@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file navigation_settings.cpp
  * @brief 快捷导航面板设置的实现
@@ -210,10 +212,19 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         QuickNavigationDesktopViewModeFromJson(
             desktopViewMode, parsedMode))
         settings.desktopViewMode = parsedMode;
+    if (const auto* value = document.Find("mappingViewMode"); value && value->IsString() &&
+        QuickNavigationDesktopViewModeFromJson(value->string, parsedMode))
+        settings.mappingViewMode = parsedMode;
+    if (const auto* value = document.Find("widgetSortByInitial"); value && value->IsObject())
+        for (const auto& [id, sort] : value->object)
+            if (!id.empty() && sort.IsBoolean())
+                settings.widgetSortByInitial[id] = sort.boolean;
     // Seed the remembered state from the former opening preference once.
     const auto* collapsed = document.Find("lastCollapsed");
     if (!collapsed || !collapsed->IsBoolean()) collapsed = document.Find("defaultCollapsed");
     if (collapsed && collapsed->IsBoolean()) settings.lastCollapsed = collapsed->boolean;
+    if (const auto* value = document.Find("appSuggestionsEnabled"); value && value->IsBoolean())
+        settings.appSuggestionsEnabled = value->boolean;
     if (const auto* layout = document.Find("layout"); layout && layout->IsObject())
     {
 #define SD_NAV_READ(name) if (const auto* value = layout->Find(#name); value && value->IsNumber() && std::isfinite(value->number) && value->number >= -32768 && value->number <= 32768) settings.layout.name = static_cast<int>(value->number)
@@ -272,17 +283,19 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
  */
 bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& settings)
 {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     file << "{\n";
     file << "  \"layoutVersion\": 2,\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
     file << "  \"virtualKey\": " << settings.virtualKey << ",\n";
+    file << "  \"appSuggestionsEnabled\": " << (settings.appSuggestionsEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopViewMode\": \""
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)
          << "\",\n";
+    file << "  \"mappingViewMode\": \""
+         << QuickNavigationDesktopViewModeToJson(settings.mappingViewMode) << "\",\n";
     file << "  \"lastCollapsed\": " << (settings.lastCollapsed ? "true" : "false") << ",\n  \"layout\": {";
     bool first = true;
 #define SD_NAV_WRITE(name) if (!first) file << ','; first = false; file << "\"" #name "\":" << settings.layout.name
@@ -304,6 +317,14 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
         }
         return out + '"';
     };
+    file << "},\n  \"widgetSortByInitial\": {";
+    first = true;
+    for (const auto& [id, sort] : settings.widgetSortByInitial)
+    {
+        if (!first) file << ',';
+        first = false;
+        file << quoted(id) << ':' << (sort ? "true" : "false");
+    }
     file << "},\n  \"prefixesVersion\": 1,\n  \"prefixes\": [";
     for (size_t i = 0; i < settings.prefixes.size(); ++i) { if (i) file << ','; file << quoted(settings.prefixes[i]); }
     file << "],\n  \"defaultEngine\": " << quoted(settings.defaultEngine) << ",\n  \"engines\": [";
@@ -318,7 +339,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     for (const auto& [key, value] : settings.colors) { if (!first) file << ','; first = false; file << quoted(key) << ':' << quoted(value); }
     file << "}\n";
     file << "}\n";
-    return file.good();
+    return file.good() && snowdesktop::atomic_file::WriteAll(path, file.str());
 }
 
 /**

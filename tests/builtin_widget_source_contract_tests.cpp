@@ -12,6 +12,9 @@
 #include <string_view>
 #include <vector>
 
+void TestRssReaderBehavior(const std::filesystem::path& repository);
+void TestBuiltinInteractionTimers(const std::filesystem::path& repository);
+
 namespace
 {
 namespace fs = std::filesystem;
@@ -230,6 +233,8 @@ int main(int argc, char** argv)
     const fs::path root(argv[1]);
     TestPublishedV2Catalog(root);
     TestBuiltinPackages(root);
+    TestRssReaderBehavior(root);
+    TestBuiltinInteractionTimers(root);
     Check(snowdesktop::test::CheckSourceBoundaries(root, {
         {"widgets/reminders/main.lua", "local function render(", "local function event(",
          {"storage.set(", "storage.remove(", "storage.transaction("}},
@@ -248,6 +253,6 @@ int main(int argc, char** argv)
         {"src/widget/runtime/widget_engine.cpp", "static int lua_ResourceExists(", "static int lua_ResourceImage(", {"is_regular_file"}},
         {"widgets/pomodoro/main.lua", "", "", {"red * 299", "green * 587", "blue * 114"}},
     }), "built-in resource, render and legacy-API source boundaries");
-    std::cout << "Built-in manifest/publication data and source boundaries passed; no widget event or VM execution was tested\n";
+    std::cout << "Built-in manifest/publication boundaries and RSS production lifecycle behavior passed\n";
     return 0;
 }

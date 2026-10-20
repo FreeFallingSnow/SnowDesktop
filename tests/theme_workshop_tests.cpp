@@ -191,7 +191,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         repeatedHashesValid = worker.get() && repeatedHashesValid;
     check(repeatedHashesValid,
         "repeated concurrent production hashes release objects and retain known empty/nonempty digests");
-    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}";
+    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
         !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
@@ -209,6 +209,10 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const std::string alphaCapability = ",\"workshop.theme.color-alpha.v1\"";
     missingAlphaCapability.erase(missingAlphaCapability.find(alphaCapability), alphaCapability.size());
     check(!workshop::Capabilities(missingAlphaCapability,"1"), "bridges without RGBA parsing cannot offer incompatible theme sharing");
+    auto missingIconCapability = current;
+    const std::string iconCapability = ",\"workshop.theme.icon.v1\"";
+    missingIconCapability.erase(missingIconCapability.find(iconCapability), iconCapability.size());
+    check(!workshop::Capabilities(missingIconCapability,"1"), "bridges must explicitly support independent icon packages");
     check(workshop::BridgeCapabilities(missingAlphaCapability,"1") && !workshop::BridgeCapabilities(current,"2"),
         "opening Workshop needs a compatible Steam bridge independently of theme upload capabilities");
     const std::string compiledField = "\"steamworksCompiled\":true";
@@ -227,6 +231,31 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     for (const auto& part : preview::Parts(package, root.id, root.scopes, error))
         std::filesystem::copy_file(prepared / L"cover.png", prepared / preview::GalleryFilename(bridge::ThemeSha256(root.id), part.component));
     constexpr std::int64_t now = 1700000000;
+    Theme icon; icon.id = "theme/icon"; icon.kind = Kind::Icon; icon.scopes = Components; icon.name = "Icon";
+    check(tags::Applicable(icon) == std::vector<std::string>{"Icon Theme"} && tags::Valid(icon, {"Icon Theme"}) &&
+        !tags::Valid(icon, {"Global Theme"}), "independent icon themes use the exact Steamworks canonical tag");
+    {
+        icon.icon.enabled = true; icon.icon.preset = IconBeautifyPreset::Custom; icon.icon.shape = IconBeautifyShape::Circle;
+        Library icons; icons.themes.emplace(icon.id, icon);
+        workshop::SubscriptionSnapshot incoming{true, "321", {"654"}, {}, {{"654", "321", std::string(64, 'a'), {{icon.id, icon}}}}};
+        check(workshop::Reconcile(icons, incoming, error) && icons.references.empty() && icons.themes.size() == 2,
+            "icon subscriptions install without applying or aliasing an editable local theme");
+        const auto installedIcon = *icons.workshop.at("654").ids.begin();
+        check(installedIcon != icon.id && SameIconTheme(icons.themes.at(installedIcon).icon, icon.icon) &&
+            Select(icons, "icon", installedIcon, Kind::Icon, Components, error), "installed icon themes preserve all values and support explicit selection");
+        std::string localIcon;
+        check(workshop::CopyLocal(icons, installedIcon, localIcon, error) && localIcon != installedIcon &&
+            SameIconTheme(icons.themes.at(localIcon).icon, icon.icon), "copying a subscribed icon theme creates an editable independent identity");
+        incoming.downloads.front().package.at(icon.id).icon.backgroundOpacity = .12f;
+        incoming.downloads.front().sha256 = std::string(64, 'b');
+        check(workshop::Reconcile(icons, incoming, error) && icons.themes.at(installedIcon).icon.backgroundOpacity == .12f &&
+            Resolve(icons.references.at("icon").snapshot, installedIcon)->icon.backgroundOpacity == icon.icon.backgroundOpacity,
+            "subscription refresh retains icon identity and the last explicitly applied immutable values");
+        incoming.subscribed.clear(); incoming.downloads.clear();
+        check(workshop::Reconcile(icons, incoming, error) && !icons.themes.contains(installedIcon) &&
+            icons.references.at("icon").id.empty() && icons.themes.contains(localIcon) && icons.themes.contains(icon.id),
+            "unsubscribing retains applied icon values as custom and preserves both local themes");
+    }
     const auto classification = tags::Applicable(root);
     check(classification == std::vector<std::string>{"Global Theme", "Dock Theme", "Status Bar Theme", "Taskbar Theme"}, "global classification uses fixed Steamworks names for every applicable base scope");
     auto partial = root; partial.scopes = Dock | Taskbar;

@@ -166,10 +166,24 @@ int RunWebsiteIconTests()
     Check(newSnapshot && site::Apply(*newSnapshot, newIcon), "repeated fetch replaces the shortcut icon reference");
     const auto activeLink = desktop / L"active.lnk";
     Check(MakeLink(activeLink, L"C:\\Browser\\chrome.exe", L"--app=https://example.com", linkIcon.c_str()), "create a second live icon owner");
+    // OFFLINE is one of the real rendering filters implicated by removable
+    // volumes and directory junctions. It must not change reference ownership.
+    Check(SetFileAttributesW(newIcon.c_str(), FILE_ATTRIBUTE_OFFLINE) != FALSE &&
+        SetFileAttributesW(linkIcon.c_str(), FILE_ATTRIBUTE_OFFLINE) != FALSE &&
+        (GetFileAttributesW(newIcon.c_str()) & FILE_ATTRIBUTE_OFFLINE) != 0 &&
+        (GetFileAttributesW(linkIcon.c_str()) & FILE_ATTRIBUTE_OFFLINE) != 0,
+        "create real managed icon targets rejected by the first-image performance filter");
     const auto count = site::CollectUnused(managed, {desktop, L"::{645FF040-5081-101B-9F08-00AA002F954E}", L"widget-id"});
     Check(count == 1 && !fs::exists(oldIcon) && fs::exists(newIcon) && fs::exists(linkIcon) && fs::exists(personalIcon),
         "collection skips Shell namespace/widget identifiers, reclaims a superseded GUID icon and preserves live resources");
+    SetFileAttributesW(newIcon.c_str(), FILE_ATTRIBUTE_NORMAL);
+    SetFileAttributesW(linkIcon.c_str(), FILE_ATTRIBUTE_NORMAL);
+    const auto unreadableLink = desktop / L"unsupported.lnk";
+    atomic_file::WriteAll(unreadableLink, "a truncated Shell Link declaration");
     fs::remove(activeUrl); fs::remove(activeLink);
+    Check(site::CollectUnused(managed, {desktop}) == 0 && fs::exists(newIcon) && fs::exists(linkIcon),
+        "an unparseable shortcut is unknown ownership and cannot authorize managed icon deletion");
+    fs::remove(unreadableLink);
     Check(site::CollectUnused(managed, {desktop}) == 2 && !fs::exists(newIcon) && !fs::exists(linkIcon) && fs::exists(personalIcon),
         "deleting the last website shortcuts releases their generated icons");
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-website-icon-")) fs::remove_all(root);

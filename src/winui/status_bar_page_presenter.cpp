@@ -20,19 +20,26 @@ struct StatusBarPagePresenter::Impl
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
     BarSettingsAvailability availability;
     int monitorCount = 0;
-    muxc::TextBlock mergedNotice;
-    muxc::HyperlinkButton dockAppearanceLink;
-    muxc::Expander independentAppearance;
+    muxc::TextBlock relatedTitle;
+    muxc::Button dockAppearanceLink;
+    muxc::Border relatedAppearance;
+    muxc::StackPanel relatedContent;
+    muxc::Button calendarLink;
+    SettingRow calendarLinkRow;
+    SettingRow relatedAppearanceRow;
+    muxc::Border independentAppearance;
     muxc::ContentControl independentHost;
     muxc::StackPanel independentBody;
-    muxc::StackPanel root, basic, leftItems, infoItems;
-    muxc::Expander layoutSection, leftSection, infoSection, timeNotificationSection, controlCenterSection;
+    muxc::StackPanel root, basic, leftItems, infoItems, appearanceRoot;
+    bool centralizedAppearance = false;
+    muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
+    muxc::TextBlock layoutTitle, clickTitle;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
     muxc::Button scaleReset;
     SettingRow edgeRow, monitorsRow, scaleRow, clockPanelRow, controlPanelRow, inputPanelRow, timeNotificationPositionRow;
-    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint, clockBehaviorHint, controlBehaviorHint;
+    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint;
     const bool systemQuickSettings = StatusBarSupportsSystemQuickSettings();
     struct ThemeControl
     {
@@ -68,11 +75,12 @@ struct StatusBarPagePresenter::Impl
     bool syncing = false, closed = false, active = false, scaleDirty = false, hasSnapshot = false;
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
-    muxc::StackPanel Card(const mux::Style& style)
+    muxc::StackPanel Card(const mux::Style& style, mux::FrameworkElement heading = nullptr)
     {
-        muxc::Border border; if (style) border.Style(style);
-        muxc::StackPanel panel; panel.Spacing(12);
-        border.Child(panel); root.Children().Append(border); return panel;
+        muxc::Border border;
+        muxc::StackPanel panel;
+        presenter_controls::InitializeSettingsGroup(border, heading, panel, style);
+        root.Children().Append(border); return panel;
     }
     void Emit(std::function<void(StatusBarSettings&)> edit, bool commit = true)
     {
@@ -89,7 +97,8 @@ struct StatusBarPagePresenter::Impl
     void InitializeTheme(ThemeControl& control, muxc::StackPanel parent,
         StatusBarAppearanceRule StatusBarSettings::* member = nullptr)
     {
-        control.root.Spacing(12);
+        control.root.Spacing(0);
+        if (member) control.root.Margin({16, 0, 0, 0});
         control.combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         control.combo.MaxWidth(520);
         control.editor = PanelAppearanceEditor::Create(localize,
@@ -99,15 +108,18 @@ struct StatusBarPagePresenter::Impl
                     theme.appearance = appearance;
                     theme.customized = true;
                 }, commit);
-            });
+            }, false, true);
         const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
             member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
         control.themes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.combo, 10, 9);
+        if (member) control.themes->SetInlineSurface();
         control.row.Initialize(control.themes->SelectionContent());
+        presenter_controls::StyleSettingsSubrow(control.row.root, true, 0);
         control.root.Children().Append(control.row.root);
         control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
         control.root.Children().Append(control.themes->SaveContent());
+        presenter_controls::JoinSettingsSections(control.root);
         control.themes->SetCustomContent({control.editor->Content()});
         parent.Children().Append(control.root);
         const auto combo = control.combo;
@@ -137,9 +149,9 @@ struct StatusBarPagePresenter::Impl
     {
         auto rule = std::make_unique<RuleControl>();
         rule->key = key; rule->focus = focus; rule->member = member;
-        Title(rule->title); rule->title.Margin({0,12,0,0});
-        parent.Children().Append(rule->title);
+        Title(rule->title);
         rule->enabledRow.Initialize(rule->enabled);
+        presenter_controls::StyleSettingsSubrow(rule->enabledRow.root, rules.empty(), 0);
         rule->enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         parent.Children().Append(rule->enabledRow.root);
         InitializeTheme(rule->theme, parent, member);
@@ -180,15 +192,12 @@ struct StatusBarPagePresenter::Impl
         std::function<void(SettingsRoute)> navigateCallback)
         : localize(std::move(callback)), navigate(std::move(navigateCallback))
     {
-        root.Spacing(8);
+        root.Spacing(24);
+        appearanceRoot.Spacing(8);
         basic = Card(style);
         ToggleRow(basic, "statusBar.enabled", "statusBar.enable", &StatusBarSettings::enabled);
-        muxc::StackPanel layout; layout.Spacing(12);
-        layoutSection.Content(layout);
-        layoutSection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        layoutSection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        layoutSection.IsExpanded(false);
-        root.Children().Append(layoutSection);
+        Title(layoutTitle);
+        auto layout = Card(style, layoutTitle);
         edgeRow.Initialize(edge); monitorsRow.Initialize(monitors);
         edge.Width(200); monitors.Width(200);
         edgeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -203,7 +212,7 @@ struct StatusBarPagePresenter::Impl
         scale.Minimum(75); scale.Maximum(300); scale.StepFrequency(5);
         scale.VerticalAlignment(mux::VerticalAlignment::Center);
         scaleNumber.Minimum(75); scaleNumber.Maximum(300); scaleNumber.SmallChange(5); scaleNumber.LargeChange(25);
-        scaleNumber.Width(92); scaleNumber.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        scaleNumber.Width(presenter_controls::kSettingNumberWidth); scaleNumber.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
         muxc::TextBlock unit; unit.Text(L"%"); unit.VerticalAlignment(mux::VerticalAlignment::Center); unit.Opacity(.72);
         scaleReset.VerticalAlignment(mux::VerticalAlignment::Center);
         editor.Children().Append(scale);
@@ -214,17 +223,27 @@ struct StatusBarPagePresenter::Impl
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) layout.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         layout.Children().Append(mergedHeight->Content());
-        root.Children().Append(mergedNotice);
-        root.Children().Append(dockAppearanceLink);
-        root.Children().Append(independentAppearance);
-        for (auto section : {leftSection, infoSection, timeNotificationSection, controlCenterSection})
+        for (auto section : {leftSection, infoSection, controlCenterSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            section.Padding({0, 0, 0, 0});
             section.IsExpanded(false);
-            root.Children().Append(section);
         }
-        leftItems.Spacing(12); infoItems.Spacing(12);
+        root.Children().Append(leftSection);
+        Title(clickTitle);
+        auto clickBehavior = Card(style, clickTitle);
+        root.Children().Append(controlCenterSection);
+        root.Children().Append(infoSection);
+        root.Children().Append(appearanceRoot);
+        Title(relatedTitle);
+        presenter_controls::InitializeSettingsGroup(relatedAppearance, relatedTitle, relatedContent, style);
+        relatedAppearanceRow.Initialize(dockAppearanceLink, 0.0);
+        relatedAppearanceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        relatedContent.Children().Append(relatedAppearanceRow.root);
+        presenter_controls::UpdateSettingsSubrows(relatedContent, 0.0);
+        appearanceRoot.Children().Append(independentAppearance);
+        leftItems.Spacing(2); infoItems.Spacing(2);
         leftSection.Content(leftItems); infoSection.Content(infoItems);
         ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu);
         ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
@@ -233,20 +252,19 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
         ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
         ToggleRow(infoItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic);
-        muxc::StackPanel timeNotification; timeNotification.Spacing(12);
-        timeNotificationSection.Content(timeNotification);
-        muxc::StackPanel controlCenter; controlCenter.Spacing(12);
+        auto timeNotification = leftItems;
+        muxc::StackPanel controlCenter; controlCenter.Spacing(2);
         controlCenterSection.Content(controlCenter);
-        ToggleRow(controlCenter, "statusBar.inputMethod", "statusBar.inputMethod", &StatusBarSettings::inputMethod);
+        ToggleRow(leftItems, "statusBar.inputMethod", "statusBar.inputMethod", &StatusBarSettings::inputMethod);
         inputPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         inputPanelRow.Initialize(inputPanel);
-        controlCenter.Children().Append(inputPanelRow.root);
         ToggleRow(controlCenter, "statusBar.audioControls", "statusBar.audioControls", &StatusBarSettings::audioControls);
         ToggleRow(controlCenter, "statusBar.brightnessControls", "statusBar.brightnessControls", &StatusBarSettings::brightnessControls);
         ToggleRow(controlCenter, "statusBar.wifiControls", "statusBar.wifiControls", &StatusBarSettings::wifiControls);
         ToggleRow(controlCenter, "statusBar.bluetoothControls", "statusBar.bluetoothControls", &StatusBarSettings::bluetoothControls);
         ToggleRow(controlCenter, "statusBar.mediaControls", "statusBar.mediaControls", &StatusBarSettings::mediaControls);
         ToggleRow(controlCenter, "statusBar.powerControls", "statusBar.powerControls", &StatusBarSettings::powerControls);
+        ToggleRow(controlCenter, "statusBar.batteryPercentage", "statusBar.batteryPercentage", &StatusBarSettings::batteryPercentage);
         timeNotificationPosition.Width(200);
         timeNotificationPositionRow.Initialize(timeNotificationPosition);
         timeNotificationPositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -255,17 +273,13 @@ struct StatusBarPagePresenter::Impl
         clockPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         controlPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         clockPanelRow.Initialize(clockPanel); controlPanelRow.Initialize(controlPanel);
-        timeNotification.Children().Append(clockPanelRow.root);
-        if (systemQuickSettings) controlCenter.Children().Append(controlPanelRow.root);
-        for (auto hint : {clockBehaviorHint, controlBehaviorHint})
-        {
-            hint.TextWrapping(mux::TextWrapping::Wrap); hint.Opacity(.72);
-        }
-        timeNotification.Children().Append(clockBehaviorHint);
-        if (systemQuickSettings) controlCenter.Children().Append(controlBehaviorHint);
+        ToggleRow(clickBehavior, "statusBar.showDesktop", "statusBar.showDesktop", &StatusBarSettings::showDesktop);
+        clickBehavior.Children().Append(clockPanelRow.root);
+        clickBehavior.Children().Append(inputPanelRow.root);
+        if (systemQuickSettings) clickBehavior.Children().Append(controlPanelRow.root);
         const auto positionSelection = timeNotificationPosition.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = timeNotificationPosition.SelectedIndex();
-            if (availability.allStatusMerged || selected < 0 || selected > 1) return;
+            if (selected < 0 || selected > 1) return;
             Emit([selected](auto& settings) { settings.timeNotificationRightAligned = selected == 1; });
         });
         revoke.push_back([control = timeNotificationPosition, positionSelection] { control.SelectionChanged(positionSelection); });
@@ -289,27 +303,46 @@ struct StatusBarPagePresenter::Impl
         });
         revoke.push_back([control = inputPanel, inputSelection] { control.SelectionChanged(inputSelection); });
         independentAppearance.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        independentAppearance.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        independentBody.Spacing(12);
-        mergedNotice.TextWrapping(mux::TextWrapping::Wrap);
-        dockAppearanceLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        independentBody.Spacing(0);
         const auto appearanceLinkToken = dockAppearanceLink.Click([this](const auto&, const auto&) {
             if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
         });
         revoke.push_back([control = dockAppearanceLink, appearanceLinkToken] { control.Click(appearanceLinkToken); });
         independentHost.Content(independentBody);
         independentHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        independentAppearance.Content(independentHost);
-        auto appearance = independentBody;
-        Title(defaultThemeTitle); appearance.Children().Append(defaultThemeTitle);
+        independentAppearance.Child(independentHost);
+        muxc::StackPanel appearance;
+        appearance.Spacing(0);
+        muxc::Border appearanceGroup;
+        Title(defaultThemeTitle);
+        presenter_controls::InitializeSettingsGroup(appearanceGroup, defaultThemeTitle, appearance, style);
+        independentBody.Children().Append(appearanceGroup);
         InitializeTheme(defaultTheme, appearance);
 
-        auto scenarios = independentBody;
-        Title(rulesTitle); scenarios.Children().Append(rulesTitle);
-        rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72);
-        scenarios.Children().Append(rulesHint);
+        muxc::StackPanel scenarios;
+        scenarios.Spacing(0);
+        Title(rulesTitle);
+        rulesSection.Header(rulesTitle);
+        rulesSection.Content(scenarios);
+        rulesSection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        rulesSection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        rulesSection.Padding({0, 0, 0, 0});
+        rulesSection.IsExpanded(false);
+        appearance.Children().Append(presenter_controls::SettingsDisclosureRow(rulesSection));
+        rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72); rulesHint.FontSize(12);
         InitializeRule(scenarios, "statusBar.noWindow", "statusBar.noWindow", &StatusBarSettings::noWindow);
+        rules.front()->enabledRow.text.Children().Append(rulesHint);
         InitializeRule(scenarios, "statusBar.maximizedWindow", "statusBar.maximizedWindow", &StatusBarSettings::maximizedWindow);
+        calendarLinkRow.Initialize(calendarLink);
+        relatedContent.Children().Append(calendarLinkRow.root);
+        presenter_controls::UpdateSettingsSubrows(relatedContent, 0);
+        root.Children().Append(relatedAppearance);
+        const auto calendarToken = calendarLink.Click([this](const auto&, const auto&) {
+            if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Calendar, "calendar.events"));
+        });
+        revoke.push_back([control = calendarLink, calendarToken] { control.Click(calendarToken); });
+        for (const auto panel : {basic, layout, leftItems, infoItems, controlCenter, clickBehavior})
+            presenter_controls::UpdateSettingsSubrows(panel, 0);
         auto token = edge.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = edge.SelectedIndex();
             if (selected >= 0) Emit([selected](auto& settings) { settings.position = static_cast<DockPosition>(selected); });
@@ -358,9 +391,26 @@ struct StatusBarPagePresenter::Impl
     }
     void SyncBehaviorHint()
     {
-        clockBehaviorHint.Visibility(value.clockSystemPanel ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        controlBehaviorHint.Visibility(systemQuickSettings && value.controlCenterSystemPanel ?
-            mux::Visibility::Visible : mux::Visibility::Collapsed);
+        const auto placement = L("statusBar.systemPanelPlacement");
+        clockPanelRow.SetText(L("statusBar.clockPanel"), value.clockSystemPanel ? placement : L"");
+        controlPanelRow.SetText(L("statusBar.controlCenterPanel"),
+            systemQuickSettings && value.controlCenterSystemPanel && !value.clockSystemPanel ? placement : L"");
+        mux::Automation::AutomationProperties::SetHelpText(clockPanel, clockPanelRow.help.Text());
+        mux::Automation::AutomationProperties::SetHelpText(controlPanel,
+            systemQuickSettings && value.controlCenterSystemPanel ? placement : L"");
+    }
+    void SyncAppearanceContext()
+    {
+        const bool showStandaloneNotice = availability.anyMerged && !centralizedAppearance;
+        const bool showCalendar = value.clock && !value.clockSystemPanel;
+        relatedAppearanceRow.root.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        calendarLinkRow.root.Visibility(showCalendar ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        relatedAppearance.Visibility(showStandaloneNotice || showCalendar ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        presenter_controls::UpdateSettingsSubrows(relatedContent, 0);
+        relatedAppearanceRow.SetText(L("settings.bars.openDockAppearance"), L("statusBar.theme.mergedHint"));
+        defaultTheme.row.SetText(L("app.settings.theme"), centralizedAppearance && availability.anyMerged
+            ? L("statusBar.theme.mergedHint") : L"");
+        mux::Automation::AutomationProperties::SetHelpText(defaultTheme.combo, defaultTheme.row.help.Text());
     }
     void Sync(bool force = false)
     {
@@ -370,7 +420,7 @@ struct StatusBarPagePresenter::Impl
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
         inputPanel.SelectedIndex(value.inputMethodSystemPanel ? 1 : 0);
-        timeNotificationPosition.SelectedIndex(availability.allStatusMerged || value.timeNotificationRightAligned ? 1 : 0);
+        timeNotificationPosition.SelectedIndex(value.timeNotificationRightAligned ? 1 : 0);
         SyncBehaviorHint();
         if (!scaleDirty)
         {
@@ -386,18 +436,16 @@ struct StatusBarPagePresenter::Impl
             SyncTheme(rule->theme, current.theme, force);
         }
         edgeRow.SetEnabled(value.enabled); monitorsRow.SetEnabled(value.enabled);
-        scaleRow.SetEnabled(value.enabled && !availability.allStatusMerged);
+        scaleRow.SetEnabled(value.enabled);
         clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
         inputPanelRow.SetEnabled(value.enabled && value.inputMethod);
-        timeNotificationPositionRow.SetEnabled(value.enabled && !availability.allStatusMerged);
+        timeNotificationPositionRow.SetEnabled(value.enabled);
         for (auto& toggle : toggles)
             toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
-                (value.enabled && !(toggle->member == &StatusBarSettings::quickSearch && availability.allStatusMerged)));
-        independentHost.IsEnabled(value.enabled && !availability.allStatusMerged);
-        independentHost.Opacity(value.enabled && !availability.allStatusMerged ? 1.0 : .62);
-        mergedNotice.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        dockAppearanceLink.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));
+                value.enabled);
+        independentHost.IsEnabled(value.enabled);
+        independentHost.Opacity(value.enabled ? 1.0 : .62);
+        SyncAppearanceContext();
 
         syncing = false;
     }
@@ -417,17 +465,16 @@ struct StatusBarPagePresenter::Impl
         Flush();
         syncing = true;
         for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
-        layoutSection.Header(winrt::box_value(L("statusBar.layout")));
-        leftSection.Header(winrt::box_value(L("statusBar.leftItems")));
+        layoutTitle.Text(L("statusBar.layout"));
+        clickTitle.Text(L("statusBar.clickBehavior"));
+        leftSection.Header(winrt::box_value(L("statusBar.content")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
-        timeNotificationSection.Header(winrt::box_value(L("statusBar.timeAndNotificationArea")));
         controlCenterSection.Header(winrt::box_value(L("statusBar.controlCenter")));
         timeNotificationPositionRow.SetText(L("statusBar.timeNotificationPosition"));
         mux::Automation::AutomationProperties::SetName(timeNotificationPosition, timeNotificationPositionRow.label.Text());
         timeNotificationPosition.Items().Clear();
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.settings.taskbar_center")));
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.dock.right")));
-        for (auto hint : {clockBehaviorHint, controlBehaviorHint}) hint.Text(L("statusBar.systemPanelPlacement"));
         clockPanelRow.SetText(L("statusBar.clockPanel")); controlPanelRow.SetText(L("statusBar.controlCenterPanel"));
         inputPanelRow.SetText(L("statusBar.inputMethodPanel"));
         mux::Automation::AutomationProperties::SetName(inputPanel, inputPanelRow.label.Text());
@@ -446,19 +493,23 @@ struct StatusBarPagePresenter::Impl
         mux::Automation::AutomationProperties::SetName(scaleNumber, L("statusBar.scale"));
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
-        independentAppearance.Header(winrt::box_value(L("settings.bars.independentAppearance")));
-        dockAppearanceLink.Content(winrt::box_value(L("settings.bars.openDockAppearance")));
+        relatedTitle.Text(L("settings.common.relatedSettings"));
+        calendarLinkRow.SetText(L("settings.calendar.page"), L("settings.related.calendar"));
+        calendarLink.Content(winrt::box_value(L("start.openSettings")));
+        dockAppearanceLink.Content(winrt::box_value(L("start.openSettings")));
         mergedHeight->RefreshLocalizedText();
-        defaultThemeTitle.Text(L("statusBar.defaultAppearance"));
+        defaultThemeTitle.Text(L(centralizedAppearance ? "settings.nav.statusBar" : "statusBar.defaultAppearance"));
         rulesTitle.Text(L("settings.taskbar.scenarioOverrides"));
+        mux::Automation::AutomationProperties::SetName(rulesSection, rulesTitle.Text());
         rulesHint.Text(L("statusBar.scenarioOverrides.description"));
         LocalizeTheme(defaultTheme);
         mux::Automation::AutomationProperties::SetName(defaultTheme.combo, defaultThemeTitle.Text());
         for (auto& rule : rules)
         {
             rule->title.Text(L(rule->key));
-            rule->enabledRow.SetText(L("app.settings.widgets_enabled"));
+            rule->enabledRow.SetText(L(rule->key));
             mux::Automation::AutomationProperties::SetName(rule->enabled, rule->title.Text());
+            mux::Automation::AutomationProperties::SetHelpText(rule->enabled, rulesHint.Text());
             LocalizeTheme(rule->theme);
             mux::Automation::AutomationProperties::SetName(rule->theme.combo,
                 L(rule->key) + L" / " + L("app.settings.theme"));
@@ -504,7 +555,29 @@ void StatusBarPagePresenter::SetActions(DockPageActions actions)
     configure(*impl_->defaultTheme.themes);
     for (auto& rule : impl_->rules) configure(*rule->theme.themes);
 }
-mux::UIElement StatusBarPagePresenter::Content() const { return impl_->root; }
+mux::UIElement StatusBarPagePresenter::Content() const
+{
+    impl_->centralizedAppearance = false;
+    impl_->defaultThemeTitle.Text(impl_->L("statusBar.defaultAppearance"));
+    impl_->SyncAppearanceContext();
+    uint32_t index = 0;
+    if (!impl_->root.Children().IndexOf(impl_->appearanceRoot, index))
+    {
+        impl_->root.Children().IndexOf(impl_->relatedAppearance, index);
+        impl_->root.Children().InsertAt(index, impl_->appearanceRoot);
+    }
+    return impl_->root;
+}
+mux::UIElement StatusBarPagePresenter::AppearanceContent() const
+{
+    impl_->centralizedAppearance = true;
+    impl_->defaultThemeTitle.Text(impl_->L("settings.nav.statusBar"));
+    impl_->SyncAppearanceContext();
+    uint32_t index = 0;
+    if (impl_->root.Children().IndexOf(impl_->appearanceRoot, index))
+        impl_->root.Children().RemoveAt(index);
+    return impl_->appearanceRoot;
+}
 void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_->closed) return;
@@ -545,16 +618,57 @@ void StatusBarPagePresenter::Activate(std::string_view focusId)
     impl_->active = true;
     impl_->defaultTheme.themes->Refresh();
     for (auto& rule : impl_->rules) rule->theme.themes->Refresh();
-    if (focusId == "statusBar.theme" || focusId == "statusBar.fullscreen" || focusId == "statusBar.maximizedWindow")
-        impl_->independentAppearance.IsExpanded(true);
+    (void)focusId;
 }
 void StatusBarPagePresenter::Deactivate() { impl_->mergedHeight->Flush(); impl_->Flush(); impl_->active = false; }
 void StatusBarPagePresenter::Close() { impl_->Close(); }
+mux::FrameworkElement StatusBarPagePresenter::FocusTarget(
+    std::string_view focusId, SettingsFocusPrerequisite* prerequisite) const
+{
+    if (prerequisite) *prerequisite = {};
+    mux::FrameworkElement result{nullptr};
+    RegisterFocusTargets([&](std::string id, const mux::FrameworkElement& target) {
+        if (id == focusId) result = target;
+    });
+    if (!result) return nullptr;
+    const auto enablingTarget = [&](bool StatusBarSettings::* member) -> mux::FrameworkElement {
+        for (const auto& toggle : impl_->toggles)
+        {
+            if (toggle->member != member) continue;
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite.enable";
+                prerequisite->controlName = toggle->row.label.Text().c_str();
+            }
+            // The centralized editor does not mount the behavior-page switch.
+            // Keep prerequisite navigation on a visible card in this page.
+            return impl_->centralizedAppearance ? impl_->defaultTheme.row.root.as<mux::FrameworkElement>()
+                : toggle->control.as<mux::FrameworkElement>();
+        }
+        return result;
+    };
+    // Sync disables these rows through their ContentControl hosts. Inspect the
+    // same model prerequisites, rather than IsEnabled on the non-Control row.
+    if (focusId != "statusBar.enable" && !impl_->value.enabled)
+        return enablingTarget(&StatusBarSettings::enabled);
+    if (focusId == "statusBar.inputMethodPanel" && !impl_->value.inputMethod)
+        return enablingTarget(&StatusBarSettings::inputMethod);
+    if (result && focusId == "statusBar.mergedBarHeight" && !impl_->availability.anyMerged && prerequisite)
+    {
+        // A merged bar depends on both bars' current layout, not just an
+        // on/off choice. Keep the existing position target and explain that
+        // dependency only when navigation actually requests this setting.
+        prerequisite->messageKey = "settings.search.prerequisite.dependency";
+        prerequisite->controlName = impl_->edgeRow.label.Text().c_str();
+    }
+    return result;
+}
 void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::string, const mux::FrameworkElement&)>& target) const
 {
     target("statusBar.position", impl_->edgeRow.root); target("statusBar.monitor", impl_->monitorsRow.root);
     target("statusBar.scale", impl_->scaleRow.root);
-    target("statusBar.mergedBarHeight", impl_->mergedHeight->FocusTarget());
+    target("statusBar.mergedBarHeight", impl_->availability.anyMerged
+        ? impl_->mergedHeight->FocusTarget().as<mux::FrameworkElement>() : impl_->edgeRow.root);
     target("statusBar.clockPanel", impl_->clockPanelRow.root);
     target("statusBar.inputMethodPanel", impl_->inputPanelRow.root);
     target("statusBar.timeNotificationPosition", impl_->timeNotificationPositionRow.root);

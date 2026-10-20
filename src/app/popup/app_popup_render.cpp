@@ -2,10 +2,40 @@
 #include "popup_opacity_scope.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "categorized_popup_scope.h"
+#include "ui/render/app_font.h"
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
+
+IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)
+{
+    if (!dwriteFactory_) return nullptr;
+    const auto revision = snowdesktop::app_fonts::revision.load();
+    if (collectionPopupFontRevision_ != revision)
+    {
+        collectionPopupTitleTextFormat_.Reset();
+        collectionPopupControlTextFormat_.Reset();
+        collectionPopupFontRevision_ = revision;
+    }
+    auto& format = title ? collectionPopupTitleTextFormat_ : collectionPopupControlTextFormat_;
+    const float size = title
+        ? snowdesktop::collection_popup_layout::ResolveTitleFontSize(scale)
+        : snowdesktop::collection_popup_layout::ResolveControlFontSize(scale);
+    if (!format || format->GetFontSize() != size)
+    {
+        format.Reset();
+        snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI",
+            title ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        if (!format) return nullptr;
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    return format.Get();
+}
 
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
@@ -114,9 +144,6 @@ void DesktopApp::DrawCollectionPopup(
                 popupMetrics.scale,
             &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
-        const auto headerBounds =
-            snowdesktop::collection_popup_layout::
-                ResolveHeaderVerticalBounds(popupMetrics.scale);
         const RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(popupRect_, popupMetrics.scale,
                 dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
@@ -128,10 +155,17 @@ void DesktopApp::DrawCollectionPopup(
                 ? _LW("app.overlay.collection_default") : widget.title);
         DrawD2DTextEllipsis(
             ctx, title, titleRect,
-            itemTextFormat_.Get(),
+            GetCollectionPopupTextFormat(popupMetrics.scale, true),
             popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        if (dockTrayPopup_)
+        {
+            DrawDockTrayPopup(ctx, popupRect_);
+            if (animationApplied) ctx->SetTransform(previousTransform);
+            return;
+        }
 
         if (dockFolderPopupOpen_)
         {
@@ -188,13 +222,9 @@ void DesktopApp::DrawCollectionPopup(
                     widget.folderSortAscending
                         ? L" ↑" : L" ↓";
             }
-            RECT sortTextRect = sortRect;
-            OffsetRect(
-                &sortTextRect, 0,
-                headerBounds.sortLabelOffsetY);
             DrawD2DTextEllipsis(
-                ctx, sortLabel, sortTextRect,
-                itemTextFormat_.Get(),
+                ctx, sortLabel, sortRect,
+                GetCollectionPopupTextFormat(popupMetrics.scale, false),
                 popupTextColor(0.88f),
                 DWRITE_TEXT_ALIGNMENT_CENTER,
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -203,6 +233,18 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (auto* view = GetDateGroupedPopupView(popupRect_))
+    {
+        const RECT frame = view->GetLayoutFrameRect();
+        ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        view->DrawContent(ctx, frame);
+        view->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
+        if (dragSession_.TargetContainer() == view)
+            view->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
+        ctx->PopAxisAlignedClip();
+        if (animationApplied) ctx->SetTransform(previousTransform);
+        return;
+    }
     if (auto* group = GetGroupPopupView())
     {
         const RECT frame = GetCategorizedPopupFrame(popupRect_);
@@ -230,6 +272,8 @@ void DesktopApp::DrawCollectionPopup(
     popupListStyle.bounds = popupRect_;
     popupListStyle.cellScale = popupMetrics.scale;
     popupListStyle.listMode = UsesCollectionPopupList(widget);
+    popupListStyle.id = widget.id;
+    popupListStyle.listColumns = snowdesktop::list_detail_rules::ListColumns(widget);
     popupListStyle.showDetails = widget.showDetails;
     popupListStyle.detailShowModified =
         widget.detailShowModified;
@@ -249,7 +293,7 @@ void DesktopApp::DrawCollectionPopup(
         widget.contentSortAscending;
     Collection popupListRenderer(
         &popupListStyle, this);
-    popupListRenderer.SetHostedFrame(&popupRect_);
+    popupListRenderer.SetPopupFrame(&popupRect_);
     if (UsesCollectionPopupList(widget) && !fan)
     {
         popupListRenderer.DrawDetailsHeader(
@@ -354,8 +398,7 @@ void DesktopApp::DrawCollectionPopup(
             }
         }
         if (!iconDrawn) drawIcon(ctx, pose.icon);
-        RECT textRect = pose.label;
-        InflateRect(&textRect, -layout::ScaleDimension(8, popupMetrics.scale), 0);
+        const RECT textRect = layout::FanLabelTextRect(pose.label, popupMetrics.scale);
         DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
             fanTitleTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -368,8 +411,15 @@ void DesktopApp::DrawCollectionPopup(
                 DrawDemoCollectionIdentityIcon(iconContext, widget,
                     desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
                     iconRect, 1.0f);
-            else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
-                ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+            else if (auto* custom = GetSmallCustomIcon(iconContext, [&]() -> std::wstring_view {
+                if constexpr (requires { item.layoutKey; }) return item.layoutKey;
+                else return item.fullPath;
+            }(), iconRect.right - iconRect.left))
+                DrawIconBitmap(iconContext, custom, iconRect);
+            else if (auto* icon = GetTargetIconBitmap(iconContext, item.iconBitmap, [&]() -> std::wstring_view {
+                    if constexpr (requires { item.layoutKey; }) return item.layoutKey;
+                    else return item.fullPath;
+                }(), item.iconIsMediaThumbnail))
                 DrawIconBitmap(iconContext, icon, iconRect);
             else
                 DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);
@@ -396,7 +446,7 @@ void DesktopApp::DrawCollectionPopup(
                     ctx, itemRect,
                     entry.iconBitmap,
                     entry.sysIconIndex,
-                    entry.name,
+                    entry.DisplayName(),
                     entry.selected,
                     entry.iconIsMediaThumbnail,
                     {}, nullptr,
@@ -406,7 +456,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&entry));
+                    collectionPopupLightTheme_, !IsRenamingItem(&entry), entry.fullPath, content);
                 continue;
             }
             const bool hovered =
@@ -477,14 +527,14 @@ void DesktopApp::DrawCollectionPopup(
                         item.fileSize,
                         false,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&item));
+                    collectionPopupLightTheme_, !IsRenamingItem(&item), item.layoutKey, content);
                 continue;
             }
             bool hovered =
                 popupAnimation_.IsInteractive() &&
                 !items_[itemIndex].selected &&
                 PtInRect(&itemRect, lastMousePoint_);
-            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            DesktopIcon icon(&items_[itemIndex], nullptr, this, true);
             const auto titleLayers =
                 snowdesktop::item_render_layer_rules::
                     ResolveTitleLayerPlan(
@@ -522,7 +572,7 @@ void DesktopApp::DrawCollectionPopup(
             if (itemIndex == static_cast<size_t>(-1) ||
                 !items_[itemIndex].selected)
                 continue;
-            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            DesktopIcon icon(&items_[itemIndex], nullptr, this, true);
             icon.DrawTitle(
                 ctx, itemRect, true, 1.0f,
                 collectionPopupLightTheme_,
@@ -570,7 +620,8 @@ void DesktopApp::DrawCollectionPopup(
             : dockFolderPopupAvailable_
                 ? _LW("widget.folder_mapping.empty")
                 : _LW("widget.folder_mapping.unavailable");
-        DrawD2DTextEllipsis(ctx, status, content, itemTextFormat_.Get(),
+        DrawD2DTextEllipsis(ctx, status, content,
+            GetCollectionPopupTextFormat(popupMetrics.scale, false),
             popupTextColor(0.68f),
             DWRITE_TEXT_ALIGNMENT_CENTER,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
@@ -586,9 +637,9 @@ void DesktopApp::DrawCollectionPopup(
         PtInRect(&popupRect_, lastMousePoint_);
     popupHovered = popupHovered || popupScrollbarDragging_;
     if (!fan) DrawScrollbarAt(
-        ctx, content, contentHeight, visibleHeight,
+        ctx, snowdesktop::popup_scrollbar_layout::Viewport(popupRect_, content), contentHeight, visibleHeight,
         popupScrollOffset_, popupHovered,
-        collectionPopupLightTheme_);
+        collectionPopupLightTheme_, popupMetrics.scale);
 
     if (!fan) (void)DrawWidgetPanelEdgeHighlight(
         ctx, popupRect_, 18.0f * popupMetrics.scale,

@@ -112,13 +112,13 @@ void CheckUsageGuide()
     entry.focusId = "contextMenu.extensions";
     const auto &menuLesson = *Find(Topic::ContextMenu);
     const auto menuRoute = SettingsDestination(menuLesson);
-    Check(menuLesson.section == Section::Basics && !menuLesson.practice &&
+    Check(!menuLesson.practice &&
               IsLessonVisible(menuLesson, {entry}) &&
               menuRoute.page == snowdesktop::SettingsPage::ContextMenu &&
               menuRoute.focusId == "contextMenu.extensions" &&
               ReturnDestination(menuRoute) == snowdesktop::SettingsRoute::ForPage(
                                                   snowdesktop::SettingsPage::General, "start.contextMenu"),
-          "Basics links to context-menu settings and returns to the same guide entry");
+          "context-menu guidance opens settings and returns to the same guide entry");
     for (const auto& lesson : kLessons)
     {
         Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");

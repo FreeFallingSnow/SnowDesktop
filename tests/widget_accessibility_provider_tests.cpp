@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -784,6 +785,45 @@ void TestProviderTreeAndLifetime()
             PropertyString(containingGrid.Get(),
                 UIA_AutomationIdPropertyId) == L"grid",
         "GridItem must expose coordinates and its containing grid");
+
+    snapshots[0].nodes[10].gridRowCount = 3;
+    snapshots[0].nodes[10].gridColumnCount = 3;
+    snapshots[0].nodes[11].gridRowSpan = 2;
+    snapshots[0].nodes[11].gridColumnSpan = 2;
+    snapshots[0].nodes[12].gridRow = 2;
+    snapshots[0].nodes[12].gridColumn = 1;
+    snapshots[0].nodes[12].gridColumnSpan = 2;
+    for (int queriedRow = 0; queriedRow < 3; ++queriedRow)
+        for (int queriedColumn = 0; queriedColumn < 3; ++queriedColumn)
+        {
+            const wchar_t* expected = queriedRow < 2 && queriedColumn < 2
+                ? L"cell-a" : queriedRow == 2 && queriedColumn >= 1 ? L"cell-b" : nullptr;
+            ComPtr<IRawElementProviderSimple> covered;
+            Check(SUCCEEDED(gridPattern->GetItem(queriedRow, queriedColumn, &covered)),
+                "merged-grid coordinates remain valid provider queries");
+            Check(expected ? covered && PropertyString(covered.Get(), UIA_AutomationIdPropertyId) == expected
+                           : !covered,
+                "every occupied coordinate resolves to its covering item; empty coordinates stay empty");
+            if (!expected) continue;
+            ComPtr<IUnknown> coveredPattern;
+            ComPtr<IGridItemProvider> coveredItem;
+            int startRow = -1, startColumn = -1, rowSpan = 0, columnSpan = 0;
+            Check(SUCCEEDED(covered->GetPatternProvider(UIA_GridItemPatternId, &coveredPattern)) &&
+                    SUCCEEDED(coveredPattern.As(&coveredItem)) &&
+                    SUCCEEDED(coveredItem->get_Row(&startRow)) &&
+                    SUCCEEDED(coveredItem->get_Column(&startColumn)) &&
+                    SUCCEEDED(coveredItem->get_RowSpan(&rowSpan)) &&
+                    SUCCEEDED(coveredItem->get_ColumnSpan(&columnSpan)) &&
+                    (queriedRow < 2 ? startRow == 0 && startColumn == 0 && rowSpan == 2 && columnSpan == 2
+                                    : startRow == 2 && startColumn == 1 && rowSpan == 1 && columnSpan == 2),
+                "covered cells retain the merged item's origin and full spans through GridItem");
+        }
+    for (const auto coordinate : {std::pair{-1, 0}, std::pair{0, -1}, std::pair{3, 0}, std::pair{0, 3}})
+    {
+        ComPtr<IRawElementProviderSimple> outside;
+        Check(gridPattern->GetItem(coordinate.first, coordinate.second, &outside) == E_INVALIDARG && !outside,
+            "negative and half-open outer grid coordinates remain rejected");
+    }
 
     snapshots[0].nodes[3].checked = true;
     host.RefreshEvents();

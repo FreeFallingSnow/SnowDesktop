@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file general_settings.cpp
  * @brief 通用设置的实现
@@ -83,6 +85,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.softwareDesktopEnabled = val;
     if (ReadBoolField(text, "softwareDesktopHotkeyEnabled", val))
         settings.softwareDesktopHotkeyEnabled = val;
+    if (ReadBoolField(text, "forceRestartHotkeyEnabled", val))
+        settings.forceRestartHotkeyEnabled = val;
     if (ReadBoolField(text, "demoModeEnabled", val))
         settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
@@ -97,7 +101,15 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.contextMenuExpandQuickActions = val;
     if (ReadBoolField(text, "contextMenuHidePageManagement", val))
         settings.contextMenuHidePageManagement = val;
+    if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
+        settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "forceRestartHotkeyModifiers", hotkeyValue))
+        settings.forceRestartHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    if (ReadIntField(text, "forceRestartHotkeyVirtualKey", hotkeyValue) &&
+        hotkeyValue >= 0 && hotkeyValue <= 0xff)
+        settings.forceRestartHotkeyVirtualKey = static_cast<UINT>(hotkeyValue);
     if (ReadIntField(text, "softwareDesktopHotkeyModifiers", hotkeyValue))
         settings.softwareDesktopHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -207,8 +219,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
     if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
         globalPopupAppearance.empty() || statusBar.empty()) return false;
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
     const auto quote = [](std::string_view text) {
@@ -231,6 +242,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << (settings.contextMenuExpandQuickActions ? "true" : "false") << ",\n";
     file << "  \"contextMenuHidePageManagement\": "
          << (settings.contextMenuHidePageManagement ? "true" : "false") << ",\n";
+    file << "  \"contextMenuHideMoreManagement\": "
+         << (settings.contextMenuHideMoreManagement ? "true" : "false") << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
@@ -245,6 +258,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"animationOnBattery\": " << (settings.animationOnBattery ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"forceRestartHotkeyEnabled\": "
+         << (settings.forceRestartHotkeyEnabled ? "true" : "false") << ",\n";
+    file << "  \"forceRestartHotkeyModifiers\": "
+         << settings.forceRestartHotkeyModifiers << ",\n";
+    file << "  \"forceRestartHotkeyVirtualKey\": "
+         << settings.forceRestartHotkeyVirtualKey << ",\n";
     file << "  \"softwareDesktopHotkeyEnabled\": "
          << (settings.softwareDesktopHotkeyEnabled ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopHotkeyModifiers\": "
@@ -281,5 +300,5 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }

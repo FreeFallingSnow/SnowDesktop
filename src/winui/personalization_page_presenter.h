@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
 #include "theme_library_actions.h"
 #include "shell/shell_extension_service.h"
 
@@ -11,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -79,20 +81,27 @@ public:
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement ThemeManagementContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
-    /** Shared widget dimension and layout controls. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TypographyContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement WindowPinBorderContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAttentionDotContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement QuickNavigationAppearanceContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement WidgetCommonContent() const noexcept;
+    /** Compatibility alias for TypographyContent; do not mount both. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetLayoutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetBehaviorContent() const noexcept;
+    /** Mount spacing rows once, using the existing layout group surface. */
     void SetLayoutSpacingContent(
-        const winrt::Microsoft::UI::Xaml::UIElement& content);
+        const std::vector<winrt::Microsoft::UI::Xaml::UIElement>& content);
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 
     void Activate() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId) const noexcept;
+        FocusTarget(std::string_view focusId, bool reveal = false,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
     void Close() noexcept;
 
 private:

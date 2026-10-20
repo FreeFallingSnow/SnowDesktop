@@ -7,6 +7,7 @@
 namespace snowdesktop::taskbar_hook::native
 {
 inline constexpr wchar_t kContextMenuProperty[] = L"SnowDesktop.Taskbar.ContextMenu.v1";
+inline constexpr wchar_t kMinimizeInputTickProperty[] = L"SnowDesktop.Taskbar.MinimizeInputTick.v1";
 
 // Called on the owning window thread. The mapping must outlive the subclass.
 using AppBarMessage = UINT_PTR(WINAPI*)(DWORD, PAPPBARDATA);
@@ -17,4 +18,6 @@ bool Retire(HWND window) noexcept;
 bool IsClassicTaskbarPlatform() noexcept;
 // Private Explorer hook entry for menus owned by taskbar child windows.
 void ObserveMenuMessage(HWND source, UINT message) noexcept;
+// Input-delivery boundary used by the native queued-input observer.
+void ObserveTaskbarInput(HWND source, DWORD messageTime) noexcept;
 }

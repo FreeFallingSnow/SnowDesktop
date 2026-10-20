@@ -45,7 +45,7 @@ std::map<std::string, std::string> RecoverSourceIds(const Library& library,
     // only a unique, complete graph with identical material and dependency edges.
     std::map<std::string, std::string> installed;
     std::set<std::string> used;
-    for (const auto kind : {Kind::QuickPanel, Kind::Popup, Kind::Global})
+    for (const auto kind : {Kind::QuickPanel, Kind::Popup, Kind::Icon, Kind::Global})
         for (const auto& [authoredId, authored] : source)
         {
             if (Builtin(authoredId) || authored.kind != kind) continue;
@@ -55,7 +55,8 @@ std::map<std::string, std::string> RecoverSourceIds(const Library& library,
                 const auto saved = Find(library.themes, id);
                 if (!saved || used.contains(id) || saved->kind != authored.kind || saved->scopes != authored.scopes ||
                     saved->name != authored.name || saved->appearance != authored.appearance ||
-                    saved->layout != authored.layout || saved->colors != authored.colors) continue;
+                    saved->layout != authored.layout || saved->colors != authored.colors ||
+                    (authored.kind == Kind::Icon && !SameIconTheme(saved->icon, authored.icon))) continue;
                 const auto binding = [&](const std::string& key) {
                     if (key.empty() || Builtin(key)) return key;
                     const auto found = installed.find(key);
@@ -127,7 +128,7 @@ bool Capabilities(std::string_view configuration, std::string_view hostVersion)
         std::any_of(capabilities->array.begin(), capabilities->array.end(),
             [key](const auto& value) { return value.IsString() && value.string == key; }); };
     return has("workshop.theme.v1") && has("workshop.theme.tags.v1") && has("workshop.theme.gallery.v1") &&
-        has("workshop.theme.color-alpha.v1");
+        has("workshop.theme.color-alpha.v1") && has("workshop.theme.icon.v1") && has("workshop.theme.icon-style.v1");
 }
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion)
 {

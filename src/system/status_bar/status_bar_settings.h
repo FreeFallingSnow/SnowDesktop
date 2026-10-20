@@ -35,11 +35,13 @@ struct StatusBarSettings
     // only. Never reinterpret "has visible windows" as "has no windows".
     StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
     bool menu = true, quickSearch = true, taskView = true;
+    bool showDesktop = true;
     bool clockSystemPanel = false, controlCenterSystemPanel = false;
     bool clockShowSeconds = false;
     bool timeNotificationRightAligned = false;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
+    bool batteryPercentage = false;
     bool inputMethod = true;
     bool inputMethodSystemPanel = false;
     bool cpu = false, memory = false, gpu = false, traffic = false;
@@ -73,6 +75,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("menu", &StatusBarSettings::menu);
     visit("quickSearch", &StatusBarSettings::quickSearch);
     visit("taskView", &StatusBarSettings::taskView);
+    visit("showDesktop", &StatusBarSettings::showDesktop);
     visit("inputMethod", &StatusBarSettings::inputMethod);
     visit("inputMethodSystemPanel", &StatusBarSettings::inputMethodSystemPanel);
     visit("clockSystemPanel", &StatusBarSettings::clockSystemPanel);
@@ -85,6 +88,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("volume", &StatusBarSettings::volume);
     visit("battery", &StatusBarSettings::battery);
     visit("controlCenter", &StatusBarSettings::controlCenter);
+    visit("batteryPercentage", &StatusBarSettings::batteryPercentage);
     visit("cpu", &StatusBarSettings::cpu);
     visit("memory", &StatusBarSettings::memory);
     visit("gpu", &StatusBarSettings::gpu);

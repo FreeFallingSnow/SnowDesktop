@@ -2,11 +2,21 @@
 #include <sddl.h>
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <future>
+#include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include "shell/shell_extension_catalogue.h"
+#include "shell/shell_catalogue_workers.h"
+#include "shell/shell_menu_registry_watch.h"
+#include "platform/foreground_fullscreen.h"
 
 namespace
 {
@@ -188,10 +198,173 @@ std::vector<std::wstring> Types(const ext::Catalogue &catalogue, const std::stri
     Check(row != catalogue.rows.end(), "expected private command exists");
     return row->types;
 }
+
+void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expected, bool fail = false)
+{
+    ext::CatalogueForegroundDemand foreground{foregroundAtStart};
+    std::atomic_int entered{0};
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool release = false;
+    auto scan = std::async(std::launch::async, [&] {
+        return ext::detail::RunCatalogueWorkers(8, &foreground, [&] {
+            entered.fetch_add(1);
+            changed.notify_all();
+            std::unique_lock lock(mutex);
+            changed.wait(lock, [&] { return release; });
+            if (fail) throw std::runtime_error("injected catalogue worker failure");
+        });
+    });
+    auto waitFor = [&](int count) {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(5),
+            [&] { return entered.load() >= count; });
+    };
+    const bool initialReady = waitFor(foregroundAtStart ? 8 : 1);
+    if (promote) foreground.Promote();
+    const bool promoted = !promote || waitFor(8);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    const bool completed = scan.get();
+    Check(initialReady && promoted && completed == !fail && entered.load() == expected,
+        "background catalogue uses one worker and foreground demand restores eight");
+}
+
+void CheckCataloguePauseWake(int action)
+{
+    std::atomic_bool fullscreen{true};
+    std::promise<void> observed;
+    auto ready = observed.get_future();
+    bool first = true;
+    ext::CatalogueForegroundDemand demand{false, [&] {
+        if (first) { first = false; observed.set_value(); }
+        return fullscreen.load();
+    }};
+    auto work = std::async(std::launch::async, [&] {
+        try { demand.WaitUntilAllowed(); return 1; }
+        catch (const std::runtime_error& error) {
+            return std::string(error.what()) == "catalogue scan cancelled" ? 0 : -1;
+        }
+    });
+    const bool observedPause = ready.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const bool blocked = work.wait_for(std::chrono::milliseconds(80)) == std::future_status::timeout;
+    if (action == 0) fullscreen.store(false);
+    else if (action == 1) demand.Promote();
+    else demand.Cancel();
+    const bool woke = work.wait_for(action == 0 ? std::chrono::seconds(2) :
+        std::chrono::milliseconds(100)) == std::future_status::ready;
+    if (!woke) demand.Cancel(); // Failure must not strand a paused future.
+    const int result = work.get();
+    Check(observedPause && blocked && woke && result == (action == 2 ? 0 : 1),
+        "fullscreen pause resumes, foreground promotion wakes it, and shutdown cancels it");
+    Check(demand.PausedMilliseconds() >= 60,
+        "paused duration is recorded for the active scan timeout budget");
+    demand.Reset(true);
+    demand.WaitUntilAllowed();
+    Check(demand.PausedMilliseconds() == 0,
+        "a new foreground scan resets cancellation and paused time");
+}
+
+void CheckCataloguePauseProgress()
+{
+    std::atomic_bool fullscreen{false};
+    std::atomic_int completed{0};
+    std::promise<void> paused;
+    auto pausedReady = paused.get_future();
+    bool reported = false;
+    ext::CatalogueForegroundDemand demand{false, [&] {
+        const bool blocked = fullscreen.load();
+        if (blocked && !reported) { reported = true; paused.set_value(); }
+        return blocked;
+    }};
+    auto work = std::async(std::launch::async, [&] {
+        return ext::detail::RunCatalogueWorkers(8, &demand, [&] {
+            for (int i = 0; i < 40; ++i)
+            {
+                demand.WaitUntilAllowed();
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                completed.fetch_add(1);
+            }
+        });
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (completed.load() < 3 && std::chrono::steady_clock::now() < deadline &&
+        work.wait_for(std::chrono::milliseconds(20)) != std::future_status::ready) {}
+    fullscreen.store(true);
+    const bool stopped = pausedReady.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const int progress = completed.load();
+    const bool waiting = work.wait_for(std::chrono::milliseconds(80)) == std::future_status::timeout;
+    const bool unchanged = completed.load() == progress;
+    fullscreen.store(false);
+    if (work.wait_for(std::chrono::seconds(3)) != std::future_status::ready) demand.Cancel();
+    const bool successful = work.get();
+    Check(stopped && waiting && unchanged && successful && completed.load() == 40,
+        "a fullscreen change pauses an active single-worker scan and resumes its existing queue exactly once");
+}
+
+void CheckPausedRegistryCatalogue(const ext::Catalogue& expected)
+{
+    std::atomic_bool fullscreen{true};
+    std::promise<void> observed;
+    auto ready = observed.get_future();
+    bool first = true;
+    ext::CatalogueForegroundDemand demand{false, [&] {
+        if (first) { first = false; observed.set_value(); }
+        return fullscreen.load();
+    }};
+    auto work = std::async(std::launch::async, [&] {
+        return ext::ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, false, demand);
+    });
+    const bool observedPause = ready.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const bool blocked = work.wait_for(std::chrono::milliseconds(80)) == std::future_status::timeout;
+    fullscreen.store(false);
+    if (work.wait_for(std::chrono::seconds(3)) != std::future_status::ready) demand.Cancel();
+    const auto result = work.get();
+    Check(observedPause && blocked && snowdesktop::settings_ipc::Pack(result) ==
+        snowdesktop::settings_ipc::Pack(expected),
+        "the real registry inventory waits while fullscreen and resumes without losing associations or fingerprints");
+}
 }
 
 void TestCatalogueRegistryHandles()
 {
+    // The production watch previously invalidated the complete catalogue for
+    // any value under the parent of a missing optional registration.
+    {
+        PrivateRegistry fixture;
+        {
+            OwnedKey parent(fixture.value, L"AppPaths");
+            ext::detail::MenuRegistryWatch watch(fixture.value, L"AppPaths\\Optional\\Provider", 0);
+            Check(watch.armed, "watch the nearest existing optional-registration ancestor");
+            Put(fixture.value, L"AppPaths\\Unrelated", nullptr, L"other.exe");
+            Check(!watch.Changed(), "an unrelated child must not invalidate the menu inventory");
+            Put(fixture.value, L"AppPaths", L"cache", L"one");
+            Check(!watch.Changed(), "an ancestor cache value must not invalidate an absent target");
+            {
+                OwnedKey intermediate(fixture.value, L"AppPaths\\Optional");
+                Check(!watch.Changed() && watch.armed, "follow intermediate creation without declaring a target change");
+            }
+            Put(fixture.value, L"AppPaths\\Optional\\Provider", nullptr, L"provider.exe");
+            Check(watch.Changed(), "new target registration invalidates the inventory");
+            Put(fixture.value, L"AppPaths\\Optional\\Provider", nullptr, L"replacement.exe");
+            Check(watch.Changed(), "an existing target value change remains observable");
+            Check(RegDeleteTreeW(fixture.value, L"AppPaths\\Optional") == ERROR_SUCCESS,
+                "remove only the optional subtree in the private fixture");
+            Check(watch.Changed() && watch.armed, "target deletion invalidates and rearms on its ancestor");
+            Put(fixture.value, L"AppPaths\\Unrelated", nullptr, L"again.exe");
+            Check(!watch.Changed(), "deletion does not restore broad unrelated ancestor invalidations");
+        }
+        fixture.Cleanup();
+    }
+    CheckCatalogueWorkerBudget(false, false, 1);
+    CheckCatalogueWorkerBudget(false, true, 8);
+    CheckCatalogueWorkerBudget(true, false, 8);
+    CheckCatalogueWorkerBudget(false, false, 1, true);
+    for (int action = 0; action < 3; ++action) CheckCataloguePauseWake(action);
+    CheckCataloguePauseProgress();
     PrivateRegistry registry;
     {
         OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User");
@@ -217,6 +390,11 @@ void TestCatalogueRegistryHandles()
             "isolated classes mapping is active before production catalogue reads");
 
         const auto first = ext::ReadCatalogue(HKEY_CLASSES_ROOT, false);
+        CheckPausedRegistryCatalogue(first);
+        ext::CatalogueForegroundDemand foreground;
+        Check(snowdesktop::settings_ipc::Pack(ext::ReadCatalogueWithForegroundDemand(
+            HKEY_CLASSES_ROOT, false, foreground)) == snowdesktop::settings_ipc::Pack(first),
+            "throttled background catalogue preserves the full association inventory");
         Check(first.rows.size() == 3 && Types(first, "reg:choice.a\\shell\\inspect").size() == 80 &&
             Types(first, "reg:choice.b\\shell\\inspect") == std::vector<std::wstring>{L".snapshot0"} &&
             Types(first, "reg:choice.c\\shell\\inspect") == std::vector<std::wstring>{L".snapshot0"},
@@ -266,4 +444,53 @@ void TestCatalogueRegistryHandles()
         overrides.Restore();
     }
     registry.Cleanup();
+}
+
+// Opt-in native observation fixture for the running host, never an automatic
+// desktop interaction test. It stays at the bottom of the Z order, does not
+// activate or capture input, and destroys only its own HWND after ten seconds.
+int RunCatalogueFullscreenFixture()
+{
+    const auto instance = GetModuleHandleW(nullptr);
+    const wchar_t* name = L"SnowDesktopCatalogueFullscreenFixture";
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = name;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_TIMER && wp == 1) { DestroyWindow(window); return 0; }
+        if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Check(RegisterClassW(&windowClass) != 0, "register the private fullscreen fixture");
+    struct RegistrationCleanup {
+        HINSTANCE instance; const wchar_t* name;
+        ~RegistrationCleanup() { UnregisterClassW(name, instance); }
+    } registration{instance, name};
+    MONITORINFO monitor{sizeof(monitor)};
+    Check(GetMonitorInfoW(MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY), &monitor) != FALSE,
+        "read the fixture monitor geometry");
+    const auto bounds = monitor.rcMonitor;
+    const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW, name, L"", WS_POPUP,
+        bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
+        nullptr, nullptr, instance, nullptr);
+    Check(window != nullptr, "create only the private fixture window");
+    struct WindowCleanup {
+        HWND window;
+        ~WindowCleanup() { if (IsWindow(window)) DestroyWindow(window); }
+    } cleanup{window};
+    Check(SetWindowPos(window, HWND_BOTTOM, bounds.left, bounds.top,
+        bounds.right - bounds.left, bounds.bottom - bounds.top,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE, "show the fixture behind existing windows without activation");
+    Check(snowdesktop::fullscreen::ObserveWindow(window, 0).has_value(),
+        "the real native fullscreen observer accepts the external fixture geometry");
+    Check(SetTimer(window, 1, 10000, nullptr) != 0, "bound the native fixture lifetime");
+    std::cout << "FULLSCREEN_FIXTURE_READY pid=" << GetCurrentProcessId() << std::endl;
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    std::cout << "FULLSCREEN_FIXTURE_CLOSED" << std::endl;
+    return 0;
 }

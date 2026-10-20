@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
+#include <utility>
 
 namespace snowdesktop::winui
 {
@@ -443,6 +444,18 @@ void WinUiRuntime::ResizeToClient() noexcept
     if (width == 0 || height == 0)
         return;
 
+    RECT islandClient{};
+    POINT islandOrigin{};
+    if (impl_->islandWindow && GetClientRect(impl_->islandWindow, &islandClient) &&
+        islandClient.right - islandClient.left == width &&
+        islandClient.bottom - islandClient.top == height &&
+        ClientToScreen(impl_->islandWindow, &islandOrigin) &&
+        ScreenToClient(impl_->parentWindow, &islandOrigin) &&
+        islandOrigin.x == 0 && islandOrigin.y == 0)
+    {
+        return;
+    }
+
     try
     {
         impl_->xamlSource.SiteBridge().MoveAndResize(
@@ -522,6 +535,11 @@ void WinUiRuntime::HandleWindowMessage(
     switch (message)
     {
     case WM_SIZE:
+        // Minimize/restore retains the Island and its current page. Only a
+        // real change to client bounds needs a native Island resize.
+        if (wParam != SIZE_MINIMIZED)
+            ResizeToClient();
+        break;
     case WM_DPICHANGED:
         ResizeToClient();
         break;

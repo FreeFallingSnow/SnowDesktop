@@ -16,7 +16,7 @@
     <XamlLanguage>CppWinRT</XamlLanguage>
     <ManagedAssembly>false</ManagedAssembly>
     <DefaultLanguageSourceExtension>.cpp</DefaultLanguageSourceExtension>
-    <XamlGeneratedOutputPath>$(ProjectDir)generated\xaml\$(Configuration)\</XamlGeneratedOutputPath>
+    <XamlGeneratedOutputPath Condition="'$(XamlGeneratedOutputPath)' == ''">$(ProjectDir)generated\xaml\$(Configuration)\</XamlGeneratedOutputPath>
     <SnowDesktopNuGetPackageRoot Condition="'$(NuGetPackageRoot)' != ''">$(NuGetPackageRoot)</SnowDesktopNuGetPackageRoot>
     <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(RestorePackagesPath)' != ''">$(RestorePackagesPath)</SnowDesktopNuGetPackageRoot>
     <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</SnowDesktopNuGetPackageRoot>
@@ -163,8 +163,8 @@
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
       </_SnowDesktopDeploymentFile>
-      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.pri">
-        <DeploymentPath>SnowDesktop.pri</DeploymentPath>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)$(TargetName).pri">
+        <DeploymentPath>$(TargetName).pri</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
       </_SnowDesktopDeploymentFile>
@@ -207,6 +207,6 @@
         Lines="@(MicrosoftWindowsAppSDKAppxFragmentFiles)"
         Overwrite="true"
         Encoding="UTF-8" />
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot; -WebView2LicensePath &quot;$(PkgMicrosoft_Web_WebView2)\LICENSE.txt&quot; -WebView2NoticePath &quot;$(PkgMicrosoft_Web_WebView2)\NOTICE.txt&quot;" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -ApplicationPriFileName &quot;$(TargetName).pri&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot; -WebView2LicensePath &quot;$(PkgMicrosoft_Web_WebView2)\LICENSE.txt&quot; -WebView2NoticePath &quot;$(PkgMicrosoft_Web_WebView2)\NOTICE.txt&quot;" />
   </Target>
 </Project>

@@ -4,6 +4,7 @@
 #include "component_workshop_publish.h"
 
 #include <algorithm>
+#include <charconv>
 #include <utility>
 
 namespace snowdesktop::steam_bridge
@@ -11,16 +12,52 @@ namespace snowdesktop::steam_bridge
 bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
     SteamWorkshopCore& steam,
     const ComponentPublishProgressCallback& progress,
-    ComponentPublishResult& result, CoreError& error)
+    ComponentPublishResult& result, CoreError& error,
+    const ComponentPublishPersistence& persistence)
+{
+    ComponentPublishTransport transport;
+    transport.status = [&](CoreError& failure) -> std::optional<SteamStatus> {
+        if (!steam.Initialize(failure)) return std::nullopt;
+        return steam.Status();
+    };
+    transport.item = [&](std::uint64_t id, CoreError& failure) { return steam.FindItem(id, failure); };
+    transport.publish = [&](const PublishRequest& request, const PublishProgressCallback& changed, CoreError& failure) {
+        return steam.Publish(request, changed, failure);
+    };
+    return ExecuteComponentPublishPlan(plan, transport, progress, result, error, persistence);
+}
+
+bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
+    ComponentPublishTransport& transport,
+    const ComponentPublishProgressCallback& progress,
+    ComponentPublishResult& result, CoreError& error,
+    const ComponentPublishPersistence& persistence)
 {
     result = {};
     error = {};
+    if (plan.publishedFileId)
+    {
+        const auto status = transport.status(error);
+        if (!status) return false;
+        const auto item = transport.item(*plan.publishedFileId, error);
+        if (!item) return false;
+        std::uint64_t owner = 0;
+        const auto parsed = std::from_chars(status->steamId.data(), status->steamId.data() + status->steamId.size(), owner);
+        WorkshopProject project; project.packageId = plan.packageId;
+        std::string detail;
+        if (!status->loggedOn || parsed.ec != std::errc{} || parsed.ptr != status->steamId.data() + status->steamId.size() ||
+            item->banned || !CanBindWorkshopItem(project, item->metadata, item->ownerSteamId, owner,
+                item->consumerAppId, status->appId, detail))
+        { error = {kInvalidArguments, "project_item_mismatch", detail.empty() ? "Workshop item identity or owner does not match this component" : detail}; return false; }
+    }
+    else if (!persistence.prepareCreateItem || !persistence.persistCreatedItem)
+    { error = {kSteamOperationFailed, "writeFailed", "Workshop creation requires durable local ID persistence"}; return false; }
     const std::size_t submissionTotal =
         std::max<std::size_t>(1, plan.localizations.size());
     const auto publish = [&](const PublishRequest& request,
         std::size_t index, std::string language)
     {
-        return steam.Publish(request,
+        return transport.publish(request,
             [&](const PublishProgress& value)
             {
                 if (progress)
@@ -31,6 +68,12 @@ bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
 
     PublishRequest primary;
     primary.package = plan.package;
+    primary.expectedPackageId = plan.packageId;
+    primary.prepareCreateItem = persistence.prepareCreateItem;
+    primary.persistCreatedItem = [&](std::uint64_t id) {
+        result.created = true; result.publishedFileId = id;
+        return persistence.persistCreatedItem && persistence.persistCreatedItem(id);
+    };
     primary.updateContent = plan.updateContent;
     primary.preview = plan.preview;
     primary.publishedFileId = plan.publishedFileId;
@@ -68,6 +111,7 @@ bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
         const auto& localized = plan.localizations[index];
         PublishRequest request;
         request.updateContent = false;
+        request.expectedPackageId = plan.packageId;
         request.publishedFileId = result.publishedFileId;
         request.language = localized.language;
         request.title = localized.title;

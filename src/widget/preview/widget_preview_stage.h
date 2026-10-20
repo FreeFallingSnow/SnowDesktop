@@ -107,6 +107,6 @@ enum class HighlightEdge { All, Top, Bottom, Left, Right };
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
     float effectStrength, const EdgeLightSettings& edgeLight = {},
-    HighlightEdge edge = HighlightEdge::All);
+    HighlightEdge edge = HighlightEdge::All, bool smoothCorners = true);
 
 } // namespace snowdesktop::widget_preview

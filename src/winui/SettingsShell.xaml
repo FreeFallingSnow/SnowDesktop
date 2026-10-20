@@ -10,7 +10,7 @@
 
     <UserControl.Resources>
         <Style x:Key="SettingsShellContentColumnStyle" TargetType="Border">
-            <Setter Property="MaxWidth" Value="1120" />
+            <Setter Property="MaxWidth" Value="1000" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>
         <Style x:Key="SettingsShellGuideButtonStyle" TargetType="Button">
@@ -20,18 +20,18 @@
         <Style x:Key="SettingsShellCardButtonStyle" TargetType="Button">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="Padding" Value="20,16" />
+            <Setter Property="Padding" Value="16" />
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
         </Style>
         <Style x:Key="SettingsShellCardStyle" TargetType="Border">
-            <Setter Property="Padding" Value="20,16" />
+            <Setter Property="Padding" Value="16" />
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
         </Style>
         <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
             <Border Width="38" Height="38">
@@ -83,8 +83,8 @@
                         <AdaptiveTrigger MinWindowWidth="1008" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
-                        <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
-                        <Setter Target="GuideReturnBanner.Margin" Value="40,8,40,0" />
+                        <Setter Target="PageSurface.Margin" Value="20,16,20,48" />
+                        <Setter Target="GuideReturnBanner.Margin" Value="20,8,20,0" />
                         <Setter Target="PageTitle.FontSize" Value="32" />
                         <Setter Target="PageHeaderIconHost.Width" Value="44" />
                         <Setter Target="PageHeaderIconHost.Height" Value="44" />
@@ -158,39 +158,38 @@
             </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
-                <NavigationViewItemHeader x:Name="AppearanceHeader" />
-                <NavigationViewItem x:Name="PersonalizationItem"
-                                    Tag="appearance"
-                                    IsExpanded="True"
-                                    SelectsOnInvoked="False">
+                <NavigationViewItem x:Name="DesktopOrganizationItem" Tag="group-organization"
+                                    IsExpanded="False" SelectsOnInvoked="False">
                     <NavigationViewItem.MenuItems>
-                        <NavigationViewItem x:Name="AppearanceThemeItem"
-                                            Tag="appearance-theme" />
-                        <NavigationViewItem x:Name="AppearanceWidgetsItem"
-                                            Tag="appearance-widgets" />
-                        <NavigationViewItem x:Name="AppearanceDesktopIconsItem"
-                                            Tag="appearance-desktop-icons" />
-                        <NavigationViewItem x:Name="AppearanceIconBeautificationItem"
-                                            Tag="appearance-icon-beautification" />
-                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
+                        <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                        <NavigationViewItem x:Name="QuickNavigationItem" Tag="quick-navigation" />
+                        <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
+                        <NavigationViewItem x:Name="WidgetBehaviorItem" Tag="widget-behavior" />
+                        <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
-                <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
-                <NavigationViewItemHeader x:Name="DesktopBarsHeader" />
-                <NavigationViewItem x:Name="DesktopStyleItem" Tag="desktop-style" />
-                <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
-                <NavigationViewItem x:Name="QuickNavigationItem" Tag="quick-navigation" />
-                <NavigationViewItem x:Name="DockItem" Tag="dock" />
-                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
-                <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" Visibility="Collapsed" />
-                <NavigationViewItemHeader x:Name="DesktopShellHeader" />
-                <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
-                <NavigationViewItemHeader x:Name="WidgetsAndCategoriesHeader" />
+                <NavigationViewItem x:Name="DesktopLayoutItem" Tag="group-layout"
+                                    IsExpanded="False" SelectsOnInvoked="False">
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem x:Name="DesktopStyleItem" Tag="desktop-style" />
+                        <NavigationViewItem x:Name="DockItem" Tag="dock" />
+                        <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" />
+                        <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="PersonalizationItem" Tag="group-appearance"
+                                    IsExpanded="False" SelectsOnInvoked="False">
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem x:Name="AppearanceThemeItem" Tag="appearance-theme" />
+                        <NavigationViewItem x:Name="AppearanceDesktopIconsItem" Tag="appearance-desktop-icons" />
+                        <NavigationViewItem x:Name="AppearanceIconBeautificationItem" Tag="appearance-icon-beautification" />
+                        <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
+                        <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
+                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
+                        <NavigationViewItem x:Name="IconLibraryItem" Tag="icon-library" />
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
-                <NavigationViewItem x:Name="WidgetBehaviorItem" Tag="widget-behavior" />
-                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
-                <NavigationViewItemHeader x:Name="DataHeader" />
                 <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>
@@ -214,6 +213,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -226,7 +226,7 @@
                 <Border x:Name="GuideReturnBanner"
                         Grid.Row="1"
                         Style="{StaticResource SettingsShellContentColumnStyle}"
-                        Margin="40,8,40,0"
+                        Margin="20,8,20,0"
                         Visibility="Collapsed"
                         Padding="4"
                         CornerRadius="8"
@@ -262,7 +262,16 @@
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="2">
+                <InfoBar x:Name="FocusPrerequisiteInfoBar"
+                         Grid.Row="2"
+                         MaxWidth="1000"
+                         HorizontalAlignment="Stretch"
+                         Margin="20,0,20,0"
+                         Severity="Informational"
+                         IsOpen="False"
+                         IsClosable="True" />
+
+                <Grid Grid.Row="3">
                     <ScrollViewer x:Name="PageScrollViewer"
                                   HorizontalAlignment="Stretch"
                                   HorizontalContentAlignment="Stretch"
@@ -275,7 +284,7 @@
                         <Grid HorizontalAlignment="Stretch">
                         <Border x:Name="PageSurface"
                                 Style="{StaticResource SettingsShellContentColumnStyle}"
-                                Margin="40,16,40,48">
+                                Margin="20,16,20,48">
                             <Grid x:Name="PageContentGrid">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
@@ -307,12 +316,12 @@
                                                    HorizontalAlignment="Left" />
                                     </StackPanel>
                                 </Grid>
-                                <StackPanel x:Name="PageCards" Spacing="8" />
+                                <StackPanel x:Name="PageCards" Spacing="24" />
                             </StackPanel>
                             <Canvas x:Name="FocusHighlightLayer" IsHitTestVisible="False" Visibility="Collapsed">
                                 <Grid x:Name="FocusHighlight" Opacity="0">
-                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="8" />
-                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" />
+                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="{ThemeResource ControlCornerRadius}" />
+                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="{ThemeResource ControlCornerRadius}" />
                                 </Grid>
                             </Canvas>
                             </Grid>

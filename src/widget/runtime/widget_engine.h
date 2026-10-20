@@ -119,6 +119,7 @@ struct LuaWidgetManifest
         std::string validationMessage;
         std::string dependsOn;
         std::string type;
+        std::string durationUnit = "seconds";
         std::string defaultValue;
         std::string searchKey;
         std::string binding;
@@ -127,7 +128,7 @@ struct LuaWidgetManifest
         std::string noResultsLabel;
         double minValue = 0.0;
         double maxValue = 100.0;
-        double stepValue = 1.0;
+        double stepValue = 0.1;
         int minLength = -1;
         int maxLength = -1;
         bool required = false;
@@ -456,6 +457,9 @@ struct LuaWidgetDataSnapshot
     std::string calendarRangeEnd;
     std::uint64_t calendarRevision = 0;
     bool calendarTruncated = false;
+    std::optional<std::uint64_t> calendarTotal;
+    bool calendarHasMore = false;
+    std::uint64_t calendarNextOffset = 0;
     std::string appIndexState;
     std::uint64_t appIndexRevision = 0;
     std::vector<FilesystemWatchEvent> filesystemWatchEvents;
@@ -580,6 +584,7 @@ struct LuaWidget
         RECT sourceBounds{};
         RECT indicatorBounds{};
         bool moved = false;
+        std::uint64_t targetRevision = 0;
     };
 
     struct LogicalSlotFocus
@@ -747,6 +752,7 @@ struct LogicalSlotHostSurface
 struct LogicalSlotPickerRequest
 {
     std::wstring widgetId;
+    std::uint64_t ownerToken = 0;
     std::string slotId;
     snowdesktop::widget_runtime::LogicalSlotKind kind =
         snowdesktop::widget_runtime::LogicalSlotKind::Binding;
@@ -1178,9 +1184,12 @@ public:
     static bool UnsubscribeSteamWorkshopItem(
         const std::string& externalItemId, std::string& error);
     static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
-        QuerySteamWorkshopSubscriptions(const std::string& locale);
+        QuerySteamWorkshopSubscriptions(const std::string& locale,
+            std::uint64_t diagnosticQueryId = 0);
     static snowdesktop::widget::SteamWorkshopSubscriptionHistory
         GetSteamWorkshopSubscriptionHistory();
+    static snowdesktop::widget::SteamLibrarySubscriptionHistory
+        GetSteamWorkshopLibrarySubscriptionHistory();
     static void PrepareSteamWorkshopSubscriptionArtifacts(
         snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
         const std::vector<snowdesktop::widget::InstalledPackage>& installed,
@@ -1269,7 +1278,9 @@ public:
             std::string rangeStart = {}, std::string rangeEnd = {},
             std::string scopeHandle = {},
             snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-                audioAnalysis = {}, std::string eventId = {});
+                audioAnalysis = {}, std::string eventId = {},
+            std::optional<snowdesktop::widget_runtime::CalendarEventQueryOptions>
+                calendarQuery = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
@@ -1593,20 +1604,24 @@ public:
         const std::wstring& widgetId, std::uint64_t ownerToken,
         std::uint64_t taskId);
     bool RuntimeSetTimer(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name, int intervalMs, bool repeat,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
             snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
     bool RuntimeSetTimerAt(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name, std::int64_t epochMilliseconds,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
             snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
     bool RuntimeSetTimeline(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name,
         std::vector<snowdesktop::widget_runtime::
             NamedTimerSchedule::TimelineEntry> entries,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
         bool reloadAtEnd);
-    bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
+    bool RuntimeCancelTimer(const std::wstring& widgetId,
+        std::uint64_t ownerToken, const std::string& name);
     std::string RuntimeRequestAnimationFrame(
         const std::wstring& widgetId, const std::string& name);
     bool RuntimeCancelAnimationFrame(
@@ -1645,6 +1660,7 @@ public:
     bool DispatchHostViewKeyEvent(WPARAM key, bool pressed, bool repeated,
         bool ctrl, bool shift, bool alt);
     void ClearHostViewKeyState() noexcept;
+    bool HasHostViewKeyboardFocus() const;
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
         bool ctrl, bool shift, bool alt,
         std::string_view surface = "desktop", bool repeated = false);
@@ -1672,7 +1688,7 @@ public:
         std::string_view surface = "desktop");
     bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
-    void BlurHostInput(bool cancel = false);
+    void BlurHostInput(bool cancel = false, bool preserveViewFocus = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId,
         const std::string& id, std::string_view surface = {}) const;
     bool RuntimeHasScrollOffset(const std::wstring& widgetId,
@@ -1708,6 +1724,8 @@ public:
         std::string_view surface = {});
 
 private:
+    void ReconcileHostViewKeyboardFocus(LuaWidget& widget, std::string_view surface);
+    void RevealHostViewKeyboardFocus(LuaWidget& widget, std::string_view surface);
     friend class snowdesktop::widget_runtime::WidgetEngineSettingsBackend;
 
     std::unordered_map<std::string, std::string>&
@@ -1715,6 +1733,14 @@ private:
     const std::unordered_map<std::string, std::string>&
         WidgetSettingsPersistentStorageForBackend() const noexcept;
     bool PersistWidgetSettingsStorageForBackend();
+    const std::unordered_map<std::string, std::string>&
+        WidgetSettingsReadStorageForBackend() const;
+    bool StageWidgetSettingsPreviewForBackend(const void* owner,
+        const std::string& prefix,
+        const std::unordered_map<std::string, std::string>& previous,
+        const std::unordered_map<std::string, std::string>& candidate);
+    bool CommitWidgetSettingsPreviewForBackend(const void* owner);
+    void RemoveWidgetSettingsPreviewForBackend(const void* owner) noexcept;
 
     void BeginHostLogicalSlotPointer(
         LuaWidget& widget, int x, int y);
@@ -1728,7 +1754,7 @@ private:
         std::string_view focusedKey, bool drawLogicalSlotDrag);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
-        std::wstring& error);
+        std::wstring& error, std::uint64_t diagnosticQueryId = 0);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
     bool HandleHostScrollbarPointer(
@@ -1983,6 +2009,7 @@ private:
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;
+    bool calendarServiceLoaded_ = false;
     snowdesktop::calendar::DisplayPreferences calendarDisplay_;
     std::string calendarAnnotationCacheKey_;
     std::vector<snowdesktop::calendar::DayAnnotation> calendarAnnotationCache_;

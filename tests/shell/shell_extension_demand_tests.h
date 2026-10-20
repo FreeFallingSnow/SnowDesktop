@@ -1,6 +1,8 @@
 #pragma once
 #include "shell/shell_extension_demand.h"
 #include "shell/shell_extension_source.h"
+#include "shell/shell_extension_diagnostics.h"
+#include <exception>
 
 namespace demand_tests
 {
@@ -356,15 +358,30 @@ inline void PreparationAfterRegistryNoise()
     Expect(noise.owned, "preparation notification fixture has a unique owner");
     struct TraceEnvironment
     {
-        std::wstring previous;
+        std::wstring previous, base;
         TraceEnvironment(const std::wstring &path)
+            : base(path)
         {
             wchar_t value[32768]{};
             GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", value, static_cast<DWORD>(std::size(value)));
             previous = value;
             SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", path.c_str());
         }
-        ~TraceEnvironment() { SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str()); }
+        ~TraceEnvironment()
+        {
+            if (std::uncaught_exceptions())
+            {
+                try
+                {
+                    // The service has already joined. Retain its evidence in
+                    // CTest output before TemporaryDirectory removes the file.
+                    std::ifstream input(base + L"." + std::to_wstring(GetCurrentProcessId()) + L".log", std::ios::binary);
+                    std::cerr << "Preparation trace before fixture cleanup:\n" << input.rdbuf();
+                }
+                catch (...) {}
+            }
+            SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str());
+        }
     } environment((temp.path / L"preparation").wstring());
     const auto trace = temp.path / (L"preparation." + std::to_wstring(GetCurrentProcessId()) + L".log");
     auto logged = [&](const char *message) {
@@ -372,6 +389,15 @@ inline void PreparationAfterRegistryNoise()
         const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
         return text.find(message) != std::string::npos;
     };
+    ext::MenuTrace("fixture", "reader_baseline");
+    {
+        std::ifstream reader(trace, std::ios::binary);
+        Expect(static_cast<bool>(reader), "open a real concurrent diagnostic reader");
+        std::thread writer([] { ext::MenuTrace("fixture", "reader_held"); });
+        writer.join();
+    }
+    Expect(logged("phase=fixture reason=reader_held"),
+        "a concurrent diagnostic reader cannot suppress a real preparation trace record");
     std::atomic<unsigned> scans = 0;
     std::atomic<bool> release = false, holdRefresh = false, releaseRefresh = false;
     const auto cache = temp.path / L"cache";

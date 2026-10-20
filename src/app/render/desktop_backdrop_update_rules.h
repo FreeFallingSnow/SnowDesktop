@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <algorithm>
 
+#include "ui/render/icon_backdrop_clip.h"
+
 namespace snowdesktop::desktop_backdrop_update_rules
 {
 
@@ -14,14 +16,17 @@ namespace snowdesktop::desktop_backdrop_update_rules
 // old per-icon blur before it can sample the enclosing strip a second time.
 template<class Compositor, class Shape>
 void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
-    float blurRadius, float opacity, std::uintptr_t ownerKey, bool inheritedGlass)
+    float blurRadius, float opacity, std::uintptr_t ownerKey, bool inheritedGlass,
+    const IconBackdropClip* contentClip = nullptr)
 {
-    if (inheritedGlass || compositor.HasPanelContaining(frame) || opacity <= 0.0f)
+    RECT visible{};
+    if (inheritedGlass || compositor.HasPanelContaining(frame) || opacity <= 0.0f ||
+        (contentClip && !IntersectRect(&visible, &frame, &contentClip->bounds)))
     {
         compositor.RemoveIconPanel(frame, ownerKey);
         return;
     }
-    if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey))
+    if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey, contentClip))
         (void)compositor.SetPanelOpacity(frame, opacity);
 }
 
@@ -37,7 +42,7 @@ bool KeepOrRestoreWidgetPanel(Compositor& compositor, const Widget& widget)
         return true;
     return compositor.AddPanel(widget.bounds,
         static_cast<float>(widget.backdropCornerRadius),
-        static_cast<float>(widget.backdropBlurRadius));
+        static_cast<float>(widget.backdropBlurRadius), 0, true);
 }
 
 // Call after the final panel collection, so a remove/add pair in one frame

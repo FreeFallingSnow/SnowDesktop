@@ -4,6 +4,8 @@
 #include "ui/menu/right_click_contract.h"
 #include "widgets/lua_logical_slot.h"
 #include "dock/dock_drop_rules.h"
+#include "app/widgets/widget_right_drag_actions.h"
+#include "drag_drop/right_drag_actions.h"
 
 #include <utility>
 
@@ -175,11 +177,17 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    typeToSelectSession_.Reset();
     // Nonactivating Dock Hosts do not dismiss another menu on their own.
     // Unwind that session before release starts an asynchronous running-app
     // lookup: its delivery is fenced while a menu is active, and otherwise
     // captures the old menu HWND as a foreground that cannot survive teardown.
     DismissActiveContextMenuForPopupTransition();
+    if (DockTrayPopupPointerDown(point, true))
+    {
+        SetCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
+        return;
+    }
     POINT cursor{};
     if (quickNavigationOpen_ && GetCursorPos(&cursor))
     {
@@ -214,6 +222,25 @@ void DesktopApp::OnRightButtonDown(
     ClearPopupMouseDownItem();
     Item* pressed = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    const auto beginWidgetMove = [&](size_t index) {
+        if (index >= widgets_.size() || IsGroupedWidget(widgets_[index])) return;
+        SelectWidgetOnly(index);
+        mouseDown_ = true;
+        mouseDownPoint_ = point;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = index;
+        pendingWidgetButtonAction_ = WidgetHit::None;
+        widgetAction_ = WidgetAction::PendingMove;
+        rightButtonItemDrag_ = true;
+        InvalidateDragStaticScene();
+        widgetDragOriginalCell_ = widgets_[index].gridCell;
+        widgetDragOriginalSpan_ = widgets_[index].gridSpan;
+        widgetPreviewCell_ = widgetDragOriginalCell_;
+        widgetPreviewSpan_ = widgetDragOriginalSpan_;
+        widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[index].bounds, point);
+        SetCapture(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
     auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
     const DesktopWidget* popupWidget = GetOpenPopupWidget();
     if (popupWidget && IsCollectionPopupInteractive() &&
@@ -274,11 +301,22 @@ void DesktopApp::OnRightButtonDown(
         {
             auto* widget = dynamic_cast<WidgetContainer*>(it->get());
             if (popupGroup && widget != popupGroup) continue;
-            if (!widget || widget->IsCollapsed() ||
+            if (!widget ||
                 (desktopIconsHidden_ && !IsRetainedContainer(widget))) continue;
             const WidgetHit hit = widget->HitTestWidget(point);
             if (hit == WidgetHit::None) continue;
-            if (auto* group = dynamic_cast<FileGroup*>(widget);
+            const auto* data = widget->GetWidgetData();
+            if (data && snowdesktop::single_cell_widget::IsIconMode(*data) &&
+                widget->IsSingleCellDesktopPoint(point) &&
+                hit != WidgetHit::ResizeHandle)
+                pressed = widget;
+            else if (data && !popupGroup && !IsPointOccludedByOpenPopup(point) &&
+                (hit == WidgetHit::MoveHandle || hit == WidgetHit::CollectionOpenBtn))
+            {
+                beginWidgetMove(FindWidgetIndexById(widget->GetWidgetData()->id));
+                return;
+            }
+            else if (auto* group = dynamic_cast<FileGroup*>(widget);
                 group && hit == WidgetHit::SourceTab)
                 pressed = group->GetSourceTabItemAtPoint(point);
             else if (auto* collectionGroup = dynamic_cast<CollectionGroup*>(widget);
@@ -303,6 +341,15 @@ void DesktopApp::OnRightButtonDown(
             break;
         }
     }
+    if (!pressed && !popupGroup && !IsPointOccludedByOpenPopup(point))
+    {
+        const size_t index = HitTestStandaloneWidgetIndex(point);
+        if (index < widgets_.size() && HitTestStandaloneWidget(index, point) == WidgetHit::MoveHandle)
+        {
+            beginWidgetMove(index);
+            return;
+        }
+    }
     if (!pressed && !popupGroup && !IsPointOverWidgetChrome(point))
         pressed = HitTestIcon(point);
     if (!pressed || !pressed->GetContainer()) return;
@@ -316,6 +363,7 @@ void DesktopApp::OnRightButtonDown(
         pressed->SetSelected(true);
     }
     mouseDown_ = true;
+    pendingWidgetButtonAction_ = WidgetHit::None;
     mouseDownHit_ = pressed;
     mouseDownPoint_ = point;
     rightButtonItemDrag_ = true;
@@ -333,16 +381,58 @@ int DesktopApp::PointerGestureVirtualKey() const
 }
 
 bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
-    DWORD allowedEffects, bool externalSource)
+    DWORD allowedEffects, bool externalSource,
+    const RightDragMenuPresenter& presentMenu, bool externalContent)
 {
+    namespace pair = snowdesktop::widget_pair_drop;
+    const bool handleDrag = !externalSource && widgetAction_ == WidgetAction::Move &&
+        mouseDownWidgetIndex_ < widgets_.size();
+    const bool nativeIconDrag = !externalSource && !handleDrag &&
+        dragSession_.SourceList().HasDesktopWidgetIcons();
+    const auto source = handleDrag
+        ? snowdesktop::widget_pair_drag::Source{mouseDownWidgetIndex_, {}}
+        : !externalSource ? GetWidgetPairDragSource() : snowdesktop::widget_pair_drag::Source{};
+    const size_t pairTarget = HitTestWidgetPairTarget(point, source.widgetIndex, source.groupId);
+    const std::wstring sourceId = source.widgetIndex < widgets_.size()
+        ? widgets_[source.widgetIndex].id : L"";
+    const std::wstring pairTargetId = pairTarget < widgets_.size() ? widgets_[pairTarget].id : L"";
+    const DesktopWidgetType sourceType = source.widgetIndex < widgets_.size()
+        ? widgets_[source.widgetIndex].type : DesktopWidgetType::Collection;
+    const GridCell sourceCell = handleDrag ? widgets_[source.widgetIndex].gridCell : GridCell{};
+    const GridSpan sourceSpan = handleDrag ? widgets_[source.widgetIndex].gridSpan : GridSpan{};
+    const std::wstring nativeGroupId = handleDrag && widgetCollectionGroupTargetIndex_ < widgets_.size()
+        ? widgets_[widgetCollectionGroupTargetIndex_].id : L"";
+    const auto* nativeDock = handleDrag ? widgetDockTargetContainer_ : nullptr;
+    const auto pairChoices = pairTarget < widgets_.size() && (allowedEffects & DROPEFFECT_MOVE)
+        ? snowdesktop::widget_right_drag::PairChoices(sourceType,
+            pair::GetOptions(sourceType, widgets_[pairTarget].type),
+            GetWidgetPairGroupSpan(source.widgetIndex, pairTarget, source.groupId).has_value())
+        : std::vector<snowdesktop::widget_right_drag::PairChoice>{};
+    widgetPairAction_ = pair::Action::None;
+    widgetPairTargetIndex_ = static_cast<size_t>(-1);
     const bool luaFileDrop = HitTestLuaFileDropTarget(point) < widgets_.size();
     Container* target = dragSession_.TargetContainer();
     Slot* slot = dragSession_.TargetSlot();
     const HitRegion region = dragSession_.TargetRegion();
     const bool dockRemoval = !externalSource &&
         !GetDockDragOutRemovalHint(point).empty();
-    if (!luaFileDrop && !dockRemoval &&
-        (!target || region == HitRegion::None || region == HitRegion::Blocked))
+    const bool nativeGridClear = handleDrag && std::none_of(widgets_.begin(), widgets_.end(),
+        [&](const auto& widget) {
+            if (widget.id == sourceId || IsGroupedWidget(widget) ||
+                widget.gridCell.pageId != widgetPreviewCell_.pageId) return false;
+            return widgetPreviewCell_.column < widget.gridCell.column + widget.gridSpan.columns &&
+                widget.gridCell.column < widgetPreviewCell_.column + widgetPreviewSpan_.columns &&
+                widgetPreviewCell_.row < widget.gridCell.row + widget.gridSpan.rows &&
+                widget.gridCell.row < widgetPreviewCell_.row + widgetPreviewSpan_.rows;
+        });
+    const bool nativeMove = handleDrag && !IsExternalDropWindowAt(point) &&
+        (widgetCollectionGroupTargetIndex_ < widgets_.size() ||
+            (!IsPointOccludedByOpenPopup(point) &&
+                (widgetDockTarget_ || (GridPageFromPoint(point) && nativeGridClear))));
+    const bool itemTarget = !handleDrag &&
+        (luaFileDrop || dockRemoval ||
+            (target && region != HitRegion::None && region != HitRegion::Blocked));
+    if (!nativeMove && !itemTarget && pairChoices.empty())
         return false;
 
     if (region == HitRegion::Handoff && slot && slot->GetItem())
@@ -360,66 +450,32 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
             return true;
     }
 
-    struct Choice { UINT command; DWORD effect; DWORD modifiers; const char* label; };
-    const Choice choices[] = {
-        {1, DROPEFFECT_MOVE, MK_SHIFT, "widget.base.move"},
-        {2, DROPEFFECT_COPY, MK_CONTROL, "widget.base.copy_label"},
-        {3, DROPEFFECT_LINK, MK_ALT, "widget.base.create_shortcut"},
+    snowdesktop::right_drag_actions::Context menuContext;
+    menuContext.allowedEffects = allowedEffects;
+    menuContext.handleDrag = handleDrag; menuContext.nativeMove = nativeMove;
+    menuContext.itemTarget = itemTarget; menuContext.luaFileDrop = luaFileDrop;
+    menuContext.dockRemoval = dockRemoval; menuContext.externalSource = externalSource;
+    menuContext.externalContent = externalContent;
+    menuContext.targetDock = dynamic_cast<DockContainer*>(target) != nullptr;
+    menuContext.sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source()) != nullptr;
+    menuContext.displayDockTarget = handleDrag ? widgetDockTarget_ : menuContext.targetDock;
+    menuContext.sourceWidgets = dragSession_.SourceList().hasWidgets;
+    menuContext.sourceDesktopIcons = dragSession_.SourceList().hasDesktopIcons;
+    menuContext.sourceFolderEntries = dragSession_.SourceList().hasFolderEntries;
+    menuContext.desktopWidgetIcons = dragSession_.SourceList().HasDesktopWidgetIcons();
+    menuContext.handoff = region == HitRegion::Handoff;
+    menuContext.sourceHasPaths = !dragSession_.SourceList().FilePaths().empty();
+    menuContext.externalFileCount = dragDropController_.ExternalSummary().fileCount;
+    menuContext.preview = [&](DWORD modifiers) {
+        return BuildDropPreviewList(dragSession_.SourceList(), target, slot, region,
+            static_cast<int>(modifiers), point);
     };
+    const auto choices = snowdesktop::right_drag_actions::Build(menuContext, pairChoices);
+    if (choices.empty()) return false;
     HMENU menu = CreatePopupMenu();
     if (!menu) return false;
-    bool hasChoice = false;
     for (const auto& choice : choices)
-    {
-        if ((allowedEffects & choice.effect) == 0) continue;
-        bool accepted = false;
-        if (luaFileDrop)
-            accepted = choice.effect == DROPEFFECT_COPY;
-        else if (dockRemoval)
-            accepted = choice.effect == DROPEFFECT_MOVE;
-        else if (dynamic_cast<DockContainer*>(target))
-        {
-            if (externalSource)
-                accepted = choice.effect == snowdesktop::dock_drop_rules::
-                    ChooseExternalMappingEffect(allowedEffects);
-            else if (dynamic_cast<DockContainer*>(dragSession_.Source()))
-                accepted = choice.effect == DROPEFFECT_MOVE;
-            else if (dragSession_.SourceList().hasFolderEntries)
-                accepted = choice.effect == DROPEFFECT_LINK;
-            else
-                accepted = choice.effect == DROPEFFECT_MOVE || choice.effect == DROPEFFECT_COPY;
-        }
-        else if (dragSession_.SourceList().hasWidgets)
-            accepted = choice.effect == DROPEFFECT_MOVE;
-        else if (externalSource)
-            accepted = dragDropController_.ExternalSummary().fileCount > 0 ||
-                choice.effect == DROPEFFECT_COPY;
-        else if (region == HitRegion::Handoff)
-            accepted = !dragSession_.SourceList().FilePaths().empty();
-        else
-        {
-            const DropPreviewList preview = BuildDropPreviewList(
-                dragSession_.SourceList(), target, slot, region,
-                static_cast<int>(choice.modifiers), point);
-            const DropAction action = DropActionFromMods(static_cast<int>(choice.modifiers));
-            accepted = !preview.Empty() &&
-                (preview.action == action ||
-                    (action == DropAction::Move && preview.consumeDockSource));
-        }
-        if (accepted)
-        {
-            const bool dockTarget = dynamic_cast<DockContainer*>(target) != nullptr;
-            const bool copyCreatesDockMapping = dockTarget && !luaFileDrop &&
-                region != HitRegion::Handoff && choice.effect == DROPEFFECT_COPY;
-            const char* label = externalSource && dockTarget
-                ? "widget.base.create_shortcut"
-                : copyCreatesDockMapping
-                    ? "app.dock.create_mapping_action" : choice.label;
-            AppendMenuW(menu, MF_STRING, choice.command, _LW(label));
-            hasChoice = true;
-        }
-    }
-    if (!hasChoice) { DestroyMenu(menu); return false; }
+        AppendMenuW(menu, MF_STRING, choice.command, _LW(choice.label));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, _LW("app.settings.cancel"));
 
@@ -431,7 +487,11 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, 3, snowdesktop::menu_fluent_glyphs::kLinkAdd,
         MenuIconFont::FluentRegular);
-    if (externalSource && dynamic_cast<DockContainer*>(target))
+    SetMenuItemIcon(menu, 5, L"\uF066");
+    SetMenuItemIcon(menu, 6, sourceType == DesktopWidgetType::Collection
+        ? snowdesktop::menu_fluent_glyphs::kCollectionGroup : snowdesktop::menu_fluent_glyphs::kFileGroup,
+        MenuIconFont::FluentRegular);
+    if (externalSource && !externalContent && dynamic_cast<DockContainer*>(target))
     {
         // Dock ingress maps a reference even when the source only offers copy.
         for (const auto& choice : choices)
@@ -444,25 +504,83 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     // Retain source/target bindings while the menu pumps messages, with no
     // active pointer gesture that could update the destination or commit twice.
     dragSession_.DeactivateForDrop();
+    if (handleDrag) widgetAction_ = WidgetAction::None;
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     ReleaseCapturePreservingPointerState();
     CommitDragVisualEndBeforeShellOperation();
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    const UINT command = presentMenu ? presentMenu(menu, screenPoint, hwnd_)
+        : ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
-    for (const auto& choice : choices)
+    const auto* selected = snowdesktop::right_drag_actions::Select(choices, command);
+    if (!selected) return false;
     {
-        if (choice.command != command) continue;
-        if (!dragSession_.ResumeAfterDropDecision()) return false;
+        const auto& choice = *selected;
+        if (handleDrag)
+        {
+            const size_t rebound = FindWidgetIndexById(sourceId);
+            if (rebound >= widgets_.size() || widgets_[rebound].type != sourceType ||
+                IsGroupedWidget(widgets_[rebound]) ||
+                widgets_[rebound].gridCell.pageId != sourceCell.pageId ||
+                widgets_[rebound].gridCell.column != sourceCell.column ||
+                widgets_[rebound].gridCell.row != sourceCell.row ||
+                widgets_[rebound].gridSpan.columns != sourceSpan.columns ||
+                widgets_[rebound].gridSpan.rows != sourceSpan.rows)
+                return false;
+            mouseDownWidgetIndex_ = rebound;
+            if (choice.pairAction == pair::Action::None)
+            {
+                if (!nativeGroupId.empty())
+                {
+                    const size_t group = widgets_[rebound].type == DesktopWidgetType::Collection
+                        ? HitTestCollectionGroupIndex(point, rebound) : HitTestFileGroupIndex(point, rebound);
+                    if (group >= widgets_.size() || widgets_[group].id != nativeGroupId) return false;
+                }
+                else if (nativeDock && GetDockContainerAtPoint(point) != nativeDock)
+                    return false;
+            }
+        }
+        else
+        {
+            if (nativeIconDrag && !snowdesktop::widget_right_drag::CapturedIconsCurrent(
+                    dragSession_.SourceList(), widgets_)) return false;
+            if (!dragSession_.ResumeAfterDropDecision()) return false;
+            // The menu deactivated the session while pumping messages. A
+            // rebuild can therefore replace any internal source wrappers,
+            // including ordinary Dock files. Restore all captured internal
+            // sources by identity before returning to the release handler.
+            if (!externalSource)
+            {
+                RebindDragSourceAfterRebuild();
+                if (!dragSession_.IsActive()) return false;
+            }
+            if (nativeIconDrag) ResolveCurrentDragTargetAt(point);
+        }
+        if (choice.pairAction != pair::Action::None)
+        {
+            const auto rebound = handleDrag
+                ? snowdesktop::widget_pair_drag::Source{mouseDownWidgetIndex_, {}}
+                : GetWidgetPairDragSource();
+            const size_t reboundTarget = HitTestWidgetPairTarget(point, rebound.widgetIndex, rebound.groupId);
+            if (rebound.widgetIndex >= widgets_.size() || widgets_[rebound.widgetIndex].id != sourceId ||
+                reboundTarget >= widgets_.size() || widgets_[reboundTarget].id != pairTargetId ||
+                pair::ResolveAction(pair::GetOptions(widgets_[rebound.widgetIndex].type,
+                        widgets_[reboundTarget].type), (choice.modifiers & MK_CONTROL) != 0,
+                    (choice.modifiers & MK_SHIFT) != 0, false) != choice.pairAction ||
+                (choice.pairAction != pair::Action::Merge &&
+                    !GetWidgetPairGroupSpan(rebound.widgetIndex, reboundTarget, rebound.groupId)))
+                return false;
+            widgetPairTargetIndex_ = reboundTarget;
+            widgetPairAction_ = choice.pairAction;
+        }
         // The user already selected a verb. Use a left-button Shell handoff so
         // the native target does not show a second right-drag action menu.
-        keyState = MK_LBUTTON | choice.modifiers;
-        dragSession_.UpdateActionFromMods(static_cast<int>(choice.modifiers));
+        keyState = snowdesktop::right_drag_actions::SelectedKeys(choice);
+        if (!handleDrag) dragSession_.UpdateActionFromMods(static_cast<int>(choice.modifiers));
         return true;
     }
-    return false;
 }
 
 /**
@@ -471,12 +589,14 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
  */
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
+    if (DockTrayPopupPointerUp({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return;
+    if (dockTrayPopup_ && IsPointOccludedByOpenPopup({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return;
     PersistentDockHost* const rightButtonPressDockHost =
         std::exchange(rightButtonDownDockHost_, nullptr);
     const bool consumeRelease = std::exchange(suppressRightButtonUp_, false);
     if (rightButtonItemDrag_)
     {
-        if (dragSession_.IsActive())
+        if (dragSession_.IsActive() || widgetAction_ == WidgetAction::Move)
         {
             OnLeftButtonUpAt(MK_RBUTTON,
                 {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}, true);

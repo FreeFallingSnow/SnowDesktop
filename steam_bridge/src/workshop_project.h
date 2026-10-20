@@ -70,6 +70,8 @@ public:
     bool Discover(const std::filesystem::path& developmentRoot,
         std::size_t& added, std::string& error);
     bool Remove(std::string_view localId, std::string& error);
+    bool BeginCreation(std::string_view localId, std::string& error);
+    bool PersistCreatedItem(std::string_view localId, std::uint64_t id, std::string& error);
 
     std::vector<WorkshopProject>& Projects() { return projects_; }
     const std::vector<WorkshopProject>& Projects() const { return projects_; }
@@ -79,6 +81,10 @@ public:
 private:
     std::filesystem::path root_;
     std::vector<WorkshopProject> projects_;
+    mutable bool loaded_ = false;
+    mutable bool loadFailed_ = false;
+    mutable std::optional<std::string> baseline_;
+    bool Writable(std::string& error);
 };
 
 std::filesystem::path WorkshopManagerDataRoot(

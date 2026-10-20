@@ -1,5 +1,6 @@
 #include "platform/auto_start_rules.h"
 #include "platform/auto_start_elevation.h"
+#include "platform/auto_start_launch.h"
 #include "platform/deployment_context.h"
 
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <string_view>
 
 int RunAutoStartManagerTests();
+int RunAutoStartLaunchProbe();
 
 namespace
 {
@@ -18,15 +20,61 @@ void Check(bool condition, const char* message)
     ++failures;
     std::cerr << "FAIL: " << message << '\n';
 }
-}
 
+void CheckAutoStartLaunchRules()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    struct Platform
+    {
+        int launches = 0;
+        DWORD error = 0;
+        std::wstring forwarded;
+        DWORD Relaunch(std::wstring_view command)
+        {
+            ++launches;
+            forwarded = command;
+            if (error) throw launch::Failure{error, L"test Explorer launch"};
+            return 0;
+        }
+    };
+    for (const auto owner : {L"portable", L"packaged", L"steam"})
+    {
+        Platform platform;
+        const std::wstring command = std::wstring(L"\"C:\\Snow Desktop\\host.exe\" ") +
+            L"--snowdesktop-autostart-owner=" + owner + L" --data-directory=\"D:\\用户数据\"";
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_SUCCESS &&
+            platform.launches == 1 && platform.forwarded == command,
+            "all login owners delegate once to Explorer with their launch inputs");
+    }
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-startup-elevated=123",
+        L"host.exe --snowdesktop-autostart",
+        L"host.exe --snowdesktop-autostart-owner=unknown",
+        L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
+    {
+        Platform platform;
+        Check(!launch::Normalize(command, platform).handled && platform.launches == 0,
+            "normal launches, privileged helpers and token substrings keep their existing entry point");
+    }
+    {
+        Platform platform;
+        platform.error = ERROR_ACCESS_DENIED;
+        const auto result = launch::Normalize(L"host.exe --snowdesktop-autostart-owner=steam", platform);
+        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 1,
+            "an Explorer launch failure is reported without a second creation path");
+    }
+}
+}
 int main(int argc, char** argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--autostart-permission-probe")
+        return RunAutoStartLaunchProbe();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (argc > 1 && std::string_view(argv[1]) == "--scheduler")
         return RunAutoStartManagerTests();
     // A test task must remain harmless if a logon happens during the test.
     if (argc > 1) return 0;
+    CheckAutoStartLaunchRules();
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;
     using snowdesktop::ClassifyAutoStartOwnershipNotice;

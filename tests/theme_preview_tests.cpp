@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 namespace
 {
@@ -35,6 +37,58 @@ Difference Compare(const snowdesktop::widget_preview::Wallpaper& a, const snowde
         result.alpha &= (a.pixels[i] >> 24) == (b.pixels[i] >> 24);
     }
     return result;
+}
+snowdesktop::widget_preview::Wallpaper EnlargeNativeScene(const std::filesystem::path& path)
+{
+    // Independent WIC reconstruction of the complete native scene, not a
+    // second copy of the preview's material/alpha composition.
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapScaler> scaler;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) || FAILED(factory->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(frame.Get(), 1024, 1024, WICBitmapInterpolationModeHighQualityCubic)) ||
+        FAILED(factory->CreateFormatConverter(&converter)) || FAILED(converter->Initialize(scaler.Get(),
+            GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return {};
+    snowdesktop::widget_preview::Wallpaper result;
+    result.width = result.height = 1024; result.pixels.resize(1024 * 1024);
+    if (FAILED(converter->CopyPixels(nullptr, 1024 * 4, 1024 * 1024 * 4,
+        reinterpret_cast<BYTE*>(result.pixels.data())))) return {};
+    return result;
+}
+bool PublishedBorderMatches(const std::filesystem::path& directory, const std::filesystem::path& cover,
+    snowdesktop::IconBeautifyShape shape)
+{
+    using namespace snowdesktop;
+    const auto nativeCover = EnlargeNativeScene(directory / L"icon-scene.png");
+    const auto published = widget_preview::LoadWallpaperImage(cover);
+    if (nativeCover.pixels.size() != 1024 * 1024 || published.pixels.size() != 1024 * 1024) return false;
+    std::array<bool, 256 * 256> perimeter{};
+    for (int y = 0; y < 256; ++y) for (int x = 0; x < 256; ++x)
+        perimeter[y * 256 + x] = icon_beautify::ShapeMaskAlpha(shape, x, y, 256, 256, 12.f) == 0;
+    unsigned borderMaximum = 0;
+    std::size_t crispInterior = 0;
+    for (int sample = 0; sample < 9; ++sample)
+        for (int y = 0; y < 256; ++y) for (int x = 0; x < 256; ++x)
+        {
+            const auto offset = (64 + sample / 3 * 320 + y) * 1024 + 64 + sample % 3 * 320 + x;
+            unsigned delta = 0;
+            for (unsigned shift : {0u, 8u, 16u})
+            {
+                const auto a = (published.pixels[offset] >> shift) & 255u;
+                const auto b = (nativeCover.pixels[offset] >> shift) & 255u;
+                delta = std::max(delta, a > b ? a - b : b - a);
+            }
+            if (perimeter[y * 256 + x]) borderMaximum = std::max(borderMaximum, delta);
+            else if (x >= 64 && x < 192 && y >= 64 && y < 192 && delta > 8) ++crispInterior;
+        }
+    std::cout << "Published complete icon border: maximum channel difference=" << borderMaximum
+        << ", independently sampled interior pixels=" << crispInterior << '\n';
+    return borderMaximum <= 2 && crispInterior > 1000;
 }
 }
 
@@ -64,10 +118,47 @@ int wmain(int argc, wchar_t** argv)
                 std::ofstream marker(count, std::ios::binary | std::ios::app); marker << '1';
             }
         }
-        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}\n";
+        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]}\n";
         return 0;
     }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // Manual evidence export reuses production gallery rendering without
+    // starting the desktop or exercising unrelated component previews.
+    if (argc == 4 && std::wstring_view(argv[1]) == L"--icon-preview")
+    {
+        const std::filesystem::path output(argv[3]); std::filesystem::create_directories(output);
+        bool ok = true;
+        for (const std::string variant : {"glass", "glass-dark", "glass-zero", "smart", "gradient", "automatic", "tonal", "duotone"})
+        {
+            Theme icon; icon.id = "theme/icon-evidence"; icon.name = "Icon preview"; icon.kind = Kind::Icon;
+            icon.icon = icon_beautify::MakePreset(variant == "glass-dark"
+                ? IconBeautifyPreset::FrostedGlassDark : IconBeautifyPreset::FrostedGlassLight);
+            icon.icon.preset = IconBeautifyPreset::Custom;
+            if (variant == "glass-zero")
+            {
+                icon.icon.edgeHighlightWidth = 4; icon.icon.edgeHighlightStrength = 0;
+                icon.icon.edgeLight.shadowFalloff = 1;
+            }
+            if (!variant.starts_with("glass") && variant != "smart")
+            {
+                icon.icon.glassEnabled = false; icon.icon.edgeHighlightEnabled = false; icon.icon.backgroundOpacity = 1;
+                icon.icon.backgroundGradient = {true, 135, 0, 1,
+                    {{0, 0xdef0ff, 1}, {.45, 0xdcddf8, 1}, {1, 0xbedfd8, 1}}};
+            }
+            if (variant == "automatic") icon.icon.backgroundSource = 2;
+            if (variant == "tonal") { icon.icon.filterEnabled = true; icon.icon.filterMode = 1; icon.icon.filterStrength = .6f; }
+            if (variant == "duotone") { icon.icon.filterEnabled = true; icon.icon.filterMode = 2; icon.icon.filterStrength = 1; }
+            std::vector<preview::Image> images; std::filesystem::path cover; std::string detail;
+            const bool rendered = preview::RenderGallery(argv[2], {{icon.id, icon}}, icon.id, Components,
+                output / variant, images, cover, detail, nullptr, {}, variant == "smart" ? 0 : 1);
+            ok = ok && rendered;
+            std::cout << variant << ": " << (rendered ? cover.string() : detail) << '\n';
+            if (rendered && variant.starts_with("glass"))
+                ok = PublishedBorderMatches(output / variant, cover, icon.icon.shape) && ok;
+        }
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return ok ? 0 : 1;
+    }
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL preview: " << message << '\n'; } };
     const auto directory = std::filesystem::temp_directory_path() / (L"SnowDesktop-theme-tests-" + std::to_wstring(GetCurrentProcessId()));
@@ -129,6 +220,13 @@ int wmain(int argc, wchar_t** argv)
         "partial global previews require only their selected bars and no child bindings");
     auto missing = package; missing.erase(quick.id);
     check(preview::Parts(missing, global.id, All, error).empty(), "missing dependency rejects complete preview");
+    auto ramp = widget_preview::GenerateWallpaper(1024, 1024, false);
+    for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
+        ramp.pixels[static_cast<std::size_t>(y) * 1024 + x] = 0xff000000u |
+            static_cast<unsigned>(x / 4) << 16 | static_cast<unsigned>(y / 4) << 8 | static_cast<unsigned>((x + y) / 8);
+    const auto rampPath = directory / L"smooth-gradient.png";
+    check(preview::SaveCover(rampPath, ramp, error) && Compare(ramp, widget_preview::LoadWallpaperImage(rampPath)).pixels == 0,
+        "compressible 8-bit gradient covers keep every color level without posterization");
     auto noise = widget_preview::GenerateWallpaper(1024,1024,false);
     std::uint32_t seed = 19;
     for (auto& pixel : noise.pixels) { seed = seed * 1664525u + 1013904223u; pixel = 0xff000000u | (seed & 0xffffffu); }
@@ -224,6 +322,114 @@ int wmain(int argc, wchar_t** argv)
         check(!preview::Render(directory / L"missing.exe",package,global.id,All,directory / L"failed",cover,error) && cover.empty() &&
             !std::filesystem::exists(directory / L"failed"), "renderer failure cannot publish stale output");
         std::vector<preview::Image> gallery;
+        {
+            Theme icon; icon.id = "theme/icon-preview"; icon.name = "Icon preview"; icon.kind = Kind::Icon; icon.scopes = Components;
+            icon.icon = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify); icon.icon.preset = IconBeautifyPreset::Custom;
+            const Package icons{{icon.id, icon}};
+            const auto iconDirectory = directory / L"icon-gallery";
+            const bool iconOk = preview::RenderGallery(argv[1], icons, icon.id, Components, iconDirectory, gallery, cover, error);
+            check(iconOk && gallery.size() == 1 && gallery.front().component == "icon" &&
+                preview::ManagedGalleryFilename(gallery.front().path.filename().string(), preview::GalleryPrefix(steam_bridge::ThemeSha256(icon.id))) &&
+                std::filesystem::file_size(cover) < preview::kCoverMaximumBytes,
+                "icon gallery renders a complete production effect under the Workshop image limit");
+            const auto original = iconOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            // Guard the reported thick gallery rim: compare its unscaled scene
+            // against the host's reflection layer at a normal 64px source size.
+            // A 256px rim shrunk afterward has a different outer-support profile.
+            auto rimIcons = icons;
+            auto& rimStyle = rimIcons.at(icon.id).icon;
+            rimStyle.shape = IconBeautifyShape::ContinuousRounded;
+            rimStyle.backgroundOpacity = 0; rimStyle.shadowStrength = 0;
+            rimStyle.edgeHighlightEnabled = true; rimStyle.edgeHighlightWidth = 4;
+            rimStyle.edgeHighlightStrength = 1; rimStyle.edgeLight.outerGlow = 3;
+            auto flatBackdrop = widget_preview::GenerateWallpaper(1024, 1024, false);
+            std::fill(flatBackdrop.pixels.begin(), flatBackdrop.pixels.end(), 0xff303038u);
+            const auto flatPath = directory / L"rim-backdrop.png";
+            const auto rimDirectory = directory / L"icon-native-rim";
+            const bool rimOk = preview_png::Save(flatPath, 1024, 1024, flatBackdrop.pixels, error) &&
+                preview::RenderGallery(argv[1], rimIcons, icon.id, Components, rimDirectory, gallery, cover, error, nullptr, flatPath);
+            const auto nativeScene = rimOk ? widget_preview::LoadWallpaperImage(rimDirectory / L"icon-scene.png") : widget_preview::Wallpaper{};
+            const auto nativeReflection = icon_beautify::RenderEdgeReflection(64, 64, rimStyle);
+            bool rimMatches = nativeScene.width == 256 && nativeScene.height == 256 && nativeScene.pixels.size() == 256 * 256;
+            std::size_t visibleRim = 0;
+            if (rimMatches)
+                for (int sample = 0; sample < 9; ++sample)
+                    for (int y = 0; y < 6; ++y) for (int x = 16; x < 48; ++x)
+                    {
+                        const auto pixel = nativeReflection[y * 64 + x];
+                        const unsigned alpha = pixel >> 24;
+                        std::uint32_t expected = 0xff000000u;
+                        for (unsigned shift : {0u, 8u, 16u}) expected |= std::min(255u,
+                            ((pixel >> shift) & 255u) + (((0xff303038u >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+                        const auto actual = nativeScene.pixels[(16 + sample / 3 * 80 + y) * 256 + 16 + sample % 3 * 80 + x];
+                        rimMatches &= expected == actual;
+                        visibleRim += pixel != 0;
+                    }
+            check(rimOk && rimMatches && visibleRim > 100,
+                "gallery native-size reflection agrees with the production vector/bitmap rim before whole-scene enlargement");
+            // The reported difference remained after the reflection-only check
+            // passed. Exercise the published perimeter, including rounded corners,
+            // glass fill, texture seam and a fractional outline on all nine tiles.
+            auto completeBorder = icons;
+            auto& borderStyle = completeBorder.at(icon.id).icon;
+            borderStyle = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+            borderStyle.preset = IconBeautifyPreset::Custom;
+            borderStyle.shape = IconBeautifyShape::ContinuousRounded;
+            borderStyle.outlineEnabled = true; borderStyle.outlineWidth = .75f;
+            borderStyle.outlineOpacity = .5f; borderStyle.textureEdgeHighlight = .5f;
+            const auto borderDirectory = directory / L"icon-complete-border";
+            const bool borderOk = preview::RenderGallery(argv[1], completeBorder, icon.id, Components,
+                borderDirectory, gallery, cover, error, nullptr, flatPath);
+            check(borderOk && PublishedBorderMatches(borderDirectory, cover, borderStyle.shape),
+                "all nine published borders retain the complete native edge while glyph interiors retain independent vector detail");
+            borderStyle.edgeHighlightWidth = 4; borderStyle.edgeHighlightStrength = 0;
+            borderStyle.edgeLight.shadowFalloff = 1;
+            const auto zeroDirectory = directory / L"icon-zero-reflection";
+            const bool zeroOk = preview::RenderGallery(argv[1], completeBorder, icon.id, Components,
+                zeroDirectory, gallery, cover, error, nullptr, flatPath);
+            check(zeroOk && PublishedBorderMatches(zeroDirectory, cover, borderStyle.shape),
+                "zero-strength reflection cannot enlarge the reconstruction band and soften vector artwork");
+            const bool smartOk = preview::RenderGallery(argv[1], icons, icon.id, Components,
+                directory / L"icon-gallery-smart", gallery, cover, error, nullptr, {}, 0);
+            check(smartOk && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000 &&
+                steam_bridge::ThemeFileSha256(iconDirectory / L"package.snowtheme") ==
+                    steam_bridge::ThemeFileSha256(directory / L"icon-gallery-smart" / L"package.snowtheme"),
+                "preview applies the caller's local strategy while the exported theme remains identical");
+            auto different = icons; auto& effect = different.at(icon.id).icon;
+            effect.shape = IconBeautifyShape::Circle; effect.backgroundOpacity = 1.f;
+            effect.backgroundStartR = 1.f; effect.backgroundStartG = effect.backgroundStartB = 0.f;
+            const bool changedIcon = preview::RenderGallery(argv[1], different, icon.id, Components,
+                directory / L"icon-gallery-changed", gallery, cover, error);
+            check(changedIcon && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000,
+                "icon preview changes with the frozen shape and material values");
+            steam_bridge::ThemePublishPlan iconPlan;
+            const auto iconData = directory / L"icon-publish-data";
+            std::filesystem::create_directory(iconData);
+            check(iconOk && steam_bridge::WriteThemePreparation(iconDirectory, icon.id, icon.name, 1700000000, error, tags::Applicable(icon)) &&
+                steam_bridge::BuildThemePublishPlan(iconDirectory, iconData, iconPlan, error) &&
+                iconPlan.tags == std::vector<std::string>{"Icon Theme"},
+                "actual bridge preparation accepts icon packages, their gallery and canonical tag");
+            auto glassIcons = icons;
+            auto& glassEffect = glassIcons.at(icon.id).icon;
+            glassEffect.glassEnabled = true; glassEffect.glassBlurRadius = 4.f; glassEffect.backgroundOpacity = .1f;
+            auto checker = widget_preview::GenerateWallpaper(1024, 1024, false);
+            for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
+                // 16px squares in the native 256px scene. Four-pixel squares
+                // are already erased at radius 4 and cannot distinguish 4/48.
+                checker.pixels[static_cast<std::size_t>(y) * 1024 + x] = (x / 64 + y / 64) % 2 ? 0xff202030u : 0xffe0d8cfu;
+            const auto checkerPath = directory / L"icon-backdrop.png";
+            check(preview_png::Save(checkerPath, 1024, 1024, checker.pixels, error), "frosted icon fixture has a high-contrast background");
+            const bool sharpGlass = preview::RenderGallery(argv[1], glassIcons, icon.id, Components,
+                directory / L"icon-glass-4", gallery, cover, error, nullptr, checkerPath);
+            const auto firstGlass = sharpGlass ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            glassEffect.glassBlurRadius = 48.f;
+            const bool softGlass = preview::RenderGallery(argv[1], glassIcons, icon.id, Components,
+                directory / L"icon-glass-48", gallery, cover, error, nullptr, checkerPath);
+            const auto secondGlass = softGlass ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            check(sharpGlass && softGlass && Compare(firstGlass, secondGlass).material > 10000 &&
+                firstGlass.pixels.front() == secondGlass.pixels.front() && firstGlass.pixels.back() == secondGlass.pixels.back(),
+                "frosted radius changes the production backdrop inside icon shapes and preserves the surrounding stage");
+        }
         const auto galleryDirectory = directory / L"gallery";
         const bool galleryOk = preview::RenderGallery(argv[1],package,global.id,All,galleryDirectory,gallery,cover,error);
         check(galleryOk && gallery.size() == 7 && gallery.front().component == "folder-mapping" &&

@@ -1,4 +1,5 @@
 #include "ui/render/scroll_content_clip.h"
+#include "icons/icon_backdrop_geometry.h"
 
 #include <d3d11.h>
 
@@ -106,17 +107,42 @@ struct Raster
             context->FillRectangle(D2D1::RectF(left, top - 8, right, top), brush.Get());
         }
         brush->SetColor(D2D1::ColorF(0xffffff));
+        std::optional<snowdesktop::IconBackdropClip> nativeClip;
         {
             // This is the production scope used around scrolling item drawing.
             // Deliberately overdraw horizontally to detect a lost viewport clip.
             ScrollContentClip clip(context.Get(), cache, o.viewport,
                 o.scrollOffset, o.contentHeight, o.fadeLength);
+            nativeClip = snowdesktop::ScopedIconBackdropClip::Current(context.Get());
             context->FillRectangle(D2D1::RectF(left - 8,
                 top - static_cast<float>(o.scrollOffset),
                 right + (o.translucentBackground ? -8.0f : 8.0f),
                 top - static_cast<float>(o.scrollOffset) + static_cast<float>(o.contentHeight)),
                 brush.Get());
         }
+        // The independent native layer consumes this snapshot after D2D has
+        // popped its clip. Check the production geometry outside that stack.
+        Check(nativeClip.has_value(), "scrolling drawing supplies a native icon clip");
+        Check(!snowdesktop::ScopedIconBackdropClip::Current(context.Get()),
+            "native scroll clipping cannot leak into subsequent desktop drawing");
+        ComPtr<ID2D1Factory> geometryFactory;
+        context->GetFactory(&geometryFactory);
+        ComPtr<ID2D1Geometry> nativeGeometry;
+        const LONG height = o.viewport.bottom - o.viewport.top;
+        const RECT nativeFrame{o.viewport.left, o.viewport.top - height / 2,
+            o.viewport.right, o.viewport.bottom - height / 2};
+        Ok(snowdesktop::CreateIconBackdropGeometry(geometryFactory.Get(),
+            snowdesktop::IconBeautifyShape::LegacyRounded,
+            nativeFrame, &*nativeClip, nativeGeometry), "create scoped native icon geometry");
+        BOOL outside = FALSE, inside = FALSE;
+        const float middleX = static_cast<float>(o.viewport.right - o.viewport.left) * .5f;
+        Ok(nativeGeometry->FillContainsPoint(D2D1::Point2F(middleX, 1), nullptr,
+            &outside), "query native glass above the scroll viewport");
+        Ok(nativeGeometry->FillContainsPoint(D2D1::Point2F(middleX,
+            static_cast<float>(height / 2 + 2)), nullptr, &inside),
+            "query the retained native icon segment");
+        Check(!outside && inside,
+            "the scrolling scope clips native glass after the D2D clip is gone");
         if (o.fixedChrome)
         {
             brush->SetColor(D2D1::ColorF(0x0000ff));

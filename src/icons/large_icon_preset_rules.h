@@ -27,6 +27,15 @@ inline int Effect(const LargeIconConfig& c)
 // retains its historical defaults and never opts existing items into animation.
 inline int DefaultEffect(const LargeIconConfig& c)
 { return IsLargeIconFill(c) ? 3 : 2; }
+// Conversion starts from the ordinary icon's chosen library source, including
+// a currently missing asset. Retaining its ID allows later resource recovery.
+inline void UseLibraryIcon(LargeIconConfig& c, const std::string& asset)
+{
+    if (!IsIconAssetId(asset)) return;
+    c.version = 3;
+    if (IsLargeIconFill(c)) { c.content = 1; c.image.clear(); c.imageAssetId = asset; }
+    else { c.foregroundContent = 1; c.foregroundImage.clear(); c.foregroundImageAssetId = asset; }
+}
 inline bool BackgroundVisible(int value, bool hasEdge, const LargeIconConfig& c)
 { return value != -4 || hasEdge || Background(c) == -4; }
 // Convert only an editing copy. Loading a layout, losing entitlement or opening

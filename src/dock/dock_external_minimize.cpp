@@ -75,6 +75,10 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
                 // bounded send, so a timeout no longer depends on this hook.
                 if (owner.process == ULongToHandle(GetCurrentProcessId()))
                     snowdesktop::dock_source_cloak::Release(it->first, owner.window);
+                if (GetPropW(it->first, snowdesktop::dock_minimize::kCloakDispatcherProperty) == hooks_.CloakWindow())
+                    RemovePropW(it->first, snowdesktop::dock_minimize::kCloakDispatcherProperty);
+                if (GetPropW(it->first, snowdesktop::dock_minimize::kReadyProperty) == receiver_)
+                    RemovePropW(it->first, snowdesktop::dock_minimize::kReadyProperty);
                 RemovePropW(it->first, snowdesktop::dock_minimize::kTargetProperty);
             }
             it = targets_.erase(it);
@@ -108,6 +112,12 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
         else threads.push_back(thread);
     }
     hooks_.Sync(threads);
+    for (const HWND window : windows)
+        if (OwnsTarget(window) && hooks_.HasThread(GetWindowThreadProcessId(window, nullptr)))
+        {
+            if (SetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty, hooks_.CloakWindow()))
+                SetPropW(window, snowdesktop::dock_minimize::kReadyProperty, receiver_);
+        }
     if (changed)
         SetPropW(receiver_, snowdesktop::dock_minimize::kRevisionProperty, ULongToHandle(++targetRevision_));
     if (needsHelper) StartHelper();
@@ -154,6 +164,8 @@ void DockExternalMinimize::Stop() noexcept
                 snowdesktop::dock_source_cloak::Release(window, owner.window);
             if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver_)
                 RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
+            if (GetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty) == hooks_.CloakWindow())
+                RemovePropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty);
             RemovePropW(window, snowdesktop::dock_minimize::kTargetProperty);
         }
     }

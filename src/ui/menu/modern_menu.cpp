@@ -2,6 +2,7 @@
 #include "modern_menu.h"
 #include "ui/input/text_input_state.h"
 #include "platform/foreground_fullscreen.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -337,7 +338,7 @@ public:
                     message.message == WM_NCRBUTTONDOWN ||
                     message.message == WM_NCMBUTTONDOWN ||
                     message.message == WM_NCXBUTTONDOWN;
-                if (pointerPress && !IsPopupWindow(message.hwnd))
+                if (pointerPress && !IsSessionWindow(message.hwnd))
                 {
                     // Desktop, Dock and popup hosts can use MA_NOACTIVATE,
                     // so an outside press need not generate WM_ACTIVATE.
@@ -389,7 +390,7 @@ public:
         // Sample while our popup HWNDs still exist so their normal destruction
         // cannot be mistaken for the user switching to an unrelated window.
         const HWND foreground = GetForegroundWindow();
-        if (foreground && !IsPopupWindow(foreground) &&
+        if (foreground && !IsSessionWindow(foreground) &&
             !IsOwnerWindow(foreground))
             externalActivation_ = true;
         result_.reason = superseded_ ? ExitReason::Replaced :
@@ -541,7 +542,7 @@ public:
             return 0;
         case WM_ACTIVATE:
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
-                !closing_ && !IsPopupWindow(
+                !closing_ && !IsSessionWindow(
                     reinterpret_cast<HWND>(lParam)))
             {
                 // Returning to the owner is an ordinary dismissal; another
@@ -1516,6 +1517,14 @@ private:
         return std::ranges::any_of(popups_, [hwnd](const auto& popup) {
             return popup && popup->hwnd == hwnd;
         });
+    }
+
+    bool IsSessionWindow(HWND hwnd) const
+    {
+        if (IsPopupWindow(hwnd)) return true;
+        const HWND companion = options_.zOrderCompanion ? options_.zOrderCompanion() : nullptr;
+        return hwnd && companion && IsWindow(companion) && IsWindowVisible(companion) &&
+            (hwnd == companion || IsChild(companion, hwnd));
     }
 
     bool IsOwnerWindow(HWND hwnd) const
@@ -2716,11 +2725,9 @@ private:
     void ApplyAlphaMask(Popup& popup, std::uint32_t* pixels,
         const RECT& panel)
     {
-        const float centerX = (panel.left + panel.right) * 0.5f;
-        const float centerY = (panel.top + panel.bottom) * 0.5f;
-        const float halfWidth = (panel.right - panel.left) * 0.5f;
-        const float halfHeight = (panel.bottom - panel.top) * 0.5f;
         const float radius = static_cast<float>(panelRadius_);
+        const smooth_corners::Distance contour(static_cast<float>(panel.right-panel.left),
+            static_cast<float>(panel.bottom-panel.top), radius);
         const float shadow = static_cast<float>(shadowSize_);
         constexpr float opaquePanelAlpha = 255.0f;
         // The acrylic backdrop already supplies its own tint.  Keeping the
@@ -2741,14 +2748,8 @@ private:
         {
             for (int x = 0; x < popup.windowWidth; ++x)
             {
-                const float qx = std::fabs((x + 0.5f) - centerX) -
-                    (halfWidth - radius);
-                const float qy = std::fabs((y + 0.5f) - centerY) -
-                    (halfHeight - radius);
-                const float outside = std::hypot(
-                    std::max(qx, 0.0f), std::max(qy, 0.0f));
-                const float distance = outside +
-                    std::min(std::max(qx, qy), 0.0f) - radius;
+                const float distance = contour.At(x + .5f - static_cast<float>(panel.left),
+                    y + .5f - static_cast<float>(panel.top));
                 std::uint32_t& pixel = pixels[
                     static_cast<size_t>(y) * popup.windowWidth + x];
                 const std::uint32_t rgb = pixel & 0x00FFFFFFu;

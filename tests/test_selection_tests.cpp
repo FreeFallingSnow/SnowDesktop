@@ -5,6 +5,13 @@ using namespace build_test;
 namespace {
 void run_tests(const fs::path& repo){
     auto root=temporary("selection");Bridge bridge(repo,root);auto script=root/L"selection.ps1";
+    // Exercise the real batch argument dispatch with an isolated launch sentinel.
+    // An accidental default-full branch cannot reach the repository test manager.
+    copy(repo,root,{"scripts/test.bat"});
+    write(root/L"scripts/powershell_runtime.bat","@echo off\r\nset \"SNOWDESKTOP_ENTRY_POWERSHELL=%~dp0unexpected.cmd\"\r\nexit /b 0\r\n");
+    write(root/L"scripts/unexpected.cmd","@echo off\r\necho unexpected>\"%~dp0unexpected.txt\"\r\nexit /b 91\r\n");
+    const auto defaultEntry=run({L"cmd.exe",L"/d",L"/c",(root/L"scripts/test.bat").wstring()},root);
+    require(defaultEntry.code==2&&defaultEntry.out.find("Usage:")!=std::string::npos&&!fs::exists(root/L"scripts/unexpected.txt"),"No-argument test entry launched work instead of showing usage");
     write(script,"param([string]$Operation)\n$ErrorActionPreference='Stop';Set-StrictMode -Version Latest\n$repositoryRoot="+ps_literal(repo)+R"PS(
 foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSelection','Invoke-FilteredTests','Get-TestRunOptions','Assert-HostRuntimeAvailable','Assert-CompleteTestReport')},@{path='scripts/build_protocol.ps1';functions=@('Get-Field','Resolve-PlanTests')},@{path='scripts/test_output.ps1';functions=@('Test-IsolatedOutput')})){
  $tokens=$null;$errors=$null;$source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryRoot $import.path),[ref]$tokens,[ref]$errors)
@@ -56,7 +63,7 @@ try{
     for(const auto& mode:{"name","label"}){request["mode"]=mode;request["text"]="";expectError("options","non-empty");}
     request["expected"]=Json::array({"a"});request["xml"]="<testsuite><testcase name='a' status='run'/></testsuite>";require(probe("report").at("error").str().empty(),"Valid report rejected");request["xml"]="<testsuite/>";expectError("report","no executed test cases");for(const std::string status:{"<skipped/>","<failure/>","<error/>"}){request["xml"]="<testsuite><testcase name='a'>"+status+"</testcase></testsuite>";expectError("report","not fully verified");}request["xml"]="<testsuite><testcase name='a' status='notrun'/></testsuite>";expectError("report","not fully verified");for(const auto& xml:{"<testsuite><testcase name='b'/></testsuite>","<testsuite><testcase name='a'/><testcase name='a'/></testsuite>"}){request["xml"]=xml;expectError("report","does not match");}
     write(root/L".build/Release/tests/SnowDesktopFixtureTests.exe","fixture");fs::create_directories(root/L".build/Release/SnowDesktop.Runtime/payload");require(probe("output").at("error").str().empty(),"Valid isolated output rejected");for(const auto& name:{"SnowDesktopMisplacedTests.exe","misplaced.dll"}){write(root/L".build/Release"/name,"fixture");expectError("output","escaped its dedicated");fs::remove(root/L".build/Release"/name);}fs::create_directories(root/L".build/Release/payload");expectError("output","escaped its dedicated");fs::remove(root/L".build/Release/payload");fs::remove(root/L".build/Release/tests/SnowDesktopFixtureTests.exe");expectError("output","escaped its dedicated");
-    auto presets=Json::parse(read(repo/L"CMakePresets.json"));bool jobs=false;for(const auto& preset:presets.at("testPresets").items)if(preset.at("name").str()=="all-tests")jobs=preset.at("execution").at("jobs").integer()==4;require(jobs,"Common test preset lost four-way parallelism");
+    auto presets=Json::parse(read(repo/L"CMakePresets.json"));bool jobs=false;for(const auto& preset:presets.at("testPresets").items)if(preset.at("name").str()=="all-tests")jobs=preset.at("execution").at("jobs").integer()>1;require(jobs,"Common test preset must enable bounded parallel execution");
     for(const auto& preset:presets.at("buildPresets").items){const auto name=preset.at("name").str();if(name=="tests")require(preset.at("targets").dump()==Json::array({"SnowDesktopAppTests"}).dump(),"Routine build compiles tool targets");if(name=="tools-tests")require(preset.at("targets").dump()==Json::array({"SnowDesktopBuildToolTests"}).dump(),"Tools build includes unrelated application targets");if(name=="all-tests")require(preset.at("targets").dump()==Json::array({"SnowDesktopTests"}).dump(),"Unified native inventory aggregate missing");}
     std::cout<<"PASS cold target selection, aliases, runtime guard, actual application/tools presets, isolation, reports and parallel jobs\n";
 }

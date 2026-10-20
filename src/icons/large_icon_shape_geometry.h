@@ -1,6 +1,7 @@
 #pragma once
 #include "large_icon_config.h"
 #include "theme/flat_glass_rim.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include <d2d1.h>
 #include <d2d1helper.h>
 #include <wrl/client.h>
@@ -91,8 +92,7 @@ inline Microsoft::WRL::ComPtr<ID2D1Geometry> Geometry(ID2D1Factory* factory, int
     if (!factory || frame.right <= frame.left || frame.bottom <= frame.top) return result;
     if (shape <= 1)
     {
-        Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> rounded;
-        if (SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, radius, radius), &rounded))) result = rounded;
+        result = smooth_corners::Geometry(factory, frame, radius);
     }
     else if (shape == 2)
     {

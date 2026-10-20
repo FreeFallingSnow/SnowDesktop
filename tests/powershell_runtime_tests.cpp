@@ -1,10 +1,12 @@
 #include "build_tool_test_support.h"
+#include "tools/development_launcher_tests.h"
 #include <iostream>
 #include <sstream>
 #include <thread>
 using namespace build_test;
 namespace {
 void test(const fs::path& repo) {
+    development_launcher_tests::Run(repo);
     auto root=temporary("powershell runtime");
     write(root/L"target.ps1",R"PS(param([string]$Value,[int]$Code=0,[int]$Delay=0)
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
@@ -84,6 +86,7 @@ $p.Dispose();Write-Output 'parent exited';exit 0
 }
 }
 int main(int argc,char** argv) {
+    if(auto fixture=development_launcher_tests::Fixture(argc,argv))return *fixture;
     if(executable().filename().wstring().find(L"delayed pwsh")!=std::wstring::npos){std::this_thread::sleep_for(std::chrono::seconds(9));return 99;}
     return test_main(argc,argv,test);
 }

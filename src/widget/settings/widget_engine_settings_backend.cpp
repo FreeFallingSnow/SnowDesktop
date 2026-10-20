@@ -445,7 +445,6 @@ struct WidgetEngineSettingsBackend::SearchState final
 struct WidgetEngineSettingsBackend::PreviewState
 {
     WidgetSettingsBackendDescriptor descriptor;
-    std::unordered_map<std::string, std::optional<std::string>> originals;
     std::unordered_set<std::string> affectedKeys;
 };
 
@@ -578,7 +577,7 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
 
     const auto& storage = widget.preview
         ? widget.previewStorage
-        : engine_.WidgetSettingsPersistentStorageForBackend();
+        : engine_.WidgetSettingsReadStorageForBackend();
     const std::string prefix = WideToUtf8(widget.widgetId) + ".";
     const auto stored = [&](std::string_view key) -> std::string_view {
         const auto value = storage.find(prefix + std::string(key));
@@ -650,7 +649,7 @@ WidgetSettingBackendReadResult WidgetEngineSettingsBackend::ReadOrdinary(
 
     const auto& storage = widget.preview
         ? widget.previewStorage
-        : engine_.WidgetSettingsPersistentStorageForBackend();
+        : engine_.WidgetSettingsReadStorageForBackend();
     const std::string prefix = WideToUtf8(widget.widgetId) + ".";
     const auto stored = storage.find(prefix + field.key);
     const auto marker = storage.find(prefix +
@@ -682,10 +681,13 @@ WidgetSettingBackendReadResult WidgetEngineSettingsBackend::ReadOrdinary(
     else
     {
         if (marker != storage.end())
-            return { BackendResult(
-                         WidgetSettingsBackendStatus::PersistenceFailed,
-                         "unexpectedTypedStorageMarker"), false, {} };
-        if (!DecodeLegacyWidgetSettingValue(
+        {
+            if (marker->second != TypedStorageMarker ||
+                !widget_settings_backend_detail::DecodePreviousDurationStorage(current.schema, stored->second, value, error))
+                return { BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
+                    "unexpectedTypedStorageMarker", std::move(error)), false, {} };
+        }
+        else if (!DecodeLegacyWidgetSettingValue(
                 current.schema, stored->second, value, error))
             return { BackendResult(WidgetSettingsBackendStatus::InvalidValue,
                          error.empty() ? "invalidStoredValue" : error),
@@ -725,7 +727,7 @@ WidgetEngineSettingsBackend::ReadSearchQuery(
 
     const auto& storage = widget.preview
         ? widget.previewStorage
-        : engine_.WidgetSettingsPersistentStorageForBackend();
+        : engine_.WidgetSettingsReadStorageForBackend();
     WidgetStorageTransaction transaction(
         storage, WideToUtf8(widget.widgetId));
     std::string error;
@@ -788,8 +790,12 @@ WidgetSettingBackendOpaqueResult WidgetEngineSettingsBackend::ReadOpaque(
         state.available = !widget.preview && engine_.secretStore_ != nullptr;
         state.canChoose = state.available;
         if (state.available)
+        {
             state.configured = !engine_.secretStore_->Reference(
                 widget.packageId, instanceId, field.key).empty();
+            state.secretLength = engine_.secretStore_->Length(
+                widget.packageId, instanceId, field.key);
+        }
         state.canClear = state.available && state.configured;
         return { Success(false), std::move(state) };
     }
@@ -935,7 +941,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             "invalidPanelGradient");
 
     auto& storage = engine_.WidgetSettingsPersistentStorageForBackend();
-    WidgetStorageTransaction transaction(storage,
+    const auto& previousView = persist ? storage
+        : engine_.WidgetSettingsReadStorageForBackend();
+    WidgetStorageTransaction transaction(previousView,
         WideToUtf8(widget.widgetId));
     std::unordered_set<std::string> keys;
     const auto setAppearance = [&](std::string key, std::string value,
@@ -1142,28 +1150,15 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
     auto candidate = transaction.TakeCandidate();
     if (!persist)
     {
-        if (!preview_)
-        {
-            preview_ = std::make_unique<PreviewState>();
-            preview_->descriptor = descriptor;
-        }
+        auto nextPreview = preview_ ? nullptr : std::make_unique<PreviewState>();
+        if (nextPreview) nextPreview->descriptor = descriptor;
         const std::string prefix = WideToUtf8(widget.widgetId) + ".";
-        for (const auto& [key, value] : storage)
-        {
-            if (!key.starts_with(prefix)) continue;
-            const auto next = candidate.find(key);
-            if (next == candidate.end() || next->second != value)
-                preview_->originals.try_emplace(key, value);
-        }
-        for (const auto& [key, value] : candidate)
-        {
-            (void)value;
-            if (!key.starts_with(prefix) || storage.contains(key))
-                continue;
-            preview_->originals.try_emplace(key, std::nullopt);
-        }
+        if (!engine_.StageWidgetSettingsPreviewForBackend(
+                this, prefix, previousView, candidate))
+            return BackendResult(WidgetSettingsBackendStatus::Unavailable,
+                "previewAlreadyActive");
+        if (nextPreview) preview_ = std::move(nextPreview);
         preview_->affectedKeys.insert(keys.begin(), keys.end());
-        storage.swap(candidate);
         if (!engine_.RuntimeNotifySettingsChanged(
                 widgetId, affectedKeys, true))
             engine_.RuntimeInvalidateHost(widgetId);
@@ -1205,7 +1200,7 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::CommitPreview(
         preview_->descriptor.generation != descriptor.generation)
         return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
             "stalePreview");
-    if (!engine_.PersistWidgetSettingsStorageForBackend())
+    if (!engine_.CommitWidgetSettingsPreviewForBackend(this))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
     std::vector<std::string> affectedKeys(
@@ -1248,14 +1243,7 @@ void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
     if (!preview_) return;
     try
     {
-        auto& storage = engine_.WidgetSettingsPersistentStorageForBackend();
-        for (const auto& [key, value] : preview_->originals)
-        {
-            if (value)
-                storage.insert_or_assign(key, *value);
-            else
-                storage.erase(key);
-        }
+        engine_.RemoveWidgetSettingsPreviewForBackend(this);
         const std::wstring widgetId = preview_->descriptor.widgetId;
         std::vector<std::string> affectedKeys(
             preview_->affectedKeys.begin(), preview_->affectedKeys.end());
@@ -1266,8 +1254,38 @@ void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
     }
     catch (...)
     {
+        engine_.RemoveWidgetSettingsPreviewForBackend(this);
         preview_.reset();
     }
+}
+
+WidgetSettingsBackendResult WidgetEngineSettingsBackend::ReadSecret(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetSettingFieldSchema& field, std::string& plaintext)
+{
+    plaintext.clear();
+    if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
+    const int index = engine_.FindWidget(descriptor.widgetId);
+    if (index < 0)
+        return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound, "widgetNotFound");
+    const LuaWidget& widget = engine_.widgets_[index];
+    if (!widget_settings_backend_detail::MutationIdentityMatches(
+            descriptor, guard, widget.widgetId, widget.packageId, widget.runtimeToken))
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot, "staleSnapshot");
+    const auto* declaration = FindDeclaredSetting(widget, field.key);
+    if (!declaration)
+        return BackendResult(WidgetSettingsBackendStatus::SettingNotFound, "settingNotFound");
+    if (!SchemaMatches(*declaration, field) || declaration->type != "password")
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot, "staleSettingSchema");
+    if (widget.preview || !engine_.secretStore_)
+        return BackendResult(WidgetSettingsBackendStatus::Unavailable, "secretStoreUnavailable");
+    std::string error;
+    if (!engine_.secretStore_->ReadForEditing(widget.packageId,
+            WideToUtf8(widget.widgetId), field.key, plaintext, error))
+        return BackendResult(WidgetSettingsBackendStatus::Unavailable,
+            "secretReadFailed", std::move(error));
+    return Success(false);
 }
 
 WidgetSettingsBackendResult WidgetEngineSettingsBackend::SetSecret(
@@ -1616,6 +1634,7 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
             "invalidEntityReferenceBinding");
     LogicalSlotPickerRequest request;
     request.widgetId = widget.widgetId;
+    request.ownerToken = descriptor.generation;
     request.slotId = setting->binding;
     request.kind = LogicalSlotKind::Binding;
     request.accepts = { expectedKind };

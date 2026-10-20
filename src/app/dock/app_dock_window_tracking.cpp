@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock/dock_window_order.h"
 #include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
@@ -373,8 +374,61 @@ DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemIndex) con
     return DockWindowVisualState::Running;
 }
 
+void DesktopApp::PruneDockWindowAttention(HWND acknowledgedWindow)
+{
+    // Use actual Windows foreground ownership, not the floating Dock's
+    // logical foreground or a click whose activation request may be rejected.
+    const HWND foreground = GetForegroundWindow();
+    const bool changed = dockWindowAttention_.Retain(
+        [foreground, acknowledgedWindow](HWND window,
+            snowdesktop::dock_window_attention::WindowIdentity identity) {
+            DWORD process = 0;
+            const DWORD thread = GetWindowThreadProcessId(window, &process);
+            return IsWindow(window) && process == identity.process &&
+                thread == identity.thread &&
+                !DockWindowsShareActivationGroup(window, foreground) &&
+                !DockWindowsShareActivationGroup(window, acknowledgedWindow);
+        });
+    if (changed) InvalidateDockRects();
+}
+
+void DesktopApp::HandleDockShellHook(WPARAM event, HWND window)
+{
+    // AddTab/DeleteTab can change taskbar membership without showing, hiding,
+    // or destroying the HWND. Coalesce their Shell notifications into the
+    // ordinary discovery pass so an already visible task is reclassified too.
+    if (event == HSHELL_WINDOWCREATED || event == HSHELL_WINDOWDESTROYED)
+        dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+
+    if (event == HSHELL_FLASH)
+    {
+        if (!window || !IsWindow(window)) return;
+        window = GetAncestor(window, GA_ROOT);
+        if (!IsDockTaskWindow(window)) return;
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        if (dockWindowAttention_.Flash(window, {process, thread},
+                DockWindowsShareActivationGroup(window, GetForegroundWindow())))
+        {
+            InvalidateDockRects();
+            // A flash can precede discovery. Keep the request while the usual
+            // refresh resolves the application's identity and Dock membership.
+            dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    else if (event == HSHELL_WINDOWACTIVATED || event == HSHELL_RUDEAPPACTIVATED)
+    {
+        PruneDockWindowAttention(window);
+    }
+    else if (event == HSHELL_WINDOWDESTROYED)
+    {
+        if (dockWindowAttention_.Remove(window)) InvalidateDockRects();
+    }
+}
+
 void DesktopApp::RefreshDockForegroundState()
 {
+    PruneDockWindowAttention();
     if (!generalSettings_.dockEnabled)
         return;
     const DWORD observedForegroundTick = dockForegroundChangedTick_.load();
@@ -424,6 +478,33 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    // Fallback for programmatic minimization and applications which have not
+    // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
+    if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
+        ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+            IsSystemTaskbarAutoHideEnabled()))
+    {
+        snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");
+        RefreshSystemTaskbarAppearance(false);
+        if (!BeginSystemTaskbarMinimizeProtection(window, true))
+            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
+                DiagnosticLogLevel::Warning);
+        snowdesktop::dock_taskbar_diagnostics::Record(L"system-minimize-taskbar-protection-observed", window);
+    }
+    auto& previewOrder = snowdesktop::dock_window_order::Current();
+    if (event == EVENT_OBJECT_DESTROY)
+        previewOrder.Forget(window);
+    else
+        previewOrder.Observe(window);
+    if (dockWindowTransition_)
+    {
+        if (event == EVENT_SYSTEM_MINIMIZESTART)
+            dockWindowTransition_->ObserveNativeMinimize(window);
+        else if (event == EVENT_SYSTEM_MINIMIZEEND || event == EVENT_OBJECT_DESTROY)
+            dockWindowTransition_->ForgetNativeMinimize(window);
+    }
+    if (event == EVENT_OBJECT_DESTROY && dockWindowAttention_.Remove(window))
+        InvalidateDockRects();
     const auto tracks = [window](const auto& state) {
         return state.window == window ||
             std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=
@@ -464,6 +545,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    PruneDockWindowAttention();
     if (invalidateChanged && dockWindowTransition_ && dockWindowTransition_->IsActive())
     {
         // Background discovery can spend tens of milliseconds in process/Shell queries.
@@ -489,6 +571,7 @@ void DesktopApp::RefreshDockRunningWindows(
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
+    snowdesktop::dock_window_order::Current().Prune();
     dockWindowAppIds_.Retain([](HWND window) { return IsWindow(window) != FALSE; });
     struct DockWindowTarget
     {
@@ -611,6 +694,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 return TRUE;
             }
             auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
+            snowdesktop::dock_window_order::Current().Observe(window);
             if (inserted)
                 pathIt->second = QueryDockWindowExecutablePath(window);
             auto [ancestorIt, ancestorsInserted] =
@@ -652,7 +736,7 @@ void DesktopApp::RefreshDockRunningWindows(
                             target.identity.steamInstallDirectory,
                             pathIt->second,
                             appUserModelId,
-                            ancestorIt->second);
+                            ancestorIt->second, target.identity.validatedPayloadPaths);
                 if (!identityMatches)
                     continue;
                 target.trackedWindows.push_back(window);
@@ -675,7 +759,7 @@ void DesktopApp::RefreshDockRunningWindows(
                             identity.steamInstallDirectory,
                             pathIt->second,
                             appUserModelId,
-                            ancestorIt->second);
+                            ancestorIt->second, identity.validatedPayloadPaths);
                 if (fixed) break;
             }
             if (fixed) return TRUE;
@@ -990,6 +1074,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         return true;
 
     using snowdesktop::dock_window_rules::DockClickAction;
+    if (TryActivateDockTray(requestedIdentity.executablePath, itemIndex, pressedAnchorScreen)) return true;
     DockClickAction action =
         pressedAction.value_or(DockClickAction::None);
     if (action == DockClickAction::Launch)
@@ -1080,7 +1165,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
             : DockClickAction::Minimize;
     }
     if (pressedAnchorScreen &&
-        (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        (action == DockClickAction::Restore ||
+         (action == DockClickAction::Minimize && dockSettings_.summonOnAppMinimize)))
         KeepDockTopmostForAction(*pressedAnchorScreen);
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
@@ -1106,9 +1192,11 @@ bool DesktopApp::ActivateOrToggleDockItem(
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            dockWindowTransition_->StartMinimize(
+            const bool started = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
                 transitionKeepBelowWindow);
+            if (started && !dockSettings_.summonOnAppMinimize)
+                KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
         if (shouldMinimize)
         {
@@ -1222,7 +1310,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             : DockClickAction::Minimize;
     }
     if (pressedAnchorScreen &&
-        (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        (action == DockClickAction::Restore ||
+         (action == DockClickAction::Minimize && dockSettings_.summonOnAppMinimize)))
         KeepDockTopmostForAction(*pressedAnchorScreen);
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
@@ -1247,9 +1336,11 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            dockWindowTransition_->StartMinimize(
+            const bool started = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
                 transitionKeepBelowWindow);
+            if (started && !dockSettings_.summonOnAppMinimize)
+                KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
         if (shouldMinimize)
         {

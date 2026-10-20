@@ -1,9 +1,11 @@
 #include "widget/api/widget_logical_slot_manifest.h"
+#include "layout/logical_slot_pointer_rules.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -255,6 +257,62 @@ void TestCrossCollectionTransfer()
         "incompatible cross-collection transfer must fail without mutation");
 }
 
+void TestTransferRebindAndLegacyIdentities()
+{
+    LogicalSlotModel model;
+    std::string error;
+    LogicalSlotChange change;
+    Check(model.Configure(TransferDeclarations(), error) &&
+        model.Bind("source", Item("app.reference", "Calendar", "app:calendar"), change, error),
+        "identity fixture binds the original item");
+    const auto original = model.Find("source")->items.front();
+    Check(model.Transfer("source", original.id, "target", 0, change, error) &&
+        model.Bind("source", Item("app.reference", "Calendar", "app:calendar"), change, error),
+        "moving an item and adding the same target back to the original slot are valid operations");
+    const auto rebound = model.Find("source")->items.front();
+    const auto moved = model.Find("target")->items.front();
+    const bool distinct = rebound.id != moved.id && rebound.reference != moved.reference &&
+        moved.id == original.id && moved.reference == original.reference;
+
+    std::unordered_map<std::string, std::string> storage;
+    model.Export(storage, "instance");
+    auto& legacySource = storage.at(LogicalSlotModel::StorageKey("instance", "source"));
+    for (const auto& tokens : {std::pair{rebound.id, moved.id},
+            std::pair{rebound.reference, moved.reference}})
+    {
+        const auto position = legacySource.find(tokens.first);
+        Check(position != std::string::npos, "legacy identity fixture uses actual exported storage");
+        legacySource.replace(position, tokens.first.size(), tokens.second);
+    }
+    LogicalSlotModel repaired;
+    Check(repaired.Configure(TransferDeclarations(), error) && repaired.Restore(storage, "instance", error),
+        "old cross-slot duplicate identities remain recoverable without dropping items");
+    const auto repairedSource = repaired.Find("source")->items.front();
+    const auto repairedTarget = repaired.Find("target")->items.front();
+    const bool migrated = repairedSource.id != repairedTarget.id &&
+        repairedSource.reference != repairedTarget.reference &&
+        repairedSource.target == "app:calendar" && repairedTarget.target == "app:calendar";
+    repaired.Export(storage, "instance");
+    LogicalSlotModel reopened;
+    Check(reopened.Configure(TransferDeclarations(), error) && reopened.Restore(storage, "instance", error) &&
+        reopened.Find("source")->items == repaired.Find("source")->items &&
+        reopened.Find("target")->items == repaired.Find("target")->items,
+        "repaired identities persist and remain stable on a second load");
+    Check(distinct && migrated,
+        "IDs and references are unique across the instance after transfer/rebind and legacy recovery");
+
+    auto corrupt = storage;
+    auto& changedSource = corrupt.at(LogicalSlotModel::StorageKey("instance", "source"));
+    const auto title = changedSource.find("Calendar");
+    Check(title != std::string::npos, "restoration rollback fixture has a known title");
+    changedSource.replace(title, 8, "Changed before failure");
+    corrupt[LogicalSlotModel::StorageKey("instance", "target")] = "{";
+    Check(!reopened.Restore(corrupt, "instance", error) &&
+        reopened.Find("source")->items == repaired.Find("source")->items &&
+        reopened.Find("target")->items == repaired.Find("target")->items,
+        "a later corrupt slot cannot partially publish an earlier restored slot");
+}
+
 void TestBoundedUndoRedoHistory()
 {
     LogicalSlotModel model;
@@ -314,6 +372,60 @@ void TestBoundedUndoRedoHistory()
             model.Find("primaryApp")->items.front().target == "app:history-1",
         "the oldest overflowed history entries must be unavailable");
 }
+
+void TestClippedPointerModelTransactions()
+{
+    auto declarations=TransferDeclarations();
+    declarations.at("source").capacity=8;
+    declarations.at("target").capacity=8;
+    LogicalSlotModel original;
+    LogicalSlotChange change;
+    std::string error;
+    Check(original.Configure(declarations,error),"clipped model configures");
+    for(int i=0;i<6;++i)
+        Check(original.Bind("source",Item("app.reference",std::to_string(i),
+            "app:item"+std::to_string(i)),change,error),"populate complete source model");
+    for(int i=0;i<5;++i)
+        Check(original.Bind("target",Item("app.reference","target"+std::to_string(i),
+            "app:target"+std::to_string(i)),change,error),"populate complete target model");
+    const RECT surface{0,0,120,120};
+    const std::vector<RECT> bounds{{10,10,100,40},{10,50,100,80}};
+    for (const auto sourceIndex : {0u,3u,5u})
+    {
+        auto model=original;
+        const auto snapshot=*model.Find("source");
+        const std::vector<std::string_view> visible{snapshot.items[2].id,snapshot.items[3].id};
+        const auto target=ResolveLogicalSlotModelPointerTarget(bounds,visible,snapshot,
+            snapshot.items[sourceIndex].id,POINT{50,75},surface);
+        Check(target && model.Move("source",snapshot.items[sourceIndex].id,
+            target->targetIndex,change,error),"clipped move applies to complete model");
+        auto expected=snapshot.items;
+        auto moved=expected[sourceIndex]; expected.erase(expected.begin()+sourceIndex);
+        expected.insert(expected.begin()+(sourceIndex<4?3:4),moved);
+        Check(model.Find("source")->items==expected,
+            "visible insertion preserves hidden prefix/suffix and complete source identity");
+        std::unordered_map<std::string,std::string> storage;
+        model.Export(storage,"clipped");
+        LogicalSlotModel reopened;
+        Check(reopened.Configure(declarations,error) && reopened.Restore(storage,"clipped",error) &&
+            reopened.Find("source")->items==expected,"clipped move persists complete order");
+    }
+    auto model=original;
+    const auto source=*model.Find("source");
+    const auto targetSnapshot=*model.Find("target");
+    const std::vector<RECT> single{{10,30,100,60}};
+    const std::vector<std::string_view> visible{targetSnapshot.items[2].id};
+    const auto target=ResolveLogicalSlotModelPointerTarget(single,visible,targetSnapshot,
+        {},POINT{50,55},surface);
+    Check(target && model.Transfer("source",source.items[4].id,"target",
+        target->targetIndex,change,error),"single visible target transfers at complete model insertion");
+    Check(model.Find("target")->items.size()==6 &&
+        model.Find("target")->items[3].target==source.items[4].target &&
+        model.Find("source")->items.size()==5,"transfer respects hidden target prefix and source removal");
+    const std::vector<std::string_view> stale{"removed-id"};
+    Check(!ResolveLogicalSlotModelPointerTarget(single,stale,targetSnapshot,{},POINT{50,55},surface),
+        "stale visible identity cannot mutate a different full-model item");
+}
 }
 
 int main()
@@ -322,7 +434,9 @@ int main()
     TestBindingAndCollectionTransactions();
     TestPersistenceRoundTrip();
     TestCrossCollectionTransfer();
+    TestTransferRebindAndLegacyIdentities();
     TestBoundedUndoRedoHistory();
+    TestClippedPointerModelTransactions();
     std::cout << "widget logical slot tests passed\n";
     return 0;
 }

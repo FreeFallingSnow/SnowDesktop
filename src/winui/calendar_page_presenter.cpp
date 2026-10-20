@@ -2,9 +2,11 @@
 #include "calendar_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "common/l10n.h"
-#include <charconv>
+#include "system/calendar/system_calendar_editor_state.h"
+#include <cmath>
 #include <cstdio>
 #include <winrt/Windows.Globalization.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
 namespace snowdesktop::winui
 {
@@ -18,26 +20,32 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
     muxc::Border editorCard{nullptr};
-    muxc::ToggleSwitch calendarToggle, allDay;
+    muxc::ToggleSwitch calendarToggle;
+    muxc::CheckBox allDay;
     muxc::ComboBox calendarChoice;
     SettingRow calendarEnabledRow, calendarRow;
-    muxc::TextBlock listHeading, error;
+    SettingRow titleRow, modeRow, scopeRow, dateRow, multipleDatesRow;
+    SettingRow intervalRow, weekdaysRow, monthDayRow, endTypeRow, untilRow;
+    SettingRow occurrenceRow, allDayRow, startRow, endRow, reminderRow, notesRow, actionsRow;
+    muxc::TextBlock listHeading;
+    muxc::InfoBar scheduleFeedback;
     muxc::ListView list;
     muxc::TextBox title, notes;
     muxc::CalendarDatePicker date;
     muxc::CalendarDatePicker until, occurrenceDate;
     muxc::CalendarView multipleDates;
     muxc::ComboBox mode, scope, monthDay;
-    muxc::TextBox interval;
+    muxc::NumberBox interval;
     muxc::ComboBox endType;
-    muxc::TextBlock ruleSummary;
     muxc::Button editOccurrence;
     std::vector<muxc::CheckBox> weekdays;
-    muxc::StackPanel weekdayRow;
+    std::vector<muxc::TextBlock> weekdayLabels;
+    muxc::Grid weekdayChoices;
     muxc::TimePicker start, end;
     muxc::ComboBox reminder;
     static constexpr std::array<int, 7> reminderValues = {-1, 0, 5, 15, 30, 60, 1440};
-    muxc::Button add, save, remove, cancel, refresh;
+    muxc::Button save, remove, cancel;
+    muxc::HyperlinkButton add, refresh;
     muxc::ContentDialog dialog{nullptr};
     std::vector<calendar::DisplayOption> calendars;
     std::vector<calendar::CalendarEvent> events;
@@ -48,6 +56,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     calendar::CalendarSeries editingSeries;
     bool editingSeriesMode = false;
     std::string confirmedRule;
+    std::wstring savedDraft;
+    int editingListIndex = -1;
     calendar::DisplayPreferences prefs;
     mux::DispatcherTimer timer;
     std::vector<std::function<void()>> revoke;
@@ -66,7 +76,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (outer) *outer = border;
         return content;
     }
-    template<class F> void Click(muxc::Button button, F callback)
+    template<class Control, class F> void Click(Control button, F callback)
     {
         auto token = button.Click([this, callback](const auto&, const auto&) {
             if (!closed && active && hasSnapshot) callback();
@@ -75,28 +85,55 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     Impl(LocalizeCallback callback, const mux::Style& style) : localize(std::move(callback))
     {
-        root.Spacing(8);
-        preferences = Card(style);
+        root.Spacing(24);
+        muxc::Border preferencesSurface;
+        preferences = Card(style, &preferencesSurface);
+        preferencesSurface.Padding({0, 0, 0, 0});
         calendarEnabledRow.Initialize(calendarToggle);
         calendarRow.Initialize(calendarChoice);
         calendarEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         calendarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         for (const auto& row : {calendarEnabledRow.root, calendarRow.root})
             preferences.Children().Append(row);
-        auto schedules = Card(style);
+        presenter_controls::UpdateSettingsSubrows(preferences, 0);
         muxc::StackPanel toolbar;
         toolbar.Orientation(muxc::Orientation::Horizontal); toolbar.Spacing(8);
+        presenter_controls::ConfigureSettingsHeadingLink(add);
+        presenter_controls::ConfigureSettingsHeadingLink(refresh);
         toolbar.Children().Append(add); toolbar.Children().Append(refresh);
         SettingRow schedulesHeader;
         schedulesHeader.Initialize(toolbar, 0.0);
         schedulesHeader.SetControlAlignment(mux::HorizontalAlignment::Right);
         listHeading = schedulesHeader.label;
         listHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        schedules.Children().Append(schedulesHeader.root);
+        muxc::StackPanel schedulesSection;
+        schedulesSection.Spacing(8);
+        root.Children().Append(schedulesSection);
+        schedulesSection.Children().Append(schedulesHeader.root);
+        scheduleFeedback.Severity(muxc::InfoBarSeverity::Warning);
+        scheduleFeedback.IsClosable(false);
+        scheduleFeedback.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(scheduleFeedback);
+        schedulesSection.Children().Append(scheduleFeedback);
+        muxc::Border schedulesSurface;
+        auto schedules = Card(style, &schedulesSurface);
+        root.Children().RemoveAtEnd();
+        schedulesSection.Children().Append(schedulesSurface);
+        schedulesSurface.Padding({0, 0, 0, 0});
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
+        list.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
+        mux::Automation::AutomationProperties::SetAutomationId(list, L"CalendarSchedules");
+        mux::Automation::AutomationProperties::SetAutomationId(add, L"CalendarAddSchedule");
+        mux::Automation::AutomationProperties::SetAutomationId(save, L"CalendarSaveSchedule");
+        mux::Automation::AutomationProperties::SetAutomationId(cancel, L"CalendarCancelEdit");
+        mux::Automation::AutomationProperties::SetAutomationId(remove, L"CalendarDeleteSchedule");
         schedules.Children().Append(list);
         editor = Card(style, &editorCard);
+        root.Children().RemoveAtEnd();
+        schedulesSection.Children().Append(editorCard);
+        editorCard.Padding({0, 0, 0, 0});
+        editor.Spacing(0);
         title.MaxLength(512); notes.MaxLength(8192);
         date.CalendarIdentifier(L"GregorianCalendar");
         date.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
@@ -106,33 +143,96 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         occurrenceDate.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
         multipleDates.CalendarIdentifier(L"GregorianCalendar");
         multipleDates.SelectionMode(muxc::CalendarViewSelectionMode::Multiple);
+        multipleDates.MinWidth(0);
         multipleDates.MaxHeight(320);
-        interval.MaxLength(2);
-        interval.Text(L"1");
+        interval.Minimum(1); interval.Maximum(99);
+        interval.SmallChange(1); interval.LargeChange(10);
+        interval.AcceptsExpression(false);
+        interval.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        interval.MaxWidth(300);
+        interval.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        interval.Value(1);
+        weekdayChoices.ColumnSpacing(12);
+        weekdayChoices.RowSpacing(8);
+        for (int column = 0; column < 4; ++column)
+            weekdayChoices.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        for (int row = 0; row < 2; ++row)
+            weekdayChoices.RowDefinitions().Append(muxc::RowDefinition{});
         for (int day = 0; day < 7; ++day)
         {
             muxc::CheckBox checkbox;
+            checkbox.MinWidth(0);
+            checkbox.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            muxc::TextBlock label;
+            label.VerticalAlignment(mux::VerticalAlignment::Center);
+            muxc::Grid choice;
+            choice.ColumnSpacing(6);
+            choice.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+            muxc::ColumnDefinition controlColumn;
+            controlColumn.Width(mux::GridLengthHelper::Auto());
+            choice.ColumnDefinitions().Append(controlColumn);
+            choice.Children().Append(label);
+            muxc::Grid::SetColumn(checkbox, 1);
+            choice.Children().Append(checkbox);
+            muxc::Grid::SetColumn(choice, day % 4);
+            muxc::Grid::SetRow(choice, day / 4);
+            weekdayChoices.Children().Append(choice);
             weekdays.push_back(checkbox);
-            weekdayRow.Children().Append(checkbox);
+            weekdayLabels.push_back(label);
         }
-        weekdayRow.Orientation(muxc::Orientation::Vertical);
-        weekdayRow.Spacing(8);
-        weekdayRow.MaxWidth(700);
         start.MinuteIncrement(1); end.MinuteIncrement(1);
         notes.AcceptsReturn(true); notes.TextWrapping(mux::TextWrapping::Wrap); notes.MinHeight(72);
-        editor.Children().Append(title); editor.Children().Append(mode); editor.Children().Append(scope);
-        editor.Children().Append(ruleSummary);
-        editor.Children().Append(date); editor.Children().Append(multipleDates);
-        editor.Children().Append(interval); editor.Children().Append(weekdayRow);
-        editor.Children().Append(monthDay); editor.Children().Append(endType);
-        editor.Children().Append(until); editor.Children().Append(occurrenceDate);
-        editor.Children().Append(editOccurrence); editor.Children().Append(allDay);
-        editor.Children().Append(start); editor.Children().Append(end); editor.Children().Append(reminder);
-        editor.Children().Append(notes);
+        const auto addRow = [&](SettingRow& row, const mux::FrameworkElement& control,
+                                std::wstring_view automationId, double width = 300.0) {
+            control.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            row.Initialize(control, width);
+            mux::Automation::AutomationProperties::SetAutomationId(control, winrt::hstring(automationId));
+            mux::Automation::AutomationProperties::SetLabeledBy(control, row.label);
+            editor.Children().Append(row.root);
+        };
+        addRow(titleRow, title, L"CalendarTitle");
+        addRow(scopeRow, scope, L"CalendarScope");
+        muxc::Grid occurrenceControls;
+        occurrenceControls.ColumnSpacing(8);
+        occurrenceControls.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        muxc::ColumnDefinition occurrenceActionColumn;
+        occurrenceActionColumn.Width(mux::GridLengthHelper::Auto());
+        occurrenceControls.ColumnDefinitions().Append(occurrenceActionColumn);
+        occurrenceDate.MinWidth(0);
+        occurrenceDate.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        occurrenceControls.Children().Append(occurrenceDate);
+        muxc::Grid::SetColumn(editOccurrence, 1);
+        occurrenceControls.Children().Append(editOccurrence);
+        addRow(occurrenceRow, occurrenceControls, L"CalendarOccurrence", 420.0);
+        mux::Automation::AutomationProperties::SetAutomationId(occurrenceDate, L"CalendarOccurrenceDate");
+        mux::Automation::AutomationProperties::SetLabeledBy(occurrenceDate, occurrenceRow.label);
+        mux::Automation::AutomationProperties::SetAutomationId(editOccurrence, L"CalendarEditOccurrence");
+        addRow(modeRow, mode, L"CalendarDateMode");
+        addRow(dateRow, date, L"CalendarDate");
+        addRow(multipleDatesRow, multipleDates, L"CalendarMultipleDates", 320.0);
+        multipleDatesRow.text.VerticalAlignment(mux::VerticalAlignment::Top);
+        addRow(intervalRow, interval, L"CalendarInterval");
+        addRow(weekdaysRow, weekdayChoices, L"CalendarWeekdays", 360.0);
+        addRow(monthDayRow, monthDay, L"CalendarMonthDay");
+        addRow(endTypeRow, endType, L"CalendarEndType");
+        addRow(untilRow, until, L"CalendarUntil");
+        addRow(allDayRow, allDay, L"CalendarAllDay");
+        allDay.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        allDayRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        addRow(startRow, start, L"CalendarStartTime");
+        addRow(endRow, end, L"CalendarEndTime");
+        addRow(reminderRow, reminder, L"CalendarReminder");
+        addRow(notesRow, notes, L"CalendarNotes");
+        notesRow.text.VerticalAlignment(mux::VerticalAlignment::Top);
         muxc::StackPanel buttons; buttons.Orientation(muxc::Orientation::Horizontal); buttons.Spacing(8);
+        buttons.HorizontalAlignment(mux::HorizontalAlignment::Right);
         buttons.Children().Append(save); buttons.Children().Append(cancel); buttons.Children().Append(remove);
-        editor.Children().Append(buttons);
-        error.TextWrapping(mux::TextWrapping::Wrap); root.Children().Append(error);
+        if (const auto accent = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
+            if (const auto accentStyle = accent.try_as<mux::Style>()) save.Style(accentStyle);
+        addRow(actionsRow, buttons, L"CalendarEditorActions", 0.0);
+        actionsRow.SetCompactEditor();
+        actionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::UpdateSettingsSubrows(editor, 0);
         editorCard.Visibility(mux::Visibility::Collapsed);
         auto ctoken = calendarToggle.Toggled([this](const auto&, const auto&) { Commit(); });
         revoke.push_back([c = calendarToggle, ctoken] { c.Toggled(ctoken); });
@@ -141,16 +241,32 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             auto token = choice.SelectionChanged([this](const auto&, const auto&) { Commit(); });
             revoke.push_back([choice, token] { choice.SelectionChanged(token); });
         }
-        auto token = allDay.Toggled([this](const auto&, const auto&) { UpdateTimeVisibility(); });
-        revoke.push_back([c = allDay, token] { c.Toggled(token); });
+        auto token = allDay.Checked([this](const auto&, const auto&) { UpdateTimeVisibility(); });
+        revoke.push_back([c = allDay, token] { c.Checked(token); });
+        token = allDay.Unchecked([this](const auto&, const auto&) { UpdateTimeVisibility(); });
+        revoke.push_back([c = allDay, token] { c.Unchecked(token); });
+        token = interval.ValueChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
+        revoke.push_back([c = interval, token] { c.ValueChanged(token); });
         auto modeToken = mode.SelectionChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
         revoke.push_back([c = mode, modeToken] { c.SelectionChanged(modeToken); });
         auto datesToken = multipleDates.SelectedDatesChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
         revoke.push_back([c = multipleDates, datesToken] { c.SelectedDatesChanged(datesToken); });
         auto scopeToken = scope.SelectionChanged([this](const auto&, const auto&) {
             if (updating || editingSeries.id.empty()) return;
+            if (!CanReplaceDraft())
+            {
+                updating = true;
+                scope.SelectedIndex(editingSeriesMode ? 1 : 0);
+                updating = false;
+                return;
+            }
             if (scope.SelectedIndex() == 1) EditSeries(editingSeries);
-            else if (scope.SelectedIndex() == 0) LoadOccurrence();
+            else if (scope.SelectedIndex() == 0 && !LoadOccurrence())
+            {
+                updating = true;
+                scope.SelectedIndex(editingSeriesMode ? 1 : 0);
+                updating = false;
+            }
         });
         revoke.push_back([c = scope, scopeToken] { c.SelectionChanged(scopeToken); });
         auto endToken = endType.SelectionChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
@@ -158,6 +274,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Click(editOccurrence, [this] { LoadOccurrence(); });
         auto selection = list.SelectionChanged([this](const auto&, const auto&) {
             if (updating || closed || !active) return;
+            if (!CanReplaceDraft())
+            {
+                updating = true;
+                list.SelectedIndex(editingListIndex);
+                updating = false;
+                return;
+            }
             auto index = list.SelectedIndex();
             if (index >= 0 && static_cast<size_t>(index) < rows.size())
             {
@@ -168,6 +291,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         revoke.push_back([c = list, selection] { c.SelectionChanged(selection); });
         Click(add, [this] {
+            if (!CanReplaceDraft()) return;
             calendar::CalendarEvent event;
             event.date = calendar::CalendarService::CurrentLocalNow().date;
             event.allDay = true; Edit(event);
@@ -203,25 +327,31 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         calendarEnabledRow.SetText(L("settings.calendar.showSecondary"));
         calendarRow.SetText(L("settings.calendar.type"));
         listHeading.Text(L("settings.calendar.events"));
-        title.Header(winrt::box_value(L("settings.calendar.title")));
-        date.Header(winrt::box_value(L("settings.calendar.date")));
-        until.Header(winrt::box_value(L("settings.calendar.endDate")));
-        occurrenceDate.Header(winrt::box_value(L("settings.calendar.occurrenceDate")));
-        interval.Header(winrt::box_value(L("settings.calendar.interval")));
-        endType.Header(winrt::box_value(L("settings.calendar.endDate")));
+        titleRow.SetText(L("settings.calendar.title"));
+        dateRow.SetText(L("settings.calendar.date"));
+        multipleDatesRow.SetText(L("settings.calendar.chooseDates"));
+        untilRow.SetText(L("settings.calendar.endDate"));
+        occurrenceRow.SetText(L("settings.calendar.originalDate"));
+        intervalRow.SetText(L("settings.calendar.interval"));
+        weekdaysRow.SetText(L("settings.calendar.mode.weekly"));
+        endTypeRow.SetText(L("settings.calendar.endDate"));
         const int selectedEndType = endType.SelectedIndex();
         endType.Items().Clear();
         endType.Items().Append(winrt::box_value(L("settings.calendar.neverEnds")));
         endType.Items().Append(winrt::box_value(L("settings.calendar.endsOn")));
         endType.SelectedIndex(selectedEndType >= 0 ? selectedEndType : 0);
-        mode.Header(winrt::box_value(L("settings.calendar.dateMode")));
-        scope.Header(winrt::box_value(L("settings.calendar.scope")));
-        monthDay.Header(winrt::box_value(L("settings.calendar.monthDay")));
+        modeRow.SetText(L("settings.calendar.dateMode"));
+        scopeRow.SetText(L("settings.calendar.scope"));
+        monthDayRow.SetText(L("settings.calendar.monthDay"));
         const int selectedMode = mode.SelectedIndex();
         mode.Items().Clear();
         for (const auto& key : {"settings.calendar.mode.single", "settings.calendar.mode.dates",
             "settings.calendar.mode.weekly", "settings.calendar.mode.monthly"})
-            mode.Items().Append(winrt::box_value(L(key)));
+        {
+            muxc::ComboBoxItem item;
+            item.Content(winrt::box_value(L(key)));
+            mode.Items().Append(item);
+        }
         mode.SelectedIndex(selectedMode >= 0 ? selectedMode : 0);
         const int selectedScope = scope.SelectedIndex();
         scope.Items().Clear();
@@ -235,11 +365,17 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             monthDay.Items().Append(winrt::box_value(day));
         monthDay.SelectedIndex(selectedDay >= 0 ? selectedDay : 1);
         for (std::size_t index = 0; index < weekdays.size(); ++index)
-            weekdays[index].Content(winrt::box_value(L(("settings.calendar.weekday." + std::to_string(index + 1)).c_str())));
+        {
+            const auto label = L(("settings.calendar.weekday." + std::to_string(index + 1)).c_str());
+            weekdayLabels[index].Text(label);
+            mux::Automation::AutomationProperties::SetName(weekdays[index], label);
+            mux::Automation::AutomationProperties::SetAutomationId(weekdays[index],
+                L"CalendarWeekday" + std::to_wstring(index + 1));
+        }
         editOccurrence.Content(winrt::box_value(L("settings.calendar.editOccurrence")));
-        start.Header(winrt::box_value(L("settings.calendar.start")));
-        end.Header(winrt::box_value(L("settings.calendar.end")));
-        reminder.Header(winrt::box_value(L("settings.calendar.reminder")));
+        startRow.SetText(L("settings.calendar.start"));
+        endRow.SetText(L("settings.calendar.end"));
+        reminderRow.SetText(L("settings.calendar.reminder"));
         const auto reminderSelection = reminder.SelectedIndex();
         reminder.Items().Clear();
         for (const auto& label : {L("settings.calendar.reminder.-1"),
@@ -248,8 +384,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 L("settings.calendar.reminder.60"), L("settings.calendar.reminder.1440")})
             reminder.Items().Append(winrt::box_value(label));
         reminder.SelectedIndex(reminderSelection >= 0 ? reminderSelection : 0);
-        notes.Header(winrt::box_value(L("settings.calendar.notes")));
-        allDay.Header(winrt::box_value(L("settings.calendar.allDay")));
+        notesRow.SetText(L("settings.calendar.notes"));
+        allDayRow.SetText(L("settings.calendar.allDay"));
         add.Content(winrt::box_value(L("settings.calendar.add")));
         refresh.Content(winrt::box_value(L("settings.calendar.refresh")));
         save.Content(winrt::box_value(L("settings.calendar.save")));
@@ -283,11 +419,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Refresh(bool explicitRefresh)
     {
         if (!active || closed || !actions.events || !actions.series || !hasSnapshot) return;
+        if (explicitRefresh && !CanReplaceDraft()) return;
         try
         {
             const auto result = actions.events(generation);
             const auto seriesResult = actions.series(generation);
-            if (!result || !seriesResult) { error.Text(L("settings.calendar.failed")); return; }
+            if (!result || !seriesResult) { SetError(L("settings.calendar.failed")); return; }
             bool same = result->size() == events.size() && seriesResult->size() == series.size();
             for (size_t i = 0; same && i < events.size(); ++i)
                 same = (*result)[i].id == events[i].id && (*result)[i].revision == events[i].revision;
@@ -297,11 +434,22 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             updating = true;
             events = *result; series = *seriesResult; rows.clear(); list.Items().Clear();
             int selected = -1;
+            const auto appendRow = [&](const std::string& name, const std::wstring& details) {
+                muxc::StackPanel information; information.Spacing(4);
+                muxc::TextBlock titleText, detailText;
+                titleText.Text(winrt::to_hstring(name)); titleText.TextWrapping(mux::TextWrapping::Wrap);
+                detailText.Text(details); detailText.FontSize(12); detailText.Opacity(.72);
+                detailText.TextWrapping(mux::TextWrapping::Wrap);
+                information.Children().Append(titleText); information.Children().Append(detailText);
+                muxc::ListViewItem item; item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                item.ContentTransitions(mux::Media::Animation::TransitionCollection());
+                item.Padding({16, 12, 16, 12}); item.Content(information); list.Items().Append(item);
+            };
             for (size_t i = 0; i < events.size(); ++i)
             {
                 const auto& event = events[i];
                 rows.push_back({false, i});
-                list.Items().Append(winrt::box_value(winrt::to_hstring(event.date + "  " + event.title)));
+                appendRow(event.title, std::wstring(winrt::to_hstring(event.date).c_str()));
                 if (editingSeries.id.empty() && event.id == editing.id) selected = static_cast<int>(rows.size() - 1);
             }
             for (size_t i = 0; i < series.size(); ++i)
@@ -311,16 +459,17 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 const auto summary = RuleSummary(item.rule);
                 const auto firstDate = item.rule.kind == "dates" && !item.rule.dates.empty()
                     ? item.rule.dates.front() : item.rule.startDate;
-                std::wstring label = winrt::to_hstring(firstDate + "  " + item.event.title).c_str();
+                std::wstring label = winrt::to_hstring(firstDate).c_str();
                 label += L" · " + summary;
-                list.Items().Append(winrt::box_value(label));
+                appendRow(item.event.title, label);
                 if (item.id == editingSeries.id) selected = static_cast<int>(rows.size() - 1);
             }
             list.SelectedIndex(selected); updating = false;
+            editingListIndex = selected;
             listHeading.Text(L(rows.empty() ? "settings.calendar.empty" : "settings.calendar.events"));
             if (explicitRefresh)
             {
-                error.Text(L"");
+                SetError(L"");
                 if (selected >= 0)
                 {
                     const auto row = rows[static_cast<std::size_t>(selected)];
@@ -329,39 +478,50 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 }
             }
         }
-        catch (...) { updating = false; error.Text(L("settings.calendar.failed")); }
+        catch (...) { updating = false; SetError(L("settings.calendar.failed")); }
     }
     void UpdateTimeVisibility()
     {
-        const auto visibility = allDay.IsOn() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
-        start.Visibility(visibility); end.Visibility(visibility);
+        const auto visibility = allDay.IsChecked() && allDay.IsChecked().Value() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
+        startRow.root.Visibility(visibility); endRow.root.Visibility(visibility);
+        presenter_controls::UpdateSettingsSubrows(editor, 0);
     }
+    void SetError(const std::wstring& message)
+    {
+        scheduleFeedback.Message(message);
+        scheduleFeedback.IsOpen(!message.empty());
+    }
+
     void UpdateModeVisibility()
     {
         if (updating) return;
         if (editingSeriesMode && mode.SelectedIndex() == 0) mode.SelectedIndex(1);
+        if (mode.Items().Size() > 0)
+            mode.Items().GetAt(0).as<muxc::ComboBoxItem>().IsEnabled(!editingSeriesMode);
         const int selected = editingSeriesMode || editing.id.empty() ? mode.SelectedIndex() : 0;
-        if (selected >= 2) interval.Header(winrt::box_value(L(selected == 2 ?
-            "settings.calendar.intervalWeeks" : "settings.calendar.intervalMonths")));
+        if (selected >= 2) intervalRow.SetText(L(selected == 2 ?
+            "settings.calendar.intervalWeeks" : "settings.calendar.intervalMonths"));
         const bool rule = editingSeriesMode || editing.id.empty();
-        mode.Visibility(rule ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        scope.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        date.Visibility(selected == 1 ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        multipleDates.Visibility(selected == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        interval.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        weekdayRow.Visibility(selected == 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        monthDay.Visibility(selected == 3 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        endType.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        until.Visibility(selected >= 2 && endType.SelectedIndex() == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        occurrenceDate.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        editOccurrence.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        if (selected == 1)
-            ruleSummary.Text(L("settings.calendar.selectedDates") + L" " +
-                winrt::to_hstring(multipleDates.SelectedDates().Size()));
-        else if (selected >= 2)
-            ruleSummary.Text(L(selected == 2 ? "settings.calendar.mode.weekly" : "settings.calendar.mode.monthly") +
-                L" · " + interval.Text());
-        else ruleSummary.Text(L"");
+        modeRow.root.Visibility(rule ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        scopeRow.root.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        dateRow.root.Visibility(selected == 1 ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        dateRow.SetText(L(selected >= 2 ? "settings.calendar.startDate" : "settings.calendar.date"));
+        multipleDatesRow.root.Visibility(selected == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        multipleDatesRow.SetText(L("settings.calendar.chooseDates"), L("settings.calendar.selectedDates") +
+            L" " + std::to_wstring(multipleDates.SelectedDates().Size()));
+        intervalRow.root.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        weekdaysRow.root.Visibility(selected == 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        monthDayRow.root.Visibility(selected == 3 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        endTypeRow.root.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        untilRow.root.Visibility(selected >= 2 && endType.SelectedIndex() == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        occurrenceRow.root.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        actionsRow.SetText(L(editing.id.empty() && editingSeries.id.empty() ?
+            "settings.calendar.add" : "settings.calendar.edit"));
+        remove.Content(winrt::box_value(L(editingSeriesMode ? "settings.calendar.deleteSeries" :
+            editing.seriesId.empty() ? "app.settings.delete" : "settings.calendar.deleteOccurrence")));
+        remove.Visibility(editing.id.empty() && editingSeries.id.empty() ?
+            mux::Visibility::Collapsed : mux::Visibility::Visible);
+        presenter_controls::UpdateSettingsSubrows(editor, 0);
     }
     static winrt::Windows::Foundation::DateTime PickerDate(const std::string& value)
     {
@@ -371,6 +531,20 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         local.Day(1); local.Year(info.year); local.Month(info.month); local.Day(info.day);
         local.Hour(12); local.Minute(0); local.Second(0); local.Nanosecond(0);
         return local.GetDateTime();
+    }
+    template<class Picker> static void IncludeDate(const Picker& picker,
+        const winrt::Windows::Foundation::DateTime& value)
+    {
+        // WinUI's default picker range is narrower than persisted calendars.
+        if (value < picker.MinDate()) picker.MinDate(value);
+        if (value > picker.MaxDate()) picker.MaxDate(value);
+    }
+    static void SetDate(const muxc::CalendarDatePicker& picker, const std::string& value)
+    {
+        if (value.empty()) { picker.Date(nullptr); return; }
+        const auto selected = PickerDate(value);
+        IncludeDate(picker, selected);
+        picker.Date(winrt::box_value(selected).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
     }
     static std::string DateString(const winrt::Windows::Foundation::DateTime& value)
     {
@@ -389,6 +563,37 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         return picker.SelectedTime() ? static_cast<int>(std::chrono::duration_cast<std::chrono::minutes>(picker.SelectedTime().Value()).count()) : -1;
     }
+    std::wstring DraftKey() const
+    {
+        std::wstring result;
+        const auto append = [&](std::wstring_view text) {
+            result += std::to_wstring(text.size()) + L":";
+            result.append(text);
+        };
+        append(title.Text()); append(notes.Text());
+        append(std::to_wstring(mode.SelectedIndex()));
+        append(std::to_wstring(monthDay.SelectedIndex()));
+        append(std::to_wstring(endType.SelectedIndex()));
+        append(std::to_wstring(reminder.SelectedIndex()));
+        append(interval.Text());
+        append(allDay.IsChecked() && allDay.IsChecked().Value() ? L"1" : L"0");
+        append(std::to_wstring(Minutes(start))); append(std::to_wstring(Minutes(end)));
+        for (const auto picker : {date, until})
+            append(picker.Date() ? winrt::to_hstring(DateString(picker.Date().Value())) : winrt::hstring{});
+        std::vector<std::string> selectedDates;
+        for (const auto selected : multipleDates.SelectedDates()) selectedDates.push_back(DateString(selected));
+        std::sort(selectedDates.begin(), selectedDates.end());
+        for (const auto& selected : selectedDates) append(winrt::to_hstring(selected));
+        for (const auto& checkbox : weekdays) append(checkbox.IsChecked() && checkbox.IsChecked().Value() ? L"1" : L"0");
+        return result;
+    }
+    bool CanReplaceDraft()
+    {
+        if (editorCard.Visibility() != mux::Visibility::Visible || savedDraft.empty() || DraftKey() == savedDraft)
+            return true;
+        SetError(L("settings.calendar.unsavedDraft"));
+        return false;
+    }
     void Edit(const calendar::CalendarEvent& event)
     {
         updating = true;
@@ -399,56 +604,62 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (item.id == event.seriesId) { editingSeries = item; break; }
         editingSeriesMode = false;
         confirmedRule.clear();
+        mode.Items().GetAt(0).as<muxc::ComboBoxItem>().IsEnabled(true);
         mode.SelectedIndex(0);
         scope.SelectedIndex(0);
         title.Text(winrt::to_hstring(event.title));
         const auto selectedDate = PickerDate(event.date);
         multipleDates.SelectedDates().Clear();
+        IncludeDate(multipleDates, selectedDate);
         multipleDates.SelectedDates().Append(selectedDate);
-        interval.Text(L"1");
+        multipleDates.SetDisplayDate(selectedDate);
+        interval.Value(1);
         const auto info = calendar::CalendarService::GetDateInfo(event.date);
         for (std::size_t index = 0; index < weekdays.size(); ++index)
             weekdays[index].IsChecked(info && info->weekday == static_cast<int>(index + 1));
         monthDay.SelectedIndex(info ? info->day : 1);
         endType.SelectedIndex(0);
         until.Date(nullptr);
-        if (selectedDate < date.MinDate()) date.MinDate(selectedDate);
-        if (selectedDate > date.MaxDate()) date.MaxDate(selectedDate);
-        date.Date(winrt::box_value(selectedDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        occurrenceDate.Date(winrt::box_value(PickerDate(event.occurrenceDate.empty() ? event.date : event.occurrenceDate))
-            .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        allDay.IsOn(event.allDay);
+        SetDate(date, event.date);
+        SetDate(occurrenceDate, event.occurrenceDate.empty() ? event.date : event.occurrenceDate);
+        allDay.IsChecked(event.allDay);
         start.Time(std::chrono::minutes(event.startMinutes)); end.Time(std::chrono::minutes(event.endMinutes));
         UpdateTimeVisibility();
         notes.Text(winrt::to_hstring(event.notes)); for (size_t i = 0; i < reminderValues.size(); ++i) if (reminderValues[i] == event.reminderMinutes) reminder.SelectedIndex(static_cast<int>(i));
-        remove.IsEnabled(!event.id.empty()); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
+        remove.IsEnabled(!event.id.empty()); SetError(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateModeVisibility();
+        editingListIndex = list.SelectedIndex();
+        savedDraft = DraftKey();
     }
     void EditSeries(const calendar::CalendarSeries& item)
     {
         updating = true;
+        const auto preferredOccurrence = item.id == editingSeries.id && occurrenceDate.Date()
+            ? DateString(occurrenceDate.Date().Value()) : std::string{};
         editingSeries = item;
         editingSeriesMode = true;
         editing = item.event;
         confirmedRule.clear();
         title.Text(winrt::to_hstring(item.event.title));
         notes.Text(winrt::to_hstring(item.event.notes));
-        allDay.IsOn(item.event.allDay);
+        allDay.IsChecked(item.event.allDay);
         start.Time(std::chrono::minutes(item.event.startMinutes));
         end.Time(std::chrono::minutes(item.event.endMinutes));
         for (size_t index = 0; index < reminderValues.size(); ++index)
             if (reminderValues[index] == item.event.reminderMinutes) reminder.SelectedIndex(static_cast<int>(index));
         const auto startDate = PickerDate(item.rule.startDate);
-        if (startDate < date.MinDate()) date.MinDate(startDate);
-        if (startDate > date.MaxDate()) date.MaxDate(startDate);
-        date.Date(winrt::box_value(startDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        occurrenceDate.Date(winrt::box_value(startDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
+        SetDate(date, item.rule.startDate);
+        SetDate(occurrenceDate, CalendarEditorOccurrenceDate(item, preferredOccurrence).value_or(std::string{}));
         multipleDates.SelectedDates().Clear();
         for (const auto& selected : item.rule.dates)
+            IncludeDate(multipleDates, PickerDate(selected));
+        for (const auto& selected : item.rule.dates)
             multipleDates.SelectedDates().Append(PickerDate(selected));
+        IncludeDate(multipleDates, startDate);
+        multipleDates.SetDisplayDate(startDate);
         mode.SelectedIndex(item.rule.kind == "dates" ? 1 : item.rule.kind == "weekly" ? 2 : 3);
         scope.SelectedIndex(1);
-        interval.Text(winrt::to_hstring(item.rule.interval));
+        interval.Value(item.rule.interval);
         monthDay.SelectedIndex(item.rule.monthDay);
         for (std::size_t index = 0; index < weekdays.size(); ++index)
         {
@@ -457,26 +668,29 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             weekdays[index].IsChecked(checked);
         }
         endType.SelectedIndex(item.rule.endDate.empty() ? 0 : 1);
-        if (!item.rule.endDate.empty())
-            until.Date(winrt::box_value(PickerDate(item.rule.endDate))
-                .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        remove.IsEnabled(true); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
+        SetDate(until, item.rule.endDate);
+        remove.IsEnabled(true); SetError(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateTimeVisibility(); UpdateModeVisibility();
+        editingListIndex = list.SelectedIndex();
+        savedDraft = DraftKey();
     }
-    void LoadOccurrence()
+    bool LoadOccurrence()
     {
-        if (editingSeries.id.empty() || !occurrenceDate.Date() || !actions.occurrence) return;
+        if (!CanReplaceDraft()) return false;
+        if (editingSeries.id.empty() || !occurrenceDate.Date() || !actions.occurrence)
+        { SetError(L("settings.calendar.invalidOccurrence")); return false; }
         const auto original = DateString(occurrenceDate.Date().Value());
         const auto result = actions.occurrence(generation, editingSeries.id + "/" + original);
-        if (!result) { error.Text(L("settings.calendar.invalidOccurrence")); return; }
+        if (!result) { SetError(L("settings.calendar.invalidOccurrence")); return false; }
         Edit(*result);
+        return true;
     }
     void Save()
     {
         if (!actions.mutate) return;
         auto event = editing;
         event.title = winrt::to_string(title.Text());
-        event.notes = winrt::to_string(notes.Text()); event.allDay = allDay.IsOn();
+        event.notes = winrt::to_string(notes.Text()); event.allDay = allDay.IsChecked() && allDay.IsChecked().Value();
         event.startMinutes = event.allDay ? 0 : Minutes(start);
         event.endMinutes = event.allDay ? 0 : Minutes(end);
         const int reminderIndex = reminder.SelectedIndex();
@@ -505,11 +719,9 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 rule.startDate = SelectedDate();
                 rule.endDate = endType.SelectedIndex() == 0 ? std::string{} :
                     until.Date() ? DateString(until.Date().Value()) : std::string{};
-                const auto intervalText = winrt::to_string(interval.Text());
-                const auto parsed = std::from_chars(intervalText.data(),
-                    intervalText.data() + intervalText.size(), rule.interval);
-                if (parsed.ec != std::errc{} || parsed.ptr != intervalText.data() + intervalText.size())
-                    rule.interval = 0;
+                const double intervalValue = interval.Value();
+                rule.interval = std::isfinite(intervalValue) && intervalValue >= 1 && intervalValue <= 99 &&
+                    std::floor(intervalValue) == intervalValue ? static_cast<int>(intervalValue) : 0;
                 if (selectedMode == 2)
                 {
                     for (std::size_t index = 0; index < weekdays.size(); ++index)
@@ -529,13 +741,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                         rule.endDate < rule.startDate)))) ||
                 (selectedMode == 2 && rule.weekdays.empty()) ||
                 (selectedMode == 3 && (rule.monthDay < 0 || rule.monthDay > 31));
-            if (invalid) { error.Text(L("settings.calendar.invalid")); return; }
+            if (invalid) { SetError(L("settings.calendar.invalid")); return; }
         }
         else event.date = SelectedDate();
         if (minutes < -1 ||
             event.title.empty() || !calendar::CalendarService::GetDateInfo(event.date) ||
             event.startMinutes < 0 || event.endMinutes < event.startMinutes)
-        { error.Text(L("settings.calendar.invalid")); return; }
+        { SetError(L("settings.calendar.invalid")); return; }
         event.reminderMinutes = static_cast<int>(minutes);
         if (seriesMode) candidate.event = event;
         try
@@ -554,7 +766,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (discards && confirmedRule != signature)
                 {
                     confirmedRule = std::move(signature);
-                    error.Text(L("settings.calendar.confirmExceptions"));
+                    SetError(L("settings.calendar.confirmExceptions"));
                     return;
                 }
             }
@@ -562,10 +774,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 ? actions.mutateSeries(generation, candidate, false)
                 : seriesMode ? calendar::MutationResult{false, {}, 0, "unavailable"}
                     : actions.mutate(generation, event, false);
-            if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); return; }
+            if (!result.ok) { SetError(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); return; }
             editing = {}; editingSeries = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
-        catch (...) { error.Text(L("settings.calendar.failed")); }
+        catch (...) { SetError(L("settings.calendar.failed")); }
     }
     winrt::fire_and_forget ConfirmDelete()
     {
@@ -580,7 +792,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             muxc::ContentDialog confirmation;
             dialog = confirmation;
             confirmation.XamlRoot(root.XamlRoot());
-            confirmation.Title(winrt::box_value(L("settings.calendar.confirmDelete")));
+            confirmation.Title(winrt::box_value(L(removeSeries ? "settings.calendar.deleteSeries" :
+                target.seriesId.empty() ? "settings.calendar.confirmDelete" : "settings.calendar.deleteOccurrence")));
             confirmation.Content(winrt::box_value(winrt::to_hstring(
                 (removeSeries ? targetSeries.rule.startDate : target.date) + "  " + target.title)));
             confirmation.PrimaryButtonText(L("app.settings.delete")); confirmation.CloseButtonText(L("app.settings.cancel"));
@@ -591,10 +804,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const auto result = removeSeries && actions.mutateSeries
                 ? actions.mutateSeries(session, targetSeries, true)
                 : actions.mutate(session, target, true);
-            if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); co_return; }
+            if (!result.ok) { SetError(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); co_return; }
             editing = {}; editingSeries = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
-        catch (...) { dialog = nullptr; if (!closed) error.Text(L("settings.calendar.failed")); }
+        catch (...) { dialog = nullptr; if (!closed) SetError(L("settings.calendar.failed")); }
     }
     void Deactivate()
     { active = false; timer.Stop(); if (dialog) dialog.Hide(); }

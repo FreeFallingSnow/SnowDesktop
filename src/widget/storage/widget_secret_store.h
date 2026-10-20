@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -33,6 +35,11 @@ public:
         std::string_view settingKey, std::string_view reference) const;
     std::string Reference(std::string_view packageId,
         std::string_view instanceId, std::string_view settingKey) const;
+    std::optional<std::uint32_t> Length(std::string_view packageId,
+        std::string_view instanceId, std::string_view settingKey) const;
+    bool ReadForEditing(std::string_view packageId,
+        std::string_view instanceId, std::string_view settingKey,
+        std::string& plaintext, std::string& error);
     bool RemoveSetting(std::string_view packageId,
         std::string_view instanceId, std::string_view settingKey,
         bool& removed, std::string& error);
@@ -49,10 +56,15 @@ private:
         std::string instanceId;
         std::string settingKey;
         std::string ciphertext;
+        std::optional<std::uint32_t> length;
     };
 
     bool Save(const std::unordered_map<std::string, Record>& records,
         std::string& error) const;
+    void ReadLengths(std::string_view primary,
+        std::unordered_map<std::string, Record>& records) const noexcept;
+    void SaveLengths(std::string_view primary,
+        const std::unordered_map<std::string, Record>& records) const noexcept;
     static std::string EntropyFor(const Record& record);
     static bool Protect(const Record& record, std::string_view plaintext,
         std::string& ciphertext, std::string& error);
@@ -63,5 +75,6 @@ private:
 
     std::filesystem::path path_;
     std::unordered_map<std::string, Record> records_;
+    bool loadFailed_ = false;
 };
 }

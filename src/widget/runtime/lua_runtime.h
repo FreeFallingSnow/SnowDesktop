@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 extern "C" {
 #include <lua.h>
@@ -60,4 +61,11 @@ private:
 int ProtectedCall(lua_State* state, int arguments, int results,
     std::int64_t instructionBudget = kDefaultInstructionBudget,
     std::chrono::milliseconds timeBudget = kDefaultTimeBudget);
+
+// Protects host-side Lua API construction as well as callbacks. The light C
+// function receives context at index 1 and, when requested, a copy of the
+// caller's argument at index 2. Failure restores the original stack height;
+// success appends exactly results values. No allocating Lua API precedes pcall.
+bool ProtectedHostCall(lua_State* state, lua_CFunction function, void* context,
+    int results, std::string& error, int argumentIndex = 0);
 }

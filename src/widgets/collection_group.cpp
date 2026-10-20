@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "core/drop_model.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
 #include "navigation/search_match.h"
 #include "widget_chrome_rules.h"
@@ -229,16 +230,16 @@ snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = CollectionGroupContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -604,6 +605,12 @@ int CollectionGroup::GetItemWidth() const
         const_cast<CollectionGroup*>(this)).horizontal.cell;
 }
 
+int CollectionGroup::GetMemberColumnCount() const
+{
+    return CollectionGroupLocalLayout(
+        const_cast<CollectionGroup*>(this)).horizontal.count;
+}
+
 bool CollectionGroup::SingleColumn() const
 {
     return data_ && data_->listMode;
@@ -638,6 +645,7 @@ Item* CollectionGroup::GetSlotItem(size_t idx) const
 std::vector<std::unique_ptr<Slot>>
 CollectionGroup::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
@@ -870,6 +878,7 @@ WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base =
         WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None) return base;
     RECT search = GetSearchBoxRect();
     if (!IsRectEmptyRect(search) &&
@@ -894,6 +903,7 @@ WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
 HitRegion CollectionGroup::HitTestDrag(
     POINT pt, Slot*& outSlot)
 {
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     outSlot = nullptr;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))
@@ -914,8 +924,9 @@ HitRegion CollectionGroup::HitTestDrag(
     }
 
     if (app_ &&
-        app_->dragSession_.SourceList().
-            hasCollectionGroupEntries)
+        (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup)))
         return HitRegion::Empty;
 
     return WidgetContainer::HitTestDrag(pt, outSlot);
@@ -927,9 +938,11 @@ void CollectionGroup::DrawDropPreview(
 {
     if (!ctx) return;
     if (app_ &&
-        app_->dragSession_.SourceList().
-            hasCollectionGroupEntries &&
-        region == HitRegion::Empty)
+        (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
+                DesktopWidgetType::CollectionGroup, DropActionToMods(app_->dragSession_.Action()))) &&
+        (region == HitRegion::Empty ||
+            (!slot && app_->dragSession_.SourceList().HasDesktopWidgetIcons())))
     {
         RECT target = GetFrameRect();
         const int padding = Cu(3.0f);
@@ -954,6 +967,9 @@ std::wstring CollectionGroup::GetDragHint(
         region == HitRegion::Blocked ||
         sourceItems.empty())
         return L"";
+    if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+            app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup, mods))
+        return _LW("widget.collection_group.add_hint");
     const bool allCollections = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -976,6 +992,11 @@ void CollectionGroup::OnItemsDropped(
 {
     if (!app_ || !data_) return;
     const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
+    if (sourceListForMembership.HasDesktopWidgetIcons())
+    {
+        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
+        return;
+    }
     if (sourceListForMembership.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
     {
         const size_t insertion = CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()
@@ -1012,7 +1033,23 @@ void CollectionGroup::OnItemsDropped(
             preview.landings[i].insertIndex =
                 preview.insertIndex + i;
     }
-    app_->ExecuteDropPipeline(sourceList, preview);
+    DesktopApp* app = app_;
+    const std::wstring groupId = data_->id;
+    const std::wstring hitChild = !allCollections ? CategoryIdAtPoint(app->dragSession_.CurrentPoint()) : L"";
+    const bool activate = !hitChild.empty() && !preview.Empty() && preview.targetWidget && preview.targetWidget->id == hitChild;
+    if (!app->ExecuteDropPipeline(sourceList, preview) || !activate) return;
+    // Submission may rebuild this view. Resolve only stable IDs afterwards.
+    const size_t groupIndex = app->FindWidgetIndexById(groupId);
+    if (groupIndex >= app->widgets_.size()) return;
+    auto& group = app->widgets_[groupIndex];
+    if (group.type != DesktopWidgetType::CollectionGroup ||
+        std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), hitChild) == group.childWidgetIds.end()) return;
+    group.activeCategoryId = hitChild;
+    for (const auto& container : app->containers_)
+        if (auto* current = dynamic_cast<CollectionGroup*>(container.get()); current && current->GetWidgetData() == &group)
+            current->InvalidateFilterCache();
+    app->SaveLayoutSlots();
+    InvalidateRect(app->hwnd_, nullptr, FALSE);
 }
 
 void CollectionGroup::DrawContent(
@@ -1161,7 +1198,7 @@ void CollectionGroup::DrawContent(
                     item->selected, item->iconIsMediaThumbnail,
                     demoIdentity, activeCollection,
                     { item->typeName, item->modifiedTime,
-                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item));
+                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item), item->layoutKey);
             }
         }
         else if (privacyActive)

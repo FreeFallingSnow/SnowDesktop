@@ -26,8 +26,55 @@ void Expect(bool condition, const char* message)
     std::exit(1);
 }
 
+void TestSmoothCornerGeometry()
+{
+    using namespace snowdesktop::smooth_corners;
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    Expect(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())),
+        "create smooth corner geometry factory");
+    const auto frame = D2D1::RectF(0, 0, 480, 320);
+    const auto path = Geometry(factory.Get(), frame, 80);
+    Expect(static_cast<bool>(path), "smooth panel geometry is available");
+    const auto contains = [&](ID2D1Geometry* geometry, float x, float y) {
+        BOOL inside = FALSE;
+        Expect(SUCCEEDED(geometry->FillContainsPoint({x, y}, nullptr, .01f, &inside)),
+            "query actual panel geometry");
+        return inside != FALSE;
+    };
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> circular;
+    Expect(SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, 80, 80), &circular)),
+        "create circular negative control");
+    Expect(contains(circular.Get(), 70, 1) && !contains(path.Get(), 70, 1),
+        "continuous corner ramps must replace the abrupt circular tangent");
+    const float equivalentCut = 80.f * (1.f - std::sqrt(.5f));
+    Expect(!contains(path.Get(), equivalentCut-.2f, equivalentCut-.2f) &&
+        contains(path.Get(), equivalentCut+.2f, equivalentCut+.2f),
+        "existing radius values retain the exact 45-degree circular cut");
+    const Distance distance(480, 320, 80);
+    for (const auto point : {D2D1::Point2F(70, 1), D2D1::Point2F(24, 24),
+            D2D1::Point2F(1, 160), D2D1::Point2F(479, 160), D2D1::Point2F(460, 310)})
+        Expect((distance.At(point.x, point.y) <= 0) == contains(path.Get(), point.x, point.y),
+            "rim distances and real content clipping agree on inside and outside");
+    Expect(std::abs(distance.At(equivalentCut, equivalentCut)) < .06f,
+        "glass rim stays on the equivalent 45-degree contour");
+    const Corner corner(80, 160);
+    const float handle = std::hypot(corner.c, corner.d);
+    const float curvature = 2.f*corner.b*corner.d/(3.f*handle*handle*handle);
+    Expect(std::abs(curvature - 1.f/80.f) < .00001f && corner.extent > 80.f,
+        "ramp curvature joins the middle arc continuously while extending the straight-edge transition");
+    for (const auto bounds : {D2D1::RectF(0, 0, 32, 32), D2D1::RectF(13, 7, 613, 47)})
+        for (const float radius : {0.f, 12.f, 28.f, 1000.f})
+        {
+            const auto boundedGeometry = Geometry(factory.Get(), bounds, radius);
+            const float x = (bounds.left+bounds.right)*.5f, y = (bounds.top+bounds.bottom)*.5f;
+            Expect(boundedGeometry && contains(boundedGeometry.Get(), x, y) && !contains(boundedGeometry.Get(), bounds.left-1, y),
+                "square, thin Dock, zero radius and oversized radii remain bounded and filled");
+        }
+}
+
 void TestWidgetClipFactoryReplacement()
 {
+    TestSmoothCornerGeometry();
     // Issue #11: the real widget cache survives recovery. Replacing its factory
     // with unchanged bounds used to return geometry from the previous factory.
     using Microsoft::WRL::ComPtr;
@@ -67,7 +114,7 @@ void TestWidgetClipFactoryReplacement()
             }
             return result;
         };
-        ComPtr<ID2D1RoundedRectangleGeometry> cached;
+        ComPtr<ID2D1Geometry> cached;
         RECT cachedFrame{};
         float cachedRadius = 0;
         const RECT frame{8, 8, 56, 56};
@@ -218,6 +265,66 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    {
+        using namespace snowdesktop::component_preview;
+        for (UINT dpi : {96u, 144u, 192u})
+            for (const auto appearance : {snowdesktop::modern_menu::Appearance::SystemLightBlur,
+                    snowdesktop::modern_menu::Appearance::SystemDarkBlur})
+            {
+                Window window;
+                Model model;
+                model.title = L"Button surface regression";
+                Card card;
+                card.previewWidth = 120;
+                card.previewHeight = 80;
+                card.cacheKey = L"button-opacity-regression";
+                card.applySettings.kind = ApplyKind::FileCategories;
+                card.options = {{OptionSetting::ListMode, L"Layout", L"Grid", L"List"}};
+                card.render = [](int width, int height, UINT, const StagePlacement&, const ApplySettings&, bool) {
+                    return SolidBitmap(width, height, 0xff204080u);
+                };
+                model.cards.push_back(std::move(card));
+                bool observed = false;
+                window.SetPaintObserverForTesting([&](const std::uint32_t* pixels, int width, int height) {
+                    const RECT button = window.OptionBoundsForTesting(OptionSetting::ListMode, true);
+                    Expect(!IsRectEmpty(&button) && button.right <= width && button.bottom <= height,
+                        "the production preview exposes the unselected option button");
+                    const int x = button.left + MulDiv(8, static_cast<int>(dpi), 96);
+                    const int y = (button.top + button.bottom) / 2;
+                    Expect((pixels[static_cast<size_t>(y) * width + x] >> 24) == 246,
+                        "real unselected button fill cannot become translucent panel material");
+                    bool smoothEdge = false;
+                    for (int row = button.top; row < button.top + (button.bottom - button.top) / 3; ++row)
+                        for (int column = button.left; column < button.left + (button.right - button.left) / 3; ++column)
+                        {
+                            const auto alpha = pixels[static_cast<size_t>(row) * width + column] >> 24;
+                            if (alpha > 76 && alpha < 246) smoothEdge = true;
+                        }
+                    Expect(smoothEdge, "real button corner opacity transitions smoothly into the blurred panel at every DPI");
+                    observed = true;
+                });
+                const RECT anchor{40, 40, 140, 80};
+                Expect(window.Show(model, anchor, nullptr, dpi, false, {}, {}, appearance) && observed,
+                    "the opacity regression executes the production layered-window paint path");
+                window.Close();
+            }
+    }
+    {
+        using snowdesktop::component_preview::detail::ComposeSurfacePixel;
+        // Same RGB inside and outside a button must retain different surface opacity.
+        const COLORREF background = RGB(240, 240, 240);
+        constexpr std::uint32_t pixel = 0x00f0f0f0;
+        Expect((ComposeSurfacePixel(pixel, background, 1.0f, 70, 246, 1.0f) >> 24) == 246,
+            "button interiors remain opaque even when their fill matches the panel background");
+        Expect((ComposeSurfacePixel(pixel, background, 0.0f, 70, 246, 1.0f) >> 24) == 70,
+            "panel material outside controls retains its transparency");
+        Expect((ComposeSurfacePixel(pixel, background, 0.5f, 70, 246, 1.0f) >> 24) == 158,
+            "antialiased button edges interpolate surface opacity instead of jumping at RGB equality");
+        Expect(ComposeSurfacePixel(0x00aaaaaau, background, 0.5f, 70, 246, 1.0f) == 0x9e515151u,
+            "a half-covered gray outline uses the two surfaces' premultiplied colors without a pale halo");
+        Expect(ComposeSurfacePixel(pixel, background, 1.0f, 70, 246, 0.0f) == 0,
+            "the outer panel clip clears control surfaces outside its rounded outline");
+    }
     TestRoundedCoverageEquivalence();
     TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();

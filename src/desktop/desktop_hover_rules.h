@@ -42,6 +42,27 @@ constexpr bool ShouldClearRejectedDesktopHover(
     return hoverPresent && !(pointerOnDockSurface && pointerInDockLayer);
 }
 
+inline void ObserveRetainedDockLeavePointer(
+    RetainedDockLeaveTracking& tracking, int screenX, int screenY)
+{
+    if (tracking.pointerKnown && tracking.screenX == screenX &&
+        tracking.screenY == screenY) return;
+    tracking = {screenX, screenY, true, false, false};
+}
+
+inline bool TryRearmRetainedDockLeave(
+    RetainedDockLeaveTracking& tracking, bool content, int screenX, int screenY)
+{
+    ObserveRetainedDockLeavePointer(tracking, screenX, screenY);
+    // User32 can immediately post another leave when native tracking disagrees
+    // with WindowFromPoint at a region edge. Preserve hover, but permit only
+    // one rearm per surface until the actual screen position changes.
+    bool& rearmed = content ? tracking.contentRearmed : tracking.desktopRearmed;
+    if (rearmed) return false;
+    rearmed = true;
+    return true;
+}
+
 template<typename RearmTracking>
 bool RetainPairedSurfaceMouseLeave(
     bool pointerOnContentWindow,

@@ -104,7 +104,8 @@
 ---@field dependsOn? string Shorthand for enabledWhen={key=dependsOn,operator='truthy'}.
 ---@field showWhen? SnowSettingCondition Hide the field while the condition is false without clearing its value.
 ---@field enabledWhen? SnowSettingCondition Disable the field while the condition is false without clearing its value.
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'duration'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field unit? 'seconds'|'minutes'|'hours' duration storage unit; defaults to seconds. Numeric values and min/max/step use this unit. UI shows whole hour/minute/second parts at the declared precision, up to 99:59:59. Requires settings.duration.
 ---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password, filesystem-handle, and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
 ---@field binding? string Required by appReference, desktopItemReference, fileReference, and folderReference; names one uniquely used replacePolicy='allow' manifest binding accepting only the matching reference kind.
@@ -113,7 +114,7 @@
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
----@field step? number Positive range increment; defaults to 1.
+---@field step? number Positive numeric editor increment; defaults to 0.1, or 1 for duration. Duration requires an integer step and rejects unaligned values relative to min. Integer controls use whole-number increments; declare 1 explicitly for integer range increments.
 ---@field options? string[] Stable select or multiSelect values; multiSelect accepts 1-64 unique values.
 ---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
 ---@field extensions? string[] Up to 16 safe file extensions for fileHandle; leading dots are optional. Not accepted by folderHandle.
@@ -1316,9 +1317,12 @@ function animation.cancelFrame(id) end
 ---@field whenHidden? SnowDataHiddenPolicy
 
 ---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions
----@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, mutually exclusive with fromDate/toDate.
+---@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, excludes range and query pagination options.
 ---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
 ---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
+---@field query? string Literal title substring, at most 512 UTF-8 bytes without NUL; requires data.calendar.events.query and excludes eventId.
+---@field offset? integer Nonnegative filtered-result offset, default 0; requires data.calendar.events.query and excludes eventId.
+---@field limit? integer Filtered page size 1..512, default 512; requires data.calendar.events.query and excludes eventId.
 
 ---@class SnowFilesystemWatchSubscribeOptions: SnowDataSubscribeOptions
 ---@field handle string Opaque folder handle returned by filesystem.pickFolder.
@@ -1658,6 +1662,9 @@ function animation.cancelFrame(id) end
 ---@field toDate string Inclusive range end.
 ---@field revision integer
 ---@field truncated boolean
+---@field total? integer Total matching events, present for query pagination.
+---@field hasMore? boolean Whether another filtered page exists.
+---@field nextOffset? integer Offset of the next filtered page.
 
 ---@class SnowCalendarSelectedDateDataValue
 ---@field date string YYYY-MM-DD.
@@ -2061,13 +2068,14 @@ function data.subscribe(topic, options) end
 ---@field source 'satellite'|'wifi'|'cellular'|'ip'|'default'|'obfuscated'|'unknown' System source; never assume GPS accuracy.
 
 ---@class SnowNetworkRequestArguments
+---@field retryDirect? boolean Opt in to one direct retry after transport failure or HTTP 4xx/5xx; bodyless GET/HEAD only. Requires task.network.retryDirect; defaults to false.
 ---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
 ---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
 ---@field headers? table<string, string|SnowNetworkSecretDescriptor> Up to 32 single-line headers and 32 KiB after host injection.
 ---@field body? string|SnowNetworkSecretDescriptor Raw bytes up to 64 KiB; a descriptor injects one host-managed secret segment.
 ---@field timeoutMs? integer 1000 through 30000; defaults to 15000.
 ---@field cacheSeconds? integer 0 through 86400; defaults to 0.
----@field maxBytes? integer 4096 through 1048576; defaults to 524288.
+---@field maxBytes? integer 4096 through 4194304; defaults to 524288. Values above 1048576 require task.network.largeResponse; omit or cap at 1048576 on older hosts.
 
 ---@class SnowNetworkSecretDescriptor
 ---@field secretRef string Opaque reference returned by storage.get for a declared password setting in this instance.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/json_value.h"
+#include "icon_library.h"
 #include "theme/panel_gradient.h"
 #include "theme/edge_light_codec.h"
 
@@ -19,7 +20,7 @@ namespace snowdesktop
 // belong here. Span remains the user's intent when a monitor temporarily shrinks.
 struct LargeIconConfig
 {
-    int version = 2;
+    int version = 3;
     int columns = 1, rows = 1;
     int shape = 0; // rounded rectangle, rounded square, circle, flag, diamond, hexagon
     int flagDirection = 0; // swallowtail notch: right, left, up, down
@@ -35,6 +36,7 @@ struct LargeIconConfig
     int fit = 1; // Fill layer only: 0 contain, 1 cover. Foreground always contains.
     double focusX = .5, focusY = .5;
     std::string image;
+    std::string imageAssetId;
     std::string cachedCover;
     bool autoColor = true;
     std::uint32_t manualColor = 0x505866;
@@ -75,6 +77,7 @@ struct LargeIconConfig
     PanelGradient defaultGradient;
     int foregroundContent = 0; // 0 original, 1 imported
     std::string foregroundImage;
+    std::string foregroundImageAssetId;
     double iconX = .5, iconY = .5;
     int material = 0, componentTheme = 0; // plain/glass/acrylic; light/dark text
     double blurRadius = 24;
@@ -101,7 +104,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows); LI_FIELD(shape); LI_FIELD(flagDirection); LI_FIELD(regularHexagon);
     LI_FIELD(followComponentRadius); LI_FIELD(showOnHoverOnly); LI_FIELD(keepWhenDesktopHidden);
     LI_FIELD(contentScale); LI_FIELD(fillScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
-    LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);
+    LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(imageAssetId); LI_FIELD(cachedCover);
     LI_FIELD(autoColor); LI_FIELD(manualColor); LI_FIELD(colorMix);
     LI_FIELD(opacity); LI_FIELD(hoverOpacity); LI_FIELD(border);
     LI_FIELD(hoverOpacityLinked);
@@ -114,7 +117,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(steamOrientation); LI_FIELD(localOnly);
     LI_FIELD(backgroundStyle); LI_FIELD(smartFill); LI_FIELD(themeColor); LI_FIELD(themeGradient);
     LI_FIELD(defaultBackground); LI_FIELD(defaultSolidColor); LI_FIELD(defaultSolidOpacity); LI_FIELD(defaultGradient);
-    LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
+    LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage); LI_FIELD(foregroundImageAssetId);
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
     LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(edgeLight); LI_FIELD(gradient); LI_FIELD(gradientOpacity);
     LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(autoTitleDirection); LI_FIELD(titleWeight);
@@ -140,7 +143,10 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
     const bool style = c.backgroundStyle == -5 || c.backgroundStyle == -4 || c.backgroundStyle == -3 || c.backgroundStyle == -2 || c.backgroundStyle == -1 ||
         c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
         c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11 || c.backgroundStyle == 13;
-    return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
+    return (c.version == 1 || c.version == 2 || c.version == 3) &&
+        (c.imageAssetId.empty() || (c.version >= 3 && IsIconAssetId(c.imageAssetId))) &&
+        (c.foregroundImageAssetId.empty() || (c.version >= 3 && IsIconAssetId(c.foregroundImageAssetId))) &&
+        c.columns >= 1 && c.columns <= 1024 &&
         c.rows >= 1 && c.rows <= 1024 && c.shape >= 0 && c.shape <= 5 && c.flagDirection >= 0 && c.flagDirection <= 3 &&
         range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
         range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
@@ -172,7 +178,10 @@ inline bool IsLargeIconFill(const LargeIconConfig& config) { return config.backg
 inline int LargeIconActiveContent(const LargeIconConfig& config)
 { return IsLargeIconFill(config) ? config.content : config.foregroundContent; }
 inline const std::string& LargeIconActiveImage(const LargeIconConfig& config)
-{ return IsLargeIconFill(config) ? config.image : config.foregroundImage; }
+{
+    if (IsLargeIconFill(config)) return config.imageAssetId.empty() ? config.image : config.imageAssetId;
+    return config.foregroundImageAssetId.empty() ? config.foregroundImage : config.foregroundImageAssetId;
+}
 
 inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& result)
 {

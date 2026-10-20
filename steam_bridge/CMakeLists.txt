@@ -32,6 +32,7 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/workshop_localization.cpp
     src/workshop_project.cpp
     src/theme_workshop_publish.cpp
+    src/icon_pack_workshop_publish.cpp
     "${CMAKE_SOURCE_DIR}/src/theme/theme_library.cpp"
     "${CMAKE_SOURCE_DIR}/src/theme/personalization.cpp"
     "${CMAKE_SOURCE_DIR}/src/data/atomic_file.cpp")

@@ -33,10 +33,11 @@ constexpr bool SourceLongEdgeCoversTarget(
         SourcePixelsForTarget(targetPixels);
 }
 
-/** Content/media thumbnails preserve their preview instead of receiving an icon plate. */
-constexpr bool ShouldBeautify(bool beautificationEnabled, bool mediaThumbnail)
+/** Content thumbnails opt into the global icon style separately from ordinary icons. */
+constexpr bool ShouldBeautify(bool beautificationEnabled, bool mediaThumbnail,
+    bool beautifyFileThumbnails = false)
 {
-    return beautificationEnabled && !mediaThumbnail;
+    return beautificationEnabled && (!mediaThumbnail || beautifyFileThumbnails);
 }
 
 /** Full-quality loads always request folder previews; application files stay icon-only. */
@@ -46,7 +47,7 @@ constexpr bool ShouldRequestShellThumbnail(
     return fullQualityPhase && (shellFolder || !applicationLike);
 }
 
-/** Folder previews remain beautifiable; only content/media thumbnails bypass beautification. */
+/** Distinguish file thumbnails from folder previews for the global beautification opt-in. */
 constexpr bool IsMediaThumbnail(bool shellThumbnail, bool shellFolder)
 {
     return shellThumbnail && !shellFolder;
@@ -58,8 +59,8 @@ struct FittedSize
     int height = 0;
 };
 
-/** Fit a bitmap inside a destination box without changing its aspect ratio or upscaling it. */
-inline FittedSize FitWithoutUpscaling(
+/** Honor the requested icon size while preserving the bitmap's aspect ratio. */
+inline FittedSize FitToBounds(
     int sourceWidth, int sourceHeight,
     int destinationWidth, int destinationHeight)
 {
@@ -67,12 +68,11 @@ inline FittedSize FitWithoutUpscaling(
         destinationWidth <= 0 || destinationHeight <= 0)
         return {};
 
-    const double scale = std::min({
-        1.0,
+    const double scale = std::min(
         static_cast<double>(destinationWidth) /
             static_cast<double>(sourceWidth),
         static_cast<double>(destinationHeight) /
-            static_cast<double>(sourceHeight) });
+            static_cast<double>(sourceHeight));
     return {
         std::max(1, static_cast<int>(std::lround(sourceWidth * scale))),
         std::max(1, static_cast<int>(std::lround(sourceHeight * scale)))

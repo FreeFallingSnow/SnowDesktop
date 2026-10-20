@@ -2,6 +2,9 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
+#include "widgets/widget_group_drop.h"
+#include "layout/widget_displacement.h"
 
 #include <commctrl.h>
 #include <objbase.h>
@@ -331,22 +334,7 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
-    const int pageMaxColumns = std::max(1, availableColumns);
-    const int pageMaxRows = std::max(1, availableRows);
-    const int maxColumns = widget.maxGridSpan.columns > 0
-        ? std::min(pageMaxColumns, widget.maxGridSpan.columns)
-        : pageMaxColumns;
-    const int maxRows = widget.maxGridSpan.rows > 0
-        ? std::min(pageMaxRows, widget.maxGridSpan.rows)
-        : pageMaxRows;
-    const int minColumns = std::min(
-        maxColumns, std::max(1, widget.minGridSpan.columns));
-    const int minRows = std::min(
-        maxRows, std::max(1, widget.minGridSpan.rows));
-
-    span.columns = std::clamp(span.columns, minColumns, maxColumns);
-    span.rows = std::clamp(span.rows, minRows, maxRows);
-    return span;
+    return snowdesktop::widget_displacement::ClampSpan(widget, span, availableColumns, availableRows);
 }
 
 /**
@@ -436,11 +424,11 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 /**
  * @brief 按组件预览页所表达的尺寸与显示模式创建组件。
  */
-void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
+std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     const snowdesktop::component_preview::ApplySettings& settings)
 {
     using snowdesktop::component_preview::ApplyKind;
-    if (settings.kind == ApplyKind::None) return;
+    if (settings.kind == ApplyKind::None) return {};
 
     lastContextMenuScreenPoint_ = screenPoint;
     const GridSpan span{
@@ -451,6 +439,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     widget.id = MakeNewWidgetId();
     widget.listMode = settings.listMode;
     widget.scrollContainerMode = settings.scrollContainerMode;
+    widget.singleCellIconMode = settings.singleCellIconMode;
     widget.largeFolderTitleless = settings.largeFolderTitleless;
     widget.dateHeaders = settings.dateHeaders;
     widget.showFileCategories = settings.showFileCategories;
@@ -507,7 +496,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
             dialog->Release();
         }
         CoUninitialize();
-        if (folderPath.empty()) return;
+        if (folderPath.empty()) return {};
 
         std::wstring title = folderPath;
         if (!title.empty() && title.back() == L'\\') title.pop_back();
@@ -521,7 +510,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         break;
     }
     case ApplyKind::LuaScript:
-        if (settings.packageId.empty()) return;
+        if (settings.packageId.empty()) return {};
         widget.type = DesktopWidgetType::LuaScript;
         widget.packageId = settings.packageId;
         CaptureWidgetPackageSource(widget);
@@ -538,7 +527,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         }
         break;
     default:
-        return;
+        return {};
     }
 
     const bool enumerateFolder =
@@ -548,7 +537,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     // LayoutItems may remove an empty-page Guide during this insertion.
     // Confirm the created instance rather than comparing vector sizes.
     const size_t createdIndex = FindWidgetIndexById(createdId);
-    if (createdIndex >= widgets_.size()) return;
+    if (createdIndex >= widgets_.size()) return {};
     if (enumerateFolder)
     {
         EnumerateFolderMappingEntries(widgets_[createdIndex]);
@@ -556,6 +545,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     }
     ClearWidgetAddedHint();
     ShowWidgetAddedHint();
+    return createdId;
 }
 
 /**
@@ -687,6 +677,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     group.showTitle = true;
     group.gridCell = widgets_[targetIndex].gridCell;
     group.gridSpan = widgets_[targetIndex].gridSpan;
+    group.singleCellIconMode = widgets_[targetIndex].singleCellIconMode;
     group.keepWhenDesktopHidden = widgets_[targetIndex].keepWhenDesktopHidden;
     ConfigureWidgetGridLimits(group);
     if (action != pair::Action::Merge)
@@ -1019,6 +1010,55 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
         MoveWidgetSourcesToGroup(sourceItems, groupIndex, insertIndex);
 }
 
+bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
+    const DragSourceList& source, Slot* targetSlot, HitRegion region, int mods)
+{
+    if (!group || !group->GetWidgetData() || !IsGroupWidgetType(group->GetWidgetData()->type)) return false;
+    const auto* target = group->GetWidgetData();
+    const std::wstring groupId = target->id;
+    const auto groupType = target->type;
+    size_t insertIndex = group->GetDropInsertIndex(targetSlot, region);
+    const bool overTab = groupType == DesktopWidgetType::CollectionGroup
+        ? !static_cast<CollectionGroup*>(group)->CategoryIdAtPoint(dragSession_.CurrentPoint()).empty()
+        : !static_cast<FileGroup*>(group)->SourceIdAtPoint(dragSession_.CurrentPoint()).empty();
+    if (!overTab) insertIndex = target->childWidgetIds.size();
+    const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source,
+        snowdesktop::slot_contract::SurfaceForWidgetType(groupType), mods);
+    std::vector<std::wstring> movingIds;
+    for (const auto& entry : eligible.entries)
+    {
+        if (!entry.desktopWidgetIcon) continue;
+        const size_t index = FindWidgetIndexById(entry.widgetId);
+        if (index >= widgets_.size() || widgets_[index].type != *entry.widgetType ||
+            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index]) || IsGroupedWidget(widgets_[index]) ||
+            widgets_[index].id == groupId) continue;
+        if (std::find(movingIds.begin(), movingIds.end(), entry.widgetId) == movingIds.end())
+            movingIds.push_back(entry.widgetId);
+    }
+    const auto files = source.WithoutDesktopWidgetIcons();
+    const auto filePreview = BuildDropPreviewList(files, group,
+        nullptr, HitRegion::Empty, mods, dragSession_.CurrentPoint());
+    if (movingIds.empty()) return !files.Empty() && ExecuteDropPipeline(files, filePreview);
+
+    // File submission can rebuild containers or create an empty group's first
+    // source. Retain IDs only across that boundary; never reuse Item/Slot pointers.
+    EndDragSession();
+    if (!files.Empty() && !filePreview.Empty() && !ExecuteDropPipeline(files, filePreview)) return false;
+    const size_t targetIndex = FindWidgetIndexById(groupId);
+    if (targetIndex >= widgets_.size() || widgets_[targetIndex].type != groupType) return false;
+    std::vector<std::unique_ptr<Widget>> wrappers;
+    std::vector<Item*> members;
+    for (const auto& id : movingIds)
+    {
+        const size_t index = FindWidgetIndexById(id);
+        if (index >= widgets_.size() || IsGroupedWidget(widgets_[index]) ||
+            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index])) return false;
+        wrappers.push_back(std::make_unique<Widget>(&widgets_[index], this));
+        members.push_back(wrappers.back().get());
+    }
+    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex);
+}
+
 bool DesktopApp::MoveWidgetSourcesToGroup(
     const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex)
 {
@@ -1029,9 +1069,7 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
 
     const auto groupType = widgets_[groupIndex].type;
     const auto acceptsChild = [groupType](DesktopWidgetType type) {
-        return groupType == DesktopWidgetType::CollectionGroup
-            ? type == DesktopWidgetType::Collection
-            : type == DesktopWidgetType::FolderMapping || type == DesktopWidgetType::FileCategories;
+        return snowdesktop::widget_group_drop::AcceptsChild(groupType, type);
     };
 
     std::vector<std::wstring> movingIds;
@@ -1086,83 +1124,8 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
     if (movingIds.empty())
         return false;
 
-    DesktopWidget& target =
-        widgets_[groupIndex];
-    const std::wstring previousActive =
-        target.activeCategoryId;
-    insertIndex = std::min(
-        insertIndex,
-        target.childWidgetIds.size());
-    size_t removedBefore = 0;
-    for (const auto& id : movingIds)
-    {
-        const auto existing =
-            std::find(
-                target.childWidgetIds.begin(),
-                target.childWidgetIds.end(),
-                id);
-        if (existing !=
-                target.childWidgetIds.end() &&
-            static_cast<size_t>(
-                std::distance(
-                    target.childWidgetIds.begin(),
-                    existing)) < insertIndex)
-            ++removedBefore;
-    }
-
-    for (auto& group : widgets_)
-    {
-        if (group.type != groupType)
-            continue;
-        for (const auto& id : movingIds)
-            std::erase(
-                group.childWidgetIds, id);
-        group.activeCategoryId =
-            snowdesktop::
-                collection_group_rules::
-                    ResolveActiveItem(
-                        group.childWidgetIds,
-                        group.activeCategoryId);
-    }
-
-    const size_t insertAt =
-        std::min(
-            insertIndex > removedBefore
-                ? insertIndex - removedBefore
-                : 0,
-            target.childWidgetIds.size());
-    target.childWidgetIds.insert(
-        target.childWidgetIds.begin() +
-            static_cast<std::ptrdiff_t>(
-                insertAt),
-        movingIds.begin(), movingIds.end());
-    target.activeCategoryId =
-        snowdesktop::
-            collection_group_rules::
-                ResolveActiveItem(
-                    target.childWidgetIds,
-                    previousActive);
-
-    const std::unordered_set<std::wstring>
-        movingSet(
-            movingIds.begin(), movingIds.end());
-    std::erase_if(
-        dockEntries_,
-        [&](const DockEntry& entry) {
-            return (entry.type == DockEntryType::Collection ||
-                    entry.type == DockEntryType::FolderMapping ||
-                    entry.type == DockEntryType::DesktopFiles) &&
-                movingSet.contains(
-                    entry.reference);
-        });
-    for (const auto& id : movingIds)
-    {
-        const size_t childIndex =
-            FindWidgetIndexById(id);
-        if (childIndex < widgets_.size())
-            widgets_[childIndex].
-                selected = false;
-    }
+    if (!snowdesktop::widget_group_drop::Apply(widgets_, dockEntries_, groupIndex, movingIds, insertIndex))
+        return false;
 
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
@@ -1178,59 +1141,14 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
 bool DesktopApp::ReleaseWidgetFromFileGroup(
     const std::wstring& childId, GridCell preferredCell)
 {
-    const size_t childIndex = FindWidgetIndexById(childId);
-    const size_t groupIndex = FindFileGroupIndexForChild(childId);
-    if (childIndex >= widgets_.size() ||
-        groupIndex >= widgets_.size())
-        return false;
-    const DesktopWidgetType childType = widgets_[childIndex].type;
-    if (childType != DesktopWidgetType::FileCategories &&
-        childType != DesktopWidgetType::FolderMapping)
-        return false;
-
-    DesktopWidget& group = widgets_[groupIndex];
-    auto membership = std::find(
-        group.childWidgetIds.begin(),
-        group.childWidgetIds.end(), childId);
-    const size_t membershipIndex =
-        membership == group.childWidgetIds.end()
-            ? group.childWidgetIds.size()
-            : static_cast<size_t>(std::distance(
-                group.childWidgetIds.begin(), membership));
-    const std::wstring previousActive = group.activeCategoryId;
-    std::erase(group.childWidgetIds, childId);
-    if (group.activeCategoryId == childId)
-        group.activeCategoryId =
-            group.childWidgetIds.empty()
-                ? L""
-                : group.childWidgetIds[
-                    std::min(membershipIndex,
-                        group.childWidgetIds.size() - 1)];
-
-    DesktopWidget& child = widgets_[childIndex];
-    child.selected = false;
-    auto restoreMembership = [&]() {
-        group.childWidgetIds.insert(
-            group.childWidgetIds.begin() +
-                static_cast<std::ptrdiff_t>(
-                    std::min(membershipIndex,
-                        group.childWidgetIds.size())),
-            childId);
-        group.activeCategoryId = previousActive;
-    };
-
-    std::unordered_set<std::wstring> usedSlots;
-    GridSpan span{};
-    const auto landing = FindFileGroupReleaseLanding(
-        childIndex, preferredCell, usedSlots, &span);
-    if (!landing)
-    {
-        restoreMembership();
-        return false;
-    }
-
-    child.gridCell = *landing;
-    child.gridSpan = span;
+    using namespace snowdesktop::widget_group_drop;
+    if (!Release(widgets_, childId, DesktopWidgetType::FileGroup,
+        [&](size_t childIndex, size_t) -> std::optional<ReleasePlacement> {
+            std::unordered_set<std::wstring> usedSlots;
+            GridSpan span{};
+            const auto cell = FindFileGroupReleaseLanding(childIndex, preferredCell, usedSlots, &span);
+            return cell ? std::make_optional(ReleasePlacement{*cell, span}) : std::nullopt;
+        })) return false;
     EnsureNavTabOrder();
     LayoutItems();
     RebuildContainersAndItems();
@@ -1238,7 +1156,6 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
-
 std::optional<GridCell> DesktopApp::FindFileGroupReleaseLanding(
     size_t childIndex, GridCell preferredCell,
     std::unordered_set<std::wstring>& usedSlots,
@@ -1247,29 +1164,8 @@ std::optional<GridCell> DesktopApp::FindFileGroupReleaseLanding(
     if (childIndex >= widgets_.size()) return std::nullopt;
     const DesktopWidget& child = widgets_[childIndex];
 
-    const GridPage* page =
-        FindGridPage(gridPages_, preferredCell.pageId);
-    if (!page)
-    {
-        const size_t groupIndex =
-            FindFileGroupIndexForChild(child.id);
-        if (groupIndex >= widgets_.size())
-            return std::nullopt;
-        preferredCell = widgets_[groupIndex].gridCell;
-        page = FindGridPage(gridPages_, preferredCell.pageId);
-    }
-    if (!page) return std::nullopt;
-
-    GridSpan span = ClampWidgetGridSpan(
-        child, child.gridSpan, page->columns, page->rows);
-    preferredCell.column = std::clamp(
-        preferredCell.column, 0,
-        std::max(0, page->columns - span.columns));
-    preferredCell.row = std::clamp(
-        preferredCell.row, 0,
-        std::max(0, page->rows - span.rows));
-    if (outSpan) *outSpan = span;
-
+    const size_t groupIndex = FindFileGroupIndexForChild(child.id);
+    const GridCell fallback = groupIndex < widgets_.size() ? widgets_[groupIndex].gridCell : GridCell{};
     if (usedSlots.empty())
     {
         for (size_t i = 0; i < widgets_.size(); ++i)
@@ -1287,14 +1183,17 @@ std::optional<GridCell> DesktopApp::FindFileGroupReleaseLanding(
         }
     }
 
-    GridCell landing = preferredCell;
-    if (!IsGridAreaValid(landing, span) ||
-        AreGridSlotsMarked(usedSlots, landing, span))
-        return std::nullopt;
-    MarkGridArea(usedSlots, landing, span);
-    return landing;
+    const auto placement = snowdesktop::widget_group_drop::PlanRelease(child, preferredCell,
+        fallback, gridPages_, usedSlots, false,
+        [&](const auto& widget, GridSpan span, int columns, int rows) {
+            const auto clamped = ClampWidgetGridSpan(widget, span, columns, rows);
+            if (outSpan) *outSpan = clamped;
+            return clamped;
+        }, [&](auto span, auto& slots, auto& cell, const auto& page, int start) {
+            return TryFindFreeCell(span, slots, cell, page, start);
+        });
+    return placement ? std::optional<GridCell>(placement->cell) : std::nullopt;
 }
-
 bool DesktopApp::AddCollectionToGroup(
     size_t collectionIndex, size_t groupIndex, size_t insertIndex)
 {
@@ -1347,103 +1246,24 @@ bool DesktopApp::AddCollectionToGroup(
 bool DesktopApp::ReleaseCollectionFromGroup(
     const std::wstring& collectionId, GridCell preferredCell)
 {
-    const size_t collectionIndex = FindWidgetIndexById(collectionId);
-    const size_t groupIndex =
-        FindCollectionGroupIndexForChild(collectionId);
-    if (collectionIndex >= widgets_.size() ||
-        groupIndex >= widgets_.size() ||
-        widgets_[collectionIndex].type != DesktopWidgetType::Collection)
-        return false;
-
-    DesktopWidget& group = widgets_[groupIndex];
-    auto membership = std::find(
-        group.childWidgetIds.begin(),
-        group.childWidgetIds.end(), collectionId);
-    const size_t membershipIndex =
-        membership == group.childWidgetIds.end()
-            ? group.childWidgetIds.size()
-            : static_cast<size_t>(
-                std::distance(group.childWidgetIds.begin(), membership));
-    const std::wstring previousActiveCategory =
-        group.activeCategoryId;
-    std::erase(group.childWidgetIds, collectionId);
-    if (group.activeCategoryId == collectionId)
-        group.activeCategoryId =
-            group.childWidgetIds.empty()
-                ? L""
-                : group.childWidgetIds[
-                    std::min(
-                        membershipIndex,
-                        group.childWidgetIds.size() - 1)];
-    DesktopWidget& collection = widgets_[collectionIndex];
-    collection.selected = false;
-
-    const GridPage* page =
-        FindGridPage(gridPages_, preferredCell.pageId);
-    if (!page)
-    {
-        preferredCell = group.gridCell;
-        page = FindGridPage(gridPages_, preferredCell.pageId);
-    }
-    if (!page)
-    {
-        group.childWidgetIds.insert(
-            group.childWidgetIds.begin() +
-                static_cast<std::ptrdiff_t>(
-                    std::min(membershipIndex,
-                        group.childWidgetIds.size())),
-            collectionId);
-        group.activeCategoryId = previousActiveCategory;
-        return false;
-    }
-
-    GridSpan span = ClampWidgetGridSpan(collection, collection.gridSpan,
-        page->columns, page->rows);
-    preferredCell.column = std::clamp(
-        preferredCell.column, 0,
-        std::max(0, page->columns - span.columns));
-    preferredCell.row = std::clamp(
-        preferredCell.row, 0,
-        std::max(0, page->rows - span.rows));
-
-    std::unordered_set<std::wstring> usedSlots;
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        if (i == collectionIndex || IsGroupedWidget(widgets_[i]))
-            continue;
-        MarkGridArea(usedSlots,
-            widgets_[i].gridCell, widgets_[i].gridSpan);
-    }
-    for (const auto& item : items_)
-    {
-        if (item.name.empty() || IsItemInAnyWidget(item)) continue;
-        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-    }
-
-    GridCell landing = preferredCell;
-    if (!IsGridAreaValid(landing, span) ||
-        AreGridSlotsMarked(usedSlots, landing, span))
-    {
-        const int startSlot =
-            SlotFromCell(gridPages_, preferredCell);
-        if (!TryFindFreeCell(span, usedSlots, landing,
-            preferredCell.pageId, startSlot) &&
-            !TryFindFreeCell(span, usedSlots, landing, L"", 0))
-        {
-            group.childWidgetIds.insert(
-                group.childWidgetIds.begin() +
-                    static_cast<std::ptrdiff_t>(
-                        std::min(membershipIndex,
-                            group.childWidgetIds.size())),
-                collectionId);
-            group.activeCategoryId =
-                previousActiveCategory;
-            return false;
-        }
-    }
-
-    collection.gridCell = landing;
-    collection.gridSpan = span;
+    using namespace snowdesktop::widget_group_drop;
+    if (!Release(widgets_, collectionId, DesktopWidgetType::CollectionGroup,
+        [&](size_t childIndex, size_t groupIndex) {
+            std::unordered_set<std::wstring> usedSlots;
+            for (size_t index = 0; index < widgets_.size(); ++index)
+                if (index != childIndex && !IsGroupedWidget(widgets_[index]))
+                    MarkGridArea(usedSlots, widgets_[index].gridCell, widgets_[index].gridSpan);
+            for (const auto& item : items_)
+                if (!item.name.empty() && !IsItemInAnyWidget(item))
+                    MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+            return PlanRelease(widgets_[childIndex], preferredCell, widgets_[groupIndex].gridCell,
+                gridPages_, usedSlots, true,
+                [&](const auto& child, auto span, int columns, int rows) {
+                    return ClampWidgetGridSpan(child, span, columns, rows);
+                }, [&](auto span, auto& slots, auto& cell, const auto& page, int start) {
+                    return TryFindFreeCell(span, slots, cell, page, start);
+                });
+        })) return false;
     EnsureNavTabOrder();
     LayoutItems();
     SaveLayoutSlots();
@@ -1831,11 +1651,9 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
         settings.packageId = packageId;
         settings.columns = defaultColumns;
         settings.rows = defaultRows;
-        const size_t previousCount = widgets_.size();
-        ApplyWidgetPreviewSettings(screenPoint, settings);
-        if (widgets_.size() <= previousCount) return;
-        BeginLuaWidgetConsent(screenPoint, packageId,
-            widgets_.back().id);
+        const std::wstring createdId = ApplyWidgetPreviewSettings(screenPoint, settings);
+        if (createdId.empty()) return;
+        BeginLuaWidgetConsent(screenPoint, packageId, createdId);
         return;
     }
     if (!alreadyGranted)

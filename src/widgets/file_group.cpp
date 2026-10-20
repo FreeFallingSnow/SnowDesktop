@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "core/drop_model.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -18,6 +19,8 @@
 #include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
+#include "layout/folder_sort_rules.h"
+#include "shell/item_sort_metadata.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -262,8 +265,12 @@ public:
         savedGridSpan_ = sourceData_->gridSpan;
         savedGridCell_ = sourceData_->gridCell;
         savedBounds_ = sourceData_->bounds;
+        savedHosted_ = source_->IsHosted();
+        savedPopupHosted_ = source_->IsPopupHosted();
+        savedFrame_ = source_->GetLayoutFrameRect();
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
+        savedListColumns_ = sourceData_->listColumns;
         savedShowDetails_ = sourceData_->showDetails;
         savedDetailShowModified_ = sourceData_->detailShowModified;
         savedDetailShowType_ = sourceData_->detailShowType;
@@ -296,6 +303,7 @@ public:
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
+        sourceData_->listColumns = groupData_->listColumns;
         sourceData_->showDetails = groupData_->showDetails;
         sourceData_->detailShowModified = groupData_->detailShowModified;
         sourceData_->detailShowType = groupData_->detailShowType;
@@ -354,6 +362,7 @@ public:
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
+        sourceData_->listColumns = savedListColumns_;
         sourceData_->showDetails = savedShowDetails_;
         sourceData_->detailShowModified = savedDetailShowModified_;
         sourceData_->detailShowType = savedDetailShowType_;
@@ -374,6 +383,10 @@ public:
             savedSearchSelectionAnchor_,
             savedSearchComposition_,
             savedSearchCompositionCursor_);
+        // Geometry queries can nest while the same source is being painted.
+        // Restore the outer projection, including its popup font scale.
+        if (savedPopupHosted_) source_->SetPopupFrame(&savedFrame_);
+        else if (savedHosted_) source_->SetHostedFrame(&savedFrame_);
     }
 
     explicit operator bool() const { return active_; }
@@ -386,8 +399,12 @@ private:
     GridSpan savedGridSpan_{};
     GridCell savedGridCell_{};
     RECT savedBounds_{};
+    RECT savedFrame_{};
+    bool savedHosted_ = false;
+    bool savedPopupHosted_ = false;
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
+    int savedListColumns_ = 1;
     bool savedShowDetails_ = false;
     bool savedDetailShowModified_ = false;
     bool savedDetailShowType_ = false;
@@ -434,16 +451,16 @@ snowdesktop::widget_item_layout::Layout FileGroupSearchLocalLayout(
     DesktopWidget* data = group->GetWidgetData();
     const RECT content = group->GetContentViewportRect();
     const auto metrics = group->GetItemVisualMetrics();
-    const float spacing = group->GetLayoutSpacingScale();
+    const auto spacing = group->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(group->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), group->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, group->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -792,10 +809,12 @@ FileGroup::GetGroupSearchResults() const
         {
             std::wstring name;
             std::wstring type;
+            snowdesktop::folder_sort_rules::TypeGroup typeGroup = snowdesktop::folder_sort_rules::TypeGroup::Other;
             std::optional<FILETIME> modified;
             std::optional<std::uint64_t> size;
         };
-        const auto valueFor = [this](const SearchResultRef& result) {
+        const auto column = data_->contentSortColumn;
+        const auto valueFor = [this, column](const SearchResultRef& result) {
             SortValue value;
             if (!result.folderMapping)
             {
@@ -803,9 +822,17 @@ FileGroup::GetGroupSearchResults() const
                     app_->FindItemIndexByKey(result.desktopKey);
                 if (itemIndex < app_->items_.size())
                 {
-                    const DesktopItem& item = app_->items_[itemIndex];
+                    DesktopItem& item = app_->items_[itemIndex];
                     value.name = item.name;
                     value.type = item.typeName;
+                    if (column == snowdesktop::list_detail_rules::Column::Type)
+                    {
+                        const DWORD attributes = GetFileAttributesW(item.parsingName.c_str());
+                        const bool directory = attributes != INVALID_FILE_ATTRIBUTES &&
+                            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        if (!directory) snowdesktop::item_sort_metadata::Prepare(item, item.parsingName);
+                        value.typeGroup = snowdesktop::folder_sort_rules::TypeGroupFor(item, directory);
+                    }
                     value.modified = item.modifiedTime;
                     value.size = item.fileSize;
                 }
@@ -817,23 +844,29 @@ FileGroup::GetGroupSearchResults() const
                 result.folderEntryIndex <
                     app_->widgets_[sourceIndex].folderEntries.size())
             {
-                const FolderEntry& entry = app_->widgets_[sourceIndex].
+                FolderEntry& entry = app_->widgets_[sourceIndex].
                     folderEntries[result.folderEntryIndex];
-                value.name = entry.name;
+                value.name = entry.DisplayName();
                 value.type = entry.typeName;
+                if (column == snowdesktop::list_detail_rules::Column::Type)
+                {
+                    if (!entry.isDirectory) snowdesktop::item_sort_metadata::Prepare(entry, entry.fullPath);
+                    value.typeGroup = snowdesktop::folder_sort_rules::TypeGroupFor(entry, entry.isDirectory);
+                }
                 value.modified = entry.lastWriteTime;
                 value.size = entry.fileSize;
             }
             return value;
         };
-        const auto column = data_->contentSortColumn;
         const bool ascending = data_->contentSortAscending;
-        std::stable_sort(groupSearchResults_.begin(),
-            groupSearchResults_.end(),
-            [&](const SearchResultRef& left,
-                const SearchResultRef& right) {
-                const SortValue a = valueFor(left);
-                const SortValue b = valueFor(right);
+        struct SortEntry { SearchResultRef result; SortValue value; };
+        std::vector<SortEntry> ordered;
+        ordered.reserve(groupSearchResults_.size());
+        for (const auto& result : groupSearchResults_) ordered.push_back({result, valueFor(result)});
+        std::stable_sort(ordered.begin(), ordered.end(),
+            [&](const SortEntry& left, const SortEntry& right) {
+                const auto& a = left.value;
+                const auto& b = right.value;
                 int comparison = 0;
                 if (column == snowdesktop::list_detail_rules::Column::Name)
                 {
@@ -842,11 +875,9 @@ FileGroup::GetGroupSearchResults() const
                 }
                 else if (column == snowdesktop::list_detail_rules::Column::Type)
                 {
-                    const bool hasA = !a.type.empty();
-                    const bool hasB = !b.type.empty();
-                    if (hasA != hasB) return hasA;
-                    comparison = _wcsicmp(
-                        a.type.c_str(), b.type.c_str());
+                    comparison = snowdesktop::folder_sort_rules::CompareType(
+                        a.typeGroup, a.type, a.name, b.typeGroup, b.type, b.name);
+                    return ascending ? comparison < 0 : comparison > 0;
                 }
                 else if (column == snowdesktop::list_detail_rules::Column::Modified)
                 {
@@ -873,6 +904,7 @@ FileGroup::GetGroupSearchResults() const
                     a.name.c_str(), b.name.c_str());
                 return comparison < 0;
             });
+        for (size_t i = 0; i < ordered.size(); ++i) groupSearchResults_[i] = std::move(ordered[i].result);
     }
     return groupSearchResults_;
 }
@@ -1088,6 +1120,7 @@ FileGroup::GetSourceTabItemAtPoint(POINT pt) const
 
 std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> result;
     if (IsGroupSearchActive())
@@ -1184,6 +1217,18 @@ int FileGroup::GetItemWidth() const
     return hosted ? source->GetItemWidth() : 1;
 }
 
+int FileGroup::GetMemberColumnCount() const
+{
+    if (IsGroupSearchActive())
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).horizontal.count;
+    auto* source = GetActiveSourceContainer();
+    if (!source) return 1;
+    HostedFileSourceScope hosted(
+        const_cast<FileGroup*>(this), source);
+    return hosted ? source->GetMemberColumnCount() : 1;
+}
+
 bool FileGroup::SingleColumn() const
 {
     return data_ && data_->listMode;
@@ -1252,25 +1297,7 @@ std::vector<Item*> FileGroup::GetSelectedItems() const
         return result;
     }
 
-    auto* source = GetActiveSourceContainer();
-    if (!source) return result;
-    const auto& slots =
-        const_cast<FileGroup*>(this)->GetSlots();
-    for (const auto& slot : slots)
-    {
-        if (!slot || !slot->GetItem() ||
-            !slot->GetItem()->IsSelected())
-            continue;
-        auto clone = CloneHostedItem(
-            slot->GetItem(),
-            const_cast<FileGroup*>(this), app_);
-        if (!clone) continue;
-        clone->SetBounds(slot->GetBounds());
-        Item* raw = clone.get();
-        dragSourceCache_.push_back(std::move(clone));
-        result.push_back(raw);
-    }
-    return result;
+    return GetHostedSelectedItemsForSource(GetActiveSourceId());
 }
 
 std::vector<size_t>
@@ -1319,8 +1346,9 @@ size_t FileGroup::GetDropInsertIndex(
     if (targetSlot && targetSlot == sourceTabDropSlot_.get())
     {
         if (app_ &&
-            app_->dragSession_.SourceList().
-                UsesFileGroupSourceInsertion())
+            (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+                snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                    app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
         {
             size_t index = std::min(
                 targetSlot->GetIndex(),
@@ -1342,6 +1370,34 @@ size_t FileGroup::GetDropInsertIndex(
     }
     if (IsGroupSearchActive())
     {
+        if (targetSlot && targetSlot->GetItem())
+        {
+            auto* source = GetSourceContainerForItem(targetSlot->GetItem());
+            auto* data = source ? source->GetWidgetData() : nullptr;
+            if (data)
+            {
+                const auto key = ToUpperInvariant(targetSlot->GetItem()->GetPath());
+                size_t index = 0, count = 0;
+                if (data->type == DesktopWidgetType::FolderMapping)
+                {
+                    const auto found = std::find_if(data->folderEntries.begin(), data->folderEntries.end(),
+                        [&](const auto& entry) { return ToUpperInvariant(entry.fullPath) == key; });
+                    index = static_cast<size_t>(std::distance(data->folderEntries.begin(), found));
+                    count = data->folderEntries.size();
+                }
+                else
+                {
+                    const auto* icon = dynamic_cast<DesktopIcon*>(targetSlot->GetItem());
+                    const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                    const auto desktopKey = item ? ToUpperInvariant(item->layoutKey) : key;
+                    const auto found = std::find_if(data->itemKeys.begin(), data->itemKeys.end(),
+                        [&](const auto& value) { return ToUpperInvariant(value) == desktopKey; });
+                    index = static_cast<size_t>(std::distance(data->itemKeys.begin(), found));
+                    count = data->itemKeys.size();
+                }
+                return std::min(index + (region == HitRegion::SortAfter ? 1u : 0u), count);
+            }
+        }
         auto* source = GetActiveSourceContainer();
         if (!source) return 0;
         HostedFileSourceScope hosted(
@@ -1559,6 +1615,7 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
 WidgetHit FileGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None) return base;
     RECT search = GetSearchBoxRect();
     if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
@@ -1605,6 +1662,7 @@ HitRegion FileGroup::HitTestDrag(
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
     dropPreviewItemPad_ = 0.0f;
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))
         return HitRegion::None;
@@ -1628,8 +1686,9 @@ HitRegion FileGroup::HitTestDrag(
     }
 
     if (app_ &&
-        app_->dragSession_.SourceList().
-            UsesFileGroupSourceInsertion())
+        (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
         return HitRegion::Empty;
 
     if (IsGroupSearchActive())
@@ -1699,8 +1758,9 @@ void FileGroup::DrawDropPreview(
 {
     if (!context) return;
     if (app_ &&
-        app_->dragSession_.SourceList().
-            UsesFileGroupSourceInsertion())
+        (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
+                DesktopWidgetType::FileGroup, DropActionToMods(app_->dragSession_.Action()))))
     {
         if (dropPreviewSourceTab_ &&
             dropPreviewValid_ &&
@@ -1767,6 +1827,9 @@ std::wstring FileGroup::GetDragHint(
         region == HitRegion::Blocked ||
         sourceItems.empty())
         return L"";
+    if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+            app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup, mods))
+        return _LW("widget.file_group.add_hint");
     const bool allSources = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -1798,6 +1861,12 @@ void FileGroup::OnItemsDropped(
     HitRegion region, int mods)
 {
     if (!app_ || !data_ || sourceItems.empty()) return;
+    const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
+    if (sourceListForMembership.HasDesktopWidgetIcons())
+    {
+        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
+        return;
+    }
     const bool allFileSources =
         std::all_of(
             sourceItems.begin(),
@@ -1892,6 +1961,8 @@ void FileGroup::OnItemsDropped(
 
     const std::wstring targetSourceId = SourceIdAtPoint(app_->dragSession_.CurrentPoint());
     auto* source = targetSourceId.empty() ? GetActiveSourceContainer() : GetSourceContainerById(targetSourceId);
+    if (targetSourceId.empty() && IsGroupSearchActive() && targetSlot)
+        if (auto* hitSource = GetSourceContainerForItem(targetSlot->GetItem())) source = hitSource;
     if (!source)
     {
         const auto& session = app_->dragSession_.SourceList();
@@ -1904,6 +1975,7 @@ void FileGroup::OnItemsDropped(
         return;
     }
     DesktopApp* app = app_;
+    const std::wstring groupId = data_->id;
     DragSourceList sourceList;
     DropPreviewList preview;
     {
@@ -1928,14 +2000,31 @@ void FileGroup::OnItemsDropped(
         preview =
             app->BuildDropPreviewList(
                 sourceList, source,
-                IsGroupSearchActive() || !targetSourceId.empty()
-                    ? nullptr : targetSlot,
+                !targetSourceId.empty() ? nullptr : targetSlot,
                 targetSourceId.empty() ? region : HitRegion::SortAfter, mods,
                 app->dragSession_.CurrentPoint());
+        if (targetSourceId.empty() && IsGroupSearchActive())
+        {
+            preview.insertIndex = GetDropInsertIndex(targetSlot, region);
+            for (size_t i = 0; i < preview.landings.size(); ++i)
+                preview.landings[i].insertIndex = preview.insertIndex + i;
+        }
     }
-    // This must remain the final operation: executing can invalidate source,
-    // this FileGroup, and every other runtime container.
-    app->ExecuteDropPipeline(sourceList, preview);
+    const bool activate = !targetSourceId.empty() && !preview.Empty() && preview.targetWidget &&
+        preview.targetWidget->id == targetSourceId;
+    // Executing can invalidate source, this group and every runtime view.
+    if (!app->ExecuteDropPipeline(sourceList, preview) || !activate) return;
+    const size_t groupIndex = app->FindWidgetIndexById(groupId);
+    if (groupIndex >= app->widgets_.size()) return;
+    auto& group = app->widgets_[groupIndex];
+    if (group.type != DesktopWidgetType::FileGroup ||
+        std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), targetSourceId) == group.childWidgetIds.end()) return;
+    group.activeCategoryId = targetSourceId;
+    for (const auto& container : app->containers_)
+        if (auto* current = dynamic_cast<FileGroup*>(container.get()); current && current->GetWidgetData() == &group)
+            current->InvalidateHostedView();
+    app->SaveLayoutSlots();
+    InvalidateRect(app->hwnd_, nullptr, FALSE);
 }
 
 void FileGroup::DrawContent(
@@ -1993,6 +2082,7 @@ void FileGroup::DrawContent(
             Item* item = slot->GetItem();
             bool isDirectory = false;
             bool iconIsMediaThumbnail = false;
+            std::wstring_view iconIdentity;
             bool drawTitle = true;
             int sysIconIndex = -1;
             ListItemDetails details;
@@ -2003,6 +2093,7 @@ void FileGroup::DrawContent(
                     desktop->GetDesktopItem();
                 if (sourceItem)
                 {
+                    iconIdentity = sourceItem->layoutKey;
                     drawTitle = !app_->IsRenamingItem(sourceItem);
                     sysIconIndex =
                         sourceItem->sysIconIndex;
@@ -2021,6 +2112,7 @@ void FileGroup::DrawContent(
                     folder->GetFolderEntry();
                 if (sourceEntry)
                 {
+                    iconIdentity = sourceEntry->fullPath;
                     drawTitle = !app_->IsRenamingItem(sourceEntry);
                     isDirectory =
                         sourceEntry->isDirectory;
@@ -2046,7 +2138,7 @@ void FileGroup::DrawContent(
                     item->GetTitle(),
                     item->IsSelected(),
                     iconIsMediaThumbnail,
-                    {}, nullptr, details, std::nullopt, drawTitle);
+                    {}, nullptr, details, std::nullopt, drawTitle, iconIdentity);
             else
             {
                 const bool hovered =

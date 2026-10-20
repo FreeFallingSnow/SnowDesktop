@@ -36,7 +36,7 @@ snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion WaitFor(
 }
 }
 
-int main()
+int main() try
 {
     using namespace snowdesktop::widget_runtime;
     const snowdesktop::test::TemporaryDirectory temporary;
@@ -272,6 +272,34 @@ int main()
             binaryVerification.text == binaryWrite.text,
         "binary write round-trips exact bytes");
 
+    const auto emptyFile = root / L"empty.txt";
+    std::ofstream(emptyFile, std::ios::binary) << "content to clear";
+    WidgetFilesystemTaskRequest emptyWrite;
+    emptyWrite.action = "filesystem.write";
+    emptyWrite.path = emptyFile;
+    emptyWrite.text = "";
+    Expect(static_cast<bool>(executor.Start(900, "empty-writer", emptyWrite)),
+        "empty UTF-8 replacement starts");
+    const auto cleared = WaitFor(executor, 900);
+    Expect(cleared.ok && cleared.metadata.size == 0 &&
+            std::filesystem::file_size(emptyFile) == 0,
+        "empty UTF-8 write actually clears the file");
+    WidgetFilesystemTaskRequest emptyRead;
+    emptyRead.action = "filesystem.read";
+    emptyRead.path = emptyFile;
+    Expect(static_cast<bool>(executor.Start(901, "empty-reader", emptyRead)),
+        "cleared file read starts");
+    const auto clearedRead = WaitFor(executor, 901);
+    Expect(clearedRead.ok && clearedRead.text.empty() && clearedRead.metadata.size == 0,
+        "cleared file round-trips as empty UTF-8 text");
+    emptyWrite.path = root / L"new-empty.txt";
+    Expect(static_cast<bool>(executor.Start(902, "empty-creator", emptyWrite)),
+        "new empty UTF-8 file write starts");
+    const auto createdEmpty = WaitFor(executor, 902);
+    Expect(createdEmpty.ok && std::filesystem::is_regular_file(emptyWrite.path) &&
+            std::filesystem::file_size(emptyWrite.path) == 0,
+        "empty UTF-8 write can create an empty file");
+
     // Real WIC decoding through the production worker must preserve these
     // independently specified red/green pixels, not just accept an extension.
     const auto photo = root / L"photo.bmp";
@@ -361,4 +389,9 @@ int main()
         "multi-byte UTF-8 spanning a chunk boundary round-trips at the exact caller byte ceiling");
     std::cout << "widget filesystem task executor tests passed\n";
     return 0;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAILED: " << error.what() << '\n';
+    return 1;
 }

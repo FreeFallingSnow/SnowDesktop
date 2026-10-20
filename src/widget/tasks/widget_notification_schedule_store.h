@@ -32,10 +32,14 @@ class WidgetNotificationScheduleStore
 {
 public:
     static constexpr std::size_t MaximumEntries = 512;
-    static constexpr std::size_t MaximumFileBytes = 2 * 1024 * 1024;
+    // 512 records, all bounded strings escaped at up to six bytes per byte,
+    // including action labels/IDs, fit below this shared read/write budget.
+    static constexpr std::size_t MaximumFileBytes = 16 * 1024 * 1024;
 
     bool LoadText(std::string_view text, std::string& error);
     std::string Serialize() const;
+    bool IsWritable() const noexcept { return writable_; }
+    void MarkLoadFailed() noexcept { writable_ = false; }
 
     bool Upsert(WidgetPersistedNotificationSchedule entry,
         std::string& error);
@@ -67,5 +71,6 @@ private:
         std::string& error);
 
     std::vector<WidgetPersistedNotificationSchedule> entries_;
+    bool writable_ = true;
 };
 }

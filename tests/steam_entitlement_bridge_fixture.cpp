@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -31,7 +32,8 @@ int wmain(int argc, wchar_t** argv)
     std::array<wchar_t, 32768> modulePath{};
     const DWORD length = GetModuleFileNameW(
         nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
-    const std::wstring executable(modulePath.data(), length);
+    const std::wstring executable = std::filesystem::path(
+        std::wstring(modulePath.data(), length)).filename().wstring();
     if (argc == 2 && std::wstring_view(argv[1]) == L"configuration")
     {
         const bool stale = executable.find(L"stale") != std::wstring::npos;

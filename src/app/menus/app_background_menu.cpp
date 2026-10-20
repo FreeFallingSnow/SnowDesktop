@@ -556,7 +556,9 @@ DesktopApp::RenderWidgetMenuPreview(
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
 
     data->selected = false;
-    const RECT desktopFrame = GetStandaloneWidgetFrameRect(*data);
+    const bool iconMode = data->singleCellIconMode && data->gridSpan.columns == 1 && data->gridSpan.rows == 1;
+    const RECT desktopFrame = iconMode
+        ? data->bounds : GetStandaloneWidgetFrameRect(*data);
     if (IsRectEmptyRect(desktopFrame) ||
         desktopFrame.right - desktopFrame.left != width ||
         desktopFrame.bottom - desktopFrame.top != height)
@@ -631,13 +633,44 @@ DesktopApp::RenderWidgetMenuPreview(
     const RECT stageBounds{ 0, 0, width, height };
     if (!stage.transparent)
     {
+        // Desktop icon entrances have no full-cell panel backdrop. Their
+        // shared Dock renderer owns the icon material and its outline.
         snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
-            { stage.lightTheme, stageAppearance.glassEnabled,
+            { stage.lightTheme, !iconMode && stageAppearance.glassEnabled,
                 stageAppearance.glassBlurRadius,
                 static_cast<float>(ScaleWidgetCu(
                     globalAppearance.cornerRadius, data->cellScale)) },
             { stage.canvasWidth, stage.canvasHeight,
                 stage.offsetX, stage.offsetY }, stage.wallpaper);
+        if (iconMode && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+        {
+            const auto& outline = snowdesktop::icon_beautify::ShapeOutline(iconBeautifySettings_.shape);
+            RECT icon = GetItemIconRect(desktopFrame);
+            OffsetRect(&icon, -desktopFrame.left, -desktopFrame.top);
+            ComPtr<ID2D1Factory> factory;
+            context->GetFactory(&factory);
+            ComPtr<ID2D1PathGeometry> clip;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (!outline.empty() && factory && SUCCEEDED(factory->CreatePathGeometry(&clip)) &&
+                SUCCEEDED(clip->Open(&sink)))
+            {
+                const auto point = [&](const snowdesktop::icon_beautify::ShapePoint& value) {
+                    return D2D1::Point2F(icon.left + value.x * (icon.right - icon.left),
+                        icon.top + value.y * (icon.bottom - icon.top));
+                };
+                sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+                for (size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));
+                sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                if (SUCCEEDED(sink->Close()))
+                {
+                    context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clip.Get()), nullptr);
+                    snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
+                        {stage.lightTheme, true, iconBeautifySettings_.glassBlurRadius, 0.0f},
+                        {stage.canvasWidth, stage.canvasHeight, stage.offsetX, stage.offsetY}, stage.wallpaper);
+                    context->PopLayer();
+                }
+            }
+        }
     }
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
@@ -653,7 +686,15 @@ DesktopApp::RenderWidgetMenuPreview(
     options.dpi = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
     options.interactive = true;
     options.registerBackdrop = false;
-    widget->DrawPreview(context.Get(), options.frame, options);
+    {
+        // An offscreen preview must never publish its icon glass to the live
+        // desktop compositor. Its wallpaper/material was drawn locally above.
+        snowdesktop::WidgetIconBackdrops previewIconBackdrops;
+        const auto previousIconBackdrops = desktopWidgetIconBackdropsDrawing_;
+        desktopWidgetIconBackdropsDrawing_ = &previewIconBackdrops;
+        widget->DrawPreview(context.Get(), options.frame, options);
+        desktopWidgetIconBackdropsDrawing_ = previousIconBackdrops;
+    }
     const HRESULT drawResult = context->EndDraw();
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context->SetTarget(nullptr);
@@ -854,6 +895,13 @@ DesktopApp::BuildAddWidgetMenuPreview(
             widget.itemKeys.push_back(scene.Items()[i].key);
     };
 
+    struct SingleCellPreviewSource
+    {
+        std::shared_ptr<snowdesktop::WidgetPreviewScene> scene;
+        std::wstring rootId;
+        std::unordered_map<std::string, std::string> storage;
+    };
+    std::vector<SingleCellPreviewSource> singleCellPreviewSources;
     auto addCard = [&](const char* titleKey, const char* descriptionKey,
                        const std::wstring& modeKey,
                        const std::shared_ptr<
@@ -922,6 +970,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             {
                 preview->listMode = settings.listMode;
                 preview->scrollContainerMode = settings.scrollContainerMode;
+                preview->singleCellIconMode = settings.singleCellIconMode;
                 preview->largeFolderTitleless =
                     settings.largeFolderTitleless;
                 preview->dateHeaders = settings.dateHeaders;
@@ -953,6 +1002,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             card.applySettings.packageId = rootData->packageId;
             card.applySettings.columns = card.columns;
             card.applySettings.rows = card.rows;
+            card.applySettings.singleCellIconMode = rootData->singleCellIconMode;
             card.applySettings.listMode = rootData->listMode;
             card.applySettings.scrollContainerMode =
                 rootData->scrollContainerMode;
@@ -963,7 +1013,48 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 rootData->showFileCategories;
             card.applySettings.showSearchBox = rootData->showSearchBox;
         }
+        singleCellPreviewSources.push_back({scene, rootId, storage});
         model.cards.push_back(std::move(card));
+    };
+    const auto appendSingleCellPresets = [&]() {
+        if (singleCellPreviewSources.empty() || model.cards.empty()) return;
+        const auto source = singleCellPreviewSources.back();
+        const auto* original = source.scene->FindWidget(source.rootId);
+        if (!original) return;
+        const DesktopWidget prototype = *original;
+        const auto prototypeCard = model.cards.back();
+        for (const bool iconMode : {false, true})
+        {
+            DesktopWidget singleCell = prototype;
+            singleCell.id += iconMode ? L":single-icon" : L":single-component";
+            singleCell.gridSpan = {1, 1};
+            singleCell.singleCellIconMode = iconMode;
+            if (previewPage)
+                singleCell.bounds = GetGridRect(gridPages_, singleCell.gridCell, singleCell.gridSpan);
+            else singleCell.bounds = {0, 0, kCellWidth, kMinCellHeight};
+            const RECT frame = iconMode ? singleCell.bounds : GetStandaloneWidgetFrameRect(singleCell);
+            const auto id = singleCell.id;
+            source.scene->AddWidget(std::move(singleCell));
+            Card card = prototypeCard;
+            card.title = _LW(iconMode ? "app.interact.single_cell_icon" : "app.widget_preview.single_cell_component");
+            card.description.clear();
+            card.columns = card.rows = 1;
+            card.sizeLabel = _LFW("app.widget_preview.size", L"1", L"1");
+            card.previewWidth = std::max<LONG>(1, frame.right - frame.left);
+            card.previewHeight = std::max<LONG>(1, frame.bottom - frame.top);
+            card.cacheKey += iconMode ? L":single-icon" : L":single-component";
+            card.applySettings.columns = card.applySettings.rows = 1;
+            card.applySettings.singleCellIconMode = iconMode;
+            card.options.clear();
+            card.render = [this, scene = source.scene, id, storage = source.storage](
+                    int width, int height, UINT dpi,
+                    const snowdesktop::component_preview::StagePlacement& stage,
+                    const snowdesktop::component_preview::ApplySettings& settings, bool hovered) {
+                if (auto* data = scene->FindWidget(id)) data->singleCellIconMode = settings.singleCellIconMode;
+                return RenderWidgetMenuPreview(scene, id, storage, width, height, dpi, stage, hovered);
+            };
+            model.cards.push_back(std::move(card));
+        }
     };
     auto option = [&](OptionSetting setting, const char* labelKey,
                       const char* offKey, const char* onKey) {
@@ -999,16 +1090,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
     {
         model.title = _LW("app.menu.collection");
         model.introduction = _LW("app.widget_preview.collection_intro");
-        auto compactScene = makeScene(true);
-        DesktopWidget compact;
-        compact.type = DesktopWidgetType::Collection;
-        compact.title = model.title;
-        compact.gridSpan = { 1, 1 };
-        fillItemKeys(compact, *compactScene, 5);
-        addCard("app.widget_preview.collection_compact",
-            "app.widget_preview.collection_compact_hint", L"collection:compact",
-            compactScene, std::move(compact));
-
         auto scrollGridScene = makeScene(true);
         DesktopWidget scrollGrid;
         scrollGrid.type = DesktopWidgetType::Collection;
@@ -1021,7 +1102,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             std::move(scrollGrid));
         model.cards.back().options = { collectionModeOption(),
             collectionTitlelessOption(), layoutOption() };
-        model.initialCard = 1;
+        appendSingleCellPresets();
         return model;
     }
     case kContextAddFileCategoryWidget:
@@ -1055,6 +1136,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 "app.widget_preview.setting_hide",
                 "app.widget_preview.setting_show"),
         };
+        appendSingleCellPresets();
         return model;
     }
     case kContextAddFolderMappingWidget:
@@ -1099,6 +1181,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 "app.widget_preview.setting_hide",
                 "app.widget_preview.setting_show"),
         };
+        appendSingleCellPresets();
         return model;
     }
     case kContextAddCollectionGroupWidget:
@@ -1140,6 +1223,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 "app.widget_preview.setting_hide",
                 "app.widget_preview.setting_show"),
         };
+        appendSingleCellPresets();
         return model;
     }
     case kContextAddFileGroupWidget:
@@ -1198,6 +1282,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 "app.widget_preview.setting_hide",
                 "app.widget_preview.setting_show"),
         };
+        appendSingleCellPresets();
         return model;
     }
     default:

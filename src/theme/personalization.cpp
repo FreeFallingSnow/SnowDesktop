@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file personalization.cpp
  * @brief 个性化设置持久化实现
@@ -264,10 +266,19 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.luaWidgetContentRowHeight = settings.luaWidgetContentRowHeight;
     preset.showCategoryTabCounts = settings.showCategoryTabCounts;
     preset.showGroupTabCounts = settings.showGroupTabCounts;
+    preset.groupTabHoverSwitch = settings.groupTabHoverSwitch;
+    preset.categoryTabHoverSwitch = settings.categoryTabHoverSwitch;
+    preset.tabHoverDelayMs = settings.tabHoverDelayMs;
     preset.popupHoverOpen = settings.popupHoverOpen;
     preset.popupHoverDelayMs = settings.popupHoverDelayMs;
     preset.popupCloseOnMouseLeave = settings.popupCloseOnMouseLeave;
     preset.contextMenuStyle = settings.contextMenuStyle;
+    preset.windowPinBorderEnabled = settings.windowPinBorderEnabled;
+    preset.windowPinBorderR = settings.windowPinBorderR;
+    preset.windowPinBorderG = settings.windowPinBorderG;
+    preset.windowPinBorderB = settings.windowPinBorderB;
+    preset.windowPinBorderWidth = settings.windowPinBorderWidth;
+    preset.windowPinBorderOpacity = settings.windowPinBorderOpacity;
     settings = std::move(preset);
 }
 
@@ -489,12 +500,34 @@ bool LoadPersonalization(
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
     }
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
+    const PersonalizationSettings pinDefaults;
+    s.windowPinBorderEnabled = pinDefaults.windowPinBorderEnabled;
+    ReadBoolField(text, "windowPinBorderEnabled", s.windowPinBorderEnabled);
+    for (const auto& [key, member] : {
+            std::pair{"windowPinBorderR", &PersonalizationSettings::windowPinBorderR},
+            std::pair{"windowPinBorderG", &PersonalizationSettings::windowPinBorderG},
+            std::pair{"windowPinBorderB", &PersonalizationSettings::windowPinBorderB},
+            std::pair{"windowPinBorderWidth", &PersonalizationSettings::windowPinBorderWidth},
+            std::pair{"windowPinBorderOpacity", &PersonalizationSettings::windowPinBorderOpacity}})
+    {
+        s.*member = pinDefaults.*member;
+        if (ReadDoubleField(text, key, v) && std::isfinite(v)) s.*member = static_cast<float>(v);
+    }
+    NormalizeWindowPinBorderAppearance(s);
     if (ReadDoubleField(text, "contextMenuStyle", v))
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.widgetTransformCursors = true;
     ReadBoolField(text, "widgetTransformCursors", s.widgetTransformCursors);
+    s.groupTabHoverSwitch = false;
+    ReadBoolField(text, "groupTabHoverSwitch", s.groupTabHoverSwitch);
+    s.categoryTabHoverSwitch = false;
+    ReadBoolField(text, "categoryTabHoverSwitch", s.categoryTabHoverSwitch);
+    s.tabHoverDelayMs = kDefaultTabHoverDelayMs;
+    if (documentParsed)
+        if (const auto* delay = document.Find("tabHoverDelayMs"); delay && delay->IsNumber())
+            s.tabHoverDelayMs = NormalizeTabHoverDelayMs(delay->number);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     s.popupCloseOnMouseLeave = false;
@@ -554,8 +587,7 @@ bool LoadPersonalization(
 bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
 {
     if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     // Applied theme snapshots must survive a settings save/reload exactly.
     file.precision(std::numeric_limits<float>::max_digits10);
     file << "{\n";
@@ -606,6 +638,12 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"showGroupTabCounts\": "
          << (s.showGroupTabCounts ? "true" : "false") << ",\n";
+    file << "  \"groupTabHoverSwitch\": "
+         << (s.groupTabHoverSwitch ? "true" : "false") << ",\n";
+    file << "  \"categoryTabHoverSwitch\": "
+         << (s.categoryTabHoverSwitch ? "true" : "false") << ",\n";
+    file << "  \"tabHoverDelayMs\": "
+         << NormalizeTabHoverDelayMs(s.tabHoverDelayMs) << ",\n";
     file << "  \"popupHoverOpen\": "
          << (s.popupHoverOpen ? "true" : "false") << ",\n";
     file << "  \"popupHoverDelayMs\": "
@@ -614,6 +652,14 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.popupCloseOnMouseLeave ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
+    auto pinAppearance = s;
+    NormalizeWindowPinBorderAppearance(pinAppearance);
+    file << "  \"windowPinBorderEnabled\": " << (s.windowPinBorderEnabled ? "true" : "false") << ",\n";
+    file << "  \"windowPinBorderR\": " << pinAppearance.windowPinBorderR << ",\n";
+    file << "  \"windowPinBorderG\": " << pinAppearance.windowPinBorderG << ",\n";
+    file << "  \"windowPinBorderB\": " << pinAppearance.windowPinBorderB << ",\n";
+    file << "  \"windowPinBorderWidth\": " << pinAppearance.windowPinBorderWidth << ",\n";
+    file << "  \"windowPinBorderOpacity\": " << pinAppearance.windowPinBorderOpacity << ",\n";
     file << "  \"contextMenuStyle\": "
          << std::clamp(s.contextMenuStyle, 0, 6) << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
@@ -621,5 +667,5 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";
     file << "  \"acrylicEnabled\": " << (s.acrylicEnabled ? "true" : "false") << "\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }

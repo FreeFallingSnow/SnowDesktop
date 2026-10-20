@@ -4,10 +4,10 @@ call "%~dp0powershell_runtime.bat"
 if errorlevel 1 exit /b 2
 cd /d "%~dp0.."
 
-set "MODE=full"
+set "MODE="
 set "FILTER="
 
-if "%~1"=="" goto run
+if "%~1"=="" goto usage
 if /i "%~1"=="full" set "MODE=full"& goto validate_tail
 if /i "%~1"=="fast" set "MODE=fast"& goto validate_tail
 if /i "%~1"=="core" set "MODE=core"& goto validate_tail
@@ -40,7 +40,7 @@ exit /b %ERRORLEVEL%
 
 :usage
 echo Usage:
-echo   scripts\test.bat                         Full application suite, excludes tools and manual diagnostics
+echo   scripts\test.bat                         Show usage; does not build or run tests
 echo   scripts\test.bat full                    Full application suite, excludes tools and manual diagnostics
 echo   scripts\test.bat fast                    Exclude integration tests
 echo   scripts\test.bat core                    Core tests only

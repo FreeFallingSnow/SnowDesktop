@@ -11,6 +11,59 @@
 
 namespace snowdesktop
 {
+// Invisible pointer target at the physical right edge of either bar layout.
+inline RECT StatusBarShowDesktopTarget(LONG width, LONG height, float scale)
+{
+    if (width <= 0 || height <= 0 || !std::isfinite(scale) || scale <= 0) return {};
+    const LONG extent = static_cast<LONG>(std::ceil(8.f * scale));
+    return {std::max(0L, width - extent), 0, width, height};
+}
+
+// Per-monitor, transient state. Neither scrolling nor resizing changes the
+// persisted pinned identities or their ordering.
+struct StatusBarTrayScroll
+{
+    RECT viewport{};
+    LONG contentWidth = 0, offset = 0;
+    int wheelRemainder = 0;
+
+    LONG Maximum() const { return std::max(0L, contentWidth - (viewport.right - viewport.left)); }
+    void Arrange(RECT bounds, LONG content)
+    {
+        viewport = bounds; contentWidth = std::max(0L, content);
+        offset = IsRectEmpty(&viewport) ? 0 : std::clamp(offset, 0L, Maximum());
+        if (!Maximum()) wheelRemainder = 0;
+    }
+    bool Move(LONG distance)
+    {
+        const LONG next = std::clamp(offset + distance, 0L, Maximum());
+        if (next == offset || IsRectEmpty(&viewport)) return false;
+        offset = next; return true;
+    }
+    bool Wheel(int delta, LONG step)
+    {
+        wheelRemainder += delta;
+        const int ticks = wheelRemainder / WHEEL_DELTA;
+        wheelRemainder %= WHEEL_DELTA;
+        return Move(-ticks * step);
+    }
+    int EdgeDirection(POINT point, LONG edge) const
+    {
+        if (!PtInRect(&viewport, point) || !Maximum()) return 0;
+        edge = std::min(edge, (viewport.right - viewport.left) / 3);
+        if (point.x < viewport.left + edge && offset > 0) return -1;
+        if (point.x >= viewport.right - edge && offset < Maximum()) return 1;
+        return 0;
+    }
+    bool Reveal(RECT contentBounds)
+    {
+        if (IsRectEmpty(&viewport) || IsRectEmpty(&contentBounds)) return false;
+        if (contentBounds.left < viewport.left) return Move(contentBounds.left - viewport.left);
+        if (contentBounds.right > viewport.right) return Move(contentBounds.right - viewport.right);
+        return false;
+    }
+};
+
 // Clip only the shared edge. Corners and panels separated by a gap keep it.
 inline std::vector<RECT> StatusBarEdgeSegments(RECT frame, DockPosition position, RECT dock)
 {
@@ -71,9 +124,10 @@ inline RECT MergedStatusBarCenter(LONG width, LONG height, float scale)
 // Center the clock on the monitor. Preserve rightmost controls at narrow
 // widths; omit whole overflow items instead of partial, ambiguous targets.
 inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,
-    LONG padding, std::span<const LONG> leftWidths, LONG clockWidth, std::span<const LONG> rightWidths)
+    LONG padding, std::span<const LONG> leftWidths, LONG clockWidth, std::span<const LONG> rightWidths,
+    LONG trailingInset = 0)
 {
-    const LONG end = std::max(0L, width - padding);
+    const LONG end = std::max(0L, width - std::max(padding, trailingInset));
     clockWidth = std::clamp(clockWidth, 0L, std::max(0L, width - 2 * padding));
     const LONG center = (width - clockWidth) / 2;
     std::vector<RECT> result(leftWidths.size() + 1 + rightWidths.size());
@@ -116,7 +170,7 @@ struct MergedStatusBarLayout
 // Merged bars also keep the Dock's symmetric central reservation.
 inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float scale,
     LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
-    std::optional<std::size_t> controlIndex, bool merged = false)
+    std::optional<std::size_t> controlIndex, bool merged = false, LONG trailingInset = 0)
 {
     MergedStatusBarLayout result;
     if (merged) result.center = MergedStatusBarCenter(width, height, scale);
@@ -129,7 +183,7 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     widths.push_back(clockWidth + notificationWidth);
     LONG edge = std::max(0L, padding);
     const auto arrange = [&] { return StatusBarHorizontalLayout(width, height, edge,
-        std::span<const LONG>{}, centerWidth, widths); };
+        std::span<const LONG>{}, centerWidth, widths, trailingInset); };
     auto bounds = arrange();
     const auto missingControl = [&] { return controlWidth && IsRectEmpty(&bounds[*controlIndex + 1]); };
     const auto missingEssential = [&] {

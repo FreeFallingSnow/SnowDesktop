@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+int RunTypeToSelectTests();
+
 namespace
 {
 int failures = 0;
@@ -16,6 +18,7 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    failures += RunTypeToSelectTests();
     using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
     using snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction;
     Check(ResolvePopupEscapeAction(false, false, false, true) ==

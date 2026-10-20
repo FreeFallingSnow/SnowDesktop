@@ -11,12 +11,16 @@
 #include "item.h"
 #include "widget.h"
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
+#include "dock/dock_desktop_return.h"
+#include "drag_drop/desktop_drop_dispatch.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/utils.h"
 #include "common/l10n.h"
 #include "icons/large_icon_visibility_rules.h"
 #include "icons/large_icon_renderer.h"
+#include "app/drag_drop/desktop_preview_source.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -190,10 +194,17 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
 
     if (dynamic_cast<DockContainer*>(origin))
     {
-        GridCell target = app_->ResolveDesktopRequestCell(
-            app_->dragSession_.SourceList(),
-            app_->dragSession_.CurrentPoint());
-        app_->MoveDockItemsToDesktop(sourceItems, target);
+        const auto sourceList = app_->BuildDragSourceList(sourceItems, origin);
+        snowdesktop::desktop_drop_dispatch::Dock(true, sourceList, mods,
+            [&] {
+                const auto target = app_->ResolveDesktopRequestCell(sourceList, app_->dragSession_.CurrentPoint());
+                app_->MoveDockItemsToDesktop(sourceItems, target);
+                return true;
+            }, [&](const auto& sources, int modifiers) {
+                const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region, modifiers,
+                    app_->dragSession_.CurrentPoint());
+                return app_->ExecuteDropPipeline(sources, preview);
+            });
         return;
     }
 
@@ -281,7 +292,15 @@ std::vector<Item*> DesktopGrid::GetSelectedItems() const
         if (di && di->selected && !di->name.empty())
             result.push_back(icon);
     }
-    (void)dragSourceCache_; // items_oo_ owns the icons, no temp wrappers needed
+    for (const auto& container : app_->containers_)
+    {
+        auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+        const auto* data = widget ? widget->GetWidgetData() : nullptr;
+        if (data && snowdesktop::single_cell_widget::IsIconMode(*data) &&
+            !app_->IsGroupedWidget(*data) && widget->IsSelected())
+            result.push_back(widget);
+    }
+    (void)dragSourceCache_; // Runtime containers own widget entrances too.
     return result;
 }
 
@@ -325,6 +344,17 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
         !app_ || !app_->dragSession_.IsActive() ||
         app_->dragSession_.SourceList().
             SupportsDesktopShellHandoff();
+    if (app_ && app_->dragSession_.IsActive() &&
+        app_->dragSession_.SourceList().HasDesktopWidgetIcons() && !supportsShellHandoff)
+    {
+        const int hit = app_->HitTestItem(pt);
+        if (hit >= 0 && !(*items_)[hit].selected)
+        {
+            RECT icon = app_->GetItemIconRect((*items_)[hit].bounds);
+            InflateRect(&icon, 4, 4);
+            if (PtInRect(&icon, pt)) return HitRegion::Blocked;
+        }
+    }
     if (region != HitRegion::None && app_ &&
         supportsShellHandoff)
     {
@@ -368,7 +398,6 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
     (void)slot;
-    (void)sourceItems;
 
     if (!app_) return L"";
 
@@ -408,6 +437,13 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
     const DragSourceList& sourceList =
         app_->dragSession_.SourceList();
+    if (!ctrlDown && !altDown && dynamic_cast<DockContainer*>(origin) &&
+        std::any_of(sourceItems.begin(), sourceItems.end(), [](Item* item) { return dynamic_cast<DockEntryItem*>(item) != nullptr; }))
+    {
+        const auto plan = app_->PlanDockDesktopReturn(sourceItems, app_->ResolveDesktopRequestCell(sourceList, dragPoint));
+        return !plan.empty() && std::all_of(plan.begin(), plan.end(), [](const auto& landing) { return landing.accepted; })
+            ? _LW("core.drag.release_move_here") : _LW("core.drag.release_occupied");
+    }
     if (sourceList.hasCollectionGroupEntries ||
         sourceList.hasFileGroupEntries)
     {
@@ -489,7 +525,7 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         return _LW("core.drag.release_move_here");
     }
 
-    if (app_->BuildSelectedMove(bestCell).empty())
+    if (app_->BuildSelectedMove(bestCell, &sourceList).empty())
         return _LW("core.drag.release_occupied");
 
     return _LW("core.drag.release_move_here");
@@ -515,84 +551,33 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     const bool hasItemDrag = app_->dragSession_.IsActive() && !app_->dragSession_.Items().empty();
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
-    // Dock 中的集合不是普通桌面图标，通用预览不会为它生成 landing。
-    // 按真实顺序和原始跨度复现 MoveDockItemsToDesktop 的可见页面落位计算。
+    // Dock 组件及普通移动返回桌面的入口，预览与最终提交共用落点规划。
     if (hasItemDrag && dynamic_cast<DockContainer*>(app_->dragSession_.Source()))
     {
-        const bool hasWidgetEntry = std::any_of(app_->dragSession_.Items().begin(),
-            app_->dragSession_.Items().end(), [](Item* item) {
+        const bool hasReturnEntry = std::any_of(app_->dragSession_.Items().begin(),
+            app_->dragSession_.Items().end(), [&](Item* item) {
                 auto* dockItem = dynamic_cast<DockEntryItem*>(item);
                 return dockItem &&
-                    (IsWidgetDockEntryType(dockItem->GetEntryType()));
+                    (IsWidgetDockEntryType(dockItem->GetEntryType()) || app_->dragSession_.Action() == DropAction::Move);
         });
-        if (hasWidgetEntry)
+        if (hasReturnEntry)
         {
             GridCell requested = app_->ResolveDesktopRequestCell(
                 app_->dragSession_.SourceList(), dragPoint);
-            const GridPage* targetPage = FindGridPage(app_->gridPages_, requested.pageId);
-            if (!targetPage) return;
-
-            std::unordered_set<std::wstring> usedSlots;
-            for (const auto& widget : app_->widgets_)
-                if (!app_->IsGroupedWidget(widget) &&
-                    widget.gridCell.pageId != kDockPageId)
-                    app_->MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
-            for (const auto& item : app_->items_)
-                if (!item.name.empty() && item.gridCell.pageId != kDockPageId &&
-                    !app_->IsItemInAnyWidget(item))
-                    app_->MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-
-            std::vector<DockEntryItem*> dockItems;
-            for (Item* item : app_->dragSession_.Items())
-                if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
-                    dockItems.push_back(dockItem);
-            std::sort(dockItems.begin(), dockItems.end(),
-                [](const DockEntryItem* lhs, const DockEntryItem* rhs) {
-                    return lhs->GetEntryIndex() < rhs->GetEntryIndex();
-                });
-
-            int startSlot = SlotFromCell(app_->gridPages_, requested);
-            for (DockEntryItem* dockItem : dockItems)
+            const auto landings = app_->PlanDockDesktopReturn(app_->dragSession_.Items(), requested);
+            for (const auto& landing : landings)
             {
-                GridSpan span{ 1, 1 };
-                if (IsWidgetDockEntryType(dockItem->GetEntryType()))
-                {
-                    size_t widgetIndex = app_->FindWidgetIndexById(dockItem->GetReference());
-                    if (widgetIndex < app_->widgets_.size())
-                        span = app_->widgets_[widgetIndex].gridSpan;
-                }
-                else
-                {
-                    // A retained desktop source can be large, but its Dock
-                    // entry has a separate, ordinary presentation.
-                    span = {1, 1};
-                }
-                span.columns = std::max(1, span.columns);
-                span.rows = std::max(1, span.rows);
-
-                GridCell landing;
-                landing.pageId = requested.pageId;
-                landing.column = startSlot / std::max(1, targetPage->rows);
-                landing.row = startSlot % std::max(1, targetPage->rows);
-                landing = ClampGridCellToFitPage(
-                    *targetPage, landing, span);
-                RECT bounds = GetGridRect(app_->gridPages_, landing, span);
-                // 与桌面组件拖拽一致：边缘处收回起点并保留原跨度。命中区域
-                // 被占用（或组件大于整页）时不寻找其他位置，绘制红色禁止框。
-                if (!GridAreaFitsPage(*targetPage, landing, span) ||
-                    app_->AreGridSlotsMarked(usedSlots, landing, span))
+                const RECT bounds = GetGridRect(app_->gridPages_, landing.cell, landing.span);
+                if (!landing.accepted)
                 {
                     app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                         D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f),
                         D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f), 2.0f);
                     continue;
                 }
-
                 app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
-                app_->MarkGridArea(usedSlots, landing, span);
-                ++startSlot;
             }
             return;
         }
@@ -719,9 +704,9 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         app_->dragSession_.SourceList().origin == this)
     {
         const auto& entries = app_->dragSession_.SourceList().entries;
+        const snowdesktop::desktop_preview_source::Lookup previewSources(app_->items_, true);
         const bool hasLarge = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
-            return !entry.fromDock && entry.desktopIndex < app_->items_.size() &&
-                app_->items_[entry.desktopIndex].largeIcon.has_value();
+            return previewSources.Find(entry) != nullptr;
         });
         if (hasLarge)
         {
@@ -751,11 +736,10 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                     DesktopWidget geometry; geometry.gridCell = cell;
                     geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
                     geometry.cellScale = GetGridPageCuScale(*page);
-                    if (!entry.fromDock && entry.desktopIndex < app_->items_.size() &&
-                        app_->items_[entry.desktopIndex].largeIcon)
+                    if (const auto* sourceItem = previewSources.Find(entry))
                     {
                         const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
-                            app_->EffectiveLargeIconConfig(app_->items_[entry.desktopIndex]),
+                            app_->EffectiveLargeIconConfig(*sourceItem),
                             app_->CurrentPersonalization().cornerRadius);
                         snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config,
                             app_->GetStandaloneWidgetFrameRect(geometry), app_->GetItemLayoutScale(geometry.bounds), false, &geometry.bounds);

@@ -9,6 +9,8 @@
  */
 
 #include "core/widget.h"
+#include "folder_member_order.h"
+#include "layout/file_date_category.h"
 #include "layout/folder_mapping_rules.h"
 #include "core/slot.h"
 #include "core/item.h"
@@ -63,22 +65,6 @@ static std::wstring FolderEntryDateGroupLabel(const std::wstring& id)
     return _LW("widget.categories.earlier");
 }
 
-static int FolderEntryDayDiff(const SYSTEMTIME& newer, const SYSTEMTIME& older)
-{
-    FILETIME newerFileTime{}, olderFileTime{};
-    SystemTimeToFileTime(&newer, &newerFileTime);
-    SystemTimeToFileTime(&older, &olderFileTime);
-    ULARGE_INTEGER newerValue{}, olderValue{};
-    newerValue.LowPart = newerFileTime.dwLowDateTime;
-    newerValue.HighPart = newerFileTime.dwHighDateTime;
-    olderValue.LowPart = olderFileTime.dwLowDateTime;
-    olderValue.HighPart = olderFileTime.dwHighDateTime;
-    if (newerValue.QuadPart < olderValue.QuadPart)
-        return -1;
-    return static_cast<int>(
-        (newerValue.QuadPart - olderValue.QuadPart) / 864000000000ULL);
-}
-
 static std::wstring FolderEntryDateGroupId(const FolderEntry& entry)
 {
     FILETIME localFileTime{};
@@ -88,37 +74,7 @@ static std::wstring FolderEntryDateGroupId(const FolderEntry& entry)
         return L"older";
     GetLocalTime(&nowTime);
 
-    SYSTEMTIME todayStart = nowTime;
-    todayStart.wHour = 0;
-    todayStart.wMinute = 0;
-    todayStart.wSecond = 0;
-    todayStart.wMilliseconds = 0;
-    SYSTEMTIME fileDayStart = fileTime;
-    fileDayStart.wHour = 0;
-    fileDayStart.wMinute = 0;
-    fileDayStart.wSecond = 0;
-    fileDayStart.wMilliseconds = 0;
-    int daysFromToday = FolderEntryDayDiff(todayStart, fileDayStart);
-
-    if (daysFromToday <= 0) return L"today";
-    if (daysFromToday == 1) return L"yesterday";
-    int todayDayOfWeek =
-        nowTime.wDayOfWeek == 0 ? 7 : static_cast<int>(nowTime.wDayOfWeek);
-    if (daysFromToday < todayDayOfWeek) return L"this_week";
-    if (daysFromToday < todayDayOfWeek + 7) return L"last_week";
-    if (fileTime.wYear == nowTime.wYear &&
-        fileTime.wMonth == nowTime.wMonth)
-        return L"this_month";
-
-    int previousMonth = nowTime.wMonth == 1 ? 12 : nowTime.wMonth - 1;
-    int previousMonthYear = nowTime.wMonth == 1
-        ? nowTime.wYear - 1
-        : nowTime.wYear;
-    if (fileTime.wYear == previousMonthYear &&
-        fileTime.wMonth == previousMonth)
-        return L"last_month";
-    if (fileTime.wYear == nowTime.wYear) return L"this_year";
-    return L"older";
+    return snowdesktop::file_date_category::ForLocalDate(fileTime, nowTime, true);
 }
 
 static size_t FolderEntryDateGroupRank(const FolderEntry& entry)
@@ -280,8 +236,8 @@ const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
             std::stable_sort(visibleEntryIndices_.begin(),
                 visibleEntryIndices_.end(), [this](size_t lhs, size_t rhs) {
                     return _wcsicmp(
-                        data_->folderEntries[lhs].name.c_str(),
-                        data_->folderEntries[rhs].name.c_str()) < 0;
+                        data_->folderEntries[lhs].DisplayName().c_str(),
+                        data_->folderEntries[rhs].DisplayName().c_str()) < 0;
                 });
         }
         const bool reverseGroups =
@@ -486,16 +442,16 @@ static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = FolderMappingContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -518,6 +474,7 @@ void FolderMapping::EnsureDateLayout() const
     if (dateLayoutSource_ == visibleEntries &&
         dateLayoutListMode_ == data_->listMode &&
         dateLayoutItemHeight_ == currentItemHeight &&
+        itemLayout.horizontal.count == dateLayoutColumns_ &&
         !dateLayoutCache_.empty())
         return;
 
@@ -525,6 +482,7 @@ void FolderMapping::EnsureDateLayout() const
     dateLayoutSource_ = visibleEntries;
     dateLayoutListMode_ = data_->listMode;
     dateLayoutItemHeight_ = currentItemHeight;
+    dateLayoutColumns_ = itemLayout.horizontal.count;
     if (visibleEntries.empty()) return;
 
     const int headerHeight = data_->listMode ? Cu(28.0f) : Cu(36.0f);
@@ -702,6 +660,7 @@ Item* FolderMapping::GetSlotItem(size_t idx) const
  */
 std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -823,29 +782,7 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
  */
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
-    if (!data_) return;
-    if (data_->dateHeaders) return;
-    std::vector<FolderEntry> moving;
-    for (auto it = indices.rbegin(); it != indices.rend(); ++it)
-    {
-        if (*it >= data_->folderEntries.size()) continue;
-        moving.push_back(std::move(data_->folderEntries[*it]));
-        data_->folderEntries.erase(data_->folderEntries.begin() + static_cast<std::ptrdiff_t>(*it));
-    }
-    size_t adjusted = insertBefore;
-    for (auto idx : indices)
-        if (idx < insertBefore) --adjusted;
-    if (adjusted > data_->folderEntries.size()) adjusted = data_->folderEntries.size();
-    for (auto it = moving.rbegin(); it != moving.rend(); ++it)
-        data_->folderEntries.insert(data_->folderEntries.begin() + static_cast<std::ptrdiff_t>(adjusted++), std::move(*it));
-    data_->itemKeys.clear();
-    data_->itemKeys.reserve(data_->folderEntries.size());
-    for (const auto& entry : data_->folderEntries)
-        data_->itemKeys.push_back(entry.fullPath);
-    data_->folderSortMode =
-        snowdesktop::folder_sort_rules::kManual;
-    data_->contentSortColumn =
-        snowdesktop::list_detail_rules::Column::None;
+    if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
     InvalidateSlots();
 }
 
@@ -890,6 +827,12 @@ int FolderMapping::GetItemWidth() const
 {
     return FolderMappingLocalLayout(
         const_cast<FolderMapping*>(this)).horizontal.cell;
+}
+
+int FolderMapping::GetMemberColumnCount() const
+{
+    return FolderMappingLocalLayout(
+        const_cast<FolderMapping*>(this)).horizontal.count;
 }
 
 /**
@@ -1066,16 +1009,14 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (!segment.isHeader) continue;
             RECT headerRect = MakeRect(
                 content.left,
-                std::max<LONG>(
-                    content.top, content.top + segment.y - scroll),
+                content.top + segment.y - scroll,
                 content.right,
-                std::min<LONG>(
-                    content.bottom,
-                    content.top + segment.y + segment.height - scroll));
-            if (headerRect.top >= headerRect.bottom) continue;
+                content.top + segment.y + segment.height - scroll);
+            if (headerRect.bottom <= content.top ||
+                headerRect.top >= content.bottom) continue;
+            // Keep full-row centering; the content clip handles viewport edges.
             RECT labelRect = headerRect;
             labelRect.left += Cu(8.0f);
-            InflateRect(&labelRect, 0, -Cu(8.0f));
             app_->DrawD2DText(context, segment.label, labelRect,
                 (lt && lightHeaderFormat)
                     ? lightHeaderFormat
@@ -1104,7 +1045,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (!listMode)
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+                DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
             else
             {
                 RECT bodyRect = GetBodyRect();
@@ -1121,13 +1062,13 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
 
         if (privacyActive)
-            DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+            DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
         else
             DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.name, entry.selected, entry.iconIsMediaThumbnail,
+                entry.DisplayName(), entry.selected, entry.iconIsMediaThumbnail,
                 {}, nullptr,
                 { entry.typeName, entry.lastWriteTime,
-                  entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry));
+                  entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry), entry.fullPath);
     }
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
@@ -1285,6 +1226,7 @@ void FolderMapping::EnsureCategoryTabVisible(
 WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || !data_) return base;
 
     if (!CategoryIdAtPoint(pt).empty())
@@ -1332,7 +1274,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
  * @brief 获取当前选中的所有条目对象
  * @return 选中条目的 Item 指针向量
  *
- * 遍历当前槽位，收集所有被选中（entry.selected == true）的条目，
+ * 遍历完整过滤结果，收集所有被选中（entry.selected == true）的条目，
  * 创建对应的 FolderEntryIcon 并缓存到 dragSourceCache_ 中
  * 以支持拖放操作。
  */
@@ -1342,16 +1284,16 @@ std::vector<Item*> FolderMapping::GetSelectedItems() const
     std::vector<Item*> result;
     if (!data_) return result;
 
-    for (const auto& slot : const_cast<FolderMapping*>(this)->GetSlots())
+    const auto& visible = GetVisibleEntryIndices();
+    for (size_t visualIndex = 0; visualIndex < visible.size(); ++visualIndex)
     {
-        if (!slot) continue;
-        Item* slotItem = slot->GetItem();
-        auto* slotIcon = dynamic_cast<FolderEntryIcon*>(slotItem);
-        FolderEntry* entry = slotIcon ? slotIcon->GetFolderEntry() : nullptr;
-        if (!entry || !entry->selected) continue;
+        const size_t sourceIndex = visible[visualIndex];
+        if (sourceIndex >= data_->folderEntries.size()) continue;
+        auto* entry = &data_->folderEntries[sourceIndex];
+        if (!entry->selected) continue;
 
         auto icon = std::make_unique<FolderEntryIcon>(entry, const_cast<FolderMapping*>(this), app_);
-        icon->SetBounds(slot->GetBounds());
+        icon->SetBounds(GetMemberLayoutRect(visualIndex));
         result.push_back(icon.get());
         dragSourceCache_.push_back(std::move(icon));
     }

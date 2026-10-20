@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "remote_injection_cleanup.h"
 
 #include <cwchar>
 #include <string>
@@ -76,13 +77,7 @@ int wmain(int argc, wchar_t** argv)
         return 8;
     }
 
-    const DWORD waitResult = WaitForSingleObject(thread, 10000);
-    DWORD remoteModule = 0;
-    const bool loaded = waitResult == WAIT_OBJECT_0 &&
-        GetExitCodeThread(thread, &remoteModule) && remoteModule != 0;
-
-    CloseHandle(thread);
-    VirtualFreeEx(process, remotePath, 0, MEM_RELEASE);
-    CloseHandle(process);
+    const bool loaded = snow::wallpaper_hook::CompleteRemoteInjection(
+        process, thread, remotePath);
     return loaded ? 0 : 9;
 }

@@ -1,4 +1,5 @@
 #include "platform/auto_start_manager.h"
+#include "platform/auto_start_launch.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
 
@@ -8,6 +9,10 @@
 #include <wrl/client.h>
 
 #include <iostream>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -68,6 +73,80 @@ void Require(bool value, const char* message)
     if (!value) throw std::runtime_error(message);
 }
 
+DWORD shellTestFailure = 0;
+int shellTestCalls = 0;
+std::wstring shellTestDirectory;
+
+void ExecuteShellProbe(const std::wstring& executable, const std::wstring& parameters,
+    const std::wstring& directory)
+{
+    ++shellTestCalls;
+    shellTestDirectory = directory;
+    if (shellTestFailure)
+        throw snowdesktop::auto_start_launch::Failure{shellTestFailure, L"test Explorer launch"};
+    // Observe the real desktop COM transport; only hide the test console.
+    snowdesktop::auto_start_launch::ExecuteThroughExplorerImpl(
+        executable, parameters, directory, SW_HIDE);
+}
+
+void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* owner)
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    GUID guid{};
+    Require(SUCCEEDED(CoCreateGuid(&guid)), "create shell-launch report identity");
+    wchar_t suffix[40]{};
+    StringFromGUID2(guid, suffix, 40);
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop shell launch 测试 " + std::wstring(suffix));
+    Require(std::filesystem::create_directory(directory), "create isolated shell-launch directory");
+    struct Cleanup
+    {
+        std::filesystem::path directory;
+        ~Cleanup()
+        {
+            shellTestFailure = 0;
+            shellTestCalls = 0;
+            std::error_code ignored;
+            std::filesystem::remove(directory / L"child report.txt", ignored);
+            std::filesystem::remove(directory / L"child report.txt.tmp", ignored);
+            std::filesystem::remove(directory, ignored);
+        }
+    } cleanup{directory};
+    struct Platform
+    {
+        launch::NativePlatform native{&ExecuteShellProbe};
+        DWORD Relaunch(std::wstring_view command) { return native.Relaunch(command); }
+    } platform;
+    const auto report = directory / L"child report.txt";
+    const std::wstring payload = L"保留 \"quoted\" trailing\\";
+    const std::wstring command = launch::QuoteArgument(executable) +
+        L" --autostart-permission-probe " + launch::QuoteArgument(report.wstring()) +
+        L" --snowdesktop-autostart-owner=" + owner + L" " + launch::QuoteArgument(payload);
+    const auto result = launch::Normalize(command, platform);
+    Require(result.handled && result.error == ERROR_SUCCESS && shellTestCalls == 1,
+        "login startup delegates once through the real desktop COM object");
+    const ULONGLONG deadline = GetTickCount64() + 10000;
+    while (!std::filesystem::exists(report) && GetTickCount64() < deadline) Sleep(20);
+    std::ifstream input(report, std::ios::binary);
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(input)), {});
+    input.close();
+    Require(!bytes.empty() && bytes.size() % sizeof(wchar_t) == 0,
+        "Explorer-launched hidden probe completed its atomic report");
+    std::wstring observed(bytes.size() / sizeof(wchar_t), L'\0');
+    std::memcpy(observed.data(), bytes.data(), bytes.size());
+    const std::wstring expected = L"--autostart-permission-probe\n" + report.wstring() +
+        L"\n" + snowdesktop::kAutoStartBackgroundArgument + L"\n" + payload +
+        L"\n" + std::filesystem::current_path().wstring() + L"\n0";
+    Require(observed == expected && shellTestDirectory == std::filesystem::current_path().wstring(),
+        "real Explorer child keeps background intent/arguments/cwd and observes the ordinary desktop identity");
+    std::filesystem::remove(report);
+    shellTestFailure = ERROR_ACCESS_DENIED;
+    shellTestCalls = 0;
+    const auto denied = launch::Normalize(command, platform);
+    Require(denied.handled && denied.error == ERROR_ACCESS_DENIED && shellTestCalls == 1 &&
+        !std::filesystem::exists(report), "shell failure exits once without another creation method");
+    std::cout << "Explorer COM launch: real hidden child, background intent, Unicode arguments, cwd and ordinary identity passed\n";
+}
 struct Bstr
 {
     BSTR value;
@@ -208,6 +287,45 @@ struct DenyRegistryWrites
 };
 }
 
+int RunAutoStartLaunchProbe()
+{
+    int count = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!arguments) return ERROR_INVALID_DATA;
+    struct Arguments
+    {
+        LPWSTR* value;
+        ~Arguments() { LocalFree(value); }
+    } cleanup{arguments};
+    if (count != 5) return ERROR_INVALID_DATA;
+    try
+    {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+            return static_cast<int>(GetLastError());
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const BOOL read = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size);
+        const DWORD error = read ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(token);
+        if (!read) return static_cast<int>(error);
+        std::wstring observed;
+        for (int index = 1; index < count; ++index)
+            observed += std::wstring(arguments[index]) + L"\n";
+        observed += std::filesystem::current_path().wstring() + L"\n" +
+            std::to_wstring(elevation.TokenIsElevated ? 1 : 0);
+        const std::filesystem::path report(arguments[2]);
+        const auto temporary = std::filesystem::path(report.wstring() + L".tmp");
+        std::ofstream output(temporary, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(observed.data()),
+            static_cast<std::streamsize>(observed.size() * sizeof(wchar_t)));
+        output.close();
+        if (!output) return ERROR_WRITE_FAULT;
+        std::filesystem::rename(temporary, report);
+        return 0;
+    }
+    catch (...) { return ERROR_GEN_FAILURE; }
+}
 int RunAutoStartManagerTests()
 {
     try
@@ -218,6 +336,9 @@ int RunAutoStartManagerTests()
         Require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "get test executable");
         target.executable = executable;
         target.arguments = L"--snowdesktop-autostart-owner=portable";
+
+        for (const wchar_t* owner : {L"portable", L"packaged", L"steam"})
+            CheckAutoStartNativeHandoff(target.executable, owner);
 
         bool failedWithDetails = false;
         std::thread uninitialized([&] {

@@ -893,6 +893,44 @@ void BrightnessIdentityAndLegacyTargets()
         Require(!missing.ok && missing.error == "deviceGone" && calls == 0, "a removed token cannot fall through to another physical display");
         service.Shutdown();
     }
+    struct ReplacedDisplay final : Backend
+    {
+        struct Endpoint { std::string id; unsigned physical; };
+        std::vector<Endpoint> endpoints{{NewBrightnessEndpointId(), 1}};
+        std::mutex mutex; std::condition_variable changed;
+        bool entered = false, proceed = false, released = false;
+        unsigned writtenPhysical = 0;
+        std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation&) override { return {}; }
+        Result Execute(const Request& request, const Cancellation& cancel) override
+        {
+            std::unique_lock lock(mutex); entered = true; changed.notify_all();
+            while (!proceed && !cancel.Stop()) changed.wait_for(lock, 5ms);
+            return WithBrightnessEndpoint(endpoints, request.arguments.at("monitorId"), [&](const auto& endpoint) {
+                writtenPhysical = endpoint.physical; return Result{true, {}, 0};
+            });
+        }
+        void Release(std::string_view) override { std::lock_guard lock(mutex); released = true; changed.notify_all(); }
+    };
+    auto replacement = std::make_shared<ReplacedDisplay>();
+    const auto retainedId = replacement->endpoints[0].id;
+    Service service(replacement); auto queued = BrightnessRequest();
+    queued.arguments = {{"monitorId", retainedId}, {"brightness", "33"}};
+    const auto task = service.Start("replaced-display", std::move(queued));
+    Require(task != 0, "a sampled physical endpoint can queue a real service task");
+    {
+        std::unique_lock lock(replacement->mutex);
+        Require(replacement->changed.wait_for(lock, 2s, [&] { return replacement->entered; }), "the queued brightness operation reaches its controlled device boundary");
+        // Both displays occupy the same GDI/index slot. Only the retained
+        // physical-handle lifetime changes, as in production Refresh.
+        replacement->endpoints = {{NewBrightnessEndpointId(), 2}};
+        replacement->proceed = true; replacement->changed.notify_all();
+        Require(replacement->changed.wait_for(lock, 2s, [&] { return replacement->released; }), "the delayed brightness task completes after device replacement");
+    }
+    const auto result = service.DrainCompletions("replaced-display");
+    Require(result.size() == 1 && result[0].id == task && !result[0].ok && result[0].error == "deviceGone" &&
+        replacement->writtenPhysical == 0 && replacement->endpoints[0].id != retainedId,
+        "reusing a display slot cannot redirect a queued old token to the replacement hardware");
+    service.Shutdown();
 }
 void BluetoothPowerAndDeviceReadFailures()
 {

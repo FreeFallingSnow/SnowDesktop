@@ -49,6 +49,37 @@ float detail::RoundedRectangleCoverage(float sampleX, float sampleY,
     return std::clamp(0.5f - signedDistance, 0.0f, 1.0f);
 }
 
+std::uint32_t detail::ComposeSurfacePixel(std::uint32_t rgb, COLORREF background,
+    float controlCoverage, unsigned materialAlpha, unsigned contentAlpha,
+    float panelCoverage)
+{
+    const auto backgroundRgb = (static_cast<unsigned>(GetRValue(background)) << 16) |
+        (static_cast<unsigned>(GetGValue(background)) << 8) | GetBValue(background);
+    float alpha = static_cast<float>(materialAlpha);
+    if (controlCoverage > 0)
+        alpha += (static_cast<float>(contentAlpha) - static_cast<float>(materialAlpha)) * std::clamp(controlCoverage, 0.0f, 1.0f);
+    else if ((rgb & 0xffffffu) != backgroundRgb)
+        alpha = static_cast<float>(contentAlpha);
+    const auto a = static_cast<unsigned>(std::clamp(std::lround(alpha * panelCoverage), 0L, 255L));
+    const auto premultiply = [&](unsigned channel, unsigned backdrop) {
+        float value = static_cast<float>(channel) * alpha;
+        if (controlCoverage > 0)
+        {
+            // RoundedBox already blended RGB against the material. Weight
+            // those two surfaces by their own opacity to avoid a pale fringe.
+            value = static_cast<float>(channel) * static_cast<float>(contentAlpha) +
+                static_cast<float>(backdrop) *
+                    (static_cast<float>(materialAlpha) - static_cast<float>(contentAlpha)) *
+                    (1.0f - std::clamp(controlCoverage, 0.0f, 1.0f));
+        }
+        return static_cast<unsigned>(std::clamp(std::lround(value * panelCoverage / 255.0f),
+            0L, static_cast<long>(a)));
+    };
+    return premultiply(rgb & 0xffu, GetBValue(background)) |
+        (premultiply((rgb >> 8) & 0xffu, GetGValue(background)) << 8) |
+        (premultiply((rgb >> 16) & 0xffu, GetRValue(background)) << 16) | (a << 24);
+}
+
 namespace
 {
 
@@ -232,7 +263,8 @@ void BlendRgb(std::uint32_t& pixel, COLORREF color, float coverage)
 }
 
 void RoundedBox(std::uint32_t* pixels, int width, int height,
-    const RECT& rect, int radius, COLORREF fill, COLORREF border)
+    const RECT& rect, int radius, COLORREF fill, COLORREF border,
+    float* controlCoverage = nullptr)
 {
     if (!pixels || width <= 0 || height <= 0 || IsRectEmpty(&rect))
         return;
@@ -256,6 +288,11 @@ void RoundedBox(std::uint32_t* pixels, int width, int height,
                 static_cast<float>(rect.right),
                 static_cast<float>(rect.bottom), outerRadius);
             if (outerCoverage <= 0.0f) continue;
+            if (controlCoverage)
+            {
+                const auto index = static_cast<std::size_t>(y) * width + x;
+                controlCoverage[index] = std::max(controlCoverage[index], outerCoverage);
+            }
             const float innerCoverage = detail::RoundedRectangleCoverage(
                 sampleX, sampleY,
                 static_cast<float>(rect.left + 1),
@@ -491,14 +528,6 @@ void ApplyPremultipliedCoverage(std::uint32_t& pixel, float coverage)
     const std::uint32_t red = scale((pixel >> 16) & 0xffu);
     const std::uint32_t alpha = scale((pixel >> 24) & 0xffu);
     pixel = blue | (green << 8) | (red << 16) | (alpha << 24);
-}
-
-bool SameRgb(std::uint32_t pixel, COLORREF color)
-{
-    return (pixel & 0x00ffffffu) ==
-        (static_cast<std::uint32_t>(GetBValue(color)) |
-         (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
-         (static_cast<std::uint32_t>(GetRValue(color)) << 16));
 }
 
 bool OptionValue(const ApplySettings& settings, OptionSetting setting)
@@ -1231,6 +1260,7 @@ bool Window::RenderCurrent()
     }
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
     auto* pixels = static_cast<std::uint32_t*>(rawPixels);
+    std::vector<float> controlCoverage(static_cast<size_t>(width_) * height_, 0.0f);
     std::fill_n(pixels, static_cast<size_t>(width_) * height_, 0u);
 
     const auto palette = menu_icon::ResolvePalette(lightTheme_);
@@ -1415,9 +1445,9 @@ bool Window::RenderCurrent()
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
         RoundedBox(pixels, width_, height_, previousButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
+            palette.hoverBackground, palette.separator, controlCoverage.data());
         RoundedBox(pixels, width_, height_, nextButton_, Scale(6, dpi_),
-            palette.hoverBackground, palette.separator);
+            palette.hoverBackground, palette.separator, controlCoverage.data());
         DrawCenteredGlyph(dc, glyphFont,
             currentCard_ > 0 ? palette.text : palette.disabledText,
             L'\u2039', previousButton_, previousGlyphRect_);
@@ -1450,7 +1480,7 @@ bool Window::RenderCurrent()
                 badge.left = std::max(
                     badge.left, badge.right - Scale(58, dpi_));
                 RoundedBox(pixels, width_, height_, badge, Scale(7, dpi_),
-                    palette.hoverBackground, palette.separator);
+                    palette.hoverBackground, palette.separator, controlCoverage.data());
                 DrawCenteredText(dc, bodyFont, palette.disabledText,
                     card.sizeLabel, badge);
                 cardTitle.right = badge.left - Scale(6, dpi_);
@@ -1498,10 +1528,10 @@ bool Window::RenderCurrent()
         const int capsuleRadius = optionHeight / 2;
         RoundedBox(pixels, width_, height_, offRect, capsuleRadius,
             enabled ? palette.background : palette.hoverBackground,
-            enabled ? palette.separator : palette.accent);
+            enabled ? palette.separator : palette.accent, controlCoverage.data());
         RoundedBox(pixels, width_, height_, onRect, capsuleRadius,
             enabled ? palette.hoverBackground : palette.background,
-            enabled ? palette.accent : palette.separator);
+            enabled ? palette.accent : palette.separator, controlCoverage.data());
         DrawCenteredText(dc, bodyFont,
             enabled ? palette.disabledText : palette.accent,
             option.offLabel, offRect);
@@ -1520,7 +1550,7 @@ bool Window::RenderCurrent()
         applyRect_ = { padding, controlsY, width_ - padding,
             controlsY + applyButtonHeight };
         RoundedBox(pixels, width_, height_, applyRect_, Scale(8, dpi_),
-            palette.accent, palette.accent);
+            palette.accent, palette.accent, controlCoverage.data());
         DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),
             model_.applyLabel, applyRect_);
     }
@@ -1552,21 +1582,16 @@ bool Window::RenderCurrent()
                 pixel = 0;
                 continue;
             }
-            const unsigned baseAlpha = SameRgb(pixel, palette.background)
-                ? materialAlpha : contentAlpha;
-            const unsigned alpha = coverage >= 1.0f ? baseAlpha :
-                static_cast<unsigned>(std::clamp(
-                    std::lround(baseAlpha * coverage), 0L, 255L));
-            const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
-            const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
-            const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;
-            pixel = blue | (green << 8) | (red << 16) | (alpha << 24);
+            pixel = detail::ComposeSurfacePixel(pixel, palette.background,
+                controlCoverage[static_cast<size_t>(y) * width_ + x],
+                materialAlpha, contentAlpha, coverage);
         }
     }
 
     // A GDI window region is binary and would clip away the partial-alpha
     // edge pixels produced above.  Let the layered window's alpha channel
     // define the rounded outline instead.
+    if (paintObserverForTesting_) paintObserverForTesting_(pixels, width_, height_);
     SetWindowRgn(hwnd_, nullptr, FALSE);
 
     SIZE size{ width_, height_ };

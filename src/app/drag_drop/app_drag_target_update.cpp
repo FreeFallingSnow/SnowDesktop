@@ -1,7 +1,11 @@
 #include "app/app.h"
 #include "layout/page_navigation_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "core/drag_source_rebind.h"
 #include "core/transient_drag_slot.h"
+#include "drag_drop/file_source_eligibility.h"
+#include <map>
+#include <tuple>
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
@@ -76,6 +80,28 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
         }
     }
 
+    if (!dragDropController_.IsExternalDragActive() &&
+        snowdesktop::file_source_eligibility::ContainsProtectedDesktopIcons(dragSession_.SourceList()) &&
+        snowdesktop::file_source_eligibility::ForPhysicalFolder(dragSession_.SourceList()).Empty())
+    {
+        auto* widget = dynamic_cast<WidgetContainer*>(targetContainer);
+        const DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+        if (auto* group = dynamic_cast<FileGroup*>(widget))
+        {
+            auto id = group->SourceIdAtPoint(clientPoint);
+            if (id.empty() && group->IsGroupSearchActive() && targetSlot)
+                if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
+                    if (auto* sourceData = source->GetWidgetData()) id = sourceData->id;
+            if (id.empty()) id = group->GetActiveSourceId();
+            const auto index = FindWidgetIndexById(id);
+            data = index < widgets_.size() ? &widgets_[index] : nullptr;
+        }
+        if (data && data->type == DesktopWidgetType::FolderMapping)
+        {
+            targetSlot = nullptr;
+            targetRegion = HitRegion::Blocked;
+        }
+    }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 }
 
@@ -148,8 +174,8 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                             dockItem->GetEntryType() == entry.dockEntryType)
                             return item;
                         auto* frequent = dynamic_cast<DockFrequentItem*>(item);
-                        if (frequent && entry.dockReference.empty() &&
-                            frequent->GetItemIndex() == entry.desktopIndex)
+                        if (frequent && entry.dockReference.empty() && !entry.desktopKey.empty() &&
+                            frequent->GetItemIndex() == FindItemIndexByKey(entry.desktopKey))
                             return item;
                     }
                     return nullptr;
@@ -162,7 +188,11 @@ void DesktopApp::RebindDragSourceAfterRebuild()
         DragSourceList reboundList = oldSourceList;
         reboundList.BindRuntimeOrigin(dock);
         for (size_t i = 0; i < reboundItems.size(); ++i)
+        {
             reboundList.entries[i].item = reboundItems[i];
+            if (!reboundList.entries[i].desktopKey.empty())
+                reboundList.entries[i].desktopIndex = FindItemIndexByKey(reboundList.entries[i].desktopKey);
+        }
         dragSession_.RebindSource(dock, std::move(reboundItems),
             std::move(reboundList));
         return;
@@ -219,6 +249,43 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                 GetHostedSelectedItemsForSource(
                     oldSourceList.originWidgetId)
             : source->GetSelectedItems();
+    if (oldSourceList.HasDesktopWidgetIcons())
+    {
+        reboundItems.clear();
+        for (const auto& entry : oldSourceList.entries)
+        {
+            Item* item = nullptr;
+            if (entry.desktopWidgetIcon)
+            {
+                for (const auto& container : containers_)
+                {
+                    auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                    if (widget && widget->GetWidgetData() &&
+                        widget->GetWidgetData()->id == entry.widgetId)
+                    {
+                        item = widget;
+                        break;
+                    }
+                }
+            }
+            else for (const auto& object : items_oo_)
+            {
+                auto* icon = dynamic_cast<DesktopIcon*>(object.get());
+                if (icon && icon->GetDesktopItem() &&
+                    PathsEqualInsensitive(icon->GetDesktopItem()->layoutKey, entry.desktopKey))
+                {
+                    item = icon;
+                    break;
+                }
+            }
+            if (!item)
+            {
+                EndDragSession();
+                return;
+            }
+            reboundItems.push_back(item);
+        }
+    }
 
     // When the page turn replaces the page on the same physical monitor,
     // the source widget is rebuilt after its model bounds become empty.  A
@@ -239,13 +306,61 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                         GetMemberItem(memberIndex)
                     : nullptr;
             });
-    if (reboundItems.empty())
+    // Selection can change while a menu or reload pumps messages. It is a UI
+    // state, not a new drag payload. Resolve only the recorded identities, in
+    // their original order, and never substitute a newly selected member.
+    const auto identity = [](const DragSourceEntry& entry) {
+        return std::tuple{entry.kind, entry.fromDock, entry.desktopWidgetIcon,
+            entry.protectedDesktopIcon, entry.widgetType, entry.dockEntryType,
+            entry.widgetId, ToUpperInvariant(entry.desktopKey),
+            ToUpperInvariant(entry.filePath), ToUpperInvariant(entry.dockReference)};
+    };
+    using Identity = decltype(identity(oldSourceList.entries.front()));
+    const auto resolveRecorded = [&](const std::vector<Item*>& candidates) {
+        std::vector<Item*> resolved;
+        const auto current = BuildDragSourceList(candidates, source);
+        if (current.SourceSurfaceKind() != oldSourceList.SourceSurfaceKind() ||
+            current.hasOriginWidget != oldSourceList.hasOriginWidget ||
+            (current.hasOriginWidget && (current.originWidgetId != oldSourceList.originWidgetId ||
+                current.originWidgetType != oldSourceList.originWidgetType))) return resolved;
+        std::map<Identity, Item*> live;
+        for (const auto& entry : current.entries)
+            if (entry.item && (!entry.desktopKey.empty() || !entry.filePath.empty() ||
+                    !entry.widgetId.empty() || !entry.dockReference.empty()))
+                live.emplace(identity(entry), entry.item);
+        std::unordered_set<Item*> used;
+        for (const auto& entry : oldSourceList.entries)
+        {
+            const auto found = live.find(identity(entry));
+            if (found == live.end() || !used.insert(found->second).second) return std::vector<Item*>{};
+            resolved.push_back(found->second);
+        }
+        return resolved;
+    };
+    auto recordedItems = resolveRecorded(reboundItems);
+    if (recordedItems.empty())
+    {
+        // An original member may no longer be highlighted but still be a live
+        // member of the same source view. Query its current wrappers without
+        // changing selection. Do not retain selected-wrapper pointers across
+        // the lazy slot build, which may replace their cache.
+        std::vector<Item*> visible;
+        std::unordered_set<Item*> added;
+        for (const auto& slot : source->GetSlots())
+            if (auto* item = slot->GetItem(); item && added.insert(item).second) visible.push_back(item);
+        for (const auto& object : items_oo_)
+            if (object->GetContainer() == source && added.insert(object.get()).second) visible.push_back(object.get());
+        recordedItems = resolveRecorded(visible);
+    }
+    if (recordedItems.empty())
     {
         EndDragSession();
         return;
     }
-    DragSourceList reboundList = BuildDragSourceList(reboundItems, source);
-    dragSession_.RebindSource(source, std::move(reboundItems), std::move(reboundList));
+    DragSourceList reboundList = BuildDragSourceList(recordedItems, source);
+    for (size_t i = 0; i < reboundList.entries.size(); ++i)
+        reboundList.entries[i].sourceIndex = oldSourceList.entries[i].sourceIndex;
+    dragSession_.RebindSource(source, std::move(recordedItems), std::move(reboundList));
 }
 
 /**
@@ -375,7 +490,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)))
+                        ((UsesCollectionPopupList(dockFolderPopupWidget_) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(dockFolderPopupWidget_)))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
             if (UsesCollectionPopupFan(dockFolderPopupWidget_))
@@ -413,10 +528,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const bool after = edge != 0;
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
-                const long gutter =
-                    (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_))
-                    ? popupMetrics.gapY / 2
-                    : popupMetrics.gapX / 2;
+                const bool listLayout = UsesCollectionPopupList(dockFolderPopupWidget_);
+                const long gutter = listLayout
+                    ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                        GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
+                        GetCollectionPopupColumnCount(popup) > 1))
+                    : UsesCollectionPopupFan(dockFolderPopupWidget_) ? popupMetrics.gapY / 2 : popupMetrics.gapX / 2;
                 const long long distance = UsesCollectionPopupFan(dockFolderPopupWidget_)
                     ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
                         snowdesktop::collection_popup_layout::FanInsertionLine(
@@ -425,7 +542,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     : snowdesktop::popup_drag_rules::
                         InsertionEdgeDistanceSquared(
                             itemRect, clipped, client,
-                            (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)),
+                            ((UsesCollectionPopupList(dockFolderPopupWidget_) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(dockFolderPopupWidget_)),
                             after, gutter);
                 if (distance >=
                     bestDistanceSquared)
@@ -541,7 +658,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_])))
+                        ((UsesCollectionPopupList(widgets_[popupWidgetIndex_]) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_])))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
         }
@@ -589,10 +706,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const auto popupMetrics =
                 GetOpenCollectionPopupLayoutMetrics();
             const bool listMode =
-                (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_]));
-            const long gutter = listMode
-                ? popupMetrics.gapY / 2
-                : popupMetrics.gapX / 2;
+                ((UsesCollectionPopupList(widgets_[popupWidgetIndex_]) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_]));
+            const long gutter = UsesCollectionPopupList(widgets_[popupWidgetIndex_])
+                ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                    GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
+                    GetCollectionPopupColumnCount(popup) > 1))
+                : listMode ? popupMetrics.gapY / 2 : popupMetrics.gapX / 2;
             const long long distanceSquared = UsesCollectionPopupFan(widgets_[popupWidgetIndex_])
                 ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
                     snowdesktop::collection_popup_layout::FanInsertionLine(

@@ -10,6 +10,28 @@
 
 namespace snowdesktop::category_collection_rules
 {
+// AppsFolder links can expose only a Win32 AppID as their parsing name. The
+// identity belongs to the target Shell item, not necessarily the .lnk itself.
+inline bool HasApplicationsShellLinkPidlTarget(IShellLinkW* link)
+{
+    if (!link) return false;
+    PIDLIST_ABSOLUTE targetPidl = nullptr;
+    if (FAILED(link->GetIDList(&targetPidl)) || !targetPidl) return false;
+    Microsoft::WRL::ComPtr<IShellItem2> item;
+    const HRESULT created = SHCreateItemFromIDList(targetPidl, IID_PPV_ARGS(&item));
+    CoTaskMemFree(targetPidl);
+    if (FAILED(created) || !item) return false;
+    const auto property = [&](const PROPERTYKEY& key) {
+        std::wstring result;
+        PWSTR value = nullptr;
+        if (SUCCEEDED(item->GetString(key, &value)) && value) result = value;
+        CoTaskMemFree(value);
+        return result;
+    };
+    return snowdesktop::shortcut_application_rules::IsApplicationsShellLinkTarget(
+        {}, {}, property(PKEY_AppUserModel_ID), property(PKEY_Link_TargetParsingPath), false);
+}
+
 // Load only the shortcut's saved target; never Resolve it, launch it, or ask
 // Shell to search for a missing target. Normal UI filtering uses cached results.
 inline ShortcutTarget ReadShellLinkTarget(IShellLinkW* link)
@@ -42,6 +64,10 @@ inline ShortcutTarget ReadShellLinkTarget(IShellLinkW* link)
     result.application = rules::IsApplicationsShellLinkTarget(target, arguments,
         property(PKEY_AppUserModel_ID), property(PKEY_Link_TargetParsingPath), false);
     result.application = IsProgramItem(L".LNK", result.application, {}, result);
+    // Existing filesystem targets retain their file/folder classification.
+    // Query the virtual target only when the ordinary path provides no answer.
+    if (!result.application && !result.directory && !target[0])
+        result.application = HasApplicationsShellLinkPidlTarget(link);
     return result;
 }
 

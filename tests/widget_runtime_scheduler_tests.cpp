@@ -444,6 +444,36 @@ void TestTimelineValidationAndHiddenPause()
         "resuming a paused timeline must coalesce elapsed entries once");
 }
 
+void TestBoundedAnimationHistory()
+{
+    FrameRequests requests;
+    const FrameRequests::TimePoint start{};
+    Check(requests.Request("forgotten"), "initial history request is accepted");
+    (void)requests.Consume(start);
+    for (int index = 0; index < 96; ++index)
+    {
+        Check(requests.Request("active") && requests.Request("dynamic-" + std::to_string(index)),
+            "a live animation and changing IDs share each frame");
+        const auto frames = requests.Consume(start + std::chrono::milliseconds((index + 1) * 16));
+        Check(frames.size() == 2 && frames[0].name == "active" &&
+                frames[0].deltaMilliseconds == (index == 0 ? 0 : 16) &&
+                frames[1].deltaMilliseconds == 0,
+            "recent animation deltas survive continuous unrelated ID churn");
+    }
+    Check(requests.Request("forgotten"), "an evicted ID can request another frame");
+    const auto forgotten = requests.Consume(start + std::chrono::milliseconds(97 * 16));
+    Check(forgotten.size() == 1 && forgotten[0].deltaMilliseconds == 0,
+        "an ID outside the documented 64-entry history starts a fresh animation");
+    Check(requests.Request("active"), "the recent animation remains available");
+    const auto active = requests.Consume(start + std::chrono::milliseconds(98 * 16));
+    Check(active.size() == 1 && active[0].deltaMilliseconds == 32,
+        "eviction preserves the most recent active animation's actual elapsed time");
+    (void)requests.Cancel("active");
+    Check(requests.Request("active"), "a canceled ID can be reused");
+    Check(requests.Consume(start + std::chrono::milliseconds(99 * 16))[0].deltaMilliseconds == 0,
+        "cancel also removes retained timing history");
+}
+
 void TestAnimationFrameRequests()
 {
     FrameRequests requests;
@@ -515,6 +545,7 @@ int main()
     TestTimelineCoalescingAndReload();
     TestTimelineValidationAndHiddenPause();
     TestAnimationFrameRequests();
+    TestBoundedAnimationHistory();
     std::cout << "widget runtime scheduler tests passed\n";
     return 0;
 }

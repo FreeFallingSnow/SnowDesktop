@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/types.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "name_pinyin.h"
 #include "navigation_settings.h"
@@ -13,10 +14,28 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::quick_navigation_rules
 {
+// Return the largest grid that fits both its cells and the minimum gap.
+// Treat a single column as a terminal case; it has no inter-column gaps.
+inline int GridColumnCount(int contentWidth, int cellWidth, int minimumGap)
+{
+    contentWidth = std::max(1, contentWidth);
+    cellWidth = std::max(1, cellWidth);
+    minimumGap = std::max(0, minimumGap);
+    int columns = std::max(1, contentWidth / cellWidth);
+    while (columns > 1)
+    {
+        const int gap = (contentWidth - columns * cellWidth) / (columns - 1);
+        if (gap >= minimumGap) break;
+        --columns;
+    }
+    return columns;
+}
+
 inline QuickNavigationDesktopViewMode
 NextQuickNavigationDesktopViewMode(
     QuickNavigationDesktopViewMode mode)
@@ -28,6 +47,8 @@ NextQuickNavigationDesktopViewMode(
     case QuickNavigationDesktopViewMode::Source:
         return QuickNavigationDesktopViewMode::Initial;
     case QuickNavigationDesktopViewMode::Initial:
+        return QuickNavigationDesktopViewMode::Frequency;
+    case QuickNavigationDesktopViewMode::Frequency:
     default:
         return QuickNavigationDesktopViewMode::Tile;
     }
@@ -39,6 +60,8 @@ QuickNavigationDesktopViewModeGlyph(
 {
     switch (mode)
     {
+    case QuickNavigationDesktopViewMode::Frequency:
+        return menu_fluent_glyphs::kShowFrequent;
     case QuickNavigationDesktopViewMode::Source:
         return menu_fluent_glyphs::
             kQuickNavigationSourceView;
@@ -50,6 +73,30 @@ QuickNavigationDesktopViewModeGlyph(
         return menu_fluent_glyphs::
             kQuickNavigationTileView;
     }
+}
+
+// Inputs are in Tile order. Equal counts (including missing records) keep it.
+inline std::vector<size_t> LaunchFrequencyOrder(
+    const std::vector<int>& launchCounts, bool recordedOnly = false,
+    size_t limit = static_cast<size_t>(-1))
+{
+    std::vector<size_t> order;
+    order.reserve(launchCounts.size());
+    for (size_t i = 0; i < launchCounts.size(); ++i)
+        if (!recordedOnly || launchCounts[i] > 0)
+            order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t left, size_t right) {
+        return std::max(0, launchCounts[left]) > std::max(0, launchCounts[right]);
+    });
+    if (order.size() > limit) order.resize(limit);
+    return order;
+}
+
+inline bool ShowAppSuggestions(const NavigationSettings& settings,
+    bool desktopPage, bool searching, bool picking, bool listView)
+{
+    return settings.appSuggestionsEnabled && desktopPage && !searching &&
+        !picking && !listView && settings.desktopViewMode != QuickNavigationDesktopViewMode::Frequency;
 }
 
 inline RECT PlacePanel(RECT work, int width, int height, int margin,
@@ -274,6 +321,40 @@ inline std::vector<size_t> OrderIndicesByTabIds(
     return result;
 }
 
+/**
+ * @brief 集合、文件分类和映射各有独立标签，分组不改变快捷访问资格。
+ */
+inline std::vector<size_t> OrderTabWidgetIndices(
+    const std::vector<std::wstring>& tabOrder,
+    const std::vector<DesktopWidget>& widgets)
+{
+    std::vector<std::wstring> ids;
+    std::vector<bool> eligible;
+    ids.reserve(widgets.size());
+    eligible.reserve(widgets.size());
+    for (const auto& widget : widgets)
+    {
+        ids.push_back(widget.id);
+        eligible.push_back(
+            widget.type == DesktopWidgetType::Collection ||
+            widget.type == DesktopWidgetType::FileCategories ||
+            widget.type == DesktopWidgetType::FolderMapping);
+    }
+    return OrderIndicesByTabIds(tabOrder, ids, eligible);
+}
+
+inline void NormalizeTabOrder(
+    std::vector<std::wstring>& tabOrder,
+    const std::vector<DesktopWidget>& widgets)
+{
+    const auto indices = OrderTabWidgetIndices(tabOrder, widgets);
+    std::vector<std::wstring> normalized;
+    normalized.reserve(indices.size());
+    for (const size_t index : indices)
+        normalized.push_back(widgets[index].id);
+    tabOrder = std::move(normalized);
+}
+
 inline wchar_t InitialBucket(
     const std::wstring& name)
 {
@@ -361,6 +442,53 @@ inline int TabStripMaxScrollOffset(
         std::max(1, clipRight - scrollLeft);
     return std::max(
         0, contentWidth - available);
+}
+
+inline void SetTabScrollOffset(
+    int nextOffset, int& scrollOffset,
+    bool trackingDrag, POINT& dragStartPoint, int& dragDeltaX)
+{
+    if (trackingDrag)
+    {
+        // The tab's base position moves left when the strip scrolls right.
+        // Compensate both this frame and the origin used by later mouse moves.
+        const int scrollDelta = nextOffset - scrollOffset;
+        dragStartPoint.x -= scrollDelta;
+        dragDeltaX += scrollDelta;
+    }
+    scrollOffset = nextOffset;
+}
+
+constexpr bool TabDragExceededThreshold(
+    int deltaWithScroll, int scrollCompensation, int threshold)
+{
+    const int pointerDelta = deltaWithScroll - scrollCompensation;
+    return pointerDelta > threshold || pointerDelta < -threshold;
+}
+
+inline int TabDragTarget(
+    size_t dragTab, int draggedCenter,
+    const std::vector<int>& tabCenters)
+{
+    if (dragTab < 2 || dragTab >= tabCenters.size())
+        return 2;
+    int target = static_cast<int>(dragTab);
+    for (size_t tab = 2; tab < tabCenters.size(); ++tab)
+    {
+        if (tab < dragTab && draggedCenter < tabCenters[tab])
+            return static_cast<int>(tab);
+        if (tab > dragTab && draggedCenter > tabCenters[tab])
+            target = static_cast<int>(tab);
+    }
+    return target;
+}
+
+constexpr int TabDropSlotLeft(
+    size_t sourceTab, size_t targetTab, int targetLeft,
+    int draggedWidth, int targetWidth)
+{
+    // Moving right places the dragged tab after the shifted target tab.
+    return targetLeft + (targetTab > sourceTab ? targetWidth - draggedWidth : 0);
 }
 
 constexpr bool ShouldCloseOnDeactivate(

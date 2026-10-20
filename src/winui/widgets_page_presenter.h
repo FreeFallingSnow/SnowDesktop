@@ -561,6 +561,9 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(std::string_view focusId) const noexcept;
+    /** Reveals only the requested package's access controls; never edits access. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        FocusPackagePermissions(std::wstring_view packageId);
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         DeveloperToolsFocusTarget(std::string_view focusId) const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement

@@ -28,6 +28,11 @@ constexpr UINT kDockRevealGestureFirst = 41870;
 constexpr UINT kDockReserveDesktop = 41872;
 constexpr UINT kDockReserveMaximized = 41873;
 constexpr UINT kDockStartButton = 41874;
+constexpr UINT kDockQuickSearchButton = 41875;
+constexpr UINT kDockStartIcon = 41876, kDockSearchIcon = 41877;
+constexpr UINT kDockStartRestoreIcon = 41878, kDockSearchRestoreIcon = 41879;
+constexpr UINT kDockStartBeautify = 41890, kDockStartInherit = 41891;
+constexpr UINT kDockSearchBeautify = 41892, kDockSearchInherit = 41893;
 constexpr UINT kDesktopStyleFirst = 41880;
 constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
 constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
@@ -103,9 +108,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
                               bool selected, const wchar_t* glyph) {
         std::wstring label = title;
         if (selected) { label += L"\t"; label += _LW("statusBar.menu.current"); }
-        const bool inactive = includeStatusBar &&
-            (target == positionMenu || target == layoutMenu || target == monitorMenu || target == scaleMenu);
-        AppendMenuW(target, MF_STRING | (inactive ? MF_GRAYED : 0), command, label.c_str());
+        AppendMenuW(target, MF_STRING, command, label.c_str());
         SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
     const auto addDesktopStyles = [&](HMENU parent) {
@@ -130,12 +133,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
-    const auto availability = snowdesktop::ResolveBarSettingsAvailability(
-        generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS));
     const bool edgeRevealEnabled = snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
         dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
     const HMENU revealParent = includeStatusBar && !edgeRevealEnabled ? independentMenu : menu;
-    AppendMenuW(revealParent, MF_POPUP | (edgeRevealEnabled ? 0 : MF_GRAYED),
+    AppendMenuW(revealParent, MF_POPUP,
         reinterpret_cast<UINT_PTR>(revealMenu), _LW("settings.dock.edgeRevealGesture"));
     addChoice(revealMenu, kDockRevealGestureFirst, _LW("settings.dock.gestureSwipe"),
         dockSettings_.edgeRevealGesture == 0, L"\uF8E5");
@@ -166,27 +167,56 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring frequentLabel = toggleLabel(
         _LW("app.dock.show_frequent"),
         dockSettings_.showFrequentItems);
+    std::vector<std::pair<UINT_PTR, const wchar_t*>> dockActionIcons;
     const auto addToggle = [&](HMENU target, UINT command, const wchar_t* title, bool enabled,
                                const wchar_t* glyph, bool available = true, bool visibility = false) {
         const auto label = visibility ? std::wstring(title) + L"\t" +
             _LW(enabled ? "app.interact.shown" : "app.interact.hidden") : toggleLabel(title, enabled);
         AppendMenuW(target, MF_STRING | (available ? 0 : MF_GRAYED), command, label.c_str());
-        SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+        if (target == menu) dockActionIcons.emplace_back(command, glyph);
+        else SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
-    addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
+    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target, const wchar_t* title) {
+        const HMENU submenu=CreatePopupMenu(); if(!submenu)return submenu;
+        AppendMenuW(submenu,MF_STRING,change,_LW("iconLibrary.change"));
+        AppendMenuW(submenu,MF_STRING | (iconOverrides_.contains(target)?0:MF_GRAYED),restore,_LW("iconLibrary.restore"));
+        SetMenuItemIcon(submenu,change,L"\uF489",MenuIconFont::FluentRegular);
+        SetMenuItemIcon(submenu,restore,L"\uF19A",MenuIconFont::FluentRegular);
+        const UINT beauty = change == kDockStartIcon ? kDockStartBeautify : kDockSearchBeautify;
+        AppendMenuW(submenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(submenu, MF_STRING, beauty, _LW("iconAppearance.edit"));
+        SetMenuItemIcon(submenu, beauty, L"\uF592", MenuIconFont::FluentRegular);
+        if (iconAppearanceOverrides_.contains(target))
+        {
+            AppendMenuW(submenu, MF_STRING, beauty + 1, _LW("iconAppearance.inherit"));
+            SetMenuItemIcon(submenu, beauty + 1, L"\uF19A", MenuIconFont::FluentRegular);
+        }
+        const auto label = std::wstring(title) + L"\t" + _LW("iconLibrary.personalize");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), label.c_str());
+        return submenu;
+    };
+    const auto startIconMenu = addIconPersonalization(kDockStartIcon, kDockStartRestoreIcon,
+        L"control:start", _LW("app.dock.start_button"));
+    if (startIconMenu) AppendMenuW(menu, MF_STRING, kDockStartButton,
+        _LW(dockSettings_.showWindowsButton ? "app.interact.shown" : "app.interact.hidden"));
+    else addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
         L"\uF133", true, true);
+    const auto searchIconMenu = addIconPersonalization(kDockSearchIcon, kDockSearchRestoreIcon,
+        L"control:search", _LW("app.dock.quick_search"));
+    if (searchIconMenu) AppendMenuW(menu, MF_STRING, kDockQuickSearchButton,
+        _LW(dockSettings_.showQuickSearchButton ? "app.interact.shown" : "app.interact.hidden"));
+    else addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
+        L"\uF690", true, true); // search_20
     addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
-    const bool spaceOptionsEnabled = !dockSettings_.showOnlyWhenSummoned && !availability.allDockMerged && !includeStatusBar;
     addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
-        includeStatusBar ? !dockSettings_.allowDesktopContentOverlap : snowdesktop::dock_settings_rules::ShouldReserveDesktopWorkArea(
-            dockSettings_.showOnlyWhenSummoned, dockSettings_.allowDesktopContentOverlap), L"\uF359", spaceOptionsEnabled);
+        !dockSettings_.allowDesktopContentOverlap, L"\uF359");
     addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
-        dockSettings_.reserveScreenSpace, L"\uF8B5", spaceOptionsEnabled);
+        dockSettings_.reserveScreenSpace, L"\uF8B5");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
@@ -213,38 +243,55 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
     SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
     SetMenuItemIcon(revealParent, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextDockShowFrequentItems,
+    dockActionIcons.emplace_back(kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
-            : snowdesktop::menu_fluent_glyphs::kHideFrequent,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, keepToggleCommand,
-        snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
-        MenuIconFont::FluentRegular);
+            : snowdesktop::menu_fluent_glyphs::kHideFrequent);
+    dockActionIcons.emplace_back(keepToggleCommand,
+        snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
+    const auto bindFinalDockIcons = [&] {
+        SetMenuItemInlineAction(menu, kDockStartButton, kDockStartButton, startIconMenu != nullptr, false, startIconMenu != nullptr);
+        if (startIconMenu)
+        {
+            SetMenuItemInlineAction(menu, reinterpret_cast<UINT_PTR>(startIconMenu), kDockStartButton);
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(startIconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        }
+        SetMenuItemInlineAction(menu, kDockQuickSearchButton, kDockQuickSearchButton, searchIconMenu != nullptr, false, searchIconMenu != nullptr);
+        if (searchIconMenu)
+        {
+            SetMenuItemInlineAction(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), kDockQuickSearchButton);
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), L"\uF690", MenuIconFont::FluentRegular);
+        }
+        // Icon metadata is indexed by HMENU row. Leading insertions below
+        // shift those rows, so bind Dock actions after the final structure.
+        for (const auto& [command, glyph] : dockActionIcons)
+            SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
+        if (revealParent == menu)
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
+    };
     if (includeStatusBar)
     {
         const HMENU root = CreatePopupMenu();
         if (!root) { DestroyMenu(menu); DestroyMenu(independentMenu); return nullptr; }
         AppendMenuW(root, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
         AppendMenuW(root, MF_SEPARATOR, 0, nullptr);
-        const HMENU mergedMenu = CreatePopupMenu();
+        // Dock actions belong directly to the merged bar's settings level.
+        const HMENU mergedMenu = menu;
         const HMENU appearanceMenu = CreatePopupMenu();
-        if (!mergedMenu || !appearanceMenu)
+        if (!appearanceMenu)
         {
-            if (mergedMenu) DestroyMenu(mergedMenu);
-            if (appearanceMenu) DestroyMenu(appearanceMenu);
             DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr;
         }
         if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(mergedMenu), _LW("settings.bars.mergedBar")))
-        { DestroyMenu(mergedMenu); DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
         SetMenuItemIcon(root, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
         SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(mergedMenu), L"\uF587", MenuIconFont::FluentRegular);
-        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
-        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
-        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("settings.bars.dockActions")))
-        { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (!InsertMenuW(mergedMenu, 0, MF_BYPOSITION | MF_POPUP,
+            reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
+        { DestroyMenu(appearanceMenu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (edgeRevealEnabled)
+            InsertMenuW(mergedMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(appearanceMenu), L"\uF592", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(menu), L"\uE445", MenuIconFont::FluentRegular);
         addDesktopStyles(root);
         const HMENU heightMenu = CreatePopupMenu();
         const HMENU iconMenu = CreatePopupMenu();
@@ -276,8 +323,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(independentMenu), L"\uF133", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        bindFinalDockIcons();
         return root;
     }
+    bindFinalDockIcons();
     return menu;
 }
 
@@ -315,6 +364,23 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
+    if (command >= kDockStartBeautify && command <= kDockSearchInherit)
+    {
+        const std::wstring target = command <= kDockStartInherit ? L"control:start" : L"control:search";
+        if (command == kDockStartBeautify || command == kDockSearchBeautify) OpenIconAppearance(target);
+        else { snowdesktop::IconAppearanceRequest request; request.action = "inherit"; request.target = target; (void)EditIconAppearance(request); }
+        return;
+    }
+    if (command == kDockStartIcon || command == kDockSearchIcon)
+    {
+        OpenIconOverrideLibrary(command == kDockStartIcon ? L"control:start" : L"control:search");
+        return;
+    }
+    if(command==kDockStartRestoreIcon||command==kDockSearchRestoreIcon)
+    {
+        SetIconOverride(command==kDockStartRestoreIcon?L"control:start":L"control:search",{});
+        return;
+    }
     if (command >= kDesktopStyleFirst && command < kDesktopStyleFirst + std::size(kDesktopStyles))
     {
         if (!settingsController_) return;
@@ -382,10 +448,12 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         updated.showWindowsButton = !updated.showWindowsButton;
         layoutChanged = true;
         break;
+    case kDockQuickSearchButton:
+        updated.showQuickSearchButton = !updated.showQuickSearchButton;
+        layoutChanged = true;
+        break;
     case kDockReserveDesktop:
     case kDockReserveMaximized:
-        if (updated.showOnlyWhenSummoned || snowdesktop::ResolveBarSettingsAvailability(
-            generalSettings_.dockEnabled, updated, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged) return;
         if (command == kDockReserveDesktop)
             updated.allowDesktopContentOverlap = !updated.allowDesktopContentOverlap;
         else updated.reserveScreenSpace = !updated.reserveScreenSpace;
@@ -428,8 +496,6 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
     default:
         if (command >= kDockRevealGestureFirst && command < kDockRevealGestureFirst + 2)
         {
-            if (!snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
-                updated.showOnlyWhenSummoned, updated.floatingEdgeSwipeEnabled)) return;
             updated.edgeRevealGesture = static_cast<int>(command - kDockRevealGestureFirst);
             layoutChanged = updated.edgeRevealGesture != dockSettings_.edgeRevealGesture;
         }

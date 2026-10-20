@@ -5,6 +5,7 @@
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
 #include "shell/shell_launch_execution.h"
+#include "dock/dock_installed_application.h"
 
 // Dock launch animation, item activation and application identity resolution.
 
@@ -240,10 +241,12 @@ bool DesktopApp::LaunchPathWithShortcutPolicy(
 }
 
 bool DesktopApp::LaunchDesktopItem(
-    size_t itemIndex, bool animateDockLaunch)
+    size_t itemIndex, bool animateDockLaunch, bool allowDockTray)
 {
     if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
         return false;
+    if (animateDockLaunch && allowDockTray &&
+        TryActivateDockTray(ResolveDockAppIdentity(itemIndex).executablePath, itemIndex)) return true;
     if (animateDockLaunch)
     {
         const DockAppIdentity identity =
@@ -451,5 +454,7 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
         }
     }
 
+    if (identity.kind == DockAppIdentityKind::Executable)
+        identity.validatedPayloadPaths = snowdesktop::dock_app_identity_rules::ResolveInstalledExecutables(identity.executablePath);
     return identity;
 }

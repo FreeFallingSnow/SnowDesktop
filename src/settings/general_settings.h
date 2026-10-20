@@ -29,6 +29,9 @@ struct GeneralSettings
     bool softwareDesktopHotkeyEnabled = false;
     UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT softwareDesktopHotkeyVirtualKey = 'S';
+    bool forceRestartHotkeyEnabled = true;
+    UINT forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+    UINT forceRestartHotkeyVirtualKey = 'S';
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this
@@ -54,7 +57,7 @@ struct GeneralSettings
     bool dockEnabled = kDefaultDockEnabled;
     snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;
-    int animationMode = 0;
+    int animationMode = snowdesktop::animation::DefaultMode;
     int popupAnimationEffect = 2;
     int animationSpeed = 1;
     int animationFrameLimit = 0;
@@ -64,6 +67,7 @@ struct GeneralSettings
     snowdesktop::shell_extensions::Preferences shellExtensions;
     bool contextMenuExpandQuickActions = false;
     bool contextMenuHidePageManagement = false;
+    bool contextMenuHideMoreManagement = false;
     snowdesktop::app_fonts::Selection font;
     int tooltipFontSize = snowdesktop::kDefaultTooltipFontSize;
     char language[85] = "system";

@@ -18,7 +18,22 @@ struct Failure
     std::wstring detail;
     DWORD error = ERROR_SUCCESS;
     bool warning = false;
+    // Recoverable background failures may become obsolete while queued or
+    // displayed. Evaluate this only on the presentation thread.
+    std::function<bool()> stillRelevant;
 };
+inline bool ShouldPresent(const Failure& failure) noexcept
+{
+    try { return !failure.stillRelevant || failure.stillRelevant(); }
+    catch (...) { return false; }
+}
+template<typename Present>
+bool PresentIfCurrent(const Failure& failure, Present&& present)
+{
+    if (!ShouldPresent(failure)) return false;
+    present();
+    return true;
+}
 using Reporter = std::function<void(const Failure&)>;
 inline std::mutex reporterMutex;
 inline Reporter reporter;

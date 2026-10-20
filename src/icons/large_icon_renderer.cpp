@@ -71,7 +71,7 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         const auto inner = D2D1::RectF(frame.left + inset, frame.top + inset, frame.right - inset, frame.bottom - inset);
         const float innerRadius = std::max(0.f, radius - inset);
         brush->SetOpacity(static_cast<float>(c.glowStrength) * view.hover * view.opacity * std::exp(-3.f * i / (steps - 1)));
-        if (c.shape <= 1) target->DrawRoundedRectangle(D2D1::RoundedRect(inner, innerRadius, innerRadius), brush.Get(), stroke);
+        if (c.shape <= 1) smooth_corners::Stroke(target, inner, innerRadius, brush.Get(), stroke);
         else
         {
             ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
@@ -123,10 +123,9 @@ void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, flo
     const auto stroke = light ? D2D1::ColorF(.06f, .08f, .12f, .5f) : D2D1::ColorF(1.f, 1.f, 1.f, .5f);
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(target->CreateSolidColorBrush(fill, &brush))) return;
-    const auto rounded = D2D1::RoundedRect(rect, radius, radius);
-    target->FillRoundedRectangle(rounded, brush.Get());
+    smooth_corners::Fill(target, rect, radius, brush.Get());
     brush->SetColor(stroke);
-    target->DrawRoundedRectangle(rounded, brush.Get(), 1.f);
+    smooth_corners::Stroke(target, rect, radius, brush.Get(), 1.f);
 }
 void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& incoming)
 {
@@ -158,7 +157,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
             ComPtr<ID2D1SolidColorBrush> brush;
             if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(background.color,
                     static_cast<float>(background.opacity) * view.opacity), &brush)))
-                target->FillRoundedRectangle(D2D1::RoundedRect(frame, backgroundRadius, backgroundRadius), brush.Get());
+                smooth_corners::Fill(target, frame, backgroundRadius, brush.Get());
         }
     }
     else if (!view.bitmap)
@@ -168,7 +167,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         // or a separate foreground layer. Loaded images retain their own alpha.
         ComPtr<ID2D1SolidColorBrush> brush;
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(view.neutral, .65f * view.opacity), &brush)))
-            target->FillRoundedRectangle(D2D1::RoundedRect(frame, backgroundRadius, backgroundRadius), brush.Get());
+            smooth_corners::Fill(target, frame, backgroundRadius, brush.Get());
     }
 
     if (c.shape <= 1) push();

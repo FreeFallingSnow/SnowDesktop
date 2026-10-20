@@ -2,14 +2,50 @@
 
 #include "common/l10n.h"
 
-#include <imm.h>
 #include <windows.h>
+#include <imm.h>
 
 #include <string>
 #include <algorithm>
+#include <cstdint>
+#include <cmath>
 
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
+inline constexpr std::uintptr_t kQuickNavigationBackdropPanelOwner = 1;
+
+// Allocation belongs to the open window, not to an individual animation frame.
+// Retain it through the settling frame; DestroyQuickNavigationWindow releases it.
+inline RECT QuickNavigationRetainedAllocation(const RECT& previous, const RECT& required)
+{
+    if (previous.right <= previous.left || previous.bottom <= previous.top)
+        return required;
+    if (required.right <= required.left || required.bottom <= required.top)
+        return previous;
+    return {std::min(previous.left, required.left), std::min(previous.top, required.top),
+        std::max(previous.right, required.right), std::max(previous.bottom, required.bottom)};
+}
+
+// Reserve the invocation monitor before the first visible frame. Retaining only
+// the current panel makes the HWND origin move on the first expansion, while
+// DWM can still display content whose offset belongs to the previous origin.
+// This reserves native coordinates only; the content surface stays panel-sized.
+inline RECT QuickNavigationHostAllocation(const RECT& previous, const RECT& required,
+    const RECT& placementBounds)
+{
+    RECT allocation = QuickNavigationRetainedAllocation(required, placementBounds);
+    InflateRect(&allocation, 2, 2);
+    return QuickNavigationRetainedAllocation(previous, allocation);
+}
+
+inline RECT QuickNavigationWindowFence(const RECT& panel, const RECT& animationPath,
+    const RECT& host, bool expanded)
+{
+    RECT fence = expanded ? QuickNavigationRetainedAllocation(panel, animationPath) : panel;
+    if (expanded) InflateRect(&fence, 2, 2);
+    OffsetRect(&fence, -host.left, -host.top);
+    return fence;
+}
 
 inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
 {
@@ -17,6 +53,17 @@ inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
     search.right = std::max<LONG>(search.left + 1, search.right);
     search.bottom = std::max<LONG>(search.top + 1, search.bottom);
     return search;
+}
+
+inline float QuickNavigationItemTextLineSpacing(float fontSize)
+{
+    return std::max(1.0f, std::floor(fontSize * 1.08f));
+}
+
+inline int QuickNavigationItemTextHeight(float fontSize, int lines)
+{
+    return std::max(1, static_cast<int>(std::ceil(
+        QuickNavigationItemTextLineSpacing(fontSize) * static_cast<float>(std::max(1, lines)))));
 }
 
 inline RECT QuickNavigationItemTextRect(RECT item, RECT icon, int pad, int gap, int height)

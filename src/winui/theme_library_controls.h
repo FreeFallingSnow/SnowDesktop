@@ -8,8 +8,10 @@
 #include <winrt/Windows.System.h>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cwctype>
 #include <memory>
+#include <limits>
 
 namespace snowdesktop::winui::theme_controls
 {
@@ -30,48 +32,95 @@ public:
         root_.Spacing(8);
         if (transfer_)
         {
-            filters_.ColumnSpacing(8); filters_.RowSpacing(8);
-            root_.Children().Append(filters_);
-            for (std::size_t i = 0; i < tabs_.size(); ++i)
+            c::StackPanel filters;
+            filters.Orientation(c::Orientation::Horizontal);
+            filters.Spacing(12);
+            filterLabel_.VerticalAlignment(x::VerticalAlignment::Center);
+            filters.VerticalAlignment(x::VerticalAlignment::Center);
+            filterChoice_.VerticalAlignment(x::VerticalAlignment::Center);
+            filterChoice_.Width(180);
+            filters.Children().Append(filterLabel_);
+            filters.Children().Append(filterChoice_);
+            c::Grid toolbar;
+            toolbar.ColumnSpacing(8);
+            c::ColumnDefinition filterColumn, commandColumn;
+            filterColumn.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+            commandColumn.Width(x::GridLengthHelper::Auto());
+            toolbar.ColumnDefinitions().Append(filterColumn);
+            toolbar.ColumnDefinitions().Append(commandColumn);
+            commands_.HorizontalAlignment(x::HorizontalAlignment::Right);
+            commands_.VerticalAlignment(x::VerticalAlignment::Center);
+            commands_.ColumnSpacing(8);
+            commands_.Width(432);
+            for (int index = 0; index < 2; ++index)
             {
-                auto button = tabs_[i]; button.UseSystemFocusVisuals(true);
-                button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-                filters_.Children().Append(button);
-                const auto token = button.Click([this, i](const auto&, const auto&) {
-                    if (syncing_) return;
-                    filter_ = static_cast<FilterTab>(i); PatchTabs(); RefreshChoices();
-                });
-                revoke_.push_back([button, token] { button.Click(token); });
+                c::RowDefinition row; row.Height(x::GridLengthHelper::Auto()); toolbar.RowDefinitions().Append(row);
             }
-            const auto token = filters_.SizeChanged([this](const auto&, const auto&) { LayoutTabs(); });
-            revoke_.push_back([control = filters_, token] { control.SizeChanged(token); });
+            c::Grid::SetColumn(commands_, 1);
+            toolbar.Children().Append(filters);
+            toolbar.Children().Append(commands_);
+            const auto weakCommands = winrt::make_weak(commands_);
+            const auto weakCommandColumn = winrt::make_weak(commandColumn);
+            const auto layoutToken = toolbar.SizeChanged([weakCommands, weakCommandColumn](const auto& sender, const x::SizeChangedEventArgs& args) {
+                if (const auto commands = weakCommands.get())
+                {
+                    const bool stacked = args.NewSize().Width < 760.0;
+                    int visible = 0;
+                    for (const auto child : commands.Children()) if (child.Visibility() == x::Visibility::Visible) ++visible;
+                    commands.Width(stacked ? std::numeric_limits<double>::quiet_NaN() : 144.0 * visible);
+                    commands.HorizontalAlignment(stacked ? x::HorizontalAlignment::Stretch : x::HorizontalAlignment::Right);
+                    c::Grid::SetColumn(commands, stacked ? 0 : 1);
+                    c::Grid::SetColumnSpan(commands, stacked ? 2 : 1);
+                    c::Grid::SetRow(commands, stacked ? 1 : 0);
+                    if (const auto column = weakCommandColumn.get())
+                        column.Width(stacked ? x::GridLength{0, x::GridUnitType::Pixel} : x::GridLengthHelper::Auto());
+                    if (const auto grid = sender.template try_as<c::Grid>()) grid.RowSpacing(stacked ? 12 : 0);
+                }
+            });
+            revoke_.push_back([toolbar, layoutToken] { toolbar.SizeChanged(layoutToken); });
+            c::Border toolbarSurface;
+            if (cardStyle_) toolbarSurface.Style(cardStyle_);
+            else presenter_controls::StyleSettingsCard(toolbarSurface);
+            toolbarSurface.Child(toolbar);
+            root_.Children().Append(toolbarSurface);
+            const auto token = filterChoice_.SelectionChanged([this](const auto&, const auto&) {
+                if (syncing_ || closed_ || busy_) return;
+                const int index = filterChoice_.SelectedIndex();
+                if (index < 0 || index > static_cast<int>(FilterTab::Icon)) return;
+                filter_ = static_cast<FilterTab>(index);
+                RefreshChoices();
+            });
+            revoke_.push_back([control = filterChoice_, token] { control.SelectionChanged(token); });
             entries_.Spacing(8); root_.Children().Append(entries_);
             empty_.TextWrapping(x::TextWrapping::Wrap); root_.Children().Append(empty_);
         }
         for (auto combo : {choice_, quick_, popup_}) combo.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
-        if (transfer_) root_.Children().InsertAt(1, commands_);
         if (transfer_)
         {
-            AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
             AddCommand(ThemeLibraryCommand::Import, "themeLibrary.import");
+            AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
             AddCommand(ThemeLibraryCommand::SyncSubscriptions, "themeLibrary.sync");
         }
         else
         {
-            saveBody_ = AppearanceSections::Section(saveRoot_, saveTitle_, &disclosures_);
+            saveBody_ = AppearanceSections::Section(saveRoot_, saveTitle_, &disclosures_, true);
             name_.MaxLength(128); nameRow_.Initialize(name_); saveBody_.Children().Append(nameRow_.root);
             if (Global())
             {
                 c::StackPanel scopes; scopes.Spacing(8);
+                scopes.HorizontalAlignment(x::HorizontalAlignment::Right);
                 for (auto check : scopeChecks_)
                 {
+                    check.MinWidth(0);
                     check.IsChecked(true); scopes.Children().Append(check);
                     const auto checked = check.Checked([this](const auto&, const auto&) { PatchBindings(); });
                     const auto unchecked = check.Unchecked([this](const auto&, const auto&) { PatchBindings(); });
                     revoke_.push_back([check, checked, unchecked] { check.Checked(checked); check.Unchecked(unchecked); });
                 }
-                scopeRow_.Initialize(scopes); saveBody_.Children().Append(scopeRow_.root);
+                scopeRow_.Initialize(scopes);
+                scopeRow_.SetCompactEditor();
+                scopeRow_.SetControlAlignment(x::HorizontalAlignment::Right);
+                saveBody_.Children().Append(scopeRow_.root);
                 quickRow_.Initialize(quick_); popupRow_.Initialize(popup_);
                 saveBody_.Children().Append(quickRow_.root); saveBody_.Children().Append(popupRow_.root);
                 for (auto [combo, kind] : {std::pair{quick_, themes::Kind::QuickPanel}, {popup_, themes::Kind::Popup}})
@@ -89,15 +138,19 @@ public:
                     revoke_.push_back([combo, token] { combo.SelectionChanged(token); });
                 }
             }
+            saveActions_.ColumnSpacing(presenter_controls::kSettingControlGap);
+            saveActions_.HorizontalAlignment(x::HorizontalAlignment::Right);
+            saveActions_.MaxWidth(520);
+            saveBody_.Children().Append(saveActions_);
             for (auto [command, key] : {std::pair{ThemeLibraryCommand::Update, "themeLibrary.saveTo"}, {ThemeLibraryCommand::SaveAs, "themeLibrary.create"}})
             {
-                c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
-                button.Content(winrt::box_value(L(key))); saveBody_.Children().Append(button);
+                c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+                button.Content(winrt::box_value(L(key))); saveActions_.Children().Append(button);
                 const auto token = button.Click([this, command](const auto&, const auto&) { Run(command); });
                 revoke_.push_back([button, token] { button.Click(token); });
                 saveButtons_.push_back({command, key, button});
             }
-            cancel_.HorizontalAlignment(x::HorizontalAlignment::Right); saveBody_.Children().Append(cancel_);
+            cancel_.HorizontalAlignment(x::HorizontalAlignment::Stretch); saveActions_.Children().Append(cancel_);
             const auto cancelToken = cancel_.Click([this](const auto&, const auto&) {
                 if (EditingBound() && boundCancel_ && edit_.theme)
                 {
@@ -108,8 +161,15 @@ public:
             });
             revoke_.push_back([control = cancel_, cancelToken] { control.Click(cancelToken); });
         }
-        feedback_.IsOpen(false); root_.Children().Append(feedback_);
-        saveFeedback_.IsOpen(false); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
+        feedback_.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(feedback_); root_.Children().Append(feedback_);
+        if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
+        const auto feedbackClosed = feedback_.Closed([this](const auto&, const auto&) {
+            if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
+        });
+        revoke_.push_back([control = feedback_, feedbackClosed] { control.Closed(feedbackClosed); });
+        saveFeedback_.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(saveFeedback_); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
         const auto choiceToken = choice_.SelectionChanged([this](const auto&, const auto&) {
             if (syncing_) return;
             PatchButtons();
@@ -125,13 +185,19 @@ public:
     ~ThemeLibraryControls() { Close(); }
     x::UIElement Content() const { return root_; }
     x::UIElement SaveContent() const { return saveRoot_; }
+    void SetInlineSurface()
+    {
+        for (const auto& disclosure : disclosures_)
+            presenter_controls::StyleInlineSettingsExpander(disclosure);
+    }
     x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{entries_} : x::FrameworkElement{choice_}; }
     x::UIElement SelectionContent()
     {
-        c::Grid row; row.ColumnSpacing(8);
+        c::Grid row;
         c::ColumnDefinition selector, action; action.Width(x::GridLengthHelper::Auto());
         row.ColumnDefinitions().Append(selector); row.ColumnDefinitions().Append(action);
         c::Grid::SetColumn(editButton_, 1); row.Children().Append(choice_); row.Children().Append(editButton_);
+        editButton_.Margin({8, 0, 0, 0});
         const auto token = editButton_.Click([this](const auto&, const auto&) {
             BeginEdit();
         });
@@ -213,6 +279,7 @@ public:
     { boundSaved_ = std::move(saved); boundCancel_ = std::move(cancel); boundBegin_ = std::move(begin); }
     void SetBindingChanged(std::function<void(const themes::Theme&)> changed) { bindingChanged_ = std::move(changed); }
     bool Synchronizing() const { return syncing_ || busy_; }
+    void SetNativeChoiceCount(int count) { modeCount_ = count; }
     int NativeSelection() const { return Selected() ? customIndex_ : choice_.SelectedIndex(); }
     // The controller values and last successful library reference are authoritative.
     void SyncSelection(int nativeIndex, const SettingsValues& values)
@@ -259,6 +326,7 @@ public:
         Run(ThemeLibraryCommand::Apply, selected->id);
         return true;
     }
+    void SetAuthoringEnabled(bool enabled) { authoringEnabled_ = enabled; PatchButtons(); }
     void SetActions(ThemeLibraryAction action, ThemeLibraryAsyncAction async, std::function<bool()> flush)
     { action_ = std::move(action); async_ = std::move(async); flush_ = std::move(flush); }
     void SetChanged(std::function<void()> changed) { changed_ = std::move(changed); }
@@ -285,15 +353,17 @@ public:
         {
             empty_.Text(L("themeLibrary.empty"));
             constexpr const char* keys[]{"themeLibrary.all", "themeLibrary.global", "themeLibrary.dock", "themeLibrary.statusBar",
-                "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup"};
-            for (std::size_t i = 0; i < tabs_.size(); ++i)
-            {
-                c::TextBlock text; text.Text(L(keys[i])); text.TextWrapping(x::TextWrapping::Wrap);
-                tabs_[i].Content(text);
-            }
-            PatchTabs(); LayoutTabs();
+                "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup", "themeLibrary.icon"};
+            const bool previous = syncing_; syncing_ = true;
+            filterLabel_.Text(L("themeLibrary.type"));
+            x::Automation::AutomationProperties::SetName(filterChoice_, filterLabel_.Text());
+            filterChoice_.Items().Clear();
+            for (const auto* key : keys) filterChoice_.Items().Append(winrt::box_value(L(key)));
+            filterChoice_.SelectedIndex(static_cast<int>(filter_));
+            syncing_ = previous;
         }
-        cancel_.Content(winrt::box_value(L("themeLibrary.cancelEdit")));
+        c::TextBlock cancelText; cancelText.Text(L("themeLibrary.cancelEdit"));
+        cancelText.TextWrapping(x::TextWrapping::Wrap); cancel_.Content(cancelText);
         editButton_.Content(winrt::box_value(L("themeLibrary.edit")));
         if (!transfer_) nameRow_.SetText(L("themeLibrary.name"));
         if (saveTitle_) saveTitle_.Text(L("themeLibrary.save"));
@@ -304,7 +374,7 @@ public:
             for (std::size_t i = 0; i < scopeChecks_.size(); ++i) scopeChecks_[i].Content(winrt::box_value(L(keys[i])));
             quickRow_.SetText(L("themeLibrary.quickPanel")); popupRow_.SetText(L("themeLibrary.popup"));
         }
-        for (auto& button : buttons_) button.control.Label(L(button.key));
+        for (auto& button : buttons_) SetButtonText(button.control, L(button.key));
         for (auto& button : saveButtons_) button.control.Content(winrt::box_value(L(button.key)));
         RefreshChoices();
     }
@@ -338,27 +408,29 @@ private:
     c::ComboBox choice_, quick_, popup_;
     c::StackPanel entries_;
     x::Style cardStyle_{nullptr};
-    struct CardCommand { ThemeLibraryCommand command; std::string id; c::AppBarButton control; };
+    struct CardCommand { ThemeLibraryCommand command; std::string id; c::Control control; };
     std::vector<CardCommand> cardCommands_;
     std::vector<std::function<void()>> cardRevoke_;
-    c::Grid filters_;
-    std::array<c::Primitives::ToggleButton, 7> tabs_;
+    c::TextBlock filterLabel_;
+    c::ComboBox filterChoice_;
     FilterTab filter_ = FilterTab::All;
     c::TextBlock empty_;
     c::Button cancel_;
     EditSource edit_;
     std::map<themes::Kind, EditSource> boundSources_;
     EditSource followSource_;
+    bool authoringEnabled_ = true;
     bool editing_ = false, inheritedCustom_ = false, customVisible_ = false;
     std::vector<x::UIElement> customContent_;
     c::TextBox name_;
     c::Button editButton_;
     presenter_controls::SettingRow nameRow_, scopeRow_, quickRow_, popupRow_;
+    c::Grid saveActions_;
     std::array<c::CheckBox, 3> scopeChecks_;
     std::vector<c::Expander> disclosures_;
-    c::CommandBar commands_;
+    c::Grid commands_;
     c::InfoBar feedback_, saveFeedback_;
-    struct Command { ThemeLibraryCommand command; const char* key; c::AppBarButton control; };
+    struct Command { ThemeLibraryCommand command; const char* key; c::Button control; };
     struct SaveButton { ThemeLibraryCommand command; const char* key; c::Button control; };
     std::vector<Command> buttons_;
     std::vector<SaveButton> saveButtons_;
@@ -393,7 +465,7 @@ private:
         {
             std::wstring label(winrt::to_hstring(theme.name).c_str());
             if (transfer_) label += L" · " + (theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
-                L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup"));
+                L(theme.kind == themes::Kind::Icon ? "themeLibrary.icon" : theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup"));
             return label;
         }
         static const std::map<std::string, const char*> keys = {{"dark", "app.settings.dark"}, {"light", "app.settings.light"},
@@ -422,7 +494,8 @@ private:
             if (nativeIndex_ == customIndex_ && current_ && reference != library_.references.end() && !reference->second.id.empty())
             {
                 const auto saved = themes::Resolve(reference->second.snapshot, reference->second.id);
-                if (saved && themes::AppliedAppearanceMatches(saved->appearance, current_->appearance) &&
+                if (saved && (saved->kind == themes::Kind::Icon ? themes::SameIconTheme(saved->icon, current_->icon) :
+                    themes::AppliedAppearanceMatches(saved->appearance, current_->appearance)) &&
                     (saved->kind != themes::Kind::QuickPanel || (saved->layout == current_->layout && saved->colors == current_->colors)))
                     preferred = saved->id;
             }
@@ -504,14 +577,14 @@ private:
     }
     void PatchButtons()
     {
-        if (transfer_) { for (auto tab : tabs_) tab.IsEnabled(!busy_); }
+        if (transfer_) filterChoice_.IsEnabled(!busy_);
         else
         {
             const bool visible = CustomSelected();
             if (visible && !customVisible_) CollapseCustom();
             customVisible_ = visible;
             const auto visibility = visible ? x::Visibility::Visible : x::Visibility::Collapsed;
-            saveRoot_.Visibility(visibility);
+            saveRoot_.Visibility(authoringEnabled_ ? visibility : x::Visibility::Collapsed);
             const auto contentVisibility = CustomSelected() ||
                 (inheritedCustom_ && !Selected() && choice_.SelectedIndex() == 0)
                 ? x::Visibility::Visible : x::Visibility::Collapsed;
@@ -538,6 +611,17 @@ private:
                 button.control.IsEnabled(!busy_ && workshop_);
             }
         }
+        if (transfer_)
+        {
+            int visible = 0;
+            for (std::uint32_t index = 0; index < commands_.Children().Size(); ++index)
+            {
+                const bool shown = commands_.Children().GetAt(index).Visibility() == x::Visibility::Visible;
+                commands_.ColumnDefinitions().GetAt(index).Width(shown ? x::GridLength{1, x::GridUnitType::Star} : x::GridLength{0, x::GridUnitType::Pixel});
+                if (shown) ++visible;
+            }
+            if (std::isfinite(commands_.Width())) commands_.Width(144.0 * visible);
+        }
         for (auto& button : cardCommands_)
         {
             button.control.IsEnabled(!busy_ && themes::Find(library_.themes, button.id));
@@ -560,27 +644,41 @@ private:
             button.control.HorizontalAlignment(x::HorizontalAlignment::Stretch);
             button.control.IsEnabled(!busy_ && (!update || edit_.CanUpdate(library_)));
         }
+        if (!transfer_)
+        {
+            // Keep save/update/cancel as one command group. Hidden actions do
+            // not retain a column, and long theme names wrap inside the group.
+            saveActions_.ColumnDefinitions().Clear();
+            int columnIndex = 0;
+            for (auto const& child : saveActions_.Children())
+            {
+                if (child.Visibility() != x::Visibility::Visible) continue;
+                c::ColumnDefinition column;
+                column.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+                saveActions_.ColumnDefinitions().Append(column);
+                c::Grid::SetColumn(child.as<x::FrameworkElement>(), columnIndex++);
+            }
+            saveActions_.MaxWidth(180.0 * std::max(1, columnIndex));
+        }
     }
     void CollapseCustom()
     {
         AppearanceSections::CollapseWithin(saveRoot_);
         for (auto content : customContent_) AppearanceSections::CollapseWithin(content);
     }
-    void PatchTabs()
+    static void SetButtonText(const c::Button& button, const std::wstring& value)
     {
-        for (std::size_t i = 0; i < tabs_.size(); ++i) tabs_[i].IsChecked(i == static_cast<std::size_t>(filter_));
+        c::TextBlock text; text.Text(value); text.TextWrapping(x::TextWrapping::Wrap);
+        text.TextAlignment(x::TextAlignment::Center); button.Content(text);
     }
-    void LayoutTabs()
+    static c::Button CenteredButton()
     {
-        const int count = std::clamp(static_cast<int>(filters_.ActualWidth() / 140), 1, 7);
-        if (filters_.ColumnDefinitions().Size() == static_cast<unsigned>(count)) return;
-        filters_.ColumnDefinitions().Clear(); filters_.RowDefinitions().Clear();
-        for (int i = 0; i < count; ++i) filters_.ColumnDefinitions().Append(c::ColumnDefinition{});
-        for (std::size_t i = 0; i < tabs_.size(); ++i)
-        {
-            if (i % count == 0) { c::RowDefinition row; row.Height(x::GridLengthHelper::Auto()); filters_.RowDefinitions().Append(row); }
-            c::Grid::SetRow(tabs_[i], static_cast<int>(i) / count); c::Grid::SetColumn(tabs_[i], static_cast<int>(i) % count);
-        }
+        c::Button button; button.MinHeight(32);
+        button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        button.VerticalAlignment(x::VerticalAlignment::Stretch);
+        button.HorizontalContentAlignment(x::HorizontalAlignment::Center);
+        button.VerticalContentAlignment(x::VerticalAlignment::Center);
+        return button;
     }
     x::UIElement Entry(const themes::Theme& theme)
     {
@@ -592,10 +690,9 @@ private:
         };
         line(std::wstring(winrt::to_hstring(theme.name).c_str()), true);
         auto tags = theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
-            L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
+            L(theme.kind == themes::Kind::Icon ? "themeLibrary.icon" : theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
         if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             tags += L" · " + L("themeLibrary.dock") + L" · " + L("themeLibrary.statusBar") + L" · " + L("themeLibrary.taskbar");
-        line(tags);
         bool installed = false;
         for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
         c::ComboBox version{nullptr};
@@ -618,18 +715,23 @@ private:
                 cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
             }
         }
-        line(L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
+        line(tags + L" · " + L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
         for (auto [id, key] : {std::pair{theme.quickPanel, "themeLibrary.quickPanel"}, {theme.popup, "themeLibrary.popup"}})
             if (!id.empty()) if (auto child = themes::Resolve(library_.themes, id)) line(L(key) + L"：" + std::wstring(winrt::to_hstring(child->name).c_str()));
-        c::CommandBar actions; actions.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
+        c::MenuFlyout actions;
+        auto preview = CenteredButton(); preview.MinWidth(72);
+        auto more = CenteredButton(); more.Width(32); more.Padding({0, 0, 0, 0});
+        c::FontIcon moreIcon; moreIcon.Glyph(L"\xE712"); moreIcon.FontSize(16); more.Content(moreIcon);
+        more.Flyout(actions);
+        x::Automation::AutomationProperties::SetName(more, L("app.menu.more_options"));
         if (const auto found = publishedUrls_.find(theme.id); found != publishedUrls_.end())
         {
-            c::AppBarButton link; link.Label(L("themeLibrary.workshopPage"));
+            c::MenuFlyoutItem link; link.Text(L("themeLibrary.workshopPage"));
             const auto url = found->second;
             const auto token = link.Click([this, url](const auto&, const auto&) {
                 if (!closed_) (void)winrt::Windows::System::Launcher::LaunchUriAsync(winrt::Windows::Foundation::Uri(winrt::to_hstring(url)));
             });
-            actions.SecondaryCommands().Append(link);
+            actions.Items().Append(link);
             cardRevoke_.push_back([link, token] { link.Click(token); });
         }
         for (auto [command, key] : {std::pair{ThemeLibraryCommand::Preview, "themeLibrary.preview"},
@@ -640,28 +742,30 @@ private:
             {ThemeLibraryCommand::UnbindWorkshop, "themeLibrary.unbindWorkshop"},
             {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
         {
-            c::AppBarButton button; button.Label(L(key));
-            (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
-                command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ||
-                command == ThemeLibraryCommand::CopyLocal || command == ThemeLibraryCommand::BindWorkshop || command == ThemeLibraryCommand::UnbindWorkshop ?
-                actions.SecondaryCommands() : actions.PrimaryCommands()).Append(button);
             const auto id = theme.id;
-            const auto token = button.Click([this, command, id](const auto&, const auto&) {
+            const auto connect = [this, command, id](const auto& button) {
+              const auto token = button.Click([this, command, id](const auto&, const auto&) {
                 if (command == ThemeLibraryCommand::Remove) ConfirmRemove(id);
                 else if (command == ThemeLibraryCommand::Share) ConfirmShare(id);
                 else if (command == ThemeLibraryCommand::BindWorkshop) ConfirmBind(id);
                 else if (command == ThemeLibraryCommand::UnbindWorkshop) ConfirmUnbind(id);
                 else Run(command, id);
-            });
-            cardRevoke_.push_back([button, token] { button.Click(token); });
-            cardCommands_.push_back({command, id, button});
+              });
+              cardRevoke_.push_back([button, token] { button.Click(token); });
+              cardCommands_.push_back({command, id, button});
+            };
+            if (command == ThemeLibraryCommand::Preview) { SetButtonText(preview, L(key)); connect(preview); }
+            else { c::MenuFlyoutItem button; button.Text(L(key)); actions.Items().Append(button); connect(button); }
         }
-        c::Grid operations; operations.ColumnSpacing(version ? 12 : 0);
-        c::ColumnDefinition versionColumn, commandColumn;
-        versionColumn.Width(x::GridLengthHelper::Auto());
-        operations.ColumnDefinitions().Append(versionColumn); operations.ColumnDefinitions().Append(commandColumn);
-        if (version) operations.Children().Append(version);
-        c::Grid::SetColumn(actions, 1); operations.Children().Append(actions);
+        c::Grid operations; operations.ColumnSpacing(8);
+        operations.HorizontalAlignment(x::HorizontalAlignment::Right);
+        for (double width : {144.0, 88.0, 32.0})
+        {
+            c::ColumnDefinition column; column.Width({width, x::GridUnitType::Pixel}); operations.ColumnDefinitions().Append(column);
+        }
+        if (version) { version.MinHeight(32); version.HorizontalAlignment(x::HorizontalAlignment::Stretch); operations.Children().Append(version); }
+        c::Grid::SetColumn(preview, 1); operations.Children().Append(preview);
+        c::Grid::SetColumn(more, 2); operations.Children().Append(more);
         c::Grid row; row.ColumnSpacing(16);
         c::ColumnDefinition information, operationsColumn; operationsColumn.Width(x::GridLengthHelper::Auto());
         row.ColumnDefinitions().Append(information); row.ColumnDefinitions().Append(operationsColumn);
@@ -670,12 +774,10 @@ private:
             c::RowDefinition definition; definition.Height(x::GridLengthHelper::Auto()); row.RowDefinitions().Append(definition);
         }
         entry.VerticalAlignment(x::VerticalAlignment::Center);
-        actions.VerticalAlignment(x::VerticalAlignment::Center);
         operations.VerticalAlignment(x::VerticalAlignment::Center);
         c::Grid::SetColumn(operations, 1);
         row.Children().Append(entry); row.Children().Append(operations);
-        // Keep version selection with the commands; give that group a bounded
-        // full-width row on small windows so CommandBar can use its overflow.
+        // Keep the same action columns when they move below the description.
         const auto weakOperationsColumn = winrt::make_weak(operationsColumn);
         const auto weakOperations = winrt::make_weak(operations);
         const auto layoutToken = row.SizeChanged([weakOperationsColumn, weakOperations](const auto& sender, const x::SizeChangedEventArgs& args) {
@@ -683,10 +785,14 @@ private:
             const auto column = weakOperationsColumn.get();
             const auto controls = weakOperations.get();
             if (!grid || !column || !controls) return;
-            const bool stacked = args.NewSize().Width < presenter_controls::kSettingRowStackThreshold;
+            // Library rows include version selection and action buttons; this
+            // content budget is independent of the compact setting-row policy.
+            constexpr double kLibraryRowInlineWidth = 700.0;
+            const bool stacked = args.NewSize().Width < kLibraryRowInlineWidth;
             column.Width(stacked ? x::GridLengthHelper::FromValueAndType(0, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
             grid.ColumnSpacing(stacked ? 0 : 16); grid.RowSpacing(stacked ? 12 : 0);
             c::Grid::SetColumn(controls, stacked ? 0 : 1); c::Grid::SetRow(controls, stacked ? 1 : 0);
+            c::Grid::SetColumnSpan(controls, stacked ? 2 : 1);
         });
         cardRevoke_.push_back([row, layoutToken] { row.SizeChanged(layoutToken); });
         c::Border card; if (cardStyle_) card.Style(cardStyle_); card.Child(row);
@@ -697,10 +803,11 @@ private:
         for (auto& revoke : cardRevoke_) revoke();
         cardRevoke_.clear(); cardCommands_.clear(); entries_.Children().Clear();
     }
-    void AddCommand(ThemeLibraryCommand command, const char* key, bool secondary = false)
+    void AddCommand(ThemeLibraryCommand command, const char* key)
     {
-        c::AppBarButton button; button.Label(L(key));
-        (secondary ? commands_.SecondaryCommands() : commands_.PrimaryCommands()).Append(button);
+        auto button = CenteredButton(); SetButtonText(button, L(key));
+        c::ColumnDefinition column; commands_.ColumnDefinitions().Append(column);
+        c::Grid::SetColumn(button, static_cast<int>(commands_.Children().Size())); commands_.Children().Append(button);
         const auto token = button.Click([this, command](const auto&, const auto&) {
             if (command == ThemeLibraryCommand::OpenWorkshop)
             {
@@ -719,6 +826,8 @@ private:
         if (result.succeeded && result.message.empty()) { feedback.IsOpen(false); return; }
         feedback.Severity(result.succeeded ? c::InfoBarSeverity::Warning : c::InfoBarSeverity::Error);
         feedback.Message(result.message); feedback.IsOpen(!result.message.empty());
+        if (!save && !transfer_)
+            root_.Visibility(feedback.IsOpen() ? x::Visibility::Visible : x::Visibility::Collapsed);
     }
     winrt::fire_and_forget ConfirmRemove(std::string themeId)
     {
@@ -751,11 +860,14 @@ private:
     winrt::fire_and_forget ConfirmBind(std::string id)
     {
         if (closed_ || busy_ || !sharing_ || Subscribed(id)) co_return;
+        const auto selected = themes::Find(library_.themes, id);
+        if (!selected || !root_.XamlRoot()) co_return;
         const auto alive = alive_; const auto generation = generation_;
         c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.bindWorkshop")));
         dialog.PrimaryButtonText(L("themeLibrary.bindWorkshop")); dialog.CloseButtonText(L("settings.dialog.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Close);
-        c::StackPanel body; body.Spacing(12); c::TextBlock hint; hint.Text(L("themeLibrary.bindHint")); hint.TextWrapping(x::TextWrapping::Wrap);
+        c::StackPanel body; body.Spacing(12); c::TextBlock hint;
+        hint.Text(Label(*selected) + L"\n" + L("themeLibrary.bindHint")); hint.TextWrapping(x::TextWrapping::Wrap);
         c::TextBox input; body.Children().Append(hint); body.Children().Append(input); dialog.Content(body);
         busy_ = true; PatchButtons(); c::ContentDialogResult result = c::ContentDialogResult::None;
         try { result = co_await dialog.ShowAsync(); } catch (...) { if (!alive->load()) co_return; }
@@ -770,11 +882,13 @@ private:
     winrt::fire_and_forget ConfirmUnbind(std::string id)
     {
         if (closed_ || busy_ || Subscribed(id) || !publishedUrls_.contains(id) || !root_.XamlRoot()) co_return;
+        const auto selected = themes::Find(library_.themes, id);
+        if (!selected) co_return;
         const auto alive = alive_; const auto generation = generation_;
         c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.unbindWorkshop")));
         dialog.PrimaryButtonText(L("themeLibrary.unbindWorkshop")); dialog.CloseButtonText(L("settings.dialog.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Close);
-        c::TextBlock hint; hint.Text(L("themeLibrary.unbindHint")); hint.TextWrapping(x::TextWrapping::Wrap); dialog.Content(hint);
+        c::TextBlock hint; hint.Text(Label(*selected) + L"\n" + L("themeLibrary.unbindHint")); hint.TextWrapping(x::TextWrapping::Wrap); dialog.Content(hint);
         busy_ = true; PatchButtons(); c::ContentDialogResult result = c::ContentDialogResult::None;
         try { result = co_await dialog.ShowAsync(); }
         catch (const winrt::hresult_error&) { if (alive->load() && generation == generation_) Feedback({false, {}, {}, L("themeLibrary.operationFailed")}); }
@@ -843,7 +957,7 @@ private:
         const auto selected = Selected(); request.id = id.empty() && selected ? selected->id : std::move(id);
         if (transfer_ && command == ThemeLibraryCommand::Apply)
             if (const auto applied = themes::Find(library_.themes, request.id))
-                request.target = applied->kind == themes::Kind::QuickPanel ? "quickPanel" : applied->kind == themes::Kind::Popup ? "popup" : "global";
+                request.target = applied->kind == themes::Kind::Icon ? "icon" : applied->kind == themes::Kind::QuickPanel ? "quickPanel" : applied->kind == themes::Kind::Popup ? "popup" : "global";
         if (save)
         {
             if (!CustomSelected()) return;

@@ -504,7 +504,7 @@ bool ProtectCache(const std::filesystem::path& path,
     return saved;
 }
 
-std::int64_t UnixNow()
+std::int64_t UnixNow() noexcept
 {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
@@ -624,9 +624,10 @@ BridgeResponse ParseBridgeResponse(
 struct Service::Impl
 {
     Impl(std::filesystem::path bridge, std::filesystem::path runtime,
-        std::filesystem::path cache)
+        std::filesystem::path cache, Service::UnixTimeSource timeSource)
         : bridgeExecutable(std::move(bridge)),
-          steamRuntime(std::move(runtime)), protectedCache(std::move(cache))
+          steamRuntime(std::move(runtime)), protectedCache(std::move(cache)),
+          now(timeSource ? timeSource : UnixNow)
     {
         const auto traceId = ++nextTraceId;
         const bool runtimeAvailable = IsSafeRegularFile(steamRuntime);
@@ -640,7 +641,7 @@ struct Service::Impl
         snapshot.state = snapshot.bridgeAvailable
             ? State::Unregistered : State::BridgeUnavailable;
         const auto cached = UnprotectCache(protectedCache, traceId);
-        if (snapshot.bridgeAvailable && cached && cached->validUntil > UnixNow())
+        if (snapshot.bridgeAvailable && cached && cached->validUntil > now())
         {
             snapshot.state = State::Registered;
             snapshot.registered = true;
@@ -650,16 +651,28 @@ struct Service::Impl
             std::to_wstring(snapshot.bridgeAvailable) + L" cached_registered=" +
             std::to_wstring(snapshot.registered) + L" cache_valid_until=" +
             std::to_wstring(cached ? cached->validUntil : 0) +
-            L" now=" + std::to_wstring(UnixNow()));
+            L" now=" + std::to_wstring(now()));
     }
 
     std::filesystem::path bridgeExecutable;
     std::filesystem::path steamRuntime;
     std::filesystem::path protectedCache;
+    Service::UnixTimeSource now;
     mutable std::mutex mutex;
     Snapshot snapshot;
     std::jthread worker;
     bool stopping = false;
+
+    // Called under mutex. Expiry is latched: a later wall-clock rollback does
+    // not reactivate a lease that already expired without a new ownership check.
+    void ExpireRegistration() noexcept
+    {
+        if (!snapshot.registered || snapshot.validUntil > now()) return;
+        snapshot.registered = false;
+        if (snapshot.state == State::Registered)
+            snapshot.state = State::Unregistered;
+        ++snapshot.revision;
+    }
 
     void Finish(BridgeResponse response, std::function<void()> completed,
         std::uint64_t traceId)
@@ -675,11 +688,11 @@ struct Service::Impl
         }
         if (response.outcome == BridgeOutcome::Owned)
         {
-            const std::int64_t now = UnixNow();
+            const std::int64_t verifiedAt = now();
             CacheRecord record;
             record.steamId = response.steamId;
-            record.verifiedAt = now;
-            record.validUntil = now + std::chrono::duration_cast<
+            record.verifiedAt = verifiedAt;
+            record.validUntil = verifiedAt + std::chrono::duration_cast<
                 std::chrono::seconds>(kRegistrationLifetime).count();
             if (ProtectCache(protectedCache, record, traceId))
             {
@@ -722,6 +735,7 @@ struct Service::Impl
                 snapshot.errorDetail = std::move(response.errorDetail);
                 snapshot.registered = registered;
                 snapshot.validUntil = validUntil;
+                ExpireRegistration();
                 ++snapshot.revision;
                 notify = true;
             }
@@ -737,9 +751,9 @@ struct Service::Impl
 
 Service::Service(std::filesystem::path bridgeExecutable,
     std::filesystem::path steamRuntime,
-    std::filesystem::path protectedCache)
+    std::filesystem::path protectedCache, UnixTimeSource timeSource)
     : impl_(std::make_unique<Impl>(std::move(bridgeExecutable),
-          std::move(steamRuntime), std::move(protectedCache)))
+          std::move(steamRuntime), std::move(protectedCache), timeSource))
 {
 }
 
@@ -752,6 +766,7 @@ Snapshot Service::Current() const
 {
     if (!impl_) return {};
     std::lock_guard lock(impl_->mutex);
+    impl_->ExpireRegistration();
     return impl_->snapshot;
 }
 
@@ -759,6 +774,7 @@ bool Service::IsRegistered() const noexcept
 {
     if (!impl_) return false;
     std::lock_guard lock(impl_->mutex);
+    impl_->ExpireRegistration();
     return impl_->snapshot.registered;
 }
 
@@ -784,6 +800,7 @@ bool Service::StartRegistration(std::function<void()> completed,
             ? std::to_wstring(elevation.TokenIsElevated) : L"unknown"));
     {
         std::lock_guard lock(impl_->mutex);
+        impl_->ExpireRegistration();
         if (impl_->stopping || !impl_->snapshot.bridgeAvailable ||
             (impl_->snapshot.state == State::Registered &&
                 !revalidateRegistered) ||

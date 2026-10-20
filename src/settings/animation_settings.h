@@ -14,13 +14,14 @@ namespace snowdesktop::animation
 inline constexpr int FollowSystem = 0;
 inline constexpr int AlwaysOn = 1;
 inline constexpr int Disabled = 2;
+inline constexpr int DefaultMode = AlwaysOn;
 inline constexpr int NoEffect = 0;
 inline constexpr int Fade = 1;
 inline constexpr int Scale = 2;
 
 inline int NormalizeMode(int value) noexcept
 {
-    return value >= FollowSystem && value <= Disabled ? value : FollowSystem;
+    return value >= FollowSystem && value <= Disabled ? value : DefaultMode;
 }
 inline int NormalizePopupEffect(int value) noexcept
 {
@@ -28,7 +29,7 @@ inline int NormalizePopupEffect(int value) noexcept
 }
 inline int NormalizeSpeed(int value) noexcept
 {
-    return value >= 0 && value <= 2 ? value : 1;
+    return value >= 0 && value <= 5 ? value : 1;
 }
 inline int NormalizeFrameLimit(int value) noexcept
 {
@@ -48,7 +49,7 @@ inline int NormalizeLaunchEffect(int value) noexcept
 }
 inline int NormalizeWindowEffect(int value) noexcept
 {
-    return value >= 0 && value <= 3 ? value : 1;
+    return value >= 0 && value <= 4 ? value : 1;
 }
 inline bool ResolveEnabled(int mode, bool systemEnabled) noexcept
 {
@@ -57,8 +58,9 @@ inline bool ResolveEnabled(int mode, bool systemEnabled) noexcept
 }
 inline double DurationScale(int speed) noexcept
 {
-    return NormalizeSpeed(speed) == 0 ? 0.7 :
-        NormalizeSpeed(speed) == 2 ? 1.4 : 1.0;
+    // Keep the three existing stored choices and append slower playback.
+    constexpr double scales[]{0.7, 1.0, 1.4, 2.0, 3.0, 4.0};
+    return scales[NormalizeSpeed(speed)];
 }
 inline int ResolveFrameLimit(int requested, bool energySaverPreference,
     bool batteryPreference, bool systemEnergySaver, bool onBattery) noexcept
@@ -89,7 +91,7 @@ inline bool SystemAnimationsEnabled(bool refresh = false) noexcept
 
 namespace detail
 {
-inline std::atomic<int> mode{FollowSystem};
+inline std::atomic<int> mode{DefaultMode};
 inline std::atomic<int> popupEffect{Scale};
 inline std::atomic<int> speed{1};
 inline std::atomic<int> frameLimit{0};

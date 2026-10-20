@@ -2,6 +2,8 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include <mutex>
+#include "dock_cloak_dispatcher.h"
 
 namespace snowdesktop::dock_source_cloak
 {
@@ -21,6 +23,23 @@ struct Owner
     HANDLE process = nullptr;
     HANDLE token = nullptr;
 };
+inline std::recursive_mutex& LocalLeaseMutex() noexcept
+{
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+inline Owner RequestOwner(const dock_minimize::CloakRequest& request) noexcept
+{
+    return {reinterpret_cast<HWND>(static_cast<UINT_PTR>(request.owner)),
+        reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.process)),
+        reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.token))};
+}
+inline dock_minimize::CloakRequest MakeRequest(HWND source, Owner owner, BOOL cloak) noexcept
+{
+    return {2, static_cast<std::uint32_t>(cloak != FALSE), reinterpret_cast<UINT_PTR>(source),
+        reinterpret_cast<UINT_PTR>(owner.window), reinterpret_cast<UINT_PTR>(owner.process),
+        reinterpret_cast<UINT_PTR>(owner.token)};
+}
 
 inline Owner ReadOwner(HWND source) noexcept
 {
@@ -72,6 +91,7 @@ inline void StopRecoveryTimer(HWND source) noexcept
 
 inline void CALLBACK RecoverOnSourceThread(HWND source, UINT, UINT_PTR timer, DWORD) noexcept
 {
+    const std::lock_guard lock(LocalLeaseMutex());
     if (reinterpret_cast<UINT_PTR>(GetPropW(source, TimerProperty)) != timer) return;
     const auto owner = ReadOwner(source);
     if (!owner.window || !owner.process || !owner.token)
@@ -119,15 +139,15 @@ inline HRESULT StartRecoveryTimer(HWND source) noexcept
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
 // CALLWNDPROC hook applies it inside the source process and acknowledges the
 // current lease; the source application's window procedure is unchanged.
-inline void HandleCommand(HWND source, WPARAM cloakValue, LPARAM token) noexcept
+inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& request) noexcept
 {
-    const auto owner = ReadOwner(source);
-    if (cloakValue > 1 || !owner.window || !owner.process || !owner.token ||
-        owner.token != reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(token)) ||
-        !SameOwner(source, owner) || (cloakValue && !IsLiveOwner(owner))) return;
+    const std::lock_guard lock(LocalLeaseMutex());
+    const auto owner = RequestOwner(request);
+    if (request.source != reinterpret_cast<UINT_PTR>(source) || !SameOwner(source, owner) ||
+        (request.cloak && !IsLiveOwner(owner))) return;
     DWORD process = 0;
     if (!GetWindowThreadProcessId(source, &process) || process != GetCurrentProcessId()) return;
-    const BOOL cloak = cloakValue != 0;
+    const BOOL cloak = request.cloak != 0;
     HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
     if (SUCCEEDED(hr)) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
     if ((cloak && FAILED(hr)) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
@@ -141,18 +161,17 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     confirmed = true;
     DWORD process = 0;
     if (!GetWindowThreadProcessId(source, &process)) return E_INVALIDARG;
+    if (!SameOwner(source, owner)) return E_ABORT;
     if (process == GetCurrentProcessId())
         return DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
-    const UINT message = CommandMessage();
-    if (!message) return E_NOTIMPL;
-    if (!SameOwner(source, owner)) return E_ABORT;
     RemovePropW(source, AckProperty);
     RemovePropW(source, ResultProperty);
     DWORD_PTR ignored = 0;
     SetLastError(0);
-    const bool sent = SendMessageTimeoutW(source, message, cloak ? 1 : 0,
-        static_cast<LPARAM>(reinterpret_cast<UINT_PTR>(owner.token)),
-        SMTO_ABORTIFHUNG, 120, &ignored) != 0;
+    const HWND dispatcher = reinterpret_cast<HWND>(GetPropW(source, dock_minimize::kCloakDispatcherProperty));
+    const auto request = MakeRequest(source, owner, cloak);
+    const bool sent = dock_minimize::SendCloakRequest(dispatcher ? dispatcher : source,
+        request, dispatcher ? 180 : 120, ignored);
     const DWORD error = GetLastError();
     if (SameOwner(source, owner) && GetPropW(source, AckProperty) == owner.token)
     {
@@ -161,6 +180,9 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
         RemovePropW(source, ResultProperty);
         return hr;
     }
+    if (dispatcher && sent && FAILED(static_cast<HRESULT>(ignored)) &&
+        static_cast<HRESULT>(ignored) != HRESULT_FROM_WIN32(ERROR_TIMEOUT))
+        return static_cast<HRESULT>(ignored);
     // A timed-out sent message may still complete. Retain the lease so cleanup
     // can release a late cloak instead of abandoning an invisible application.
     confirmed = false;
@@ -192,6 +214,7 @@ inline void RemoveOwner(HWND source, Owner owner) noexcept
 // PID and host generation also reject a recycled owner HWND.
 inline bool RecoverStale(HWND source) noexcept
 {
+    const std::lock_guard lock(LocalLeaseMutex());
     const auto owner = ReadOwner(source);
     if (!owner.window || !owner.process || !owner.token || IsLiveOwner(owner)) return false;
     const BOOL cloak = FALSE;
@@ -203,6 +226,7 @@ inline bool RecoverStale(HWND source) noexcept
 
 inline HRESULT Acquire(HWND source, HWND host, bool& acquired) noexcept
 {
+    const std::lock_guard lock(LocalLeaseMutex());
     acquired = false;
     RecoverStale(source);
     DWORD flags = 0;
@@ -238,15 +262,11 @@ inline HRESULT Acquire(HWND source, HWND host, bool& acquired) noexcept
     return hr;
 }
 
-inline HRESULT Release(HWND source, HWND host) noexcept
+inline HRESULT Release(HWND source, Owner owner) noexcept
 {
+    const std::lock_guard lock(LocalLeaseMutex());
     if (!source || !IsWindow(source)) return S_FALSE;
-    const auto owner = ReadOwner(source);
-    if (!IsLiveOwner(owner))
-        return RecoverStale(source) ? S_OK : S_FALSE;
-    if (owner.window != host ||
-        owner.process != reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(GetCurrentProcessId())))
-        return S_FALSE;
+    if (!SameOwner(source, owner)) return S_FALSE;
     const BOOL cloak = FALSE;
     bool confirmed = false;
     // Persist the recovery request before the bounded cross-process send. The
@@ -260,5 +280,13 @@ inline HRESULT Release(HWND source, HWND host) noexcept
     const HRESULT hr = ApplyCloak(source, owner, cloak, confirmed);
     if (SUCCEEDED(hr)) RemoveOwner(source, owner);
     return hr;
+}
+inline HRESULT Release(HWND source, HWND host) noexcept
+{
+    const std::lock_guard lock(LocalLeaseMutex());
+    const auto owner = ReadOwner(source);
+    if (owner.window != host ||
+        owner.process != reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(GetCurrentProcessId()))) return S_FALSE;
+    return Release(source, owner);
 }
 }

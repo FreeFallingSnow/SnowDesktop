@@ -1,6 +1,7 @@
 #include "steam_runtime_environment.h"
 #include "steam_runtime_manager.h"
 #include "common/language_fallback.h"
+#include "platform/auto_start_launch.h"
 #include "launcher_messages.h"
 
 #include <windows.h>
@@ -364,6 +365,21 @@ int RunLauncher(bool& maintenance)
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    // The task may elevate even with LUA (notably built-in Administrator).
+    // Transfer before creating the runtime handshake or updating runtime files.
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
+    if (autoStartLaunch.handled)
+    {
+        const std::wstring detail = std::wstring(autoStartLaunch.operation) +
+            L" error=" + std::to_wstring(autoStartLaunch.error) +
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
+        std::string utf8(detail.size() * 4 + 1, '\0');
+        const int size = WideCharToMultiByte(CP_UTF8, 0, detail.c_str(), -1,
+            utf8.data(), static_cast<int>(utf8.size()), nullptr, nullptr);
+        utf8.resize(size > 0 ? static_cast<std::size_t>(size - 1) : 0);
+        AppendLauncherLog(CurrentExecutableDirectory(), utf8);
+        return static_cast<int>(autoStartLaunch.error);
+    }
     // Loader/critical-error dialogs can block CreateProcess itself, before
     // our exit monitoring starts. Report those failures through our log/UI.
     SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS);

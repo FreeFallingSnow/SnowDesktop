@@ -16,8 +16,11 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
 #include "layout/popup_round_geometry.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "icons/icon_backdrop_geometry.h"
 #include "platform/shell_overlay_window.h"
 
 #include <d2d1_1.h>
@@ -238,23 +241,18 @@ struct GenieOutlinePoint
 };
 
 std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
-    float width, float height, float cornerRadius, bool vertical)
+    float width, float height, float cornerRadius, bool vertical, bool attraction = false)
 {
     namespace genie = snowdesktop::dock_genie;
     const float axisLength = vertical ? height : width;
     const float crossLength = vertical ? width : height;
-    const float radius = std::clamp(cornerRadius, 0.0f,
-        std::min(width, height) * 0.5f);
-    // Uniform angle samples preserve the rounded corners even when a whole
-    // corner falls inside one strip. Cache source points until geometry changes.
-    constexpr std::size_t cornerSamples = 12;
-    constexpr double halfPi = 1.57079632679489661923;
+    const snowdesktop::smooth_corners::Corner corner(cornerRadius, std::min(width, height)*.5f);
+    // Include the smooth ramps even when a whole corner fits in one strip.
+    constexpr std::size_t cornerSamples = 24;
     std::array<float, cornerSamples * 2> cornerAxes{};
     for (std::size_t index = 0; index < cornerSamples; ++index)
     {
-        const double angle = halfPi * static_cast<double>(index + 1) /
-            static_cast<double>(cornerSamples);
-        const float offset = radius * static_cast<float>(1.0 - std::cos(angle));
+        const float offset = corner.Point(static_cast<float>(index+1) / static_cast<float>(cornerSamples)).y;
         cornerAxes[index] = offset;
         cornerAxes[cornerAxes.size() - 1 - index] = axisLength - offset;
     }
@@ -262,12 +260,7 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
     std::vector<GenieOutlinePoint> outline;
     outline.reserve(genie::StripCount * 4 + cornerAxes.size() * 2);
     const auto appendLowSide = [&](std::size_t strip, float axis) {
-        const float distance = std::max(0.0f,
-            radius - std::min(axis, axisLength - axis));
-        const float inset = radius > 0.0f
-            ? radius - std::sqrt(std::max(0.0f,
-                radius * radius - distance * distance))
-            : 0.0f;
+        const float inset = corner.Inset(std::min(axis, axisLength-axis));
         outline.push_back({vertical ? D2D1_POINT_2F{inset, axis}
                                    : D2D1_POINT_2F{axis, inset}, strip});
     };
@@ -296,7 +289,26 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
             point.source.y = crossLength - point.source.y;
         outline.push_back(point);
     }
-    return outline;
+    if (!attraction) return outline;
+    // Attraction also curves the horizontal caps. Sample them at mesh joins;
+    // a single straight segment would leave glass outside the content warp.
+    std::vector<GenieOutlinePoint> perimeter;
+    for (std::size_t i = 0; i < outline.size(); ++i)
+    {
+        const auto point = outline[i];
+        const auto next = outline[(i + 1) % outline.size()];
+        perimeter.push_back(point);
+        if (point.source.y != next.source.y ||
+            (point.source.y != 0 && point.source.y != height)) continue;
+        for (std::size_t column = 1; column < genie::StripCount; ++column)
+        {
+            const auto step = point.source.x < next.source.x ? column : genie::StripCount - column;
+            const float x = width * static_cast<float>(step) / static_cast<float>(genie::StripCount);
+            if (x > std::min(point.source.x, next.source.x) && x < std::max(point.source.x, next.source.x))
+                perimeter.push_back({{x, point.source.y}, 0});
+        }
+    }
+    return perimeter;
 }
 
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
@@ -333,10 +345,16 @@ struct DesktopBackdropCompositor::Impl
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
+        wuc::CompositionPathGeometry smoothGeometry{nullptr};
+        SIZE smoothSize{};
+        float smoothRadius = -1.f;
         wuc::CompositionGeometricClip clip{nullptr};
+        wuc::CompositionGeometry customGeometry{nullptr};
         bool seen = false;
         int iconShape = -1;
         SIZE iconSize{};
+        RECT iconFrame{};
+        std::optional<snowdesktop::IconBackdropClip> iconContentClip;
         int largeIconShape = -1;
         int largeIconFlagDirection = 0;
         SIZE largeIconSize{};
@@ -348,11 +366,13 @@ struct DesktopBackdropCompositor::Impl
         enum class Kind { Rounded, Icon, LargeIcon } kind = Kind::Rounded;
         RECT frame{};
         float cornerRadius = 0, blurRadius = 0, opacity = 1;
+        bool smoothCorners = false;
         std::uintptr_t ownerKey = 0;
         int shape = 0, flagDirection = 0;
         bool transformed = false;
         D2D1_MATRIX_4X4_F transform{};
         RECT projectedFrame{};
+        std::optional<snowdesktop::IconBackdropClip> iconContentClip;
     };
     std::vector<StagedPanel> stagedPanels;
     bool stagingFrame = false;
@@ -376,6 +396,7 @@ struct DesktopBackdropCompositor::Impl
     SIZE genieHostSize{};
     float genieCornerRadius = 0;
     bool genieVertical = true;
+    bool genieAttraction = false;
     float genieSourceOpacity = 1.0f;
     float genieOpacity = 1.0f;
     std::wstring lastError;
@@ -846,14 +867,14 @@ bool DesktopBackdropCompositor::InitializePopup(
         initiallyVisible);
 }
 
-void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
+bool DesktopBackdropCompositor::SetPopupWindowPairZOrder(
     HWND contentWindow, HWND contentInsertAfter,
     bool topmost, HWND preserveAboveWindow)
 {
     const bool contentValid =
         contentWindow && IsWindow(contentWindow);
     if (!contentValid)
-        return;
+        return false;
 
     HWND backdropWindow = nullptr;
     if (impl_ && impl_->popupMode &&
@@ -902,6 +923,14 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
         if (backdropWindow)
             impl_->SyncWindowPlacement();
     }
+    // A repaired band is useful, but does not complete a requested concrete
+    // placement. Callers restoring the desktop layer must retain retry ownership.
+    const bool concreteAnchor = contentInsertAfter != HWND_TOP &&
+        contentInsertAfter != HWND_BOTTOM && contentInsertAfter != HWND_TOPMOST &&
+        contentInsertAfter != HWND_NOTOPMOST;
+    return positionedTogether && (!concreteAnchor ||
+        (IsWindow(contentInsertAfter) &&
+         GetWindow(contentWindow, GW_HWNDPREV) == contentInsertAfter));
 }
 
 void DesktopBackdropCompositor::SetPopupTopmost(
@@ -1354,6 +1383,19 @@ bool DesktopBackdropCompositor::SetGenieTransform(
     const RECT& panelFrame, const RECT& dockFrame,
     int edge, float collapsed, float opacity)
 {
+    return SetDeformationTransform(panelFrame, dockFrame, edge, collapsed, opacity, false);
+}
+
+bool DesktopBackdropCompositor::SetAttractionTransform(
+    const RECT& panelFrame, const RECT& dockFrame, float collapsed, float opacity)
+{
+    return SetDeformationTransform(panelFrame, dockFrame, 0, collapsed, opacity, true);
+}
+
+bool DesktopBackdropCompositor::SetDeformationTransform(
+    const RECT& panelFrame, const RECT& dockFrame,
+    int edge, float collapsed, float opacity, bool attraction)
+{
     if (!impl_ || !impl_->available || !impl_->root || !impl_->compositor ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow) ||
         panelFrame.right <= panelFrame.left || panelFrame.bottom <= panelFrame.top ||
@@ -1389,6 +1431,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
         }
         if (!impl_->genieRoot || impl_->genieSource != panel->visual ||
             impl_->genieVertical != vertical ||
+            impl_->genieAttraction != attraction ||
             impl_->genieCornerRadius != panel->cornerRadius ||
             impl_->genieHostSize.cx != hostFrame.right ||
             impl_->genieHostSize.cy != hostFrame.bottom ||
@@ -1411,7 +1454,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             auto geometry = impl_->compositor.CreatePathGeometry();
             glass.Clip(impl_->compositor.CreateGeometricClip(geometry));
             auto outline = BuildGenieSourceOutline(width, height,
-                static_cast<float>(panel->cornerRadius), vertical);
+                static_cast<float>(panel->cornerRadius), vertical, attraction);
             impl_->root.StopAnimation(L"Scale");
             impl_->root.StopAnimation(L"Opacity");
             impl_->root.Scale(wfn::float3{1.0f, 1.0f, 1.0f});
@@ -1426,6 +1469,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             impl_->genieHostSize = {hostFrame.right, hostFrame.bottom};
             impl_->genieCornerRadius = panel->cornerRadius;
             impl_->genieVertical = vertical;
+            impl_->genieAttraction = attraction;
             impl_->root.Children().InsertAtTop(glass);
             panel->visual.Opacity(0.0f);
         }
@@ -1437,13 +1481,22 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             static_cast<double>(dockFrame.top), static_cast<double>(dockFrame.right),
             static_cast<double>(dockFrame.bottom)};
         namespace navigation = snowdesktop::quick_navigation_animation_rules;
-        std::array<navigation::GenieStripProjection, genie::StripCount> matrices;
-        for (std::size_t index = 0; index < matrices.size(); ++index)
+        std::array<navigation::GenieStripProjection, genie::StripCount> matrices{};
+        if (!attraction)
         {
-            matrices[index] = navigation::GenieProjection(source, target, direction,
-                std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
+            for (std::size_t index = 0; index < matrices.size(); ++index)
+                matrices[index] = navigation::GenieProjection(source, target, direction,
+                    std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
         }
-        const auto transformPoint = [&matrices](const GenieOutlinePoint& point) {
+        const auto mesh = attraction ? snowdesktop::dock_attraction::MeshFrame(source, target,
+            std::clamp(collapsed, 0.0f, 1.0f)) : snowdesktop::dock_attraction::Frame{};
+        const auto transformPoint = [&](const GenieOutlinePoint& point) {
+            if (attraction)
+            {
+                const auto mapped = navigation::AttractionMeshPoint(mesh,
+                    point.source.x / width, point.source.y / height);
+                return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
+            }
             const auto mapped = matrices[point.strip].Map(point.source.x, point.source.y);
             return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
         };
@@ -1476,7 +1529,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
     }
     catch (...)
     {
-        impl_->lastError = FormatHresult(L"backdrop.genie_transform", winrt::to_hresult());
+        impl_->lastError = FormatHresult(L"backdrop.deformation_transform", winrt::to_hresult());
         ClearGenieTransform();
         return false;
     }
@@ -1540,11 +1593,12 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
         switch (panel.kind)
         {
         case Impl::StagedPanel::Kind::Rounded:
-            applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey);
+            applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey, panel.smoothCorners);
             break;
         case Impl::StagedPanel::Kind::Icon:
             applied = AddIconPanel(panel.frame, static_cast<snowdesktop::IconBeautifyShape>(panel.shape),
-                panel.blurRadius, panel.ownerKey);
+                panel.blurRadius, panel.ownerKey,
+                panel.iconContentClip ? &*panel.iconContentClip : nullptr);
             break;
         case Impl::StagedPanel::Kind::LargeIcon:
             applied = AddLargeIconPanel(panel.frame, panel.shape, panel.cornerRadius,
@@ -1570,7 +1624,7 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
 
 bool DesktopBackdropCompositor::AddPanel(
     const RECT& frame, float cornerRadius,
-    float blurRadius, std::uintptr_t ownerKey)
+    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -1581,6 +1635,7 @@ bool DesktopBackdropCompositor::AddPanel(
         candidate.cornerRadius = cornerRadius;
         candidate.blurRadius = blurRadius;
         candidate.ownerKey = ownerKey;
+        candidate.smoothCorners = smoothCorners;
         auto existing = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
             [&](const auto& panel) {
                 return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
@@ -1649,6 +1704,28 @@ bool DesktopBackdropCompositor::AddPanel(
         existing->geometry.Size(panelSize);
         existing->geometry.CornerRadius(wfn::float2{
             resolvedRadius, resolvedRadius });
+        if (smoothCorners)
+        {
+            const SIZE size{frame.right-frame.left, frame.bottom-frame.top};
+            if (!existing->smoothGeometry || existing->smoothRadius != resolvedRadius ||
+                existing->smoothSize.cx != size.cx || existing->smoothSize.cy != size.cy)
+            {
+                if (!impl_->genieGeometryFactory)
+                    winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                        impl_->genieGeometryFactory.put()));
+                const auto path = snowdesktop::smooth_corners::Geometry(impl_->genieGeometryFactory.get(),
+                    D2D1::RectF(0, 0, panelSize.x, panelSize.y), resolvedRadius);
+                if (!path) return false;
+                winrt::com_ptr<ID2D1Geometry> source;
+                source.copy_from(path.Get());
+                if (!existing->smoothGeometry) existing->smoothGeometry = impl_->compositor.CreatePathGeometry();
+                existing->smoothGeometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+                existing->smoothSize = size;
+                existing->smoothRadius = resolvedRadius;
+            }
+            existing->clip.Geometry(existing->smoothGeometry);
+        }
+        else existing->clip.Geometry(existing->geometry);
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -1712,6 +1789,13 @@ bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_
         impl_->panels.erase(found);
         impl_->blurFactoriesDirty = true;
         // The enclosing EndFrame submits geometry and retirement together.
+        // Visibility/deletion can also retire a child outside a paint frame.
+        if (!impl_->collectingFrame)
+        {
+            impl_->PruneUnusedBlurFactories();
+            impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+            impl_->RequestCommit();
+        }
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1722,8 +1806,15 @@ bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_
 }
 
 bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
-    snowdesktop::IconBeautifyShape shape, float blurRadius, std::uintptr_t ownerKey)
+    snowdesktop::IconBeautifyShape shape, float blurRadius, std::uintptr_t ownerKey,
+    const snowdesktop::IconBackdropClip* contentClip)
 {
+    RECT visibleFrame = frame;
+    if (contentClip && !IntersectRect(&visibleFrame, &frame, &contentClip->bounds))
+    {
+        (void)RemoveIconPanel(frame, ownerKey);
+        return impl_->available;
+    }
     if (!AddPanel(frame, 0.0f, blurRadius, ownerKey)) return false;
     if (impl_->stagingFrame)
     {
@@ -1734,6 +1825,8 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
             });
         panel->kind = Impl::StagedPanel::Kind::Icon;
         panel->shape = static_cast<int>(shape);
+        panel->iconContentClip = contentClip
+            ? std::optional{*contentClip} : std::nullopt;
         return true;
     }
     try
@@ -1744,27 +1837,32 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
         });
         if (panel == impl_->panels.end()) return false;
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
+        const auto requestedClip = contentClip
+            ? std::optional{*contentClip} : std::nullopt;
         if (panel->iconShape != static_cast<int>(shape) ||
-            panel->iconSize.cx != size.cx || panel->iconSize.cy != size.cy)
+            panel->iconSize.cx != size.cx || panel->iconSize.cy != size.cy ||
+            !snowdesktop::SameIconBackdropClip(panel->iconContentClip, requestedClip) ||
+            (contentClip && !EqualRect(&panel->iconFrame, &frame)))
         {
             if (!impl_->genieGeometryFactory)
                 winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
                     impl_->genieGeometryFactory.put()));
-            winrt::com_ptr<ID2D1PathGeometry> path;
-            winrt::check_hresult(impl_->genieGeometryFactory->CreatePathGeometry(path.put()));
-            winrt::com_ptr<ID2D1GeometrySink> sink;
-            winrt::check_hresult(path->Open(sink.put()));
-            const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
-            auto point = [&](const auto& p) { return D2D1::Point2F(p.x * static_cast<float>(size.cx), p.y * static_cast<float>(size.cy)); };
-            sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
-            for (size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));
-            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-            winrt::check_hresult(sink->Close());
+            Microsoft::WRL::ComPtr<ID2D1Geometry> path;
+            winrt::check_hresult(snowdesktop::CreateIconBackdropGeometry(
+                impl_->genieGeometryFactory.get(), shape, frame, contentClip, path));
+            winrt::com_ptr<ID2D1Geometry> source;
+            source.copy_from(path.Get());
             auto geometry = impl_->compositor.CreatePathGeometry();
-            geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(path))));
+            geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+            panel->customGeometry = geometry;
             panel->clip.Geometry(geometry);
             panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
+            panel->iconFrame = frame;
+            panel->iconContentClip = requestedClip;
         }
+        else panel->clip.Geometry(panel->customGeometry);
+        panel->regionFrame = visibleFrame;
+        panel->regionCornerRadius = 0;
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1799,14 +1897,13 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
         if (panel == impl_->panels.end()) return false;
         if (shape <= 1)
         {
-            if (panel->largeIconShape >= 0) panel->clip.Geometry(panel->geometry);
             panel->largeIconShape = -1;
             return true;
         }
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
             panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
-            return true;
+        { panel->clip.Geometry(panel->customGeometry); return true; }
         if (!impl_->genieGeometryFactory)
             winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
         const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
@@ -1815,6 +1912,7 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
         winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
         auto geometry = impl_->compositor.CreatePathGeometry();
         geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+        panel->customGeometry = geometry;
         panel->clip.Geometry(geometry);
         panel->largeIconShape = shape; panel->largeIconFlagDirection = flagDirection; panel->largeIconSize = size;
         return true;

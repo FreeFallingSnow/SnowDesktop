@@ -1,5 +1,8 @@
 #include "icons/large_icon_renderer.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "icons/icon_loading_placeholder.h"
+#include "icons/icon_image_codec.h"
+#include "icons/icon_hbitmap_pixels.h"
 #include "ui/preview/preview_png_writer.h"
 #include "icons/large_icon_shape_geometry.h"
 #include <wincodec.h>
@@ -11,6 +14,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <fstream>
+#include <webp/decode.h>
 
 namespace
 {
@@ -83,6 +88,10 @@ struct Canvas
             Check(snowdesktop::large_icon_renderer::DrawCard3D(device.Get(), fonts.Get(), config, view, *transform, card), "production 3D draw accepted");
         else snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
         Require(target->EndDraw(), "production draw");
+        return ReadPixels();
+    }
+    std::vector<unsigned> ReadPixels()
+    {
         std::vector<unsigned> pixels(width * height);
         if (device)
         {
@@ -93,6 +102,19 @@ struct Canvas
         }
         else Require(surface->CopyPixels(nullptr, width * 4, width * height * 4, reinterpret_cast<BYTE*>(pixels.data())), "read rendered pixels");
         return pixels;
+    }
+    std::vector<unsigned> DrawBitmap(ID2D1Bitmap* bitmap, RECT frame,
+        bool preserveAspectRatio = true)
+    {
+        const auto source = bitmap->GetPixelSize();
+        const auto plan = snowdesktop::icon_bitmap_renderer::Prepare(
+            static_cast<int>(source.width), static_cast<int>(source.height),
+            frame, preserveAspectRatio);
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(0, 0.f));
+        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan);
+        Require(target->EndDraw(), "shared icon bitmap draw");
+        return ReadPixels();
     }
 };
 unsigned Pixel(const std::vector<unsigned>& image, int x, int y) { return image[static_cast<size_t>(y) * Canvas::width + x]; }
@@ -138,6 +160,17 @@ void Save(const char* directory, const char* name, const std::vector<unsigned>& 
 
 void CheckShapes(Canvas& canvas, const char* outputDirectory)
 {
+    {
+        snowdesktop::LargeIconConfig smooth;
+        smooth.backgroundStyle = -2; smooth.radius = 80; smooth.radiusPercent = -1;
+        snowdesktop::large_icon_renderer::View card;
+        card.frame = {40, 40, 440, 320};
+        auto cover = canvas.Image(800, 560); card.bitmap = cover.Get();
+        const auto pixels = canvas.Draw(smooth, card);
+        Check((Pixel(pixels, 120, 40) >> 24) < 220 && Red(Pixel(pixels, 120, 44)),
+            "filled large icons use the continuous tangent ramp instead of a circular image clip");
+        Save(outputDirectory, "smooth-large-icon.png", pixels);
+    }
     // Exercise the actual card renderer on unequal grid dimensions. These
     // pixels catch ellipse stretching, lost rounding, and rectangular material
     // or effect layers leaking outside a nonrectangular silhouette.
@@ -473,6 +506,130 @@ void CheckLoadingPlaceholder(Canvas& canvas, const char* outputDirectory)
     }
     Save(outputDirectory, "14-loading-size-comparison.png", comparison);
 }
+}
+
+int RunIconBitmapRenderingTests()
+{
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const int previousFailures = failures;
+    try
+    {
+        struct Fixture
+        {
+            int width, height;
+            RECT frame, expected;
+            const char* message;
+            bool preserveAspectRatio = true;
+        };
+        const Fixture fixtures[] = {
+            {16, 16, {20, 20, 76, 76}, {20, 20, 76, 76},
+                "a 16px navigation source actually paints the complete 56px icon frame"},
+            {32, 32, {20, 20, 74, 74}, {20, 20, 74, 74},
+                "a navigation list icon honors its 54px frame at 150 percent DPI"},
+            {64, 64, {20, 20, 102, 102}, {20, 20, 102, 102},
+                "Dock 128 percent hover paints 82px instead of retaining the 64px source limit"},
+            {32, 16, {20, 20, 116, 116}, {20, 44, 116, 92},
+                "landscape collection previews paint at 2:1 without being stretched into squares"},
+            {16, 32, {20, 20, 116, 116}, {44, 20, 92, 116},
+                "portrait collection previews paint at 1:2 without being stretched into squares"},
+            {16, 16, {20, 20, 56, 48}, {24, 20, 52, 48},
+                "rectangular list cells center a proportional icon inside their short dimension"},
+            {16, 32, {20, 20, 76, 76}, {20, 20, 76, 76},
+                "generated artwork explicitly requesting stretch still fills its rectangle", false},
+        };
+        // Exercise the production geometry and bitmap renderer, then measure
+        // opaque pixels. A source-size cap in either layer fails these bounds.
+        for (const bool deviceContext : {false, true})
+        {
+            Canvas canvas(deviceContext);
+            for (const auto& fixture : fixtures)
+            {
+                const auto source = canvas.Image(fixture.width, fixture.height);
+                const auto pixels = canvas.DrawBitmap(source.Get(), fixture.frame,
+                    fixture.preserveAspectRatio);
+                const auto actual = RedBounds(pixels);
+                Check(EqualRect(&actual, &fixture.expected) != FALSE, fixture.message);
+            }
+            const auto transparent = canvas.Image(64, 64, true);
+            const auto pixels = canvas.DrawBitmap(transparent.Get(), {20, 20, 116, 116});
+            Check(Red(Pixel(pixels, 68, 68)) && (Pixel(pixels, 28, 28) >> 24) == 0,
+                "shared bitmap fitting preserves artwork transparency instead of cropping its margins");
+        }
+    }
+    catch (const std::exception& error)
+    {
+        ++failures;
+        std::cerr << error.what() << '\n';
+    }
+    if (SUCCEEDED(apartment)) CoUninitialize();
+    const int addedFailures = failures - previousFailures;
+    if (addedFailures == 0) std::cout << "Shared icon bitmap rendering tests passed\n";
+    return addedFailures == 0 ? 0 : 1;
+}
+
+int RunReportedWebpFillProbe(const char* sourcePath, const char* outputDirectory)
+{
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const int previousFailures = failures;
+    try
+    {
+        std::filesystem::create_directories(outputDirectory);
+        snowdesktop::icon_image::Image image; std::string error;
+        Check(snowdesktop::icon_image::Decode(sourcePath, 2048, image, error), "reported WebP decodes through production codec");
+        if (image.pixels.empty()) throw std::runtime_error(error);
+        std::ifstream input(sourcePath, std::ios::binary);
+        const std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        int width = 0, height = 0;
+        auto* independent = WebPDecodeBGRA(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), &width, &height);
+        bool consistent = independent && width == image.width && height == image.height;
+        if (consistent) for (size_t i = 0; i < image.pixels.size(); ++i)
+        {
+            const unsigned a = independent[i * 4 + 3]; const auto actual = image.pixels[i];
+            consistent &= (actual >> 24) == a;
+            for (const int channel : {0,1,2})
+            {
+                const int expected = (independent[i * 4 + channel] * a + 127) / 255;
+                consistent &= std::abs(static_cast<int>((actual >> (channel * 8)) & 255) - expected) <= 1;
+            }
+        }
+        WebPFree(independent);
+        Check(consistent, "reported WebP matches an independent straight-alpha decode followed by one premultiplication");
+        HBITMAP bitmap = snowdesktop::icon_image::CreateBitmap(image);
+        snowdesktop::icon_bitmap_pixels::Buffer buffer;
+        Check(snowdesktop::icon_bitmap_pixels::ReadHBitmap(bitmap, buffer, false) && buffer.pixels == image.pixels,
+            "managed HBITMAP upload preserves original WebP transparency without Shell alpha guessing");
+        if (bitmap) DeleteObject(bitmap);
+        Canvas canvas(true);
+        ComPtr<ID2D1Bitmap> texture;
+        Require(canvas.target->CreateBitmap(D2D1::SizeU(image.width, image.height), image.pixels.data(), image.width * 4,
+            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &texture), "reported WebP texture");
+        snowdesktop::LargeIconConfig config; config.backgroundStyle = -2; config.content = 1; config.effect = 0; config.radiusPercent = 0;
+        snowdesktop::large_icon_renderer::View view; view.bitmap = texture.Get(); view.frame = {64,16,416,344};
+        int backgrounds = 0; view.drawBackground = [&](auto*, RECT, float, float) { ++backgrounds; };
+        for (const int fit : {0,1})
+        {
+            config.fit = fit; const auto pixels = canvas.Draw(config, view);
+            Check(backgrounds == 0 && (Pixel(pixels, 70,22) >> 24) == 0,
+                "static reported WebP fill leaves its transparent corner empty in contain and cover modes");
+            for (const bool light : {false,true})
+            {
+                auto composite = pixels; const unsigned background = light ? 250 : 24;
+                for (auto& pixel : composite)
+                {
+                    const unsigned alpha = pixel >> 24; unsigned flattened = 0xff000000;
+                    for (const int shift : {0,8,16}) flattened |= std::min(255u, ((pixel >> shift) & 255) + (background * (255 - alpha) + 127) / 255) << shift;
+                    pixel = flattened;
+                }
+                const auto name = std::string("reported-webp-") + (fit ? "cover-" : "contain-") + (light ? "light.png" : "dark.png");
+                Save(outputDirectory, name.c_str(), composite);
+            }
+        }
+        Check(snowdesktop::icon_image::ExportPng(sourcePath, std::filesystem::path(outputDirectory) / "reported-export.png", error),
+            "reported WebP exports to a transparent PNG");
+    }
+    catch (const std::exception& error) { ++failures; std::cerr << error.what() << '\n'; }
+    if (SUCCEEDED(apartment)) CoUninitialize();
+    return failures == previousFailures ? 0 : 1;
 }
 
 int RunLargeIconRenderingTests(const char* outputDirectory)

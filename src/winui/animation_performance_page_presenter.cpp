@@ -28,9 +28,8 @@ struct Card
     void Initialize(const mux::Style& style, const muxc::StackPanel& parent)
     {
         root = muxc::Border{};
-        root.Style(style);
         content = muxc::StackPanel{};
-        content.Spacing(16);
+        content.Spacing(2);
         header = muxc::Grid{};
         header.ColumnSpacing(12);
         muxc::ColumnDefinition heading{};
@@ -44,8 +43,7 @@ struct Card
         title.TextWrapping(mux::TextWrapping::Wrap);
         title.VerticalAlignment(mux::VerticalAlignment::Center);
         header.Children().Append(title);
-        content.Children().Append(header);
-        root.Child(content);
+        presenter_controls::InitializeSettingsGroup(root, header, content, style);
         parent.Children().Append(root);
     }
 };
@@ -94,16 +92,20 @@ struct AnimationPerformancePagePresenter::Impl
 {
     Impl(LocalizeCallback callback, const mux::Style& style,
         const mux::Style& navigationStyle, NavigateCallback navigate)
-        : localize(std::move(callback)), navigate(std::move(navigate))
+        : localize(std::move(callback))
     {
+        (void)navigationStyle;
+        (void)navigate;
         root = muxc::StackPanel{};
-        root.Spacing(8);
+        root.Spacing(24);
         generalCard.Initialize(style, root);
         dockCard.content = muxc::StackPanel{};
-        dockCard.content.Spacing(16);
+        dockCard.content.Spacing(2);
         dockRoot.Children().Append(dockCard.content);
+        dockOverview.Initialize(style, root);
+        dockOverview.content.Children().Append(dockHost);
         performanceCard.Initialize(style, root);
-        AddChoice(mode, generalCard, "mode", "animation.mode", 0,
+        AddChoice(mode, generalCard, "mode", "animation.mode", animation::DefaultMode,
             {L10N_KEY("settings.animation.option.followSystem"),
              L10N_KEY("settings.animation.option.alwaysOn"),
              L10N_KEY("settings.animation.option.off")});
@@ -112,9 +114,9 @@ struct AnimationPerformancePagePresenter::Impl
              L10N_KEY("settings.animation.option.fade"),
              L10N_KEY("settings.animation.option.scale")});
         AddChoice(speed, generalCard, "speed", "animation.speed", 1,
-            {L10N_KEY("settings.animation.option.fast"),
-             L10N_KEY("settings.animation.option.standard"),
-             L10N_KEY("settings.animation.option.slow")});
+                  {L10N_KEY("settings.animation.option.fast"), L10N_KEY("settings.animation.option.standard"),
+                   L10N_KEY("settings.animation.option.slow"), L10N_KEY("settings.animation.option.slower"),
+                   L10N_KEY("settings.animation.option.verySlow"), L10N_KEY("settings.animation.option.slowest")});
         HookGeneral(mode, &GeneralSettings::animationMode);
         HookGeneral(popup, &GeneralSettings::popupAnimationEffect);
         HookGeneral(speed, &GeneralSettings::animationSpeed);
@@ -122,38 +124,6 @@ struct AnimationPerformancePagePresenter::Impl
         dockNotice = muxc::TextBlock{};
         dockNotice.TextWrapping(mux::TextWrapping::Wrap);
         dockCard.content.Children().Append(dockNotice);
-        dockLink = muxc::Button{};
-        dockLink.Style(navigationStyle);
-        muxc::Grid linkContent;
-        linkContent.ColumnSpacing(20);
-        muxc::ColumnDefinition textColumn, actionColumn;
-        textColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
-        actionColumn.Width(mux::GridLengthHelper::Auto());
-        linkContent.ColumnDefinitions().Append(textColumn);
-        linkContent.ColumnDefinitions().Append(actionColumn);
-        muxc::StackPanel linkText;
-        linkText.Spacing(4);
-        dockLinkTitle = muxc::TextBlock{};
-        dockLinkTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        dockLinkTitle.TextWrapping(mux::TextWrapping::Wrap);
-        dockLinkDescription = muxc::TextBlock{};
-        dockLinkDescription.TextWrapping(mux::TextWrapping::Wrap);
-        dockLinkDescription.Opacity(0.68);
-        linkText.Children().Append(dockLinkTitle);
-        linkText.Children().Append(dockLinkDescription);
-        linkContent.Children().Append(linkText);
-        muxc::FontIcon chevron;
-        chevron.Glyph(L"\xE76C");
-        chevron.FontSize(14);
-        muxc::Grid::SetColumn(chevron, 1);
-        linkContent.Children().Append(chevron);
-        dockLink.Content(linkContent);
-        root.Children().Append(dockLink);
-        const auto linkToken = dockLink.Click([this](const auto&, const auto&) {
-            if (active && !closed && this->navigate)
-                this->navigate(SettingsRoute::ForPage(SettingsPage::Dock, "animation.hover"));
-        });
-        revoke.push_back([control = dockLink, linkToken]() { control.Click(linkToken); });
         AddChoice(hover, dockCard, "hover", "animation.hover", 2,
             {L10N_KEY("settings.animation.option.noMagnification"),
              L10N_KEY("settings.animation.option.singleIcon"),
@@ -167,7 +137,26 @@ struct AnimationPerformancePagePresenter::Impl
         hoverScale.SmallChange(1);
         hoverScale.LargeChange(10);
         hoverScale.Value(128);
-        scaleRow.Initialize(EditorWithReset(hoverScale, scaleReset));
+        hoverScaleNumber = muxc::NumberBox{};
+        hoverScaleNumber.Minimum(100); hoverScaleNumber.Maximum(200);
+        hoverScaleNumber.SmallChange(1); hoverScaleNumber.LargeChange(10);
+        hoverScaleNumber.Width(96);
+        hoverScaleNumber.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        presenter_controls::SetNumberBoxValue(hoverScaleNumber, 128);
+        muxc::Grid scaleEditors;
+        scaleEditors.ColumnSpacing(8);
+        for (int index = 0; index < 3; ++index)
+        {
+            muxc::ColumnDefinition column;
+            column.Width(index == 0 ? mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star) : mux::GridLengthHelper::Auto());
+            scaleEditors.ColumnDefinitions().Append(column);
+        }
+        muxc::TextBlock unit;
+        unit.Text(L"%"); unit.VerticalAlignment(mux::VerticalAlignment::Center);
+        scaleEditors.Children().Append(hoverScale);
+        muxc::Grid::SetColumn(hoverScaleNumber, 1); scaleEditors.Children().Append(hoverScaleNumber);
+        muxc::Grid::SetColumn(unit, 2); scaleEditors.Children().Append(unit);
+        scaleRow.Initialize(EditorWithReset(scaleEditors, scaleReset));
         dockCard.content.Children().Append(scaleRow.root);
         scalePreview.Initialize([this](double value) { PublishScale(value, SettingsUpdateMode::Preview); });
         scaleIdle = mux::DispatcherTimer{};
@@ -176,12 +165,30 @@ struct AnimationPerformancePagePresenter::Impl
         revoke.push_back([timer = scaleIdle, token]() { timer.Tick(token); });
         token = hoverScale.ValueChanged([this](const auto&, const auto&) {
             if (!CanEdit()) return;
+            updating = true;
+            presenter_controls::SetNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+            updating = false;
             scaleDirty = true;
             scalePreview.Queue(hoverScale.Value());
             scaleIdle.Stop();
             scaleIdle.Start();
         });
         revoke.push_back([control = hoverScale, token]() { control.ValueChanged(token); });
+        token = hoverScaleNumber.ValueChanged([this](const auto&, const auto&) {
+            if (!CanEdit() || !std::isfinite(hoverScaleNumber.Value())) return;
+            hoverScale.Value(presenter_controls::QuantizeNumericValue(hoverScaleNumber.Value(), 100, 200, 1));
+        });
+        revoke.push_back([control = hoverScaleNumber, token]() { control.ValueChanged(token); });
+        token = hoverScaleNumber.LostFocus([this](const auto&, const auto&) {
+            if (CanEdit())
+            {
+                updating = true;
+                presenter_controls::SetNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+                updating = false;
+            }
+            CommitScale();
+        });
+        revoke.push_back([control = hoverScaleNumber, token]() { control.LostFocus(token); });
         token = hoverScale.PointerCaptureLost([this](const auto&, const auto&) { CommitScale(); });
         revoke.push_back([control = hoverScale, token]() { control.PointerCaptureLost(token); });
         token = hoverScale.LostFocus([this](const auto&, const auto&) { CommitScale(); });
@@ -202,7 +209,8 @@ struct AnimationPerformancePagePresenter::Impl
             {L10N_KEY("settings.animation.option.systemDefault"),
              L10N_KEY("settings.animation.option.scale"),
              L10N_KEY("settings.animation.option.fade"),
-             L10N_KEY("settings.animation.option.genie")});
+             L10N_KEY("settings.animation.option.genie"),
+             L10N_KEY("settings.animation.option.attraction")});
         HookDock(launch, &DockSettings::launchEffect);
         HookDock(window, &DockSettings::windowEffect);
         AddChoice(frameLimit, performanceCard, "frameLimit", "animation.frameLimit", 0,
@@ -213,23 +221,28 @@ struct AnimationPerformancePagePresenter::Impl
         HookGeneral(frameLimit, &GeneralSettings::animationFrameLimit, true);
         AddSwitch(energySaver, "energySaver", &GeneralSettings::animationEnergySaver, true);
         AddSwitch(onBattery, "onBattery", &GeneralSettings::animationOnBattery, false);
+        for (const auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
+            presenter_controls::StyleSettingsSubrow(choice->row.root,
+                choice == &mode || choice == &hover || choice == &frameLimit, 0);
+        presenter_controls::StyleSettingsSubrow(scaleRow.root, false, 0);
+        for (const auto* control : {&energySaver, &onBattery})
+            presenter_controls::StyleSettingsSubrow(control->row.root, false, 0);
         RefreshLocalizedText();
     }
 
     LocalizeCallback localize;
-    NavigateCallback navigate;
     DockPageActions actions;
     muxc::StackPanel dockRoot;
     muxc::StackPanel root{nullptr};
-    Card generalCard, dockCard, performanceCard;
+    Card generalCard, dockCard, dockOverview, performanceCard;
+    muxc::ContentControl dockHost;
     Choice mode, popup, speed, hover, launch, window, frameLimit;
     Switch energySaver, onBattery;
     SettingRow scaleRow;
     muxc::Slider hoverScale{nullptr};
+    muxc::NumberBox hoverScaleNumber{nullptr};
     muxc::Button scaleReset{nullptr};
     muxc::TextBlock dockNotice{nullptr};
-    muxc::Button dockLink{nullptr};
-    muxc::TextBlock dockLinkTitle{nullptr}, dockLinkDescription{nullptr};
     std::vector<std::function<void()>> revoke;
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
     mux::DispatcherTimer scaleIdle{nullptr};
@@ -304,6 +317,8 @@ struct AnimationPerformancePagePresenter::Impl
         control.toggle.MinWidth(0);
         control.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.row.Initialize(EditorWithReset(control.toggle, control.reset));
+        control.row.SetCompactEditor();
+        control.row.SetControlAlignment(mux::HorizontalAlignment::Right);
         performanceCard.content.Children().Append(control.row.root);
         auto token = control.toggle.Toggled([this, &control](const auto&, const auto&) {
             if (!CanEdit() || !actions.updateGeneral) return;
@@ -356,6 +371,7 @@ struct AnimationPerformancePagePresenter::Impl
         const bool wasUpdating = updating;
         updating = true;
         generalCard.title.Text(L("settings.animation.general"));
+        dockOverview.title.Text(L("settings.animation.dock"));
         performanceCard.title.Text(L("settings.animation.performance"));
         for (auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
         {
@@ -373,6 +389,7 @@ struct AnimationPerformancePagePresenter::Impl
         }
         scaleRow.SetText(L("settings.animation.hoverScale"), L("settings.animation.hoverScale.description"));
         muxa::AutomationProperties::SetName(hoverScale, L("settings.animation.hoverScale"));
+        muxa::AutomationProperties::SetName(hoverScaleNumber, L("settings.animation.hoverScale"));
         presenter_controls::ConfigureRestoreDefaultButton(scaleReset,
             L("settings.animation.hoverScale") + L": " + L("settings.animation.restore"));
         for (auto* control : {&energySaver, &onBattery})
@@ -383,10 +400,6 @@ struct AnimationPerformancePagePresenter::Impl
                 L(control->key) + L": " + L("settings.animation.restore"));
         }
         dockNotice.Text(L("settings.animation.dockDisabled"));
-        dockLinkTitle.Text(L("settings.animation.openDock"));
-        dockLinkDescription.Text(L("settings.animation.openDock.description"));
-        muxa::AutomationProperties::SetName(dockLink, L("settings.animation.openDock"));
-        muxa::AutomationProperties::SetHelpText(dockLink, L("settings.animation.openDock.description"));
         updating = wasUpdating;
         UpdateEnabled();
     }
@@ -421,7 +434,10 @@ struct AnimationPerformancePagePresenter::Impl
             const auto& dock = snapshot.values.dock;
             hover.combo.SelectedIndex(animation::NormalizeHoverEffect(dock.hoverEffect));
             if (!scaleDirty)
+            {
                 hoverScale.Value(std::round(animation::NormalizeHoverScale(dock.hoverScale) * 100.0));
+                presenter_controls::SyncNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+            }
             launch.combo.SelectedIndex(animation::NormalizeLaunchEffect(dock.launchEffect));
             window.combo.SelectedIndex(animation::NormalizeWindowEffect(dock.windowEffect));
             dockRevision = snapshot.domainRevisions.dock;
@@ -445,7 +461,6 @@ struct AnimationPerformancePagePresenter::Impl
         for (auto& unhook : revoke) { try { unhook(); } catch (...) {} }
         revoke.clear();
         actions = {};
-        navigate = {};
     }
 };
 
@@ -456,8 +471,18 @@ AnimationPerformancePagePresenter::AnimationPerformancePagePresenter(
         navigationCardStyle, std::move(navigate))) {}
 AnimationPerformancePagePresenter::~AnimationPerformancePagePresenter() { Close(); }
 void AnimationPerformancePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
-mux::UIElement AnimationPerformancePagePresenter::DockContent() const noexcept { return impl_ ? impl_->dockRoot : nullptr; }
-mux::UIElement AnimationPerformancePagePresenter::Content() const noexcept { return impl_->root; }
+mux::UIElement AnimationPerformancePagePresenter::DockContent() const
+{
+    if (!impl_) return nullptr;
+    impl_->dockHost.Content(nullptr);
+    return impl_->dockRoot;
+}
+mux::UIElement AnimationPerformancePagePresenter::Content() const
+{
+    impl_->dockHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+    impl_->dockHost.Content(impl_->dockRoot);
+    return impl_->root;
+}
 void AnimationPerformancePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot) { impl_->ApplySnapshot(snapshot); }
 void AnimationPerformancePagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }
 void AnimationPerformancePagePresenter::Activate() noexcept

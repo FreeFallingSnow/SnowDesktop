@@ -20,8 +20,8 @@
  * @param container 所属的容器对象
  * @param app       DesktopApp 实例指针，用于访问绘制工具与缓存
  */
-DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* app)
-    : item_(item), container_(container), app_(app) {}
+DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* app, bool popupHosted)
+    : item_(item), container_(container), app_(app), popupHosted_(popupHosted) {}
 
 /**
  * @brief  获取图标标题
@@ -126,7 +126,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     const auto* widget = dynamic_cast<WidgetContainer*>(container_);
     const int componentTitleLines = demoCollection || widget
-        ? app_->ResolveItemTitleLines(demoCollection ? demoCollection : widget->GetWidgetData()) : 0;
+        ? app_->ResolveItemTitleLines(widget ? widget->GetWidgetData() : demoCollection,
+            popupHosted_ || (widget && widget->IsPopupHosted())) : 0;
 
     RECT iconRect = forcedIconSize > 0 && !quickNavLayout
         ? snowdesktop::ResolveCenteredIconRect(
@@ -143,7 +144,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             rect, iconRect, app_->GetItemLayoutScale(rect))
         : rect;
 
-    if (hovered && !selected)
+    const bool desktopHighlight = !quickNavLayout && !iconOnlyHighlight;
+    if (desktopHighlight)
+        app_->DrawItemSelectionBackground(context, rect, state, lightTheme, alpha, componentTitleLines);
+    if (hovered && !selected && !desktopHighlight)
     {
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
@@ -163,7 +167,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         ? std::wstring_view(item_->parsingName)
         : std::wstring_view(item_->layoutKey);
 
-    if (selected && !dragged)
+    if (selected && !dragged && !desktopHighlight)
     {
         RECT sel = iconOnlyHighlight
             ? highlightRect
@@ -190,15 +194,15 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
     }
     // Loading describes pending work, not whether the last image is drawable.
+    else if (auto custom = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left))
+        app_->DrawIconBitmap(context, custom, iconRect, alpha, reinterpret_cast<std::uintptr_t>(item_));
     else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
-            context, item_->iconBitmap,
-            app_->ShouldBeautifyIconBitmap(item_->iconIsMediaThumbnail));
+        ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, item_->iconBitmap, item_->layoutKey, item_->iconIsMediaThumbnail);
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, alpha,
@@ -236,12 +240,13 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity))
         : item_->name;
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
     app_->DrawItemText(
         context, rect, title,
         selected, opacity, lightTheme,
-        demoCollection || dynamic_cast<WidgetContainer*>(container_),
-        app_->ResolveItemTitleLines(demoCollection ? demoCollection :
-            (dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr)));
+        demoCollection || widget,
+        app_->ResolveItemTitleLines(widget ? widget->GetWidgetData() : demoCollection,
+            popupHosted_ || (widget && widget->IsPopupHosted())));
 }
 
 /**
@@ -269,9 +274,9 @@ FolderEntryIcon::FolderEntryIcon(FolderEntry* entry, Container* container, Deskt
 
 /**
  * @brief  获取文件夹条目的标题
- * @return entry_ 的 name 字段；entry_ 为空时返回空字符串
+ * @return entry_ 的显示名称；entry_ 为空时返回空字符串
  */
-std::wstring FolderEntryIcon::GetTitle() const { return entry_ ? entry_->name : L""; }
+std::wstring FolderEntryIcon::GetTitle() const { return entry_ ? entry_->DisplayName() : L""; }
 
 /**
  * @brief  获取文件夹条目的完整路径
@@ -374,15 +379,15 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (!entry_->iconBitmap)
+    if (auto custom = app_->GetSmallCustomIcon(context, entry_->fullPath, iconRect.right - iconRect.left))
+        app_->DrawIconBitmap(context, custom, iconRect, opacity, reinterpret_cast<std::uintptr_t>(entry_));
+    else if (!entry_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
-            context, entry_->iconBitmap,
-            app_->ShouldBeautifyIconBitmap(entry_->iconIsMediaThumbnail));
+        ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, entry_->iconBitmap, entry_->fullPath, entry_->iconIsMediaThumbnail);
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, opacity,
@@ -408,7 +413,7 @@ void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
 {
     if (!app_ || !entry_ || !context || app_->IsRenamingItem(entry_)) return;
     app_->DrawItemText(
-        context, rect, entry_->name,
+        context, rect, entry_->DisplayName(),
         selected, opacity, lightTheme,
         dynamic_cast<WidgetContainer*>(container_) != nullptr,
         app_->ResolveItemTitleLines(dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr));

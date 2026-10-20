@@ -319,6 +319,9 @@ void DesktopApp::ShowItemContextMenu(
     using snowdesktop::large_icon_edit_rules::EntryAccess;
     const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
         entitlement.bridgeAvailable, entitlement.registered);
+    const auto customIconIdentity = items_[itemIndex].layoutKey;
+    const auto iconPersonalization = selectedCount == 1 && !items_[itemIndex].largeIcon ?
+        AppendIconOverrideMenu(nullptr, customIconIdentity) : nullptr;
     if (largeIconMenu)
     {
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
@@ -366,7 +369,7 @@ void DesktopApp::ShowItemContextMenu(
             if (items_[itemIndex].largeIcon)
                 AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
             else
-                AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
+                AppendMenuW(iconPersonalization ? iconPersonalization : menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
         }
         // Returning to ordinary icons must remain available without the Bridge.
         if (items_[itemIndex].largeIcon)
@@ -397,6 +400,10 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
+    if(iconPersonalization)
+    {
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(iconPersonalization),_LW("iconLibrary.personalization"));
+    }
     if (selectedCount == 1 && canFile)
         AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -458,6 +465,21 @@ void DesktopApp::ShowItemContextMenu(
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
 
+        HMENU columnsMenu = CreatePopupMenu();
+        if (columnsMenu)
+        {
+            const int selected = snowdesktop::list_detail_rules::ListColumns(*dockFolderEntry);
+            for (int columns = 1; columns <= 4; ++columns)
+            {
+                const UINT id = kContextWidgetListColumnsFirst + columns - 1;
+                AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
+                    id, std::to_wstring(columns).c_str());
+            }
+            AppendMenuW(menu, MF_POPUP | (dockFolderEntry->listMode ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(columnsMenu),
+                snowdesktop::menu_fluent_glyphs::kContentLayout, MenuIconFont::FluentRegular);
+        }
         detailsMenu = CreatePopupMenu();
         if (detailsMenu)
         {
@@ -527,7 +549,9 @@ void DesktopApp::ShowItemContextMenu(
     if (canConvertFolderMapping)
         SetMenuItemIcon(menu, kContextAddFolderMappingWidget,
             snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
+    SetMenuItemIcon(iconPersonalization ? iconPersonalization : menu,
+        kContextLargeIconCreate, L"\uF0B2");
+    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),L"\uF489",MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
         snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
@@ -700,9 +724,11 @@ void DesktopApp::ShowItemContextMenu(
         }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
+        dockFolderPopupWidget_.listColumns = dockFolderEntry->listColumns;
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
         dockFolderPopupWidget_.showSearchBox = dockFolderEntry->showSearchBox;
         dockFolderPopupWidget_.showFileCategories = dockFolderEntry->showFileCategories;
+        dockFolderPopupWidget_.dateHeaders = dockFolderEntry->dateHeaders;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =
@@ -752,6 +778,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     applyLargeIconCommand(command);
+    if (ExecuteIconOverrideMenu(command, customIconIdentity)) return;
     switch (command)
     {
     case kContextAddFolderMappingWidget:
@@ -815,7 +842,8 @@ void DesktopApp::ShowItemContextMenu(
                 {
                     if (IsItemInAnyWidget(items_[index]) || items_[index].gridCell.pageId == kDockPageId) return;
                     lastContextMenuScreenPoint_ = screenPoint;
-                    AddWidgetToGrid(std::move(widget), {3, 3});
+                    widget.singleCellIconMode = true;
+                    AddWidgetToGrid(std::move(widget), {1, 1});
                 }
                 const size_t createdIndex = FindWidgetIndexById(createdId);
                 if (createdIndex < widgets_.size())
@@ -906,11 +934,21 @@ void DesktopApp::ShowItemContextMenu(
             applyDockFolderDisplayChange();
         }
         break;
+    case kContextWidgetListColumnsFirst:
+    case kContextWidgetListColumnsFirst + 1:
+    case kContextWidgetListColumnsFirst + 2:
+    case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
         if (dockFolderEntry)
         {
-            dockFolderEntry->listMode =
-                !dockFolderEntry->listMode;
+            if (command == kContextWidgetToggleListMode)
+                dockFolderEntry->listMode = !dockFolderEntry->listMode;
+            else
+            {
+                if (!dockFolderEntry->listMode) break;
+                snowdesktop::list_detail_rules::SetListColumns(*dockFolderEntry,
+                    static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
+            }
             applyDockFolderDisplayChange();
         }
         break;
@@ -947,6 +985,7 @@ void DesktopApp::ShowItemContextMenu(
                 dockFolderEntry->detailShowSize =
                     !dockFolderEntry->detailShowSize;
             }
+            dockFolderEntry->listColumns = 1;
             const auto positions =
                 snowdesktop::list_detail_rules::
                     NormalizePositions(
@@ -1154,7 +1193,11 @@ void DesktopApp::ShowShellContextMenu(
     const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
     std::vector<std::wstring> invocationPaths;
-    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
+    std::wstring customIconIdentity;
+    bool ordinarySelection = true;
+    const auto collectPath = [&](const DesktopItem& item) {
+        if (invocationPaths.empty()) customIconIdentity = item.layoutKey;
+        ordinarySelection = ordinarySelection && !item.largeIcon;
         PWSTR path = nullptr;
         if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
                 SIGDN_FILESYSPATH, &path)) && path)
@@ -1209,6 +1252,7 @@ void DesktopApp::ShowShellContextMenu(
             }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
+    if (ordinarySelection && selectionSnapshot.size() == 1) AppendIconOverrideMenu(menu, customIconIdentity);
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
@@ -1231,6 +1275,8 @@ void DesktopApp::ShowShellContextMenu(
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 
+    if (ExecuteIconOverrideMenu(cmd, customIconIdentity))
+    { DestroyMenu(menu); ClearMenuIcons(); RestoreDesktopWindowLayer(); return; }
     if (cmd != 0)
     {
         UINT commandOffset = cmd - kFirstCmd;

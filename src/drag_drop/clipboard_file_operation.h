@@ -5,10 +5,24 @@
 #include "shell/shell_file_operation_worker.h"
 
 #include <optional>
+#include <algorithm>
+#include <filesystem>
 #include <utility>
 
 namespace snowdesktop
 {
+// A cut selection may contain files from several directories. Moving an item
+// already in the destination is a no-op, not a reason to discard its peers.
+inline void RemoveClipboardMoveNoOps(
+    std::vector<std::wstring>& paths, const std::wstring& folder)
+{
+    const auto target = folder_self_drop_rules::NormalizeFolderPath(folder);
+    paths.erase(std::remove_if(paths.begin(), paths.end(), [&](const auto& path) {
+        return folder_self_drop_rules::NormalizeFolderPath(
+            std::filesystem::path(path).parent_path().wstring()) == target;
+    }), paths.end());
+}
+
 // Called on the Shell worker after the clipboard object's async operation has
 // started. Local paths use a tracked file operation whose return means the
 // transfer finished, not an IDropTarget handoff that can outlive Drop().
@@ -29,6 +43,11 @@ std::optional<bool> TryExecuteClipboardFileOperation(
     if (paths.empty() || folder.empty() ||
         folder_self_drop_rules::IsSelfContainedFolderDrop(paths, folder))
         return false;
+    if (effect == DROPEFFECT_MOVE)
+    {
+        RemoveClipboardMoveNoOps(paths, folder);
+        if (paths.empty()) return true;
+    }
 
     std::wstring destination = folder;
     if (destination.back() != L'\\' && destination.back() != L'/')

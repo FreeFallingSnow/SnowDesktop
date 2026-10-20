@@ -97,24 +97,20 @@ RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 RECT DesktopApp::GetQuickNavigationViewModeButtonRect(
     const RECT& overlay) const
 {
-    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty() ||
-        quickNavigationActiveWidgetIndex_ !=
-            static_cast<size_t>(-1))
+    return GetQuickNavigationViewModeSlotRect(overlay);
+}
+
+RECT DesktopApp::GetQuickNavigationViewModeSlotRect(
+    const RECT& overlay) const
+{
+    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty())
         return MakeRect(0, 0, 0, 0);
 
     const RECT tabs =
         GetQuickNavigationTabsRect(overlay);
     const int buttonSize = QuickNavScale(28);
-    int width = QuickNavScale(76);
-    const auto label = QuickNavigationViewLabel();
-    ComPtr<IDWriteTextLayout> text;
-    if (dwriteFactory_ && quickNavTabTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            label.c_str(), static_cast<UINT32>(label.size()), quickNavTabTextFormat_.Get(), 10000.f, 10000.f, &text)))
-    {
-        DWRITE_TEXT_METRICS metrics{};
-        if (SUCCEEDED(text->GetMetrics(&metrics))) width = std::clamp(
-            static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(30), QuickNavScale(60), QuickNavScale(164));
-    }
+    // The cache follows the active tab's current sorting label.
+    const int width = std::max(QuickNavScale(60), quickNavViewModeSlotWidth_);
     const int top = tabs.top +
         std::max(0,
             static_cast<int>(
@@ -131,24 +127,36 @@ int DesktopApp::GetQuickNavigationTabsStart(
 {
     const RECT tabs =
         GetQuickNavigationTabsRect(overlay);
-    const RECT button =
-        GetQuickNavigationViewModeButtonRect(
+    const RECT slot =
+        GetQuickNavigationViewModeSlotRect(
             overlay);
     return snowdesktop::
         quick_navigation_rules::
             TabStripLabelStart(
                 tabs.left,
-                !IsRectEmpty(&button),
-                static_cast<int>(button.right - button.left),
+                !IsRectEmpty(&slot),
+                static_cast<int>(slot.right - slot.left),
                 QuickNavScale(8));
 }
 
-void DesktopApp::SetQuickNavigationDesktopViewMode(
+void DesktopApp::SetQuickNavigationViewMode(
     QuickNavigationDesktopViewMode mode)
 {
-    if (navigationSettings_.desktopViewMode == mode)
+    const auto options = GetQuickNavigationViewModeOptions();
+    if (std::find(options.begin(), options.end(), mode) == options.end()) return;
+    if (GetQuickNavigationViewMode() == mode)
         return;
-    navigationSettings_.desktopViewMode = mode;
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        navigationSettings_.desktopViewMode = mode;
+    else if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        navigationSettings_.mappingViewMode = mode;
+    else if (quickNavigationActiveWidgetIndex_ < widgets_.size())
+    {
+        if (mode == QuickNavigationDesktopViewMode::Source) return;
+        navigationSettings_.widgetSortByInitial[WideToUtf8(widgets_[quickNavigationActiveWidgetIndex_].id)] =
+            mode == QuickNavigationDesktopViewMode::Initial;
+    }
+    else return;
     SaveNavigationSettings(
         GetNavigationSettingsPath().c_str(),
         navigationSettings_);
@@ -157,17 +165,16 @@ void DesktopApp::SetQuickNavigationDesktopViewMode(
             navigationSettings_);
     quickNavigationScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;
+    UpdateQuickNavTabWidths();
     ResetQuickNavigationKeyboardTarget();
     InvalidateQuickNavigationWindow();
 }
 
 bool DesktopApp::
-TrySetQuickNavigationDesktopViewModeAtPoint(
+TrySetQuickNavigationViewModeAtPoint(
     POINT point)
 {
-    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty() ||
-        quickNavigationActiveWidgetIndex_ !=
-            static_cast<size_t>(-1))
+    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty())
         return false;
 
     const RECT button =
@@ -176,7 +183,9 @@ TrySetQuickNavigationDesktopViewModeAtPoint(
     if (PtInRect(&button, point))
     {
         quickNavigationMenu_ = quickNavigationMenu_ == QuickNavigationMenu::Views ? QuickNavigationMenu::None : QuickNavigationMenu::Views;
-        quickNavigationMenuSelection_ = static_cast<int>(navigationSettings_.desktopViewMode);
+        const auto modes = GetQuickNavigationViewModeOptions();
+        const auto selected = std::find(modes.begin(), modes.end(), GetQuickNavigationViewMode());
+        quickNavigationMenuSelection_ = selected == modes.end() ? 0 : static_cast<int>(selected - modes.begin());
         PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
         return true;
@@ -238,33 +247,8 @@ int DesktopApp::GetQuickNavigationTabWidth() const
 
 void DesktopApp::EnsureNavTabOrder()
 {
-    auto isTabWidget = [](DesktopWidgetType t) {
-        return t == DesktopWidgetType::Collection ||
-               t == DesktopWidgetType::FileCategories ||
-               t == DesktopWidgetType::FolderMapping;
-    };
-    std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
-    for (const auto& w : widgets_)
-    {
-        if (isTabWidget(w.type) &&
-            !IsGroupedCollection(w) &&
-            !orderSet.count(w.id))
-        {
-            navTabOrder_.push_back(w.id);
-            orderSet.insert(w.id);
-        }
-    }
-    navTabOrder_.erase(
-        std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
-            [this, &isTabWidget](const std::wstring& id) {
-                for (const auto& w : widgets_)
-                    if (isTabWidget(w.type) &&
-                        !IsGroupedCollection(w) &&
-                        w.id == id)
-                        return false;
-                return true;
-            }),
-        navTabOrder_.end());
+    snowdesktop::quick_navigation_rules::
+        NormalizeTabOrder(navTabOrder_, widgets_);
 }
 
 RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const
@@ -314,21 +298,39 @@ RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex)
     return MakeRect(left, tabs.top, left + width, tabs.bottom);
 }
 
+std::optional<size_t> DesktopApp::GetQuickNavigationTabAtPoint(POINT point) const
+{
+    if (!quickNavigationOpen_ || UseQuickNavigationList() ||
+        !GetQuickNavigationEffectiveSearchText().empty() ||
+        quickNavigationMenu_ != QuickNavigationMenu::None)
+        return std::nullopt;
+
+    const RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
+    if (!PtInRect(&tabs, point))
+        return std::nullopt;
+    const size_t count = std::min(quickNavTabWidths_.size(),
+        GetQuickNavigationCollectionIndices().size() + 2);
+    for (size_t tab = 0; tab < count; ++tab)
+    {
+        const RECT bounds = GetQuickNavigationTabRect(quickNavigationRect_, tab);
+        RECT viewport = tabs;
+        if (tab >= 2)
+            viewport.left = GetQuickNavigationTabRect(quickNavigationRect_, 2).left +
+                quickNavigationTabScrollOffset_;
+        RECT visible{};
+        if (IntersectRect(&visible, &bounds, &viewport) && PtInRect(&visible, point))
+            return tab;
+    }
+    return std::nullopt;
+}
+
 int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const
 {
     RECT content = GetQuickNavigationContentRect(overlay);
     const int cellW = QuickNavScale(QuickNavigationGridCellWidth());
     const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    if (contentWidth < cellW) return 1;
-    int columns = contentWidth / cellW;
-    if (columns <= 1) return 1;
-    int gap = (contentWidth - columns * cellW) / (columns - 1);
-    while (columns > 1 && gap < QuickNavScale(navigationSettings_.layout.gridGap))
-    {
-        --columns;
-        gap = (contentWidth - columns * cellW) / (columns - 1);
-    }
-    return std::max(1, columns);
+    return snowdesktop::quick_navigation_rules::GridColumnCount(
+        contentWidth, cellW, QuickNavScale(navigationSettings_.layout.gridGap));
 }
 
 int DesktopApp::GetQuickNavigationGap(const RECT& overlay) const
@@ -1294,7 +1296,7 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
 
 int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) const
 {
-    return GetQuickNavigationContentHeight(overlay, BuildQuickNavigationContentModel());
+    return GetQuickNavigationContentHeight(overlay, BuildQuickNavigationContentModel(&overlay));
 }
 
 int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,

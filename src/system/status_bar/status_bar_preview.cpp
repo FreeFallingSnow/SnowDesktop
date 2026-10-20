@@ -104,7 +104,7 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     return *found;
 }
 void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
-    bool expectNotification = true, bool rightAligned = false) try
+    bool expectNotification = true, bool rightAligned = false, bool dockQuickSearch = true) try
 {
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
@@ -115,7 +115,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         const auto& item = items[i];
         if (item.key == "menu" || item.key == "quickSearch" || item.key == "taskView")
             launchEnd = std::max(launchEnd, item.bounds.right);
-        if (merged && item.key == "quickSearch")
+        if (merged && dockQuickSearch && item.key == "quickSearch")
             Require(IsRectEmpty(&item.bounds) && !ResolveStatusBarInvocation(items, i, false),
                 "merged status bar must not expose a duplicate Dock search action");
     }
@@ -142,22 +142,57 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         Require(notification.right >= width - static_cast<LONG>(12.f * scale) && notification.right <= width,
             "merged notifications must be anchored to the complete bar's right edge");
         for (const auto& item : items)
-            if (item.key != "clock" && item.key != "notifications" && !IsRectEmpty(&item.bounds))
+            if (item.key != "clock" && item.key != "notifications" &&
+                item.action != StatusBarAction::ShowDesktop && !IsRectEmpty(&item.bounds))
                 Require(item.bounds.right <= (dateVisible ? clock->bounds.left : notification.left),
                     "a tray or system item was placed after the merged date and notifications");
     }
-    const bool hasBattery = !Item(items, "controlCenter").controlGlyphs[2].empty();
-    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 84.f : 56.f) * scale)),
-        "available system controls must retain their hit targets without an absent-battery slot");
+    const auto& control = Item(items, "controlCenter");
+    const bool hasBattery = !control.controlGlyphs[2].empty();
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
     Require(snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &font));
     font->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    float controlsWidth = (hasBattery ? 84.f : 56.f) * scale;
+    if (!control.batteryPercentageText.empty())
+    {
+        Require(hasBattery, "a percentage must never reserve a slot without a valid battery");
+        ComPtr<IDWriteTextLayout> reserved, displayed;
+        DWRITE_TEXT_METRICS reservedMetrics{}, displayedMetrics{};
+        Require(text->CreateTextLayout(L"100%", 4, font.Get(), 2000, 400, &reserved));
+        Require(reserved->GetMetrics(&reservedMetrics));
+        Require(text->CreateTextLayout(control.batteryPercentageText.c_str(),
+            static_cast<UINT32>(control.batteryPercentageText.size()), font.Get(), 2000, 400, &displayed));
+        Require(displayed->GetMetrics(&displayedMetrics));
+        controlsWidth += reservedMetrics.widthIncludingTrailingWhitespace + 4.f * scale;
+        Require(displayedMetrics.widthIncludingTrailingWhitespace <= reservedMetrics.widthIncludingTrailingWhitespace + .01f &&
+                displayedMetrics.height <= controls.bottom - controls.top,
+            "visible battery percentages must fit their stable font/DPI-measured slot");
+        const POINT percentagePoint{controls.right - 2, (controls.top + controls.bottom) / 2};
+        const auto hit = HitTestStatusBarItems(items, percentagePoint);
+        Require(hit && items[*hit].key == "controlCenter" &&
+                StatusBarControlPart((percentagePoint.x - controls.left) / scale, hasBattery) == 2,
+            "the trailing percentage must share the battery hit/tooltip target, never the volume wheel target");
+        Require(ResolveStatusBarInvocation(items, *hit, false).has_value(),
+            "the battery percentage must retain the control-center invocation");
+    }
+    Require(controls.right - controls.left == static_cast<LONG>(std::ceil(controlsWidth)),
+        "system controls must reserve exactly their visible icons and optional battery percentage");
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         const auto& item = items[i]; const auto& r = item.bounds;
         if (IsRectEmpty(&r)) continue;
+        const bool showDesktop = item.action == StatusBarAction::ShowDesktop;
+        if (showDesktop)
+        {
+            Require(r.left == width - static_cast<LONG>(std::ceil(8.f * scale)) && r.right == width &&
+                r.top == 0 && r.bottom == height && item.text.empty() && item.glyph.empty() && !item.tip.empty(),
+                "show desktop must have an invisible full-height right-edge target with a tooltip");
+            const auto invocation = ResolveStatusBarInvocation(items, i, false);
+            Require(invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "the rendered right edge must resolve to the show-desktop action");
+        }
         if (merged)
         {
             const auto center = MergedStatusBarCenter(width, height, scale); RECT overlap{};
@@ -174,7 +209,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                     "system information wastes horizontal space");
         }
         Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
-        if (merged)
+        if (merged && !showDesktop)
         {
             Require(r.bottom - r.top <= std::ceil((item.key == "clock" ? 40.f : 32.f) * scale) &&
                 std::abs(r.top + r.bottom - height) <= 1,
@@ -240,16 +275,25 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon", "volume-low", "volume-zero", "volume-muted"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon", "volume-low", "volume-zero", "volume-muted",
+            "percentage", "percentage-zero", "percentage-full", "percentage-charging", "percentage-unknown", "percentage-unavailable", "percentage-narrow", "percentage-scaled", "percentage-merged"})
         {
             auto data = source; StatusBarSettings settings;
+            settings.batteryPercentage = preset.starts_with("percentage");
+            const bool merged = preset == "merged" || preset == "percentage-merged";
+            const bool narrow = preset == "narrow" || preset == "percentage-narrow";
             if (preset == "volume-low") data.audio->volume = .45;
             if (preset == "volume-zero") data.audio->volume = 0;
             if (preset == "volume-muted") data.audio->muted = true;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
-                preset == "information" || preset == "updated" || preset == "narrow" || preset == "merged";
+                preset == "information" || preset == "updated" || narrow || merged;
             settings.pinnedTrayItems = {"bar-preview-0", "bar-preview-1"};
-            if (preset == "scaled") settings.scale = 1.5f;
+            if (preset == "scaled" || preset == "percentage-scaled") settings.scale = 1.5f;
+            if (preset == "percentage-zero") data.power->batteryPercent = 0;
+            if (preset == "percentage-full") { data.power->batteryPercent = 100; data.power->acPower = true; }
+            if (preset == "percentage-charging") { data.power->charging = true; data.power->acPower = true; }
+            if (preset == "percentage-unknown") data.power->batteryPercent = std::numeric_limits<double>::quiet_NaN();
+            if (preset == "percentage-unavailable") data.power->available = false;
             if (preset == "input-icon")
             {
                 auto& icon = data.tray.front();
@@ -274,7 +318,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet";
                 data.notifications.unreadCount = 2;
             }
-            if (preset == "merged") data.notifications.totalCount = 2;
+            if (merged) data.notifications.totalCount = 2;
             if (preset == "charging" || preset == "charging-low") { data.power->charging = true; data.power->acPower = true; }
             if (preset == "charging-low" || preset == "low-battery") data.power->batteryPercent = 10;
             if (preset == "low-battery") data.wifi = WifiFixture(true, 14);
@@ -284,11 +328,26 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             if (preset == "unavailable")
             { data.power->available = false; data.network->available = false; data.audio->available = false; data.notifications = {}; }
             const float scale = dpiScale * settings.scale;
-            const int width = preset == "narrow" ? static_cast<int>(640 * dpiScale) : fullWidth;
-            const int height = static_cast<int>(std::lround((preset == "merged" ? 64 : 32) * scale));
+            const int width = narrow ? static_cast<int>(640 * dpiScale) : fullWidth;
+            const int height = static_cast<int>(std::lround((merged ? 64 : 32) * scale));
             Require(height + 2 * request.padding <= request.canvasHeight, "status bar preview canvas is too short");
             const int left = (request.canvasWidth - width) / 2, top = (request.canvasHeight - height) / 2;
             auto items = BuildStatusBarItems(settings, data);
+            auto disabledEdge = settings; disabledEdge.showDesktop = false;
+            const auto disabledItems = BuildStatusBarItems(disabledEdge, data);
+            Require(std::none_of(disabledItems.begin(), disabledItems.end(), [](const auto& item) {
+                return item.action == StatusBarAction::ShowDesktop;
+            }) && !SameStatusBarContent(items, disabledItems),
+                "disabling show desktop must remove its target and refresh hit geometry");
+            if (settings.batteryPercentage)
+            {
+                const auto& control = Item(items, "controlCenter");
+                const bool validBattery = data.power && data.power->available &&
+                    std::isfinite(data.power->batteryPercent) && data.power->batteryPercent >= 0 && data.power->batteryPercent <= 100;
+                const auto expected = validBattery ? std::to_wstring(static_cast<int>(std::lround(data.power->batteryPercent))) + L"%" : L"";
+                Require(control.batteryPercentageText == expected,
+                    "percentage text must reflect valid power data including zero, full and charging states");
+            }
             {
                 const auto overflow = std::find_if(items.begin(), items.end(), [](const auto& item) {
                     return item.key == "tray" && !item.icon;
@@ -369,11 +428,28 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "hiding a pinned tray icon would leave its pixels visible");
                 const auto& control = Item(items, "controlCenter");
-                Require(control.text.empty() && control.controlTips[2].find(L"58%") != std::wstring::npos,
-                    "battery percentage belongs in its tooltip, not in the compact bar");
+                Require(control.text.empty() && control.batteryPercentageText.empty() && control.controlTips[2].find(L"58%") != std::wstring::npos,
+                    "battery percentage stays in the tooltip until explicitly enabled");
+                auto percentageSettings = settings; percentageSettings.batteryPercentage = true;
+                const auto percentageItems = BuildStatusBarItems(percentageSettings, data);
+                Require(Item(percentageItems, "controlCenter").batteryPercentageText == L"58%" &&
+                    !SameStatusBarContent(items, percentageItems), "enabling percentage must refresh the control group");
                 auto changedBattery = data; changedBattery.power->batteryPercent = 59;
+                Require(!SameStatusBarContent(percentageItems, BuildStatusBarItems(percentageSettings, changedBattery)),
+                    "a visible percentage change within the same battery level must repaint");
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, changedBattery)),
                     "a percentage within the same battery level should update the tooltip without repainting");
+                for (const double invalidPercent : {-1., 101., 255., std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::infinity()})
+                {
+                    auto invalidBattery = data; invalidBattery.power->batteryPercent = invalidPercent;
+                    const auto invalidControl = Item(BuildStatusBarItems(percentageSettings, invalidBattery), "controlCenter");
+                    Require(invalidControl.controlGlyphs[2].empty() && invalidControl.batteryPercentageText.empty(),
+                        "unknown or out-of-range battery values cannot leave an icon or percentage slot");
+                }
+                auto absentBattery = data; absentBattery.power.reset();
+                Require(Item(BuildStatusBarItems(percentageSettings, absentBattery), "controlCenter").batteryPercentageText.empty(),
+                    "missing power data cannot display a stale percentage");
                 changedBattery.power->batteryPercent = 10;
                 const auto low = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
                 Require(low.controlGlyphs[2] != control.controlGlyphs[2] && low.batteryTone == StatusBarBatteryTone::Low,
@@ -465,7 +541,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "volume level must change its speaker glyph");
             }
             std::optional<std::size_t> hover;
-            if (preset == "hover" || preset == "high-contrast" || preset == "merged")
+            if (preset == "hover" || preset == "high-contrast" || merged)
                 hover = static_cast<std::size_t>(&Item(items, "controlCenter") - items.data());
             StatusBarPalette palette{preset == "high-contrast", D2D1::ColorF(0x000000), D2D1::ColorF(0xffffff),
                 D2D1::ColorF(0xffff00), D2D1::ColorF(0x000000)};
@@ -492,9 +568,9 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             }
             else if (!request.contentOnly) background(context.Get(), {0, 0, width, height}, appearance, scale, settings.position);
             const auto contentResult = DrawStatusBarContent(context.Get(), text, items, static_cast<UINT>(width), static_cast<UINT>(height),
-                scale, appearance, palette, hover, false, 0, preset == "merged");
+                scale, appearance, palette, hover, false, 0, merged);
             const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
-            CheckLayout(text, items, width, height, scale, preset == "merged");
+            CheckLayout(text, items, width, height, scale, merged);
             if(preset=="normal")
             {
                 // The production rendered rectangles feed the same resolver
@@ -522,8 +598,11 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // CLI presets or altering the exported normal frame.
                 const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
                     bool search = true, bool taskView = true, int mergedHeight = 64,
-                    bool rightAligned = false, bool seconds = false) {
+                    bool rightAligned = false, bool seconds = false, bool dockQuickSearch = true,
+                    bool percentage = false, bool showDesktop = true) {
                     auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.showDesktop = showDesktop;
+                    compactSettings.batteryPercentage = percentage;
                     compactSettings.timeNotificationRightAligned = rightAligned;
                     compactSettings.clockShowSeconds = seconds;
                     compactSettings.quickSearch = search; compactSettings.taskView = taskView;
@@ -543,17 +622,55 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, targetProperties, &scratch));
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
                     context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+                    std::optional<std::size_t> desktopIndex;
+                    for (std::size_t i = 0; i < compact.size(); ++i)
+                        if (compact[i].action == StatusBarAction::ShowDesktop) desktopIndex = i;
+                    Require(desktopIndex.has_value() == showDesktop, "show-desktop target must respect the setting");
                     const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
-                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned);
+                        testScale, appearance, palette, desktopIndex, desktopIndex.has_value(), desktopIndex.value_or(0),
+                        merged, compactSettings.timeNotificationRightAligned,
+                        nullptr, dockQuickSearch);
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
+                    const auto& controls = Item(compact, "controlCenter").bounds;
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
-                        static_cast<LONG>(std::ceil(28.f * testScale) + std::ceil(84.f * testScale));
+                        static_cast<LONG>(std::ceil(28.f * testScale)) + controls.right - controls.left;
                     CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
-                        notificationFits, rightAligned);
-                    if (!merged && search && logicalWidth >= 640)
-                        Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
-                            "standalone status bar lost its enabled search entry");
+                        notificationFits, rightAligned, dockQuickSearch);
+                    if (desktopIndex)
+                    {
+                        // Inspect the actual content surface, including hover and
+                        // keyboard focus, rather than relying on empty glyph text.
+                        ComPtr<ID2D1Bitmap1> edgeReadback;
+                        const auto read = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ |
+                            D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
+                        Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, read, &edgeReadback));
+                        Require(edgeReadback->CopyFromBitmap(nullptr, scratch.Get(), nullptr));
+                        D2D1_MAPPED_RECT edgeMapped{}; Require(edgeReadback->Map(D2D1_MAP_OPTIONS_READ, &edgeMapped));
+                        bool invisible = true;
+                        const auto& bounds = compact[*desktopIndex].bounds;
+                        for (LONG y = bounds.top; y < bounds.bottom; ++y)
+                        {
+                            const auto* row = reinterpret_cast<const std::uint32_t*>(
+                                edgeMapped.bits + static_cast<std::size_t>(y) * edgeMapped.pitch);
+                            for (LONG x = bounds.left; x < bounds.right; ++x)
+                                invisible = invisible && (row[x] >> 24) == 0;
+                        }
+                        edgeReadback->Unmap();
+                        Require(invisible, "show desktop must not paint a button, strip, hover fill or focus outline");
+                    }
+                    else Require(!HitTestStatusBarItems(compact,
+                        {static_cast<LONG>(testWidth) - 1, static_cast<LONG>(testHeight) / 2}),
+                        "disabled show-desktop edge must return to blank-area behavior");
+                    if (search && (!merged || !dockQuickSearch) && logicalWidth >= 640)
+                    {
+                        const auto& entry = Item(compact, "quickSearch");
+                        const auto invocation = ResolveStatusBarInvocation(compact,
+                            static_cast<std::size_t>(&entry - compact.data()), false);
+                        Require(!IsRectEmpty(&entry.bounds) && invocation &&
+                            invocation->action == StatusBarAction::QuickSearch,
+                            "status bar must retain its search target when Dock does not provide one");
+                    }
                     if (taskView && logicalWidth >= 640)
                     {
                         const auto& entry = Item(compact, "taskView");
@@ -575,8 +692,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     compactLayout(false, false, 640, rightScale, true, true, 64, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, false, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, true, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, false, true, false);
+                    compactLayout(true, true, 1920, rightScale, false, true, 64, false, true, false);
                 }
                 compactLayout(false, false, 640, scale);
+                compactLayout(true, false, 1920, scale, true, true, 64, false, false, true, false, false);
+                compactLayout(true, true, 1920, scale, true, true, 64, false, false, true, false, false);
                 compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);
                 compactLayout(false, true, 640, scale, false);
@@ -596,6 +717,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 240, 3.f);
                 compactLayout(true, false, 320, scale);
                 compactLayout(true, false, 280, scale);
+                for (const float percentageScale : {.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f})
+                    for (const int logicalWidth : {320, 640, 1920})
+                    {
+                        compactLayout(true, false, logicalWidth, percentageScale, true, true, 64, false, false, true, true);
+                        compactLayout(true, false, logicalWidth, percentageScale, true, true, 64, true, false, true, true);
+                        compactLayout(true, true, logicalWidth, percentageScale, true, true, 40, false, false, true, true);
+                    }
             }
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})
@@ -620,6 +748,21 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 std::memcpy(pixels.data() + static_cast<std::size_t>(y) * request.canvasWidth,
                     mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
             readback->Unmap();
+            if (!Item(items, "controlCenter").batteryPercentageText.empty())
+            {
+                const auto& controls = Item(items, "controlCenter").bounds;
+                const int textLeft = left + controls.left + static_cast<int>(std::ceil(84.f * scale));
+                int textInk = 0;
+                for (int py = top + controls.top + 1; py < top + controls.bottom - 1; ++py)
+                    for (int px = textLeft; px < left + controls.right - static_cast<int>(std::floor(4.f * scale)); ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                        if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                            (appearance.contentTheme == 1 ? r < 150 : r > 140)) ++textInk;
+                    }
+                Require(textInk > 0, "enabled battery percentage must produce visible text to the right of its icon");
+            }
             if (preset == "input-icon")
             {
                 const auto& trayIcon = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.icon.has_value(); });
@@ -667,7 +810,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 };
                 for (const auto& item : items)
                 {
-                    if (item.icon || item.key == "controlCenter") continue;
+                    if (item.icon || item.key == "controlCenter" || item.action == StatusBarAction::ShowDesktop) continue;
                     centeredInk(item.bounds, item.key,
                         item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||

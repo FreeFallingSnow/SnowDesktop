@@ -1,4 +1,5 @@
 #include "dock_window_pin.h"
+#include "theme/personalization.h"
 
 #include <dwmapi.h>
 #include <d2d1.h>
@@ -6,6 +7,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <new>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,13 +17,24 @@ namespace
 {
 constexpr wchar_t kManagerClass[] = L"SnowDesktopDockWindowPinManager";
 constexpr wchar_t kBorderClass[] = L"SnowDesktopDockWindowPinBorder";
+constexpr wchar_t kOperationClass[] = L"SnowDesktopDockWindowPinOperation";
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
+constexpr wchar_t kUndoProperty[] = L"SnowDesktop.DockWindowPinUndo";
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kRefreshIntervalMs = 100;
 constexpr UINT kRefreshMessage = WM_APP + 1;
-constexpr UINT32 kBorderRgb = 0x0078D7;
 constexpr UINT kPositionFlags =
-    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS;
+constexpr ULONGLONG kPinConfirmationTimeoutMs = 1000;
+
+struct BorderAppearance
+{
+    bool enabled = true;
+    float width = 6.0f;
+    UINT32 rgb = 0x0078D7;
+    float opacity = 0.5f;
+    bool operator==(const BorderAppearance&) const = default;
+};
 
 class ScopedPhysicalCoordinates
 {
@@ -37,12 +51,70 @@ private:
     DPI_AWARENESS_CONTEXT previous_;
 };
 
+bool IsTopmost(HWND window)
+{
+    return IsWindow(window) && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
 bool ChangeTopmost(HWND window, bool pinned)
 {
     return SetWindowPos(window, pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
-        0, 0, 0, 0, kPositionFlags) != FALSE &&
-        DockWindowPin::IsPinned(window) == pinned;
+        0, 0, 0, 0, kPositionFlags) != FALSE;
 }
+
+// A cross-queue TOPMOST request may arrive after its owner has gone away.
+// A preallocated message-only operation window keeps the cancellation alive
+// independently of its visual and State. One target cannot acquire another
+// lease meanwhile. Active entries own the record; retirement transfers it to
+// that operation window until native confirmation or target destruction.
+struct PinRetirement
+{
+    inline static std::atomic<unsigned> live{0};
+    static constexpr unsigned MaximumLive = 256;
+    HWND target = nullptr;
+    HWND border = nullptr;
+    HWND operation = nullptr;
+    DWORD process = 0;
+    DWORD thread = 0;
+    bool retired = false;
+    bool waitingForPin = false;
+    bool pinInFlight = false;
+    bool detached = false;
+    bool completed = false;
+
+    ~PinRetirement() { --live; }
+
+    static std::unique_ptr<PinRetirement> Reserve()
+    {
+        if (live.fetch_add(1) >= MaximumLive) { --live; return {}; }
+        auto* value = new (std::nothrow) PinRetirement;
+        if (!value) --live;
+        return std::unique_ptr<PinRetirement>(value);
+    }
+
+    bool Advance()
+    {
+        if (completed) return true;
+        DWORD currentProcess = 0;
+        const DWORD currentThread = GetWindowThreadProcessId(target, &currentProcess);
+        if (currentThread != thread || currentProcess != process ||
+                GetPropW(target, kUndoProperty) != operation) return true;
+        const bool topmost = IsTopmost(target);
+        if (waitingForPin && !topmost) return false;
+        waitingForPin = false;
+        if (!topmost) return true;
+        ChangeTopmost(target, false);
+        return !IsTopmost(target);
+    }
+
+    void Retire()
+    {
+        if (retired) return;
+        retired = true;
+        waitingForPin = pinInFlight && !IsTopmost(target);
+        if (GetPropW(target, kPinProperty) == border) RemovePropW(target, kPinProperty);
+    }
+};
 }
 
 struct DockWindowPin::State
@@ -56,11 +128,18 @@ struct DockWindowPin::State
         RECT bounds{};
         int thickness = 0;
         int radius = -1;
+        UINT32 rgb = 0;
+        float opacity = -1.0f;
         bool restoreTopmost = false;
+        bool requestedPinned = true;
+        bool requestPending = false;
+        bool pinInFlight = false;
+        std::unique_ptr<PinRetirement> cleanup;
+        ULONGLONG requestDeadline = 0;
         Microsoft::WRL::ComPtr<ID2D1Factory> factory;
         Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> renderTarget;
 
-        bool DrawBorder(const RECT& frame, int stroke, int corner)
+        bool DrawBorder(const RECT& frame, int stroke, int corner, const BorderAppearance& appearance)
         {
             if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
                     factory.GetAddressOf()))) return false;
@@ -107,7 +186,7 @@ struct DockWindowPin::State
                 D2D1_FILL_MODE_ALTERNATE, geometries, 2, ring.GetAddressOf());
             if (SUCCEEDED(result)) result = renderTarget->BindDC(dc, &client);
             if (SUCCEEDED(result)) result = renderTarget->CreateSolidColorBrush(
-                D2D1::ColorF(kBorderRgb, 0.5f), brush.GetAddressOf());
+                D2D1::ColorF(appearance.rgb, appearance.opacity), brush.GetAddressOf());
             if (SUCCEEDED(result))
             {
                 renderTarget->BeginDraw();
@@ -137,7 +216,8 @@ struct DockWindowPin::State
         {
             DWORD currentProcess = 0;
             const DWORD currentThread = GetWindowThreadProcessId(target, &currentProcess);
-            return border && currentThread == thread && currentProcess == process &&
+            return cleanup && !cleanup->retired && cleanup->border == border && IsWindow(border) &&
+                currentThread == thread && currentProcess == process &&
                 GetPropW(target, kPinProperty) == border;
         }
 
@@ -145,15 +225,64 @@ struct DockWindowPin::State
         {
             if (OwnsTarget())
             {
-                if (restoreTopmost && DockWindowPin::IsPinned(target))
-                    ChangeTopmost(target, false);
-                RemovePropW(target, kPinProperty);
+                if (restoreTopmost || !requestedPinned)
+                    cleanup->Retire();
+                else RemovePropW(target, kPinProperty);
             }
-            if (border) DestroyWindow(border);
+            if (!cleanup) return;
+            if (cleanup->border) DestroyWindow(cleanup->border);
+            if (cleanup->retired && cleanup->operation)
+            {
+                auto* pending = cleanup.release();
+                pending->detached = true;
+                if (pending->Advance()) DestroyWindow(pending->operation);
+                return;
+            }
+            if (cleanup->operation) DestroyWindow(cleanup->operation);
         }
 
-        void UpdateBorder()
+        bool MaintainPin(const BorderAppearance& appearance)
         {
+            if (!OwnsTarget()) return false;
+            const ULONGLONG now = GetTickCount64();
+            const bool topmost = IsTopmost(target);
+            if (!requestedPinned)
+            {
+                ShowWindow(border, SW_HIDE);
+                return false;
+            }
+            // Keep the user's request when an application resets TOPMOST during
+            // movement, focus changes or restore, as PowerToys does. Only repair
+            // a lost flag; refreshing a stable pin must not raise the window.
+            if (!topmost)
+            {
+                ShowWindow(border, SW_HIDE);
+                if (requestPending)
+                    return now < requestDeadline;
+                if (!ChangeTopmost(target, true)) return false;
+                requestPending = !IsTopmost(target);
+                pinInFlight = requestPending;
+                cleanup->pinInFlight = pinInFlight;
+                if (requestPending)
+                {
+                    requestDeadline = now + kPinConfirmationTimeoutMs;
+                    return true;
+                }
+            }
+            requestPending = false;
+            pinInFlight = false;
+            cleanup->pinInFlight = false;
+            UpdateBorder(appearance);
+            return true;
+        }
+
+        void UpdateBorder(const BorderAppearance& appearance)
+        {
+            if (!appearance.enabled || appearance.opacity <= 0.0f)
+            {
+                if (IsWindowVisible(border)) ShowWindow(border, SW_HIDE);
+                return;
+            }
             // DWM frame bounds are physical pixels even for DPI-unaware apps.
             // Both layered-window placement and fallback queries use that space.
             const ScopedPhysicalCoordinates physicalCoordinates;
@@ -173,7 +302,8 @@ struct DockWindowPin::State
                 GetWindowDpiAwarenessContext(target));
             const UINT dpi = std::max<UINT>(96, GetDpiForWindow(
                 awareness == DPI_AWARENESS_PER_MONITOR_AWARE ? target : border));
-            const int nextThickness = std::max(1, MulDiv(6, static_cast<int>(dpi), 96));
+            const int nextThickness = std::max(1, static_cast<int>(std::lround(
+                appearance.width * static_cast<float>(dpi) / 96.0f)));
             const bool maximized = IsZoomed(target) != FALSE;
             DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
             const bool hasCornerPreference = SUCCEEDED(DwmGetWindowAttribute(target,
@@ -199,6 +329,7 @@ struct DockWindowPin::State
             const bool shapeChanged = width != bounds.right - bounds.left ||
                 height != bounds.bottom - bounds.top || thickness != nextThickness ||
                 radius != nextRadius;
+            const bool paintChanged = rgb != appearance.rgb || opacity != appearance.opacity;
             if (shapeChanged)
             {
                 // Leave one transparent pixel around the inner geometry so
@@ -224,7 +355,10 @@ struct DockWindowPin::State
                     ShowWindow(border, SW_HIDE);
                     return;
                 }
-                if (!DrawBorder(frame, nextThickness, nextRadius))
+            }
+            if (shapeChanged || paintChanged)
+            {
+                if (!DrawBorder(frame, nextThickness, nextRadius, appearance))
                 {
                     ShowWindow(border, SW_HIDE);
                     return;
@@ -236,7 +370,7 @@ struct DockWindowPin::State
             const HWND previous = GetWindow(target, GW_HWNDPREV);
             const bool move = !EqualRect(&bounds, &frame);
             const bool show = !IsWindowVisible(border);
-            if (move || shapeChanged || show || previous != border)
+            if (move || shapeChanged || paintChanged || show || previous != border)
             {
                 UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
                 if (previous == border) flags |= SWP_NOZORDER;
@@ -251,11 +385,14 @@ struct DockWindowPin::State
                 bounds = frame;
                 thickness = nextThickness;
                 radius = nextRadius;
+                rgb = appearance.rgb;
+                opacity = appearance.opacity;
             }
         }
     };
 
     HWND manager = nullptr;
+    BorderAppearance appearance;
     std::vector<std::unique_ptr<Entry>> entries;
     std::vector<HWINEVENTHOOK> hooks;
     bool refreshQueued = false;
@@ -287,8 +424,10 @@ struct DockWindowPin::State
         Entry* entry = FindEntry(window);
         if (!entry) return;
         refreshing = true;
-        if (entry->OwnsTarget() && DockWindowPin::IsPinned(window))
-            entry->UpdateBorder();
+        if (entry->OwnsTarget())
+        {
+            if (!entry->MaintainPin(appearance)) QueueRefresh();
+        }
         else
             QueueRefresh();
         // Keep ownership changes and vector erasure in the manager handler.
@@ -318,7 +457,9 @@ struct DockWindowPin::State
         const auto found = ActiveHooks().find(hook);
         if (found == ActiveHooks().end()) return;
         State* state = found->second;
-        if (event == EVENT_SYSTEM_FOREGROUND)
+        // Focus events commonly refer to OBJID_CLIENT or a child control, not
+        // OBJID_WINDOW. They can reveal a reset on any other tracked window.
+        if (event == EVENT_SYSTEM_FOREGROUND || event == EVENT_OBJECT_FOCUS)
         {
             state->QueueRefresh();
             return;
@@ -336,10 +477,10 @@ struct DockWindowPin::State
     void Subscribe()
     {
         if (!hooks.empty()) return;
-        constexpr std::array<DWORD, 8> events{
+        constexpr std::array<DWORD, 9> events{
             EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
             EVENT_OBJECT_DESTROY, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND,
-            EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_FOREGROUND};
+            EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_FOCUS};
         for (const DWORD event : events)
         {
             const HWINEVENTHOOK hook = SetWinEventHook(event, event, nullptr, WinEventProc,
@@ -361,6 +502,14 @@ struct DockWindowPin::State
 
     static LRESULT CALLBACK BorderProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
+        auto* cleanup = reinterpret_cast<PinRetirement*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (message == WM_NCDESTROY && cleanup)
+        {
+            if (GetPropW(cleanup->target, kPinProperty) == window)
+                cleanup->Retire();
+            cleanup->border = nullptr;
+            SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        }
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
         if (message == WM_ERASEBKGND) return 1;
@@ -372,6 +521,28 @@ struct DockWindowPin::State
             (void)dc;
             EndPaint(window, &paint);
             return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+
+    static LRESULT CALLBACK OperationProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        auto* cleanup = reinterpret_cast<PinRetirement*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (cleanup && message == WM_TIMER && wp == kRefreshTimer && cleanup->retired && cleanup->Advance())
+        {
+            cleanup->completed = true;
+            if (GetPropW(cleanup->target, kUndoProperty) == window)
+                RemovePropW(cleanup->target, kUndoProperty);
+            if (cleanup->detached) DestroyWindow(window);
+            return 0;
+        }
+        if (message == WM_NCDESTROY && cleanup)
+        {
+            if (GetPropW(cleanup->target, kUndoProperty) == window)
+                RemovePropW(cleanup->target, kUndoProperty);
+            cleanup->operation = nullptr;
+            SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            if (cleanup->detached) delete cleanup;
         }
         return DefWindowProcW(window, message, wp, lp);
     }
@@ -401,7 +572,8 @@ struct DockWindowPin::State
     {
         const HINSTANCE instance = GetModuleHandleW(nullptr);
         for (const auto& registration : {
-                std::pair{kManagerClass, ManagerProc}, std::pair{kBorderClass, BorderProc}})
+                std::pair{kManagerClass, ManagerProc}, std::pair{kBorderClass, BorderProc},
+                std::pair{kOperationClass, OperationProc}})
         {
             WNDCLASSEXW cls{sizeof(cls)};
             cls.hInstance = instance;
@@ -419,13 +591,12 @@ struct DockWindowPin::State
     {
         if (refreshing) return;
         refreshing = true;
-        std::erase_if(entries, [](const auto& entry) {
-            return !entry->OwnsTarget() || !DockWindowPin::IsPinned(entry->target);
+        std::erase_if(entries, [this](const auto& entry) {
+            return !entry->MaintainPin(appearance);
         });
-        for (const auto& entry : entries) entry->UpdateBorder();
         if (entries.empty())
         {
-            KillTimer(manager, kRefreshTimer);
+            if (manager) KillTimer(manager, kRefreshTimer);
             Unsubscribe();
         }
         refreshing = false;
@@ -437,12 +608,27 @@ DockWindowPin::~DockWindowPin() = default;
 
 bool DockWindowPin::IsPinned(HWND window)
 {
-    return IsWindow(window) && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    return IsWindow(window) &&
+        (IsWindow(static_cast<HWND>(GetPropW(window, kPinProperty))) || IsTopmost(window));
 }
 
 void DockWindowPin::Refresh()
 {
     if (state_) state_->Refresh();
+}
+
+void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
+{
+    auto normalized = settings;
+    NormalizeWindowPinBorderAppearance(normalized);
+    const auto channel = [](float value) { return static_cast<UINT32>(std::lround(value * 255.0f)); };
+    const BorderAppearance appearance{normalized.windowPinBorderEnabled, normalized.windowPinBorderWidth,
+        (channel(normalized.windowPinBorderR) << 16) | (channel(normalized.windowPinBorderG) << 8) |
+            channel(normalized.windowPinBorderB), normalized.windowPinBorderOpacity};
+    if (!state_) state_ = std::make_unique<State>();
+    if (state_->appearance == appearance) return;
+    state_->appearance = appearance;
+    state_->Refresh();
 }
 
 void DockWindowPin::Clear()
@@ -454,8 +640,45 @@ bool DockWindowPin::Toggle(HWND window)
 {
     const ScopedPhysicalCoordinates physicalCoordinates;
     if (!IsWindow(window) || GetAncestor(window, GA_ROOT) != window) return false;
+    if (state_)
+    {
+        if (auto* entry = state_->FindEntry(window); entry && entry->OwnsTarget())
+        {
+            // Retire the request before refreshing so explicit cancellation
+            // cannot be mistaken for another application resetting TOPMOST.
+            const bool wasRefreshing = std::exchange(state_->refreshing, true);
+            if (!ChangeTopmost(window, false))
+            {
+                state_->refreshing = wasRefreshing;
+                return false;
+            }
+            entry->restoreTopmost = false;
+            entry->requestedPinned = false;
+            entry->requestPending = true;
+            entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
+            state_->refreshing = wasRefreshing;
+            Refresh();
+            return true;
+        }
+    }
     Refresh();
-    if (IsPinned(window))
+    // A retired request must be observed and undone before a new request can
+    // target the same native window; an old inverse must not undo a new pin.
+    if (const HWND retiringBorder = static_cast<HWND>(GetPropW(window, kUndoProperty)))
+    {
+        DWORD ownerProcess = 0;
+        wchar_t className[64]{};
+        if (GetWindowThreadProcessId(retiringBorder, &ownerProcess) != GetCurrentThreadId() ||
+            ownerProcess != GetCurrentProcessId() ||
+            !GetClassNameW(retiringBorder, className, static_cast<int>(std::size(className))) ||
+            lstrcmpW(className, kOperationClass) != 0) return false;
+        auto* cleanup = reinterpret_cast<PinRetirement*>(
+            GetWindowLongPtrW(retiringBorder, GWLP_USERDATA));
+        if (!cleanup || cleanup->target != window || cleanup->operation != retiringBorder ||
+            !cleanup->retired || !cleanup->Advance()) return false;
+        DestroyWindow(retiringBorder);
+    }
+    if (IsTopmost(window))
     {
         if (!ChangeTopmost(window, false)) return false;
         Refresh();
@@ -463,12 +686,13 @@ bool DockWindowPin::Toggle(HWND window)
     }
     if (!state_)
     {
-        auto state = std::make_unique<State>();
-        if (!state->Initialize()) return false;
-        state_ = std::move(state);
+        state_ = std::make_unique<State>();
     }
+    if (!state_->manager && !state_->Initialize()) return false;
 
     auto entry = std::make_unique<State::Entry>();
+    auto cleanup = PinRetirement::Reserve();
+    if (!cleanup) return false;
     entry->target = window;
     entry->thread = GetWindowThreadProcessId(window, &entry->process);
     RECT initialFrame{};
@@ -477,14 +701,33 @@ bool DockWindowPin::Toggle(HWND window)
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
         kBorderClass, L"", WS_POPUP, initialFrame.left, initialFrame.top, 1, 1, nullptr, nullptr,
         GetModuleHandleW(nullptr), nullptr);
-    if (!entry->border || GetPropW(window, kPinProperty) ||
+    if (!entry->border) return false;
+    cleanup->target = window;
+    cleanup->border = entry->border;
+    cleanup->process = entry->process;
+    cleanup->thread = entry->thread;
+    SetWindowLongPtrW(entry->border, GWLP_USERDATA,
+        reinterpret_cast<LONG_PTR>(cleanup.get()));
+    entry->cleanup = std::move(cleanup);
+    entry->cleanup->operation = CreateWindowExW(0, kOperationClass, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!entry->cleanup->operation) return false;
+    SetWindowLongPtrW(entry->cleanup->operation, GWLP_USERDATA,
+        reinterpret_cast<LONG_PTR>(entry->cleanup.get()));
+    if (!SetTimer(entry->cleanup->operation, kRefreshTimer, kRefreshIntervalMs, nullptr) ||
+        GetPropW(window, kUndoProperty) || GetPropW(window, kPinProperty) ||
+        !SetPropW(window, kUndoProperty, entry->cleanup->operation) ||
         !SetPropW(window, kPinProperty, entry->border)) return false;
     const BOOL excluded = TRUE;
     DwmSetWindowAttribute(entry->border, DWMWA_EXCLUDED_FROM_PEEK, &excluded, sizeof(excluded));
     if (!ChangeTopmost(window, true)) return false;
     entry->restoreTopmost = true;
+    entry->requestPending = !IsTopmost(window);
+    entry->pinInFlight = entry->requestPending;
+    entry->cleanup->pinInFlight = entry->pinInFlight;
+    entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
-    entry->UpdateBorder();
+    entry->UpdateBorder(state_->appearance);
     state_->entries.push_back(std::move(entry));
     state_->Subscribe();
     return true;

@@ -751,18 +751,10 @@ WorkResult DeleteLayoutBackup(
         return result;
     }
 
-    std::error_code error;
     const auto companion = context.paths.layoutBackupDirectory /
         StorageCompanionName(context.request.subjectId);
-    std::filesystem::remove(companion, error);
-    error.clear();
-    if (!std::filesystem::remove(*source, error) || error)
-    {
-        result.error = "cannot delete the layout backup";
-        if (error)
-            result.error += ": " + error.message();
+    if (!layout_storage::DeleteBackupPair(*source, companion, &result.error))
         return result;
-    }
     result.ok = true;
     return result;
 }

@@ -5,8 +5,11 @@
 
 #include "deployment_context.h"
 #include "injectable_runtime_cache.h"
+#include "hook_entry_deployment.h"
 #include "data/data_paths.h"
+#include "diagnostics/diagnostic_log.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
+#include "taskbar_hook/taskbar_hook_lifecycle.h"
 
 #include <windows.h>
 #include <appmodel.h>
@@ -38,6 +41,7 @@ namespace
 constexpr wchar_t kStartupTaskId[] = L"SnowDesktopStartup";
 constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
+std::mutex injectableDeploymentMutex;
 constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
 constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
@@ -382,6 +386,16 @@ std::filesystem::path GetLegacyLocalAppDataRoot()
     return result;
 }
 
+std::filesystem::path GetStableHookEntryRoot()
+{
+    // Every channel and portable data directory uses the same registered
+    // image paths for this user. Feature implementations stay in their own
+    // leased data stores and are selected by the host's process catalog.
+    const auto root = GetLegacyLocalAppDataRoot();
+    if (root.empty()) { SetLastError(ERROR_PATH_NOT_FOUND); return {}; }
+    return root / L"HookEntry";
+}
+
 bool IsReparsePoint(const std::filesystem::path& path)
 {
     const DWORD attributes = GetFileAttributesW(path.c_str());
@@ -704,14 +718,18 @@ private:
     HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
 };
 
-std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated = false)
+std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
+    const std::filesystem::path& excluded = {})
 {
     const std::filesystem::path source =
         snowdesktop::deployment::GetRuntimeFilePath(filename);
     if (!std::filesystem::is_regular_file(source))
-        return isolated ? std::wstring{} : source.wstring();
+    {
+        SetLastError(ERROR_FILE_NOT_FOUND);
+        return {};
+    }
 
-    if (!isolated && _wcsicmp(source.extension().c_str(), L".dll") == 0)
+    if (_wcsicmp(source.extension().c_str(), L".dll") == 0)
     {
         static snowdesktop::deployment::InjectableRuntimeCache cache([] {
             const std::filesystem::path data = GetDataDirectoryPath();
@@ -719,14 +737,44 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated 
             CleanupLegacyRuntimeRootsOnce(data);
             return data / L"ShellHook" / L"shared";
         }());
-        const auto shared = cache.Deploy(source);
-        return shared.empty() ? source.wstring() : shared.wstring();
+        const bool taskbar = _wcsicmp(filename, kTaskbarHookFilename) == 0;
+        const bool dock64 = _wcsicmp(filename, L"SnowDesktopDockMinimizeHook.dll") == 0;
+        const bool dock32 = _wcsicmp(filename, L"SnowDesktopDockMinimizeHook32.dll") == 0;
+        const auto payload = taskbar ? snowdesktop::hook_entry::Payload::Taskbar
+            : dock32 ? snowdesktop::hook_entry::Payload::Dock32 : snowdesktop::hook_entry::Payload::Dock64;
+        const auto excludeImplementation = !excluded.empty() && (taskbar || dock64 || dock32)
+            ? snowdesktop::hook_entry::CurrentImplementation(payload) : excluded;
+        const auto shared = cache.Deploy(source, excludeImplementation);
+        if (!shared.empty() && cache.Expanded())
+        {
+            const std::wstring message = L"[HookRuntimeDeployment] pool-expanded candidateSlots=" +
+                std::to_wstring(cache.CandidateSlotCount()) + L" path=" + shared.wstring();
+            WriteDiagnosticLogEntry(message.c_str());
+        }
+        if (shared.empty())
+        {
+            const DWORD code = cache.LastError();
+            const std::wstring message = L"[HookRuntimeDeployment] error=" + std::to_wstring(code) +
+                L" candidateSlots=" + std::to_wstring(cache.CandidateSlotCount()) +
+                L" source=" + source.wstring();
+            WriteDiagnosticLogEntry(message.c_str());
+            SetLastError(code);
+        }
+        if (!shared.empty() && (taskbar || dock64 || dock32))
+        {
+            const auto entry = snowdesktop::deployment::GetRuntimeFilePath(dock32
+                ? L"SnowDesktopHookEntry32.dll" : L"SnowDesktopHookEntry.dll");
+            const auto root = GetStableHookEntryRoot();
+            if (root.empty()) return {};
+            return snowdesktop::hook_entry::Prepare(root, entry, payload, shared);
+        }
+        return shared.wstring();
     }
 
     static const InjectableRuntimeDirectory runtimeDirectory;
     const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
-        return isolated ? std::wstring{} : source.wstring();
+        return {};
 
     const std::filesystem::path target =
         targetDirectory / source.filename();
@@ -738,7 +786,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated 
         std::filesystem::copy_options::none, error);
     if (!error && std::filesystem::is_regular_file(target))
         return target.wstring();
-    return isolated ? std::wstring{} : source.wstring();
+    return {};
 }
 
 snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
@@ -973,22 +1021,65 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename)
 {
     if (!IsBareFilename(filename))
         return {};
-    static std::mutex deploymentMutex;
-    std::lock_guard lock(deploymentMutex);
+    std::lock_guard lock(injectableDeploymentMutex);
     return DeployInjectableRuntimeCopy(filename);
 }
 
 std::wstring GetTaskbarHookPath()
 {
-    static const std::wstring deployedPath =
-        GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    static std::wstring deployedPath;
+    // Publication contention/errors are recoverable. Do not cache failure.
+    if (deployedPath.empty()) deployedPath = GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    if (deployedPath.empty() && GetLastError() == ERROR_BUSY)
+    {
+        std::wstring resident;
+        const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+        DWORD process = 0;
+        if (taskbar && GetWindowThreadProcessId(taskbar, &process))
+            resident = GetResidentTaskbarHookPath(process,
+                reinterpret_cast<std::uintptr_t>(GetPropW(taskbar,
+                    snowdesktop::taskbar_hook::kHookOwnerProperty)));
+        if (!resident.empty())
+        {
+            deployedPath = hook_entry::Prepare(GetStableHookEntryRoot(),
+                GetRuntimeFilePath(L"SnowDesktopHookEntry.dll"), hook_entry::Payload::Taskbar, resident);
+        }
+        if (!deployedPath.empty())
+        {
+            WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] publication busy; using active resident DLL; new DLL code deferred until Explorer exits naturally");
+            SetLastError(ERROR_SUCCESS);
+        }
+        else SetLastError(ERROR_BUSY);
+    }
     return deployedPath;
 }
 
 std::wstring GetIsolatedTaskbarHookPath()
 {
-    static const std::wstring deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, true);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    static std::wstring deployedPath;
+    if (deployedPath.empty())
+    {
+        const auto previous = GetTaskbarHookPath();
+        if (previous.empty()) return {};
+        std::lock_guard deploymentLock(injectableDeploymentMutex);
+        deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, previous);
+    }
     return deployedPath;
+}
+
+std::wstring GetResidentTaskbarHookPath(std::uint32_t explorerProcessId,
+    std::uintptr_t module)
+{
+    if (!explorerProcessId || !module) return {};
+    const auto data = GetDataDirectoryPath();
+    if (data.empty()) return {};
+    return InjectableRuntimeCache::ResidentModulePath(
+        std::filesystem::path(data) / L"ShellHook" / L"shared",
+        kTaskbarHookFilename, explorerProcessId, module).wstring();
 }
 
 UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(

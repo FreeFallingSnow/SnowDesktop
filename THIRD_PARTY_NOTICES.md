@@ -40,6 +40,7 @@ described under "Optional Steamworks dependency" below.
 | Microsoft.Windows.CppWinRT | 3.0.260818.1 NuGet package | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/cppwinrt> |
 | Dear ImGui | 1.92.5 WIP | MIT | Copyright (c) 2014-2025 Omar Cornut and contributors; <https://github.com/ocornut/imgui> |
 | Lua | 5.4.7 | MIT | Copyright (C) 1994-2024 Lua.org, PUC-Rio; <https://www.lua.org> |
+| libwebp decoder | 1.6.0 | BSD 3-Clause and patent grant | Copyright (c) 2010 Google Inc.; <https://developers.google.com/speed/webp> |
 | Everything SDK client | bundled source | MIT | Copyright (C) 2016, 2022 David Carpenter; <https://www.voidtools.com/support/everything/sdk/> |
 | pinyin-data | bundled data | MIT | Copyright (c) 2016 mozillazg; <https://github.com/mozillazg/pinyin-data> |
 | MinHook | bundled source | BSD 2-Clause | Copyright (c) 2009-2017 Tsuda Kageyu; <https://github.com/TsudaKageyu/minhook> |
@@ -50,6 +51,7 @@ described under "Optional Steamworks dependency" below.
 | HarmonyOS Sans SC | 1.0 original Regular TTF | HarmonyOS Sans Fonts License Agreement | Copyright 2021 Huawei Device Co., Ltd.; <https://developer.huawei.com/consumer/cn/design/resource/> |
 | DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
 | OpenHarmony GraphicsEffect adapted rim calculations | upstream commit `da8e11652a705ea2141c35de1a1fff501148740e` | Apache-2.0 | Copyright (c) 2025-2026 Huawei Device Co., Ltd.; <https://github.com/openharmony/graphic_graphics_effect> |
+| OpenHarmony adapted attraction control-point calculations | upstream commit `e72069008cd4762ddd150d164861c43f8183e439` | Apache-2.0 | Copyright (c) 2024 Huawei Device Co., Ltd.; <https://github.com/openharmony/graphic_graphic_2d> |
 | TranslucentTB-derived portions | upstream commit `322e2b7395a51975150126276308b415970e080b` | GPL-3.0-only | Copyright (c) TranslucentTB contributors; <https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b> |
 
 The complete Everything SDK, Dear ImGui, Lua, pinyin-data, Font Awesome,
@@ -169,7 +171,17 @@ binary are not included in this repository and are not covered by either the
 SnowDesktop GPL license or the bridge MIT license. See
 `steam_bridge/THIRD_PARTY_NOTICES.md` for the distribution boundary.
 
-## Apache License 2.0 — OpenHarmony GraphicsEffect
+## OpenHarmony-derived attraction calculations
+
+`src/dock/dock_attraction_rules.h` adapts the control-point trajectories and
+timing parameters of `RSAttractionEffectFilter` at the pinned commit above.
+SnowDesktop supplies its own DWM image grid, Coons evaluation, source-local
+projection, compositor timeline, finite transparent endpoint, and motion
+bounds. These changes are part of SnowDesktop's corresponding source.
+The copyright and Apache-2.0 notice are retained in the adapted header;
+the complete Apache-2.0 license below applies to these adapted portions too.
+
+## Apache License 2.0 — OpenHarmony adapted portions
 
 ```text
 
@@ -377,3 +389,5 @@ Source and regeneration details: `third_party/microsoft-ui-xaml/README.md`.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE
+
+- puff (zlib v1.3.1): Mark Adler, zlib license, retained in third_party/puff/puff.h and distributed as licenses/puff-LICENSE.txt. https://github.com/madler/zlib/tree/v1.3.1/contrib/puff

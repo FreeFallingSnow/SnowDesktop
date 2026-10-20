@@ -7,6 +7,9 @@
 namespace snowdesktop
 {
 
+// Retained after Explorer takes over a login launch, without delegating again.
+inline constexpr wchar_t kAutoStartBackgroundArgument[] = L"--snowdesktop-autostart";
+
 enum class UnifiedAutoStartOwner : std::uint8_t
 {
     None,

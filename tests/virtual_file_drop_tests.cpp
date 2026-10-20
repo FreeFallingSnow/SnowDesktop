@@ -906,6 +906,43 @@ void TestClipboardPathPasteExecution()
                     "clipboard execution must not start another async operation inside the worker-owned operation");
             }
 
+    for (int selection = 0; selection < 3; ++selection)
+    for (DWORD effect : {DROPEFFECT_COPY, DROPEFFECT_MOVE})
+    for (bool succeeded : {false, true})
+    {
+        const bool local = selection != 1;
+        const bool external = selection != 0;
+        const std::wstring destination = L"C:\\destination";
+        const std::wstring outside = L"C:\\other-source\\outside.txt";
+        const std::wstring inside = L"C:\\DESTINATION\\already-here.txt";
+        std::wstring mixedList;
+        if (local) { mixedList += inside; mixedList += L'\0'; }
+        if (external) { mixedList += outside; mixedList += L'\0'; }
+        mixedList += L'\0';
+        std::vector<std::byte> mixedPayload(sizeof(drop) + mixedList.size() * sizeof(wchar_t));
+        std::memcpy(mixedPayload.data(), &drop, sizeof(drop));
+        std::memcpy(mixedPayload.data() + sizeof(drop), mixedList.data(), mixedList.size() * sizeof(wchar_t));
+        MockDataObject mixed;
+        mixed.offerFileDrop = true;
+        mixed.fileDrop = mixedPayload;
+        int submitted = 0;
+        const auto result = TryExecuteClipboardFileOperation(&mixed, destination + L"\\", effect,
+            [&](const snowdesktop::ShellFileOperationRequest& request) {
+                ++submitted;
+                std::vector<std::wstring> expected;
+                if (local && effect == DROPEFFECT_COPY) expected.push_back(inside);
+                if (external) expected.push_back(outside);
+                Check(request.steps.size() == 1 && request.steps.front().sources == expected,
+                    "mixed cuts submit every external peer and no item already at the destination; copies retain all sources");
+                Check(request.steps.size() == 1 && request.steps.front().destination == destination + L"\\",
+                    "same-directory filtering never changes the selected paste destination");
+                return succeeded;
+            });
+        const bool noOp = effect == DROPEFFECT_MOVE && !external;
+        Check(submitted == (noOp ? 0 : 1) && result.has_value() && *result == (noOp || succeeded),
+            "local-only cuts complete without a move; external and mixed cuts retain exact completion failures");
+    }
+
     MockDataObject source;
     source.offerFileDrop = true;
     source.fileDrop = payload;

@@ -14,6 +14,9 @@ inline bool IsGeneralShortcutOnlyCommit(
     const GeneralSettings& after) noexcept
 {
     const bool shortcutChanged =
+        before.forceRestartHotkeyEnabled != after.forceRestartHotkeyEnabled ||
+        before.forceRestartHotkeyModifiers != after.forceRestartHotkeyModifiers ||
+        before.forceRestartHotkeyVirtualKey != after.forceRestartHotkeyVirtualKey ||
         before.softwareDesktopHotkeyEnabled != after.softwareDesktopHotkeyEnabled ||
         before.softwareDesktopHotkeyModifiers != after.softwareDesktopHotkeyModifiers ||
         before.softwareDesktopHotkeyVirtualKey != after.softwareDesktopHotkeyVirtualKey ||
@@ -40,6 +43,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
+        before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&

@@ -36,8 +36,10 @@ inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
 inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
 inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
 inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
+inline constexpr float kMinimumWindowPinBorderWidth = 1.0f;
+inline constexpr float kMaximumWindowPinBorderWidth = 20.0f;
 
-inline constexpr float kDefaultPopupHoverDelayMs = 600.0f;
+inline constexpr float kDefaultPopupHoverDelayMs = 250.0f;
 inline constexpr float kMinimumPopupHoverDelayMs = 100.0f;
 inline constexpr float kMaximumPopupHoverDelayMs = 3000.0f;
 
@@ -47,6 +49,18 @@ inline float NormalizePopupHoverDelayMs(double delay)
     return static_cast<float>(std::round(std::clamp(delay,
         static_cast<double>(kMinimumPopupHoverDelayMs),
         static_cast<double>(kMaximumPopupHoverDelayMs))));
+}
+
+inline constexpr float kDefaultTabHoverDelayMs = 250.0f;
+inline constexpr float kMinimumTabHoverDelayMs = 100.0f;
+inline constexpr float kMaximumTabHoverDelayMs = 3000.0f;
+
+inline float NormalizeTabHoverDelayMs(double delay)
+{
+    if (!std::isfinite(delay)) return kDefaultTabHoverDelayMs;
+    return static_cast<float>(std::round(std::clamp(delay,
+        static_cast<double>(kMinimumTabHoverDelayMs),
+        static_cast<double>(kMaximumTabHoverDelayMs))));
 }
 
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
@@ -186,6 +200,9 @@ struct PersonalizationSettings
 
     /** Group source tab counts, independent of category counts and themes. */
     bool showGroupTabCounts = false;
+    bool groupTabHoverSwitch = false;
+    bool categoryTabHoverSwitch = false;
+    float tabHoverDelayMs = kDefaultTabHoverDelayMs;
     // Open Dock folder/collection and desktop collection popups after hover.
     bool popupHoverOpen = false;
     float popupHoverDelayMs = kDefaultPopupHoverDelayMs;
@@ -195,6 +212,14 @@ struct PersonalizationSettings
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
+
+    // Global window-pin indicator; independent of component theme presets.
+    bool windowPinBorderEnabled = true;
+    float windowPinBorderR = 0.0f;
+    float windowPinBorderG = 120.0f / 255.0f;
+    float windowPinBorderB = 215.0f / 255.0f;
+    float windowPinBorderWidth = 6.0f;
+    float windowPinBorderOpacity = 0.5f;
 
     /**
      * @brief 自绘右键菜单样式，不属于主题预设。
@@ -246,6 +271,21 @@ struct PersonalizationSettings
     static PersonalizationSettings AcrylicDarkPreset();
     static PersonalizationSettings AcrylicLightPreset();
 };
+
+inline void NormalizeWindowPinBorderAppearance(PersonalizationSettings& settings)
+{
+    const PersonalizationSettings defaults;
+    const auto normalize = [&](float PersonalizationSettings::* member, float minimum, float maximum) {
+        settings.*member = std::isfinite(settings.*member)
+            ? std::clamp(settings.*member, minimum, maximum) : defaults.*member;
+    };
+    normalize(&PersonalizationSettings::windowPinBorderR, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderG, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderB, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderOpacity, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderWidth,
+        kMinimumWindowPinBorderWidth, kMaximumWindowPinBorderWidth);
+}
 
 /** @brief 将旧版或无效预设 ID 映射到现有主题。 */
 int NormalizeAppearancePresetId(int presetId);

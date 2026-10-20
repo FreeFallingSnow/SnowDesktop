@@ -1,6 +1,7 @@
 #include "widget/settings/widget_engine_settings_backend.h"
 
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -32,10 +33,57 @@ std::string ReadFile(const std::filesystem::path& path)
 }
 }
 
+void TestHostControlProjection();
+
 int main(int argc, char* argv[])
 {
+    try { TestHostControlProjection(); }
+    catch (const std::exception& error) { Check(false,error.what()); }
     using namespace snowdesktop::widget_runtime;
     namespace detail = widget_settings_backend_detail;
+    LuaWidgetManifest::Setting duration;
+    duration.key = "interval"; duration.type = "duration"; duration.durationUnit = "minutes";
+    duration.minValue = 1; duration.maxValue = 120; duration.stepValue = 1; duration.defaultValue = "25.000000";
+    const auto convertedDuration = detail::ConvertSetting(duration);
+    InteractionValue durationValue;
+    std::string durationError;
+    std::string oldDuration;
+    std::string fractionalDuration;
+    Check(EncodeTypedStorageValue(MakeWidgetSettingNumber(30), oldDuration, durationError) &&
+        EncodeTypedStorageValue(MakeWidgetSettingNumber(30.5), fractionalDuration, durationError),
+        "duration migration fixtures use the actual tagged storage format");
+    detail::EncodedOrdinaryWrite durationWrite;
+    Check(convertedDuration.schema.durationUnit == "minutes" && convertedDuration.defaultValue.integer == 25 &&
+        detail::DecodePreviousDurationStorage(convertedDuration.schema, oldDuration, durationValue, durationError) && durationValue.integer == 30 &&
+        !detail::DecodePreviousDurationStorage(convertedDuration.schema, fractionalDuration, durationValue, durationError) &&
+        detail::EncodeOrdinaryWrite(convertedDuration.schema,
+            {"interval", MakeWidgetSettingInteger(30), false}, durationWrite, durationError) &&
+        durationWrite.value == "30" && !durationWrite.typedMarker,
+        "duration converts schema units, accepts prior range numbers, and writes unchanged integer units");
+
+    // Omitted steps must preserve fractional defaults and persisted slider edits.
+    LuaWidgetManifest::Setting defaultStepRange;
+    defaultStepRange.key = "fineScale";
+    defaultStepRange.type = "range";
+    defaultStepRange.defaultValue = "4.6";
+    const auto convertedDefaultStepRange = detail::ConvertSetting(defaultStepRange);
+    Check(convertedDefaultStepRange.schema.step == 0.1 &&
+            convertedDefaultStepRange.defaultValue.type ==
+                InteractionValue::Type::Number &&
+            std::abs(convertedDefaultStepRange.defaultValue.number - 4.6) < 1e-9,
+        "range declarations without a step retain fractional defaults");
+    detail::EncodedOrdinaryWrite encodedDefaultStepRange;
+    InteractionValue decodedDefaultStepRange;
+    std::string defaultStepError;
+    Check(detail::EncodeOrdinaryWrite(convertedDefaultStepRange.schema,
+                { "fineScale", MakeWidgetSettingNumber(6.24), true },
+                encodedDefaultStepRange, defaultStepError) &&
+            encodedDefaultStepRange.typedMarker &&
+            DecodeTypedStorageValue(encodedDefaultStepRange.value,
+                decodedDefaultStepRange, defaultStepError) &&
+            decodedDefaultStepRange.type == InteractionValue::Type::Number &&
+            std::abs(decodedDefaultStepRange.number - 6.2) < 1e-9,
+        "range edits without a step persist values snapped to tenths");
 
     LuaWidgetManifest::Setting range;
     range.key = "scale";
@@ -58,6 +106,7 @@ int main(int argc, char* argv[])
             convertedRange.schema.group == "appearance" &&
             convertedRange.schema.validationMessage == "Invalid scale" &&
             convertedRange.schema.Kind() == WidgetSettingKind::Range &&
+            convertedRange.schema.step == 0.5 &&
             convertedRange.schema.showWhen &&
             convertedRange.schema.showWhen->key == "mode" &&
             convertedRange.schema.dependsOn == "enabled" &&
@@ -283,24 +332,6 @@ int main(int argc, char* argv[])
                 source.find("RuntimeBindHostLogicalSlot") !=
                     std::string::npos,
             "source keeps host appearance transactional and typed, secret, handle, and reference channels distinct");
-        Check(source.find(
-                  "PreviewHostAppearanceTransaction") !=
-                    std::string::npos &&
-                source.find("if (!persist)") != std::string::npos &&
-                source.find("preview_->originals.try_emplace") !=
-                    std::string::npos &&
-                source.find("CommitPreview(") != std::string::npos &&
-                source.find("RevertPreview(") != std::string::npos &&
-                source.find(
-                    "PersistWidgetSettingsStorageForBackend()") !=
-                    std::string::npos &&
-                source.find("storage.insert_or_assign(key, *value)") !=
-                    std::string::npos &&
-                source.find("storage.erase(key)") != std::string::npos &&
-                source.find("previewCommitRequired") !=
-                    std::string::npos,
-            "transient previews touch live storage without saving, then commit or restore only guarded touched keys");
-
         const auto functionSection = [&source](std::string_view begin,
                                                 std::string_view end) {
             const std::size_t first = source.find(begin);

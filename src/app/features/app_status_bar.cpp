@@ -5,6 +5,7 @@
 #include "ui/menu/modern_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/status_bar/status_bar_task_view_input.h"
 #include "dock/dock_settings_rules.h"
 #include "platform/taskbar_monitor.h"
@@ -17,7 +18,7 @@ namespace
 void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     std::uint64_t generation, const wchar_t* phase, double started,
     const wchar_t* result = L"-", double callMilliseconds = 0,
-    UINT requested = 0, UINT sent = 0) noexcept try
+    UINT requested = 0, UINT sent = 0, DWORD hostUiThread = 0) noexcept try
 {
     if (started < 0) return;
     wchar_t inputState[448]{};
@@ -26,7 +27,7 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     {
         // These are input-state snapshots only; do not synchronously query
         // foreign window text/classes or consume queue-status change bits.
-        const DWORD uiThread = GetCurrentThreadId();
+        const DWORD uiThread = hostUiThread ? hostUiThread : GetCurrentThreadId();
         const HWND foreground = GetForegroundWindow();
         const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
         GUITHREADINFO uiInfo{};
@@ -47,10 +48,10 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     }
     wchar_t message[768]{};
     swprintf_s(message,
-        L"StatusBarShellActivation action=%u generation=%llu phase=%ls elapsedMs=%.3f result=%ls callMs=%.3f requested=%u sent=%u%ls",
+        L"StatusBarShellActivation action=%u generation=%llu phase=%ls elapsedMs=%.3f result=%ls callMs=%.3f requested=%u sent=%u callThread=%lu%ls",
         static_cast<unsigned>(action), static_cast<unsigned long long>(generation), phase,
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
-        result, callMilliseconds, requested, sent, inputState);
+        result, callMilliseconds, requested, sent, GetCurrentThreadId(), inputState);
     WriteDiagnosticLogEntry(message);
 }
 catch (...) { /* Diagnostics must not change activation or release behavior. */ }
@@ -122,8 +123,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    if ((action == Action::TaskView && !statusBarTaskViewTransition_.CanBegin(now, systemTaskbarTaskViewActive_)) ||
-        (snowdesktop::IsTaskViewTransitionSensitiveAction(action) && statusBarTaskViewTransition_.Busy(now)))
+    if (!statusBarTaskViewTransition_.AllowsAction(action, now, systemTaskbarTaskViewActive_))
     {
         TraceStatusBarShellActivation(action, *statusBarActivationGeneration_, L"ignored",
             now, L"task-view-visible-or-transition");
@@ -134,7 +134,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     const auto generation = ++*statusBarActivationGeneration_;
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
         action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
@@ -155,7 +155,8 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         statusBarActivationMonitor_ = nullptr;
         return;
     }
-    if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled || !owner ||
+    if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled ||
+        (action == Action::ShowDesktop && !generalSettings_.statusBar.showDesktop) || !owner ||
         !IsWindow(owner) || !IsWindowVisible(owner) ||
         !statusBar_->IsInteractionAvailable(statusBarActivationMonitor_))
     {
@@ -187,14 +188,16 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
     // Queued callbacks share the hold, including callbacks discarded by an
     // outside click. Open surfaces subsequently own their interaction lifetime.
-    const auto current = [this, lifetime, generation, owner, monitor] {
+    const auto current = [this, lifetime, generation, action, owner, monitor] {
         const auto state = lifetime.lock();
         return state && *state == generation && !exitRequested_ &&
-            generalSettings_.statusBar.enabled && statusBar_ && IsWindow(owner) &&
+            generalSettings_.statusBar.enabled && (action != Action::ShowDesktop || generalSettings_.statusBar.showDesktop) &&
+            statusBar_ && IsWindow(owner) &&
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
     };
-    if (!current() || action == Action::None) return;
+    if (!current() || action == Action::None || !statusBarTaskViewTransition_.AllowsAction(action,
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_)) return;
     const auto ensureSystemPanel = [this] {
         if (!systemPanel_)
             systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
@@ -365,7 +368,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const bool externalSurface = action == Action::SystemMenu || snowdesktop::IsStatusBarContextMenuAction(action) ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
         action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
@@ -503,59 +506,156 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         CloseQuickNavigation();
         const HWND foreground = GetForegroundWindow();
         const auto mouseHandoff = action == Action::TaskView ?
-            snowdesktop::StatusBarTaskViewInputHandoff::Create(uiAnimationScheduler_, anchor, GetDoubleClickTime()) : nullptr;
+            snowdesktop::StatusBarTaskViewInputHandoff::Create(uiAnimationScheduler_, statusBar_->InputBounds(),
+                [this, lifetime] {
+                    return lifetime.expired() ? 0.0 : statusBarTaskViewTransition_.Remaining(
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+                }) : nullptr;
         if (action == Action::TaskView && !mouseHandoff)
         {
-            // Preserve the previous safe gesture handoff if the temporary
-            // input shield cannot be installed; never open unprotected.
-            chord.pointerQuietMilliseconds = GetDoubleClickTime();
-            WriteDiagnosticLogEntry(L"StatusBar Task View pointer shield unavailable; using double-click wait");
+            // A delay cannot protect against a click after injection. Refuse
+            // this opening if its raw-input handoff cannot be established.
+            WriteDiagnosticLogEntry(L"StatusBar Task View input handoff unavailable; opening cancelled");
+            hold->shortcutFinished = true;
+            MessageBeep(MB_ICONWARNING);
+            return;
         }
-        // Shell shortcut activation has no supported custom popup anchor. Let
-        // Windows place its own surface; never move or reparent its window.
-        statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, chord, {
-            [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
-            [this, action, generation, mouseHandoff, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
-                TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
-                const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-                const bool taskViewChord = action == Action::TaskView && count == 4 &&
-                    !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
-                if (taskViewChord && !statusBarTaskViewTransition_.Begin(before, systemTaskbarTaskViewActive_))
-                    return 0u;
-                if (taskViewChord && mouseHandoff) mouseHandoff->Begin();
-                const UINT sent = SendInput(count, input, size);
-                if (taskViewChord && sent == 0) statusBarTaskViewTransition_.Reset();
-                if (taskViewChord && sent == 0 && mouseHandoff) mouseHandoff->Cancel();
-                const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before;
-                TraceStatusBarShellActivation(action, generation, L"send-input", started,
-                    sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);
-                return sent;
-            },
-            [this, current, foreground, action](auto token) {
-                return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground &&
-                    (action != Action::TaskView || statusBarTaskViewTransition_.CanBegin(
-                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_));
-            },
-            [this, lifetime, generation, action, hold, mouseHandoff](auto token, snowdesktop::StatusBarShortcutResult result) {
-                if (mouseHandoff) mouseHandoff->ReleaseIfUnused();
-                const wchar_t* outcome = result == snowdesktop::StatusBarShortcutResult::Sent ? L"sent" :
-                    result == snowdesktop::StatusBarShortcutResult::Cancelled ? L"canceled" :
-                    result == snowdesktop::StatusBarShortcutResult::TimedOut ? L"timed-out" : L"failed";
-                hold->shortcutFinished = true;
-                TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, outcome);
+        using Relay = snowdesktop::StatusBarShellShortcutRelay;
+        struct ShortcutRequest
+        {
+            std::shared_ptr<Relay> relay;
+            double taskViewSendDeadline = 0;
+            bool taskViewStarted = false;
+        };
+        const auto request = std::make_shared<ShortcutRequest>();
+        const double preparationDeadline = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 5000;
+        // The relay owns a separate foreground/focus window. Calling SendInput
+        // on a worker while the desktop proxy kept focus would not isolate the
+        // input destination. Shell still chooses where its own surface opens.
+        statusBarActivationToken_ = uiAnimationScheduler_.ScheduleInterval(16,
+            [this, lifetime, current, foreground, action, generation, chord, hold,
+                mouseHandoff, request, preparationDeadline](auto token) {
                 const auto state = lifetime.lock();
-                if (!state || *state != generation) return;
-                if (token != statusBarActivationToken_) return;
-                statusBarActivationToken_ = 0;
-                statusBarActivationMonitor_ = nullptr;
-                if (result == snowdesktop::StatusBarShortcutResult::Failed || result == snowdesktop::StatusBarShortcutResult::TimedOut)
+                if (!state) return;
+                if (*state != generation || token != statusBarActivationToken_)
                 {
-                    WriteDiagnosticLogEntry(result == snowdesktop::StatusBarShortcutResult::Failed ?
-                        L"StatusBar system shortcut input failed" : L"StatusBar system shortcut modifier release timed out");
-                    MessageBeep(MB_ICONWARNING);
+                    if (request->relay) request->relay->Cancel();
+                    uiAnimationScheduler_.Cancel(token);
+                    return;
                 }
-            }});
-        if (!statusBarActivationToken_ && mouseHandoff) mouseHandoff->Cancel();
+                const auto finish = [&](Relay::Result result) {
+                    const UINT accepted = request->relay ? request->relay->AcceptedCount() : 0;
+                    // Pending cancellation can race a committed SendInput.
+                    // Only a terminal result with no accepted input permits
+                    // removing Task View's independent transition protection.
+                    if (request->taskViewStarted && accepted == 0)
+                    {
+                        statusBarTaskViewTransition_.Reset();
+                        if (mouseHandoff) mouseHandoff->Cancel();
+                    }
+                    if (mouseHandoff) mouseHandoff->ReleaseIfUnused();
+                    hold->shortcutFinished = true;
+                    const wchar_t* outcome = result == Relay::Result::Sent ? L"input-accepted" :
+                        result == Relay::Result::Cancelled ? L"canceled" :
+                        result == Relay::Result::TimedOut ? L"timed-out" : L"failed";
+                    TraceStatusBarShellActivation(action, generation, L"finished",
+                        hold->shortcutStartedMilliseconds, outcome, 0, chord.alt ? 6u : 4u, accepted);
+                    uiAnimationScheduler_.Cancel(token);
+                    if (*state != generation || token != statusBarActivationToken_) return;
+                    statusBarActivationToken_ = 0;
+                    statusBarActivationMonitor_ = nullptr;
+                    if (result == Relay::Result::Failed || result == Relay::Result::TimedOut)
+                    {
+                        // Read the worker's published terminal snapshot. Its
+                        // window may already be gone, so querying it here
+                        // would lose the failed activation/focus evidence.
+                        const auto diagnostic = request->relay ?
+                            request->relay->Diagnostics() : Relay::DiagnosticSnapshot{};
+                        const wchar_t* reason = request->relay ? Relay::ReasonName(diagnostic.reason) :
+                            result == Relay::Result::TimedOut ? L"ui-input-release-timeout" : L"start-unavailable";
+                        wchar_t message[768]{};
+                        swprintf_s(message,
+                            L"StatusBar system shortcut relay failure: action=%u generation=%llu reason=%s "
+                            L"initialForeground=%p observedForeground=%p relayWindow=%p relayThread=%lu "
+                            L"activationAttempted=%u activationReturned=%u focusChecked=%u focused=%u accepted=%u",
+                            static_cast<unsigned>(action), static_cast<unsigned long long>(generation), reason,
+                            static_cast<void*>(foreground), static_cast<void*>(diagnostic.observedForeground),
+                            static_cast<void*>(diagnostic.relayWindow),
+                            request->relay ? request->relay->ThreadId() : 0ul,
+                            diagnostic.activationAttempted ? 1u : 0u, diagnostic.activationReturned ? 1u : 0u,
+                            diagnostic.focusChecked ? 1u : 0u, diagnostic.focused ? 1u : 0u, accepted);
+                        WriteDiagnosticLogEntry(message);
+                        MessageBeep(MB_ICONWARNING);
+                    }
+                };
+                const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (request->relay)
+                {
+                    const auto result = request->relay->Poll();
+                    if (result != Relay::Result::Pending) { finish(result); return; }
+                    if (!current() || (request->taskViewStarted && now >= request->taskViewSendDeadline))
+                        request->relay->Cancel();
+                    // No join or synchronous worker request on the UI thread.
+                    // Cancellation before injection publishes a terminal result;
+                    // a committed injection retains its own handoff lifetime.
+                    return;
+                }
+                if (!current() || GetForegroundWindow() != foreground ||
+                    (action == Action::TaskView &&
+                        !statusBarTaskViewTransition_.CanBegin(now, systemTaskbarTaskViewActive_)))
+                { finish(Relay::Result::Cancelled); return; }
+                if (now >= preparationDeadline) { finish(Relay::Result::TimedOut); return; }
+                // Every system chord changes the foreground queue. Finish the
+                // physical click before handing it to the temporary window.
+                for (const int key : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+                    VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, static_cast<int>(chord.key)})
+                    if (GetAsyncKeyState(key) & 0x8000) return;
+                if (action == Action::TaskView)
+                {
+                    if (!statusBarTaskViewTransition_.Begin(now, systemTaskbarTaskViewActive_))
+                    { finish(Relay::Result::Cancelled); return; }
+                    request->taskViewStarted = true;
+                    const double remaining = statusBarTaskViewTransition_.Remaining(now);
+                    request->taskViewSendDeadline = now + remaining;
+                    mouseHandoff->Begin(remaining);
+                }
+                Relay::Api api;
+                // This callback runs only on the relay thread and retains no
+                // DesktopApp, HWND owner, scheduler or Task View guard object.
+                api.send = [action, generation, hostUiThread = GetCurrentThreadId(),
+                    started = hold->shortcutStartedMilliseconds,
+                    sendDeadline = request->taskViewSendDeadline](UINT count, INPUT* input, int size) {
+                    TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
+                    const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                    const bool initialChord = count && !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
+                    if (initialChord && sendDeadline > 0 && before >= sendDeadline)
+                    {
+                        TraceStatusBarShellActivation(action, generation, L"send-input", started,
+                            L"handoff-expired", 0, count, 0, hostUiThread);
+                        return 0u;
+                    }
+                    const UINT accepted = SendInput(count, input, size);
+                    TraceStatusBarShellActivation(action, generation, L"send-input", started,
+                        accepted == count ? L"accepted" : L"incomplete",
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before, count, accepted,
+                        hostUiThread);
+                    return accepted;
+                };
+                request->relay = Relay::Start(foreground, chord, std::move(api));
+                if (!request->relay) { finish(Relay::Result::Failed); return; }
+                TraceStatusBarShellActivation(action, generation, L"relay-start",
+                    hold->shortcutStartedMilliseconds);
+            });
+        if (!statusBarActivationToken_)
+        {
+            if (mouseHandoff) mouseHandoff->Cancel();
+            hold->shortcutFinished = true;
+            statusBarActivationMonitor_ = nullptr;
+            TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
+                L"scheduler-unavailable");
+            WriteDiagnosticLogEntry(L"StatusBar system shortcut relay scheduler unavailable", DiagnosticLogLevel::Error);
+            MessageBeep(MB_ICONWARNING);
+        }
     }
     else if (action == Action::SystemMenu)
     {
@@ -639,6 +739,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
             {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
             {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuControlCenter, L"\uF4B8"}, // keyboard
+            {"statusBar.batteryPercentage", &Settings::batteryPercentage, Action::MenuControlCenter, L"\uF1CD"}, // battery_9_20
             {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
             {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter, L"\uF8A1"}, // weather_sunny
             {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter, L"\uF8AC"}, // wifi_1
@@ -668,8 +769,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             std::wstring label = _LW(flags[index].key);
             label += L"\t";
             label += _LW(currentSettings.*(flags[index].member) ? "app.interact.shown" : "app.interact.hidden");
-            const bool disabled = merged && flags[index].member == &Settings::quickSearch;
-            AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, label.c_str());
+            AppendMenuW(target, MF_STRING, command, label.c_str());
             SetMenuItemIcon(target, command, flags[index].glyph, MenuIconFont::FluentRegular);
         };
         const auto submenu = [&](HMENU parent, const char* label) {
@@ -700,8 +800,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (!merged || independentTarget)
             if (const auto position = submenu(independentTarget ? independentTarget : target, "statusBar.timeNotificationPosition"))
             {
-                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned, merged);
-                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned, merged);
+                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);
+                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned);
             }
         };
         const auto addControlChoices = [&](HMENU target) {
@@ -730,7 +830,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (merged)
         {
             // The merged root has one settings popup. Reuse it, keeping active
-            // settings on this level and saved standalone-only options below.
+            // settings on this level and editable standalone preferences below.
             for (int index = 0; index < GetMenuItemCount(menu) && !settingsMenu; ++index)
                 settingsMenu = GetSubMenu(menu, index);
             if (settingsMenu)
@@ -766,7 +866,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 {
                     constexpr int percent[]{75, 100, 125, 150, 200, 300};
                     const auto label = std::to_wstring(percent[index]) + L"%";
-                    addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f, merged);
+                    addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f);
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
@@ -776,8 +876,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 {
                     for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index)
                     {
-                        const HMENU target = merged && flags[index].member == &Settings::quickSearch ? independentStatus : section;
-                        if (target) addFlag(target, index);
+                        addFlag(section, index);
                     }
                     if (group == 2) addTimeChoices(section, merged ? independentStatus : nullptr);
                     if (group == 3) addControlChoices(section);
@@ -821,21 +920,20 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (command >= flagBase && command < flagBase + std::size(flags))
             {
                 const auto member = flags[command - flagBase].member;
-                if (merged && member == &Settings::quickSearch) changed = false;
-                else bar.*member = !(bar.*member);
+                bar.*member = !(bar.*member);
             }
             else if (command == positionBase || command == positionBase + 1)
                 bar.position = command == positionBase ? DockPosition::Top : DockPosition::Bottom;
             else if (command >= monitorBase && command < monitorBase + 3)
                 bar.monitorScope = static_cast<DockMonitorScope>(command - monitorBase);
-            else if (command >= scaleBase && command < scaleBase + 6 && !merged)
+            else if (command >= scaleBase && command < scaleBase + 6)
             {
                 constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
                 bar.scale = scales[command - scaleBase];
             }
             else if (command == clockBase || command == clockBase + 1) bar.clockSystemPanel = command == clockBase + 1;
             else if (command == inputPanelBase || command == inputPanelBase + 1) bar.inputMethodSystemPanel = command == inputPanelBase + 1;
-            else if ((command == timePositionBase || command == timePositionBase + 1) && !merged)
+            else if (command == timePositionBase || command == timePositionBase + 1)
                 bar.timeNotificationRightAligned = command == timePositionBase + 1;
             else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())
                 bar.controlCenterSystemPanel = command == controlBase + 1;
@@ -883,6 +981,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
 
 void DesktopApp::SyncStatusBar()
 {
+    if (generalSettings_.dockEnabled || generalSettings_.statusBar.enabled) EnsureDockTrayService();
+    else dockTrayService_.reset();
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);
     if (!generalSettings_.statusBar.enabled)
@@ -912,7 +1012,7 @@ void DesktopApp::SyncStatusBar()
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
-             });
+             }, dockTrayService_);
         statusBar_->SetPointerPressed([this] {
             ClearSelection();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -954,6 +1054,7 @@ void DesktopApp::SyncStatusBar()
         statusBar_->SetDockStateProvider([this](HMONITOR monitor) {
             snowdesktop::StatusBarDockState state;
             state.interacting = statusBar_->HasInteractionSession(monitor);
+            state.quickSearch = generalSettings_.dockEnabled && dockSettings_.showQuickSearchButton;
             for (const auto& host : persistentDockHosts_)
             {
                 if (!host || !host->active || host->monitor != monitor || !host->container ||
@@ -1048,6 +1149,7 @@ void DesktopApp::SyncStatusBar()
             snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockSettings_.showOnlyWhenSummoned)});
         }
     }
+    statusBar_->SetPresentationEnabled(!desktopStartupPresentationPending_);
     statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,
         dcompDevice_.Get(), dwriteFactory_.Get(), &collectionPopupAppearance_,
         [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {

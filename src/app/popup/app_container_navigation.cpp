@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
+#include "categorized_popup_scope.h"
 
 // Keyboard entry/exit and activation for widget-contained items.
 
@@ -51,6 +53,41 @@ void DesktopApp::EnterWidget()
         widget.type == DesktopWidgetType::Guide)
         return;   // 此类组件无内部成员导航
 
+    if (snowdesktop::single_cell_widget::IsSingleCell(widget))
+    {
+        const bool alreadyOpen = IsCollectionPopupInteractive() &&
+            ((!dockFolderPopupOpen_ && popupWidgetIndex_ == static_cast<size_t>(foundIdx)) ||
+                (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widget.id));
+        if (!alreadyOpen)
+            OpenCollectionPopupAt(static_cast<size_t>(foundIdx),
+                {(widget.bounds.left + widget.bounds.right) / 2, widget.bounds.bottom});
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            if (!dockFolderPopupOpen_ || dockFolderPopupMappingWidgetId_ != widget.id) return;
+            ClearSelection();
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavVisualFocus_ = true;
+            const size_t count = GetPopupItemCount(dockFolderPopupWidget_);
+            if (count > 0)
+            {
+                const size_t entry = GetPopupFolderEntryIndex(dockFolderPopupWidget_, 0);
+                dockFolderPopupWidget_.folderEntries[entry].selected = true;
+                keyboardNavMemberIndex_ = 0;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
+    std::optional<CategorizedPopupScope> popupLayout;
+    if (!dockFolderPopupOpen_ && popupWidgetIndex_ == static_cast<size_t>(foundIdx))
+        if (auto* view = GetCategorizedPopupView())
+            popupLayout.emplace(view, GetCategorizedPopupFrame(GetCollectionPopupRect(widget)));
+    const bool compactPopup = snowdesktop::single_cell_widget::IsSingleCell(widget) &&
+        popupWidgetIndex_ == static_cast<size_t>(foundIdx);
+
     if (IsWidgetCollapsed(widget))
         ToggleWidgetCollapsed(static_cast<size_t>(foundIdx));
 
@@ -63,6 +100,25 @@ void DesktopApp::EnterWidget()
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
+
+    if (snowdesktop::single_cell_widget::IsSingleCell(widget) &&
+        widget.type == DesktopWidgetType::FileCategories)
+    {
+        keyboardNavMemberIndex_ = -1;
+        const auto keys = GetPopupItemKeys(widget);
+        if (!keys.empty())
+        {
+            const size_t item = FindItemIndexByKey(keys.front());
+            if (item < items_.size())
+            {
+                items_[item].selected = true;
+                keyboardNavMemberIndex_ = 0;
+            }
+        }
+        else NavigateWidgetMembers(VK_DOWN);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
@@ -100,8 +156,8 @@ void DesktopApp::EnterWidget()
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
-            keyboardNavInsideWidget_ = false;
-            keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = compactPopup;
+            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -137,9 +193,8 @@ void DesktopApp::EnterWidget()
         {
             if (group->GetSlotCount() == 0)
             {
-                keyboardNavInsideWidget_ = false;
-                keyboardNavWidgetIndex_ =
-                    static_cast<size_t>(-1);
+                keyboardNavInsideWidget_ = compactPopup;
+                keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
                 keyboardNavMemberIndex_ = -1;
                 widgets_[static_cast<size_t>(
                     foundIdx)].selected = true;
@@ -150,9 +205,8 @@ void DesktopApp::EnterWidget()
             Item* item = group->GetMemberItem(0);
             if (!item)
             {
-                keyboardNavInsideWidget_ = false;
-                keyboardNavWidgetIndex_ =
-                    static_cast<size_t>(-1);
+                keyboardNavInsideWidget_ = compactPopup;
+                keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
                 keyboardNavMemberIndex_ = -1;
                 widgets_[static_cast<size_t>(
                     foundIdx)].selected = true;
@@ -167,9 +221,8 @@ void DesktopApp::EnterWidget()
         }
         else if (!group || sourceIds.empty())
         {
-            keyboardNavInsideWidget_ = false;
-            keyboardNavWidgetIndex_ =
-                static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = compactPopup;
+            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -218,9 +271,8 @@ void DesktopApp::EnterWidget()
         }
         if (!group)
         {
-            keyboardNavInsideWidget_ = false;
-            keyboardNavWidgetIndex_ =
-                static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = compactPopup;
+            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -232,9 +284,8 @@ void DesktopApp::EnterWidget()
             group->GetVisibleCollectionIds();
         if (childIds.empty())
         {
-            keyboardNavInsideWidget_ = false;
-            keyboardNavWidgetIndex_ =
-                static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = compactPopup;
+            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -270,16 +321,6 @@ void DesktopApp::EnterWidget()
             if (itemIdx != static_cast<size_t>(-1))
                 items_[itemIdx].selected = true;
         }
-    }
-
-    // 1 格集合（紧凑模式）：进入时直接打开弹窗
-    if (widget.type == DesktopWidgetType::Collection && !widget.scrollContainerMode)
-    {
-        int cols = std::max(1, widget.gridSpan.columns);
-        int rows = std::max(1, widget.gridSpan.rows);
-        if (cols <= 1 && rows <= 1)
-            OpenCollectionPopupAt(static_cast<size_t>(foundIdx),
-                POINT{ widget.bounds.left, widget.bounds.top });
     }
 
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -508,6 +549,16 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
             if (!entry.fullPath.empty())
                 LaunchPathWithShortcutPolicy(
                     hwnd_, entry.fullPath);
+        }
+    }
+    else if (widget.type == DesktopWidgetType::FileCategories &&
+        popupWidgetIndex_ == widgetIndex && IsCollectionPopupInteractive())
+    {
+        const auto keys = GetPopupItemKeys(widget);
+        if (static_cast<size_t>(memberIndex) < keys.size())
+        {
+            const size_t item = FindItemIndexByKey(keys[static_cast<size_t>(memberIndex)]);
+            if (item < items_.size()) LaunchDesktopItem(item);
         }
     }
     else if (!widget.itemKeys.empty() &&

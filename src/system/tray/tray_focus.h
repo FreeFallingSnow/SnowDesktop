@@ -42,6 +42,12 @@ private:
     DWORD started_ = 0, lastMenu_ = 0;
     bool armed_ = false, observed_ = false;
 };
+struct MenuLayerPlacement
+{
+    HWND above = nullptr;
+    unsigned source = 0; // 1: this gesture's popup binding; 2: confirmed native menu.
+    bool preserveOrder = false;
+};
 // This state is armed before the first tray callback. WM_ACTIVATE may arrive
 // with no next HWND, or with a main window on a different thread from the menu.
 // Sample the concrete callback/menu threads and this gesture's SHOW evidence.
@@ -77,7 +83,8 @@ struct MenuRetentionSession
         const auto w=reinterpret_cast<HWND>(binding.window);DWORD pid=0;
         if(!w||binding.process!=process||GetWindowThreadProcessId(w,&pid)!=binding.thread||pid!=process||
             !IsWindowVisible(w)||GetWindow(w,GW_OWNER)!=reinterpret_cast<HWND>(binding.owner)||
-            GetWindowLongPtrW(w,GWL_STYLE)!=binding.style||GetWindowLongPtrW(w,GWL_EXSTYLE)!=binding.extendedStyle)return false;
+            !SameMenuPopupStyles(binding.standardMenu,binding.style,binding.extendedStyle,
+                GetWindowLongPtrW(w,GWL_STYLE),GetWindowLongPtrW(w,GWL_EXSTYLE)))return false;
         if(binding.owner&&!BelongsToTarget(reinterpret_cast<HWND>(binding.owner)))return false;
         wchar_t name[64]{};GetClassNameW(w,name,static_cast<int>(std::size(name)));
         return binding.standardMenu==(wcscmp(name,L"#32768")==0);
@@ -91,6 +98,51 @@ struct MenuRetentionSession
             (expectedOwner&&info.hwndMenuOwner!=expectedOwner)||
             (!observedMenuThread&&!Related(info.hwndMenuOwner)))return false;
         menuOwner=info.hwndMenuOwner;menuThread=thread;return true;
+    }
+    HWND NativeMenuOverlapping(const RECT& panelBounds)const
+    {
+        if(!menuThread||!menuOwner||!BelongsToTarget(menuOwner)||
+            GetWindowThreadProcessId(menuOwner,nullptr)!=menuThread)return nullptr;
+        GUITHREADINFO info{sizeof(info)};
+        if(!GetGUIThreadInfo(menuThread,&info)||
+            !(info.flags&(GUI_INMENUMODE|GUI_POPUPMENUMODE|GUI_SYSTEMMENUMODE))||
+            info.hwndMenuOwner!=menuOwner)return nullptr;
+        struct Search {const MenuRetentionSession* session;RECT bounds;HWND lowest=nullptr;} search{this,panelBounds};
+        EnumThreadWindows(menuThread,[](HWND window,LPARAM parameter)->BOOL
+        {
+            auto& search=*reinterpret_cast<Search*>(parameter);
+            DWORD process=0;
+            const DWORD thread=GetWindowThreadProcessId(window,&process);
+            if(thread!=search.session->menuThread||process!=search.session->process||
+                !IsWindowVisible(window)||!(GetWindowLongPtrW(window,GWL_STYLE)&WS_POPUP))return TRUE;
+            wchar_t name[64]{};GetClassNameW(window,name,static_cast<int>(std::size(name)));
+            if(wcscmp(name,L"#32768")!=0)return TRUE;
+            const HWND owner=GetWindow(window,GW_OWNER);
+            // Native menu HWNDs commonly have no GW_OWNER. The active menu
+            // loop above already supplies the actual owner on this thread.
+            if(owner&&(!search.session->BelongsToTarget(owner)||
+                GetAncestor(owner,GA_ROOTOWNER)!=GetAncestor(search.session->menuOwner,GA_ROOTOWNER)))return TRUE;
+            RECT bounds{},intersection{};
+            if(!GetWindowRect(window,&bounds)||!IntersectRect(&intersection,&bounds,&search.bounds))return TRUE;
+            // Place the panel below the lowest overlapping menu, including a
+            // root and any submenu on this confirmed menu thread.
+            if(!search.lowest)search.lowest=window;
+            else for(HWND current=search.lowest;current;current=GetWindow(current,GW_HWNDNEXT))
+                if(current==window){search.lowest=window;break;}
+            return TRUE;
+        },reinterpret_cast<LPARAM>(&search));
+        return search.lowest;
+    }
+    MenuLayerPlacement LayerPlacement(const RECT& panelBounds)const
+    {
+        if(!tracker.Armed())return {};
+        for(const auto& binding:popups)if(LivePopup(binding))
+            return {reinterpret_cast<HWND>(binding.window),1,false};
+        if(const auto native=NativeMenuOverlapping(panelBounds))return {native,2,false};
+        // Discovery and submenu replacement can temporarily lack a concrete
+        // anchor. Keep our order until the gesture ends instead of overtaking
+        // a menu that Windows has already placed above the panel.
+        return {nullptr,0,true};
     }
     bool ContainsPoint(POINT screen)const
     {

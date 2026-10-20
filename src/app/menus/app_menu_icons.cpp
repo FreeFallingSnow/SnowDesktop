@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "sort_menu.h"
+#include "tray_context_menu_placement.h"
 #include "desktop/desktop_input_activation.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_icon_render.h"
@@ -120,104 +121,6 @@ bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
     return false;
 }
 
-enum class TrayEdge
-{
-    Bottom,
-    Top,
-    Left,
-    Right,
-};
-
-TrayEdge ResolveTrayEdge(
-    const RECT& surface, const MONITORINFO& monitorInfo)
-{
-    const int surfaceWidth = surface.right - surface.left;
-    const int surfaceHeight = surface.bottom - surface.top;
-    const int monitorWidth =
-        monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left;
-    const int monitorHeight =
-        monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
-    if (surfaceWidth >= monitorWidth / 2 &&
-        surfaceWidth >= surfaceHeight)
-    {
-        return surface.top + surface.bottom >=
-                monitorInfo.rcMonitor.top + monitorInfo.rcMonitor.bottom
-            ? TrayEdge::Bottom : TrayEdge::Top;
-    }
-    if (surfaceHeight >= monitorHeight / 2 &&
-        surfaceHeight > surfaceWidth)
-    {
-        return surface.left + surface.right >=
-                monitorInfo.rcMonitor.left + monitorInfo.rcMonitor.right
-            ? TrayEdge::Right : TrayEdge::Left;
-    }
-
-    // A small top-level surface is the Windows hidden-icons flyout.  Follow
-    // the taskbar edge reserved by the work area; Windows 11 uses the bottom
-    // edge when an auto-hidden taskbar leaves no work-area inset.
-    if (monitorInfo.rcWork.bottom < monitorInfo.rcMonitor.bottom)
-        return TrayEdge::Bottom;
-    if (monitorInfo.rcWork.top > monitorInfo.rcMonitor.top)
-        return TrayEdge::Top;
-    if (monitorInfo.rcWork.right < monitorInfo.rcMonitor.right)
-        return TrayEdge::Right;
-    if (monitorInfo.rcWork.left > monitorInfo.rcMonitor.left)
-        return TrayEdge::Left;
-    return TrayEdge::Bottom;
-}
-
-void PlaceMenuAwayFromTraySurface(
-    snowdesktop::modern_menu::Options& options,
-    POINT screenPoint,
-    const RECT& surface,
-    const MONITORINFO& monitorInfo,
-    int gap)
-{
-    switch (ResolveTrayEdge(surface, monitorInfo))
-    {
-    case TrayEdge::Bottom:
-    {
-        const int edge = std::min(
-            surface.top, monitorInfo.rcWork.bottom) - gap;
-        options.rootPlacement =
-            snowdesktop::modern_menu::RootPlacement::AboveAnchorRect;
-        options.anchorRect = {
-            screenPoint.x, edge, screenPoint.x + 1, edge };
-        break;
-    }
-    case TrayEdge::Top:
-    {
-        const int edge = std::max(
-            surface.bottom, monitorInfo.rcWork.top) + gap;
-        options.rootPlacement =
-            snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
-        options.anchorRect = {
-            screenPoint.x, edge, screenPoint.x + 1, edge };
-        break;
-    }
-    case TrayEdge::Right:
-    {
-        const int edge = std::min(
-            surface.left, monitorInfo.rcWork.right) - gap;
-        options.rootPlacement =
-            snowdesktop::modern_menu::RootPlacement::LeftOfAnchorRect;
-        options.anchorRect = {
-            edge, screenPoint.y, edge, screenPoint.y + 1 };
-        break;
-    }
-    case TrayEdge::Left:
-    {
-        const int edge = std::max(
-            surface.right, monitorInfo.rcWork.left) + gap;
-        options.rootPlacement =
-            snowdesktop::modern_menu::RootPlacement::RightOfAnchorRect;
-        options.anchorRect = {
-            edge, screenPoint.y, edge, screenPoint.y + 1 };
-        break;
-    }
-    }
-}
-
 void ConfigureTrayMenuPlacement(
     snowdesktop::modern_menu::Options& options,
     POINT screenPoint,
@@ -233,15 +136,15 @@ void ConfigureTrayMenuPlacement(
         8, static_cast<int>(options.dpi), USER_DEFAULT_SCREEN_DPI));
     if (capturedTraySurface)
     {
-        PlaceMenuAwayFromTraySurface(options, screenPoint,
-            *capturedTraySurface, monitorInfo, gap);
+        snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+            options, screenPoint, *capturedTraySurface, monitorInfo, gap);
         return;
     }
     RECT taskbar{};
     if (TryGetTaskbarRectAtPoint(screenPoint, taskbar))
     {
-        PlaceMenuAwayFromTraySurface(options, screenPoint,
-            taskbar, monitorInfo, gap);
+        snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+            options, screenPoint, taskbar, monitorInfo, gap);
         return;
     }
 
@@ -477,7 +380,7 @@ void DesktopApp::SetMenuItemQuickAction(
 
 void DesktopApp::SetMenuItemInlineAction(
     HMENU menu, UINT_PTR command, UINT group, bool compact,
-    bool horizontalScroll)
+    bool horizontalScroll, bool measureToContent)
 {
     if (!menu)
         return;
@@ -500,6 +403,7 @@ void DesktopApp::SetMenuItemInlineAction(
                 entry->inlineGroup = group;
                 entry->compactInlineAction = compact;
                 entry->horizontalScrollAction = horizontalScroll;
+                entry->measureInlineToContent = measureToContent;
                 return;
             }
         }
@@ -510,6 +414,7 @@ void DesktopApp::SetMenuItemInlineAction(
         entry->inlineGroup = group;
         entry->compactInlineAction = compact;
         entry->horizontalScrollAction = horizontalScroll;
+        entry->measureInlineToContent = measureToContent;
         menuIconPool_.push_back(std::move(entry));
         return;
     }
@@ -611,6 +516,8 @@ std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildModernMenuItems(HME
                     icon->compactInlineAction;
                 item.horizontalScrollAction =
                     icon->horizontalScrollAction;
+                item.measureInlineAction = icon->measureInlineToContent;
+                item.fitInlineActionToContent = icon->measureInlineToContent;
                 item.textInput = icon->textInput;
                 item.inputText = icon->inputText;
                 item.quickIcon = icon->quickIcon;
@@ -787,9 +694,9 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
-    snowdesktop::shell_extensions::AddMoreManagementAction(
-        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"));
-    snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
+    snowdesktop::shell_extensions::ConfigureMoreManagementRow(
+        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"),
+        generalSettings_.contextMenuHideMoreManagement);
     std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
     if (shellRequest)
     {

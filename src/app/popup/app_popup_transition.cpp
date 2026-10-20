@@ -2,6 +2,7 @@
 #include "app/dock/dock_folder_popup_read.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "app/menus/sort_menu.h"
+#include "shell/item_sort_metadata.h"
 
 // Collection and Dock-folder popup transitions.
 
@@ -147,6 +148,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     if (widgetIndex >= widgets_.size() ||
         (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
          widgets_[widgetIndex].type != DesktopWidgetType::FileCategories &&
+         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping &&
          !IsGroupWidgetType(widgets_[widgetIndex].type)))
         return;
 
@@ -169,9 +171,11 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                 FindPersistentDockHost(requestedDock);
         }
     }
+    const bool mappingSource = widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping;
     const bool samePopupSource =
-        !dockFolderPopupOpen_ &&
-        popupWidgetIndex_ == widgetIndex &&
+        (mappingSource
+            ? dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id
+            : !dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) &&
         collectionPopupDockHost_ == requestedDockHost;
     switch (snowdesktop::popup_animation_rules::
         ResolveExistingSourceAction(
@@ -212,6 +216,12 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         break;
     }
 
+    if (mappingSource)
+    {
+        OpenDockFolderPopupAt(static_cast<size_t>(-1), anchorPoint, widgetIndex);
+        return;
+    }
+
     // The low-level outside-click notification is posted asynchronously.
     // Bind it to the collection content that existed at button-down so the
     // press which requested this popup cannot dismiss the newly published
@@ -243,6 +253,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
 
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
+    ResetDockTrayPopup();
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     dockFolderPopupOpen_ = false;
@@ -515,6 +526,10 @@ void DesktopApp::RefreshDockFolderPopup(
                 source.itemKeys;
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.listColumns = source.listColumns;
+            dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
+            dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = source.dateHeaders;
             dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
@@ -669,6 +684,10 @@ CommitDockFolderPopupStateToSource()
                 dockFolderPopupWidget_.itemKeys;
             source.listMode =
                 dockFolderPopupWidget_.listMode;
+            source.listColumns = dockFolderPopupWidget_.listColumns;
+            source.showSearchBox = dockFolderPopupWidget_.showSearchBox;
+            source.showFileCategories = dockFolderPopupWidget_.showFileCategories;
+            source.dateHeaders = dockFolderPopupWidget_.dateHeaders;
             source.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
             source.activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
             source.fanPopup = dockFolderPopupWidget_.fanPopup;
@@ -722,6 +741,11 @@ CommitDockFolderPopupStateToSource()
             dockFolderPopupWidget_.itemKeys;
         entry.listMode =
             dockFolderPopupWidget_.listMode;
+        entry.listColumns = dockFolderPopupWidget_.listColumns;
+        entry.showSearchBox = dockFolderPopupWidget_.showSearchBox;
+        entry.showFileCategories = dockFolderPopupWidget_.showFileCategories;
+        entry.dateHeaders = dockFolderPopupWidget_.dateHeaders;
+        entry.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
         entry.fanPopup = dockFolderPopupWidget_.fanPopup;
         entry.detailShowModified =
             dockFolderPopupWidget_.detailShowModified;
@@ -785,6 +809,7 @@ void DesktopApp::SortDockFolderPopupContents(
                 FromLegacyFolderSortMode(mode);
         dockFolderPopupWidget_.contentSortAscending =
             ascending;
+        snowdesktop::item_sort_metadata::PrepareFolder(dockFolderPopupWidget_.folderEntries, mode);
         snowdesktop::folder_sort_rules::
             StableSort(
                 dockFolderPopupWidget_.

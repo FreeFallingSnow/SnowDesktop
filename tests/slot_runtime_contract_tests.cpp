@@ -8,7 +8,7 @@
 #include "slot_drop_expectations.h"
 #include "drag_drop/external_drop_content.h"
 #include "../src/app/drag_drop/drag_drop_controller.h"
-#include "../src/app/drag_drop/pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "../src/app/layout/new_item_placement.h"
 #include "shell/shell_new_item_capture.h"
 #include "../src/app/drag_drop/ole_drag_drop_adapter.h"
@@ -37,8 +37,10 @@
 #include "desktop/desktop_hover_rules.h"
 #include "layout/floating_popup_rules.h"
 #include "layout/desktop_item_sort_rules.h"
+#include "layout/selected_grid_move.h"
 #include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 
 #include <propsys.h>
 #include <propkey.h>
@@ -76,6 +78,7 @@ void Check(bool condition, const std::string& message)
 #include "background_work_cases.h"
 #include "shell_icon_request_cases.h"
 #include "startup_icon_cases.h"
+#include "shell/item_display_name_cases.h"
 #include "rename_click_cases.h"
 #include "app/rename_selection_cases.h"
 
@@ -875,6 +878,8 @@ void TestEveryRegisteredSurfaceOriginLifecycle()
 
 void TestDropActionModifiers()
 {
+    // This verifies session state transitions for caller-supplied defaults.
+    // Physical file-volume defaults are exercised by native_default_files_*.
     struct Case { int mods; DropAction internal; DropAction external; };
     const std::array cases{
         Case{0, DropAction::Move, DropAction::Copy},
@@ -976,6 +981,120 @@ void TestDockGroupPayload()
                 !DragTargetResolver::AcceptsInternal(dock, source),
             "a mixed group/source payload is rejected before any ownership transfer");
     }
+}
+
+void TestDesktopWidgetIconsInMixedSelection()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer desktop(BarStyle::VBar, contract::SlotSurfaceKind::Desktop);
+    ContractContainer dock(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    ContractContainer collection(BarStyle::VBar, contract::SlotSurfaceKind::Collection);
+    ContractContainer folder(BarStyle::VBar, contract::SlotSurfaceKind::FolderMapping);
+    for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
+            DesktopWidgetType::FileGroup, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FolderMapping})
+    {
+        // Real stable source metadata produced by the native entrance path;
+        // only the platform/container boundary is substituted here.
+        DragSourceList source;
+        source.BindRuntimeOrigin(&desktop);
+        source.hasWidgets = true;
+        source.hasDesktopIcons = true;
+        DragSourceEntry widget;
+        widget.kind = DropSourceKind::Widget;
+        widget.desktopWidgetIcon = true;
+        widget.widgetType = type;
+        widget.widgetId = L"entrance";
+        widget.originalCell = {L"page", 1, 2};
+        widget.originalSpan = {1, 1};
+        DragSourceEntry file;
+        file.kind = DropSourceKind::DesktopIcon;
+        file.sourceIndex = 1;
+        file.desktopKey = L"document";
+        file.filePath = L"C:\\Desktop\\document.txt";
+        source.entries = {widget, file};
+        Check(DragTargetResolver::AcceptsInternal(desktop, source) &&
+                DragTargetResolver::AcceptsInternal(dock, source),
+            "all five native icon families can accompany files to the desktop or Dock");
+        Check(DragTargetResolver::AcceptsInternal(collection, source) &&
+                DragTargetResolver::AcceptsInternal(folder, source) &&
+                collection.observedCount == 1 && dock.observedCount == 2,
+            "an unsupported native entrance must not block the eligible file in a mixed drop");
+        const auto filtered = source.WithoutDesktopWidgetIcons();
+        Check(filtered.entries.size() == 1 && filtered.entries.front().sourceIndex == 1 &&
+                !filtered.hasWidgets && filtered.DesktopKeys() == std::vector<std::wstring>{L"document"} &&
+                source.entries.size() == 2 && source.entries.front().widgetId == L"entrance" &&
+                source.entries.front().originalCell.column == 1 && source.SupportsDesktopShellHandoff(),
+            "filtering keeps the file's original landing identity and leaves the entrance source intact");
+
+        std::vector<std::unique_ptr<Container>> targets;
+        targets.push_back(std::make_unique<ContractContainer>(BarStyle::VBar, contract::SlotSurfaceKind::Desktop));
+        targets.push_back(std::make_unique<ContractContainer>(BarStyle::VBar, contract::SlotSurfaceKind::Collection));
+        const auto mixedTarget = DragTargetResolver::ResolveInternal(targets, {50, 50}, source);
+        Check(mixedTarget.container == targets.back().get() && mixedTarget.region != HitRegion::Blocked,
+            "a mixed drag resolves to the visible component for its eligible file subset");
+
+        source.entries.pop_back();
+        source.hasDesktopIcons = false;
+        Check(!DragTargetResolver::AcceptsInternal(collection, source) &&
+                !source.SupportsDesktopShellHandoff() && source.WithoutDesktopWidgetIcons().Empty(),
+            "an entrance alone cannot enter a file container or be exported as a file");
+        const auto rejected = DragTargetResolver::ResolveInternal(targets, {50, 50}, source);
+        Check(rejected.container == targets.back().get() && rejected.region == HitRegion::Blocked,
+            "a rejected entrance cannot fall through its visible component target onto the desktop");
+
+        source.entries.front().desktopWidgetIcon = false;
+        source.entries.push_back(file);
+        source.hasDesktopIcons = true;
+        Check(!DragTargetResolver::AcceptsInternal(desktop, source),
+            "the native entrance exception never enables unrelated mixed widget payloads");
+    }
+}
+
+void TestDesktopWidgetIconDestinationMatrix()
+{
+    using Type = DesktopWidgetType;
+    using Surface = snowdesktop::slot_contract::SlotSurfaceKind;
+    namespace icons = snowdesktop::desktop_widget_icon_drop;
+    const Surface surfaces[] = {Surface::Desktop, Surface::Dock, Surface::Collection, Surface::FileCategories,
+        Surface::FolderMapping, Surface::CollectionGroup, Surface::FileGroup, Surface::LuaLogicalSlot, Surface::Guide};
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping, Type::CollectionGroup, Type::FileGroup})
+        for (const auto surface : surfaces)
+            for (const int mods : {0, MK_SHIFT, MK_CONTROL, MK_ALT, MK_CONTROL | MK_SHIFT})
+            {
+                DragSourceList captured;
+                captured.hasWidgets = captured.hasOriginSurface = true;
+                captured.originSurface = Surface::Desktop;
+                DragSourceEntry icon;
+                icon.kind = DropSourceKind::Widget;
+                icon.widgetId = L"desktop-component";
+                icon.widgetType = type;
+                icon.desktopWidgetIcon = true;
+                icon.sourceIndex = 7;
+                captured.entries.push_back(icon);
+                const bool targetAccepts = surface == Surface::Desktop || surface == Surface::Dock ||
+                    (surface == Surface::CollectionGroup && type == Type::Collection) ||
+                    (surface == Surface::FileGroup && (type == Type::FileCategories || type == Type::FolderMapping));
+                const bool transfers = targetAccepts && (mods == 0 || mods == MK_SHIFT);
+                const auto nativeOnly = icons::Filter(captured, surface, mods);
+                Check(nativeOnly.entries.size() == (transfers ? 1u : 0u),
+                    "destination/action matrix filters native identities without permitting copies, shortcuts or nested groups");
+                ContractContainer target(BarStyle::VBar, surface);
+                Check(DragTargetResolver::AcceptsInternal(target, captured) == targetAccepts,
+                    "actual runtime resolver admits every compatible group and rejects every incompatible native target");
+                DragSourceEntry file;
+                file.kind = DropSourceKind::DesktopIcon;
+                file.desktopKey = L"ordinary-document";
+                file.sourceIndex = 19;
+                captured.entries.push_back(file);
+                captured.hasDesktopIcons = true;
+                const auto mixed = icons::Filter(captured, surface, mods);
+                Check(mixed.entries.size() == (transfers ? 2u : 1u) &&
+                        mixed.entries.back().sourceIndex == 19 && mixed.DesktopKeys() == std::vector<std::wstring>{L"ordinary-document"} &&
+                        captured.entries.front().widgetId == L"desktop-component" && captured.entries.size() == 2,
+                    "mixed matrix retains file landing identities and leaves unsupported component sources unchanged");
+                Check(DragTargetResolver::AcceptsInternal(target, mixed) == (surface != Surface::Guide),
+                    "eligible files continue through the real resolver when unsupported components are filtered out");
+            }
 }
 
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
@@ -2365,6 +2484,17 @@ void TestOleDropCompletionBoundaryMatrix()
     adapter->Release();
 }
 
+void TestOleAltCombinationNegotiation()
+{
+    // Keep the two extra Alt combinations not exercised by the native
+    // four-gesture matrix; ordinary verbs are tested through real commits.
+    for (const DWORD keys : {MK_CONTROL | MK_ALT, MK_SHIFT | MK_ALT})
+    for (DWORD allowed = 0; allowed < 8; ++allowed)
+        Check(snowdesktop::ole_drag_rules::ChooseDropEffect(keys, allowed, DROPEFFECT_COPY) ==
+                (allowed & DROPEFFECT_LINK),
+            "OLE Alt combinations request only a source-supported link");
+}
+
 void TestOleDropButtonStateEndsWithEachGesture()
 {
     FakeOleDragDropHandler handler;
@@ -3179,7 +3309,7 @@ void TestRenameUpdatesOnlyMatchingModels()
     result.status = S_OK;
     result.sourcePath = L"C:\\Desktop\\before.txt";
     result.path = L"C:\\Desktop\\after.txt";
-    result.displayName = L"after.txt";
+    result.displayName = L"after";
     result.typeName = L"Text document";
     result.metadataComplete = true;
     result.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
@@ -3241,8 +3371,11 @@ void TestRenameUpdatesOnlyMatchingModels()
             items[0].name == L"unrelated.txt" &&
             widgets[0].itemKeys[0] == result.path && dock[0].reference == result.path &&
             widgets[1].folderEntries[1].fullPath == result.path &&
+            widgets[1].folderEntries[1].name == L"after.txt" &&
+            widgets[1].folderEntries[1].DisplayName() == L"after" &&
             widgets[1].folderEntries[1].selected &&
-            popup.folderEntries[1].fullPath == result.path,
+            popup.folderEntries[1].fullPath == result.path &&
+            popup.folderEntries[1].DisplayName() == L"after",
         "rename must migrate every matching reference without reordering manual lists");
 
     result.status = E_ACCESSDENIED;
@@ -3252,6 +3385,102 @@ void TestRenameUpdatesOnlyMatchingModels()
     Check(failed.desktopItems.empty() && items[0].name == L"unrelated.txt" &&
             widgets[0].itemKeys[1] == result.sourcePath,
         "failed async renames must leave the displayed name and references unchanged");
+}
+
+void TestDirectoryRenameMigratesMappedRoots()
+{
+    snowdesktop::ShellRenameResult rename;
+    rename.status = S_OK;
+    rename.sourcePath = L"C:\\Parent\\Before";
+    rename.path = L"C:\\Parent\\After";
+    rename.displayName = L"After";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    rename.metadataComplete = true;
+    rename.absoluteId = {0, 0};
+    std::vector<DesktopWidget> widgets(4);
+    for (auto& widget : widgets) widget.type = DesktopWidgetType::FolderMapping;
+    widgets[0].sourceFolderPath = L"c:/parent/BEFORE/";
+    widgets[0].folderEntries.resize(1);
+    widgets[0].folderEntries[0].fullPath = L"C:\\Parent\\Before\\文件.txt";
+    widgets[0].folderEntries[0].selected = true;
+    widgets[0].itemKeys = {L"C:\\Parent\\Before\\文件.txt"};
+    widgets[0].missingItems.push_back({});
+    widgets[0].missingItems[0].key = L"C:\\Parent\\Before\\missing.txt";
+    widgets[1].sourceFolderPath = L"C:\\Parent\\Before\\Child";
+    widgets[2].sourceFolderPath = L"C:\\Parent\\Before-Sibling";
+    widgets[3].sourceFolderPath = L"C:\\UnrelatedTarget";
+    widgets[3].sourceDesktopItemKey = L"C:\\Parent\\Before.lnk";
+    DesktopWidget popup = widgets[0];
+    std::vector<DesktopItem> items;
+    std::vector<DockEntry> dock;
+    const auto changed = snowdesktop::rename_model_update::Apply(
+        rename, rename.path, items, widgets, dock, &popup);
+    Check(changed.folderRootsChanged && changed.popup &&
+        widgets[0].sourceFolderPath == L"C:\\Parent\\After" &&
+        widgets[1].sourceFolderPath == L"C:\\Parent\\After\\Child" &&
+        widgets[2].sourceFolderPath == L"C:\\Parent\\Before-Sibling" &&
+        widgets[3].sourceFolderPath == L"C:\\UnrelatedTarget",
+        "successful directory rename updates exact/descendant mapping roots and fences refresh without matching siblings or shortcut targets");
+    Check(widgets[0].folderEntries[0].fullPath == L"C:\\Parent\\After\\文件.txt" &&
+        widgets[0].folderEntries[0].selected && widgets[0].itemKeys[0] == L"C:\\Parent\\After\\文件.txt" &&
+        widgets[0].missingItems[0].key == L"C:\\Parent\\After\\missing.txt" &&
+        popup.sourceFolderPath == widgets[0].sourceFolderPath &&
+        popup.folderEntries[0].fullPath == widgets[0].folderEntries[0].fullPath,
+        "renamed mapping content and popup retain selection while every cached child path moves with its root");
+    rename.sourcePath = L"C:\\Parent\\Before.lnk";
+    rename.path = L"C:\\Parent\\Alias.lnk";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    const auto shortcut = snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr);
+    Check(!shortcut.folderRootsChanged && widgets[3].sourceFolderPath == L"C:\\UnrelatedTarget" &&
+        widgets[3].sourceDesktopItemKey == rename.path,
+        "renaming a folder shortcut changes its identity without redirecting the mapped target directory");
+    rename.sourcePath = L"C:\\Parent\\After";
+    rename.path = L"C:\\Parent\\after";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    Check(snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr).folderRootsChanged &&
+        widgets[1].sourceFolderPath == L"C:\\Parent\\after\\Child",
+        "case-only directory rename retains the new spelling for descendant roots");
+    rename.sourcePath = rename.path;
+    rename.path = L"C:\\Parent\\Final";
+    rename.metadataComplete = false;
+    rename.attributes = {};
+    const auto fallback = snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr);
+    Check(fallback.folderRootsChanged && fallback.needsReload &&
+        widgets[0].sourceFolderPath == rename.path && widgets[1].sourceFolderPath == rename.path + L"\\Child",
+        "successful rename with unavailable Shell metadata migrates known mapping roots before its fallback refresh");
+    rename.status = E_ACCESSDENIED;
+    rename.path = L"C:\\Parent\\Failed";
+    Check(!snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr).folderRootsChanged &&
+        widgets[0].sourceFolderPath == L"C:\\Parent\\Final",
+        "failed directory rename never migrates root paths or subscriptions");
+}
+
+void TestSelectedGridMoveCapacity()
+{
+    std::vector<DesktopItem> selected(2);
+    selected[0].selected = selected[1].selected = true;
+    selected[0].gridCell = {L"source-a", 0, 0};
+    selected[1].gridCell = {L"source-b", 0, 0};
+    GridPage landing;
+    landing.id = L"destination"; landing.columns = 2; landing.rows = 1;
+    const auto build = [&](auto occupied) {
+        return snowdesktop::selected_grid_move::Build(selected, {landing}, {landing.id, 0, 0}, occupied);
+    };
+    auto moves = build([](const GridCell& probe, GridSpan) { return probe.column == 1; });
+    Check(moves.empty() && selected[0].gridCell.pageId == L"source-a" && selected[1].gridCell.pageId == L"source-b",
+        "two-page same-cell selections reject a one-free-cell destination without returning a partial/repeated landing");
+    Check(build([](const GridCell&, GridSpan) { return true; }).empty(),
+        "a full destination rejects the complete selected group");
+    moves = build([](const GridCell&, GridSpan) { return false; });
+    Check(moves.size() == 2 && moves[0].index == 0 && moves[1].index == 1 &&
+        moves[0].cell.column == 0 && moves[1].cell.column == 1 &&
+        moves[0].cell.pageId == landing.id && moves[1].cell.pageId == landing.id,
+        "sufficient capacity creates one independent exact landing for every selected source");
+    selected[0].gridSpan = {2, 1};
+    selected[1].gridSpan = {2, 1};
+    landing.columns = 4;
+    Check(build([](const GridCell&, GridSpan) { return false; }).empty(),
+        "non-stacked cross-page spans also reject overlap within the new plan");
 }
 
 void TestPopupDwellControllerHandlesCandidateChanges()
@@ -3478,7 +3707,8 @@ void TestNewItemsRetainTheirDesktopFilesOwner()
 }
 
 // The host uses this comparator for free-desktop icons and collection contents.
-// Unknown metadata must remain last, and zero bytes must remain a known value.
+// Unknown size/time metadata remains last; Type order reverses completely.
+// Zero bytes must remain a known value.
 void TestDesktopMetadataSorting(bool negativeControl = false)
 {
     using namespace snowdesktop::folder_sort_rules;
@@ -3508,8 +3738,39 @@ void TestDesktopMetadataSorting(bool negativeControl = false)
     Check(names(kModified, false) == L"ZBADC", "modified descending puts the newest first and unavailable times last");
     Check(names(kName, true) == L"ABCDZ" && names(kName, false) == L"ZDCBA",
         "name sorting retains both directions");
-    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"DBAZC",
-        "desktop type sorting preserves empty types and direction-sensitive name ties");
+    Check(names(kType, true) == L"ZABDC" && names(kType, false) == L"CDBAZ",
+        "Type descending reverses both type blocks, missing types and names within a block");
+    // User-defined priority: system objects, directories, folder shortcuts,
+    // then other types. Misleading type labels cannot override these groups.
+    std::vector<DesktopItem> grouped(10);
+    const wchar_t* groupNames[]{L"ZText", L"ZFolder", L"ZSystem", L"ZLink", L"AImage",
+        L"ASystem", L"AFolder", L"ALink", L"AText", L"Unknown"};
+    for (size_t i = 0; i < grouped.size(); ++i) grouped[i].name = groupNames[i];
+    grouped[0].typeName = grouped[8].typeName = L"Text";
+    grouped[4].typeName = L"Image";
+    grouped[2].desktopIconClsid = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+    grouped[5].desktopIconClsid = L"{645FF040-5081-101B-9F08-00AA002F954E}";
+    grouped[2].typeName = L"A"; grouped[5].typeName = L"Z";
+    grouped[3].shortcutTarget.directory = grouped[7].shortcutTarget.directory = true;
+    const auto groupOrder = [&](bool ascending, bool desktop) {
+        std::vector<size_t> indices{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+        std::stable_sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+            const bool da = a == 1 || a == 6, db = b == 1 || b == 6;
+            return desktop ? snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                grouped[a], grouped[b], kType, ascending, da, db)
+                : snowdesktop::desktop_item_sort_rules::Less(grouped[a], grouped[b], kType, ascending, da, db);
+        });
+        std::wstring result;
+        for (const auto index : indices) result += static_cast<wchar_t>(L'A' + index);
+        return result;
+    };
+    for (const bool desktop : {false, true})
+    {
+        Check(groupOrder(true, desktop) == L"FCGBHDEIAJ",
+            "Type ascending prioritizes system objects, folders and folder shortcuts before other file types");
+        Check(groupOrder(false, desktop) == L"JAIEDHBGCF",
+            "Type descending reverses all categories, type names and item names on desktop and in collections");
+    }
     // Negative control: the former name-only behavior cannot satisfy metadata expectations.
     Check(names(kName, true) != L"BZADC" && names(kName, false) != L"ZBADC",
         "metadata fixtures distinguish unsupported size/date sorting from a correct result");
@@ -3558,6 +3819,8 @@ int wmain(int argc, wchar_t** argv)
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
     TestDockGroupPayload();
+    TestDesktopWidgetIconsInMixedSelection();
+    TestDesktopWidgetIconDestinationMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();
@@ -3573,6 +3836,7 @@ int wmain(int argc, wchar_t** argv)
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();
+    TestOleAltCombinationNegotiation();
     TestOleDropButtonStateEndsWithEachGesture();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
@@ -3590,6 +3854,7 @@ int wmain(int argc, wchar_t** argv)
     TestStartupShellReadDoesNotGateReadyIcons();
     TestStartupReadWakesConsumer();
     TestStartupDesktopMetadataDeferral();
+    TestShortcutDisplayNames();
     TestStartupIconSurvivesMetadataArrival();
     TestFirstIconsDoNotWaitForDetails();
     TestShortcutClassificationDoesNotGateIcons();
@@ -3612,6 +3877,9 @@ int wmain(int argc, wchar_t** argv)
     TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
+    TestShortcutRenameDisplayNames();
+    TestDirectoryRenameMigratesMappedRoots();
+    TestSelectedGridMoveCapacity();
     TestPopupDwellControllerHandlesCandidateChanges();
     TestPassivePopupHoverTiming();
     if (failures != 0)

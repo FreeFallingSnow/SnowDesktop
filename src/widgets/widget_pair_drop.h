@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "desktop/desktop_membership_recovery.h"
 
 #include <algorithm>
 #include <string_view>
@@ -142,6 +143,8 @@ bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
             }
         }
         DetachGroupedSource(widgets, sourceId, sourceOwnerId);
+        desktop_membership_recovery::MergeMissing(
+            widgets[targetIndex], widgets[sourceIndex], keys);
         widgets[targetIndex].itemKeys = std::move(keys);
         widgets[sourceIndex].itemKeys.clear();
         widgets.erase(widgets.begin() + static_cast<std::ptrdiff_t>(sourceIndex));

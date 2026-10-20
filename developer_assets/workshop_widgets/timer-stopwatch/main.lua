@@ -3,15 +3,19 @@ local function copy()
     return { name=l10n.tr("timer.name"), countdown=l10n.tr("timer.countdown"), stopwatch=l10n.tr("timer.stopwatch"),
         custom=l10n.tr("timer.custom"), start=l10n.tr("timer.start"), pause=l10n.tr("timer.pause"), resume=l10n.tr("timer.resume"),
         reset=l10n.tr("timer.reset"), done=l10n.tr("timer.done"), hint=l10n.tr("timer.hint"), invalid=l10n.tr("timer.invalid"),
+        schedule_failed=l10n.tr("timer.schedule_failed"),
         unit=l10n.tr("timer.unit"), settings=l10n.tr("timer.settings"), one=l10n.tr("timer.one"), five=l10n.tr("timer.five"), ten=l10n.tr("timer.ten"), fifteen=l10n.tr("timer.fifteen"), twentyfive=l10n.tr("timer.twentyfive"), thirty=l10n.tr("timer.thirty") }
 end
 local function refresh(m)
-    schedule.cancel("visual")
-    schedule.cancel("deadline")
-    if m.countdown.running or m.stopwatch.running then schedule.every("visual", 100, {whenHidden="pause"}) end
+    if m.countdown.running or m.stopwatch.running then
+        if not schedule.every("visual",100,{whenHidden="pause"}) then return false end
+    else schedule.cancel("visual") end
     if m.countdown.running then
-        schedule.after("deadline", math.max(1, logic.value(m.countdown,time.monotonic(),true)), {whenHidden="continue"})
-    end
+        if not schedule.after("deadline",logic.deadlineDelay(m.countdown,time.monotonic()),{whenHidden="continue"}) then
+            return false
+        end
+    else schedule.cancel("deadline") end
+    return true
 end
 local function setup()
     local m=logic.new()
@@ -99,7 +103,7 @@ local function panel(_,m)
         children={picker}
     else
         children={
-            view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
+            view.text({key="hint",text=m.error and (c[m.error] or c.invalid) or c.hint,width="fill",height=m.error and r*2.5 or r*1.5,flexShrink=0,
                 fontSize=r*0.46,textWrap="wrap",verticalAlign="start",style={foreground="textPrimary"}}),
             view.textInput({key="duration",value=m.draft,width="fill",height=r,flexShrink=0,fontSize=r*0.46,
                 padding={horizontal=r*0.3,vertical=0},events={change={id="duration"},submit={id="custom.start"}},accessibility={label=c.hint}})}
@@ -114,11 +118,16 @@ local function panel(_,m)
     return view.scroll({key="duration.viewport",width="fill",height="fill",children={content}})
 end
 local function startCountdown(m,duration)
-    m.countdown.value=duration
+    local previous,mode=m.countdown,m.mode
+    m.countdown={value=duration,running=false,done=false}
     logic.start(m.countdown,time.monotonic())
     m.mode="countdown"
+    if not refresh(m) then
+        m.countdown=previous;m.mode=mode;refresh(m);m.error="schedule_failed";return false
+    end
+    m.error=nil
     storage.set("mode",m.mode)
-    refresh(m)
+    return true
 end
 local function event(_,m,e)
     if logic.tick(m.countdown,time.monotonic()) then
@@ -126,6 +135,12 @@ local function event(_,m,e)
             task.start("notification.show",{title=copy().name,message=copy().done})
         end
         refresh(m)
+    end
+    if e.kind=="schedule" and e.id=="deadline" and m.countdown.running then
+        if not refresh(m) then
+            logic.pause(m.countdown,time.monotonic(),true);refresh(m);m.error="schedule_failed"
+            widget.openPanel({title=copy().custom,width=420,height=220})
+        end
     end
     if e.kind=="action" then
         local id=e.id
@@ -152,16 +167,22 @@ local function event(_,m,e)
                 if not m.picker:validation() then duration=m.picker:draftValue()*1000 end
             else duration=logic.parse(m.draft) end
             if duration and not m.countdown.running then
-                m.draft=string.format("%d:%02d",math.floor(duration/60000),math.floor(duration/1000)%60)
-                storage.set("duration",m.draft);startCountdown(m,duration);widget.closePanel()
+                if startCountdown(m,duration) then
+                    m.draft=string.format("%d:%02d",math.floor(duration/60000),math.floor(duration/1000)%60)
+                    storage.set("duration",m.draft);widget.closePanel()
+                end
             else m.error=true end
         elseif id=="preset.1" or id=="preset.2" or id=="preset.3" or id=="preset.5" then
             if not m.countdown.running then startCountdown(m,tonumber(id:sub(8))*60000) end
         elseif id=="toggle" then
             local t=m[m.mode]
+            local previous={};for key,value in pairs(t) do previous[key]=value end
             if t.running then logic.pause(t,time.monotonic(),m.mode=="countdown")
             elseif not t.done then logic.start(t,time.monotonic()) end
-            refresh(m)
+            if not refresh(m) then
+                m[m.mode]=previous;refresh(m);m.error="schedule_failed"
+                widget.openPanel({title=copy().custom,width=420,height=220})
+            else m.error=nil end
         elseif id=="reset" then logic.reset(m[m.mode]);refresh(m) end
     end
     widget.invalidate()

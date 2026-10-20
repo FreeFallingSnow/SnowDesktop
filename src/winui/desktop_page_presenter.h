@@ -1,6 +1,8 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
+#include "theme_library_actions.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -9,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -16,6 +19,9 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Desktop settings presenter. */
 struct DesktopPageActions
 {
+    std::function<void(bool)> iconThemeInheritanceChanged;
+    ThemeLibraryAction themeLibrary;
+    ThemeLibraryAsyncAction themeAsync;
     using DesktopEdit = std::function<void(DesktopDisplaySettings&)>;
     using CategoryEdit = std::function<void(CategorySettings&)>;
     using PersonalizationEdit =
@@ -48,7 +54,7 @@ struct DesktopPageActions
  *
  * Continuous editors publish Preview while changing and
  * PreviewAndCommit when their pointer/keyboard interaction ends. Category
- * rules deliberately remain Draft until the user presses Apply.
+ * edits use the host's existing immediate preview-and-commit transaction.
  */
 class DesktopPagePresenter final
 {
@@ -66,12 +72,14 @@ public:
     DesktopPagePresenter& operator=(const DesktopPagePresenter&) = delete;
 
     void SetActions(DesktopPageActions actions);
+    void SetIconEditorMode();
+    void SetIconThemeInheritance(bool followGlobalTheme);
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Shared layout spacing editor, hosted on Interface & layout. */
-    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        LayoutSpacingContent() const noexcept;
+    /** Spacing rows mounted in order in the existing global layout group. */
+    [[nodiscard]] std::vector<winrt::Microsoft::UI::Xaml::UIElement>
+        LayoutSpacingContent() const;
     /** Icon rendering, typography, and shortcut-arrow controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         DesktopIconsContent() const noexcept;
@@ -86,9 +94,13 @@ public:
 
     /** Return a stable control for search-result navigation and focus. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(
-        std::string_view focusId) const noexcept;
+        std::string_view focusId, bool reveal = false,
+        SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
 
     void Activate() noexcept;
+    /** Track category-page visits independently of other pages sharing this
+     * presenter. Changing pages hides the add form without discarding drafts. */
+    void SetCategoryPageActive(bool active) noexcept;
     void Deactivate() noexcept;
     void Close() noexcept;
 

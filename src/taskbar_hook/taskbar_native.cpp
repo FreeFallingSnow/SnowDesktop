@@ -3,6 +3,7 @@
 #include "taskbar_classic_appearance.h"
 #include "taskbar_material_render.h"
 #include "taskbar_hook_lifecycle.h"
+#include "taskbar_autohide_rules.h"
 #include "../platform/taskbar_monitor.h"
 
 #include <commctrl.h>
@@ -42,6 +43,8 @@ struct WindowState
     AppBarMessage appBarMessage = nullptr;
     std::mutex mutex;
     bool cloaked = false, styled = false;
+    MinimizeProtection minimize;
+    UINT timerInterval = 250;
     BOOL restoreCloak = FALSE;
     AccentPolicy restoreAccent{}, accent{};
     bool haveRestoreAccent = false;
@@ -52,6 +55,7 @@ struct WindowState
     ClassicSurface surface;
     HHOOK menuMouseHook = nullptr;
     HHOOK menuMessageHook = nullptr;
+    HHOOK inputMessageHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD externalMenuToken = 0;
@@ -63,6 +67,7 @@ struct WindowState
     {
         if (menuMouseHook) UnhookWindowsHookEx(menuMouseHook);
         if (menuMessageHook) UnhookWindowsHookEx(menuMessageHook);
+        if (inputMessageHook) UnhookWindowsHookEx(inputMessageHook);
         if (owner) CloseHandle(owner);
     }
 };
@@ -282,6 +287,31 @@ catch (...)
     return CallNextHookEx(nullptr, code, message, data);
 }
 
+LRESULT CALLBACK InputMessageProc(int code, WPARAM removed, LPARAM data) try
+{
+    if (code == HC_ACTION && removed == PM_REMOVE && data)
+    {
+        const auto* message = reinterpret_cast<const MSG*>(data);
+        switch (message->message)
+        {
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_NCLBUTTONDOWN: case WM_NCLBUTTONUP:
+        case WM_NCRBUTTONDOWN: case WM_NCRBUTTONUP:
+        case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+        case WM_POINTERDOWN: case WM_POINTERUP:
+            // MSG.time belongs to this operation, before Explorer dispatches it.
+            ObserveTaskbarInput(message->hwnd, message->time);
+            break;
+        }
+    }
+    return CallNextHookEx(nullptr, code, removed, data);
+}
+catch (...)
+{
+    return CallNextHookEx(nullptr, code, removed, data);
+}
+
 LRESULT CALLBACK MenuMessageProc(int code, WPARAM wParam, LPARAM lParam) try
 {
     if (code >= 0 && lParam)
@@ -319,9 +349,13 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                     // message arrives, so Explorer's own reveal is not blocked.
                     enforce = (ReadSharedSnapshot(state->mapping, snapshot)
                             ? snapshot.ownerProcessId == state->ownerId &&
-                                ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
-                            : state->mapping->ownerProcessId == state->ownerId &&
-                                state->mapping->enabled && state->mapping->suppressTaskbar) &&
+                                (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window)) ||
+                                    (state->minimize.active &&
+                                        state->minimize.sequence == snapshot.minimizeSequence &&
+                                        snapshot.minimizeCancelled != snapshot.minimizeSequence &&
+                                        ProtectsTaskbarMinimize(snapshot, reinterpret_cast<std::uintptr_t>(window))))
+                            : state->mapping->ownerProcessId == state->ownerId && state->mapping->enabled &&
+                                (state->mapping->suppressTaskbar || state->minimize.active)) &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT && !contextMenu;
                 }
             }
@@ -501,6 +535,7 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
     RemovePropW(window, kContextMenuProperty);
+    RemovePropW(window, kMinimizeInputTickProperty);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
     return !windows.empty() || StopHooks();
@@ -525,7 +560,47 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     const bool contextMenu = HasContextMenu(window, state);
     if (contextMenu) SetPropW(window, kContextMenuProperty, reinterpret_cast<HANDLE>(1));
     else RemovePropW(window, kContextMenuProperty);
-    const bool suppress = ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window)) && !contextMenu;
+    RECT rect{};
+    POINT cursor{};
+    MONITORINFO monitor{sizeof(monitor)};
+    const bool geometryValid = GetWindowRect(window, &rect) && GetCursorPos(&cursor) &&
+        GetMonitorInfoW(snowdesktop::taskbar_monitor::Resolve(window), &monitor);
+    const HWND source = reinterpret_cast<HWND>(snapshot.minimizeSource);
+    const bool sourceMinimized = source && (!IsWindow(source) || IsIconic(source) || !IsWindowVisible(source));
+    const MinimizeProtectionInput protection{
+        snapshot.minimizeSequence, snapshot.minimizeStarted, GetTickCount64(),
+        geometryValid && ProtectsTaskbarMinimize(snapshot, reinterpret_cast<std::uintptr_t>(window)),
+        snapshot.minimizeCancelled == snapshot.minimizeSequence,
+        contextMenu || (geometryValid && IsTaskbarRevealEdge(rect, monitor.rcMonitor, cursor)),
+        sourceMinimized, geometryValid && IsAutoHiddenTaskbar(rect, monitor.rcMonitor)};
+    bool temporary = false, temporaryChanged = false;
+    {
+        std::lock_guard lock(state->mutex);
+        const bool wasActive = state->minimize.active;
+        temporary = state->minimize.Update(protection);
+        temporaryChanged = temporary != wasActive;
+    }
+    if (temporaryChanged)
+    {
+        AutoHideTraceRecord record;
+        record.tick = protection.now;
+        record.kind = AutoHideTraceKind::Protection;
+        record.threadId = GetCurrentThreadId();
+        record.taskbar = reinterpret_cast<std::uintptr_t>(window);
+        record.foreground = reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
+        record.rect = rect;
+        record.cursor = cursor;
+        record.geometryValid = geometryValid;
+        record.flags = temporary ? 1 : 0;
+        record.request = snapshot.minimizeSequence;
+        AppendAutoHideTrace(state->mapping->autoHideTrace, record);
+    }
+    const UINT interval = temporary ? 50 : 250;
+    if (interval != state->timerInterval)
+    {
+        if (SetTimer(window, kTimer, interval, nullptr)) state->timerInterval = interval;
+    }
+    const bool suppress = (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window)) || temporary) && !contextMenu;
     bool cloakChanged = false;
     BOOL restoreCloak = FALSE;
     {
@@ -618,7 +693,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     }
     if (styled && FAILED(state->surface.Synchronize(window)))
         InterlockedExchange(&state->mapping->status, kStatusFailed);
-    if (!snapshot.suppressTaskbar && !styled && !state->classic)
+    if (!snapshot.suppressTaskbar && !HasMinimizeProtection(snapshot) && !styled && !state->classic)
     { Detach(window, state); return false; }
     return true;
 }
@@ -631,6 +706,27 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     {
         Detach(window, state, true);
         return DefSubclassProc(window, message, wParam, lParam);
+    }
+    // These are explicit taskbar keyboard/mouse operations, not passive
+    // WM_ACTIVATE/WM_SETFOCUS caused by another application minimizing.
+    const bool explicitReveal = message == WM_MOUSEACTIVATE ||
+        (message == WM_HOTKEY && (wParam == 0x1fe || wParam == 0x1ff || wParam == 0x24e)) ||
+        (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_TASKLIST) ||
+        ((message == 0x55c || message == 0x55d) && wParam != 0);
+    if (explicitReveal)
+    {
+        Snapshot snapshot;
+        if (ReadSharedSnapshot(state->mapping, snapshot) && snapshot.ownerProcessId == state->ownerId)
+        {
+            InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+            // Other taskbars may belong to different UI threads. Cancel their
+            // matching request too without synchronous cross-thread recursion.
+            std::lock_guard lock(windowsMutex);
+            for (const auto& [other, otherState] : windows)
+                if (other != window && otherState->mapping == state->mapping)
+                    PostMessageW(other, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+        }
+        Update(window, state, false);
     }
     if (message == RegisterWindowMessageW(kBeginMenuAccess))
     {
@@ -665,8 +761,10 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
     if (message == apply)
     {
-        Update(window, state, false);
-        return DefSubclassProc(window, message, wParam, lParam);
+        const bool updated = Update(window, state, false);
+        DefSubclassProc(window, message, wParam, lParam);
+        return updated && state->mapping->suppressionStatus >= kStatusIdle
+            ? kMinimizeApplyAcknowledged : 0;
     }
     if (message == WM_TIMER && wParam == kTimer)
     { Update(window, state, false); return 0; }
@@ -725,6 +823,29 @@ bool Retire(HWND window) noexcept try
 }
 catch (...) { return false; }
 
+void ObserveTaskbarInput(HWND source, DWORD messageTime) noexcept try
+{
+    if (!source || !messageTime || hookInstanceRetired.load()) return;
+    std::vector<std::pair<HWND, std::shared_ptr<WindowState>>> targets;
+    { std::lock_guard lock(windowsMutex);
+      for (const auto& entry : windows) targets.push_back(entry); }
+    for (const auto& [window, state] : targets)
+    {
+        if (!IsTrayOrigin(source, window) || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) continue;
+        Snapshot snapshot;
+        if (!ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
+            snapshot.ownerProcessId != state->ownerId) continue;
+        SetPropW(window, kMinimizeInputTickProperty, ULongToHandle(messageTime));
+        InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+        // All taskbar threads release the current request before a subsequent
+        // application minimize can be mistaken for a passive activation.
+        for (const auto& [other, otherState] : targets)
+            if (otherState->mapping == state->mapping)
+                PostMessageW(other, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+    }
+}
+catch (...) {}
+
 void ObserveMenuMessage(HWND source, UINT message) noexcept try
 {
     if (message != WM_ENTERMENULOOP && message != WM_EXITMENULOOP && message != WM_CONTEXTMENU)
@@ -759,7 +880,7 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     if (wcscmp(name, L"Shell_TrayWnd") != 0 && wcscmp(name, L"Shell_SecondaryTrayWnd") != 0) return false;
     Snapshot snapshot;
     if (!ReadSharedSnapshot(mapping, snapshot) || !snapshot.enabled ||
-        (!classic && !snapshot.suppressTaskbar)) return false;
+        (!classic && !snapshot.suppressTaskbar && !HasMinimizeProtection(snapshot))) return false;
     auto state = std::make_shared<WindowState>();
     state->mapping = mapping; state->classic = classic; state->ownerId = snapshot.ownerProcessId;
     state->primary = wcscmp(name, L"Shell_TrayWnd") == 0;
@@ -785,7 +906,8 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     }
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
-    if (!state->menuMouseHook || !state->menuMessageHook ||
+    state->inputMessageHook = SetWindowsHookExW(WH_GETMESSAGE, InputMessageProc, nullptr, GetCurrentThreadId());
+    if (!state->menuMouseHook || !state->menuMessageHook || !state->inputMessageHook ||
         !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))

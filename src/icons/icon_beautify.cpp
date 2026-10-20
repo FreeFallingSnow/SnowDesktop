@@ -1,4 +1,6 @@
 #include "icon_beautify.h"
+#include "icon_beautify_preview.h"
+#include "icon_render_rules.h"
 #include "theme/flat_glass_rim.h"
 #include "theme/appearance_edge_presets.h"
 
@@ -16,6 +18,40 @@
 
 namespace snowdesktop::icon_beautify
 {
+namespace
+{
+std::uint32_t SampleBilinear(const std::vector<std::uint32_t>& pixels,
+    int width, int height, float x, float y);
+}
+
+bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled)
+{
+    if (width <= 0 || height <= 0 || pixels.size() != static_cast<size_t>(width) * height) return false;
+    if (!enabled) return true;
+    const int sourceEdge = std::max(width, height);
+    const int edge = std::max(sourceEdge, icon_render_rules::kMinimumSourcePixels);
+    if (width == edge && height == edge) return true;
+    if (static_cast<std::uint64_t>(edge) * edge > 16ull * 1024 * 1024) return false;
+    std::vector<std::uint32_t> square(static_cast<size_t>(edge) * edge, 0);
+    const float scale = static_cast<float>(edge) / sourceEdge;
+    const int fittedWidth = std::max(1, static_cast<int>(std::lround(width * scale)));
+    const int fittedHeight = std::max(1, static_cast<int>(std::lround(height * scale)));
+    const int left = (edge - fittedWidth) / 2, top = (edge - fittedHeight) / 2;
+    for (int y = 0; y < fittedHeight; ++y)
+    {
+        auto* row = square.data() + static_cast<size_t>(y + top) * edge + left;
+        if (edge == sourceEdge)
+            std::copy_n(pixels.data() + static_cast<size_t>(y) * width, width, row);
+        else
+            for (int x = 0; x < fittedWidth; ++x)
+                row[x] = SampleBilinear(pixels, width, height,
+                    (static_cast<float>(x) + 0.5f) * width / fittedWidth - 0.5f,
+                    (static_cast<float>(y) + 0.5f) * height / fittedHeight - 0.5f);
+    }
+    width = height = edge; pixels = std::move(square);
+    return true;
+}
+
 InteractionAction AdvanceContinuousPreview(ContinuousPreviewState& state,
     bool changed, bool deactivatedAfterEdit, std::uint32_t now)
 {
@@ -421,7 +457,7 @@ std::uint32_t SampleBilinear(const std::vector<std::uint32_t>& pixels,
 }
 
 void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, bool legacyExact)
+    const IconBeautifySettings& settings, bool legacyExact, int rasterScale)
 {
     const EdgeColor start = ColorFromFloats(settings.backgroundStartR,
         settings.backgroundStartG, settings.backgroundStartB);
@@ -431,8 +467,12 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
     const EdgeColor automatic = AutoOutline(start, end);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     const auto& inner = CachedMask(settings.shape, width, height,
-        legacyExact ? 1.0f : std::max(0.0f, settings.outlineWidth));
+        (legacyExact ? 1.0f : std::max(0.0f, settings.outlineWidth)) * rasterScale);
     const int plateOpacity = static_cast<int>(std::round(settings.backgroundOpacity * 255.0f));
+    const auto& gradient = settings.backgroundGradient;
+    const auto line = ResolvePanelGradientLine(gradient, std::max(1, width - 1), std::max(1, height - 1));
+    const double dx = line.x2 - line.x1, dy = line.y2 - line.y1;
+    const double lengthSquared = dx * dx + dy * dy;
     for (int y = 0; y < height; ++y)
     {
         const float yt = height > 1 ? static_cast<float>(y) / (height - 1) : 0.0f;
@@ -451,6 +491,25 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
                 }
             }
             EdgeColor fill = Mix(start, end, t);
+            int opacity = plateOpacity;
+            if (gradient.enabled)
+            {
+                const double position = std::clamp(((x - line.x1) * dx + (y - line.y1) * dy) / lengthSquared, 0., 1.);
+                auto right = std::upper_bound(gradient.stops.begin(), gradient.stops.end(), position,
+                    [](double p, const auto& stop) { return p < stop.position; });
+                if (right == gradient.stops.end()) right = gradient.stops.end() - 1;
+                if (right == gradient.stops.begin()) ++right;
+                const auto& a = *(right - 1); const auto& b = *right;
+                const double amount = std::clamp((position - a.position) / (b.position - a.position), 0., 1.);
+                const double alpha = a.opacity * (1 - amount) + b.opacity * amount;
+                const auto channel = [&](int shift) {
+                    return alpha > .000001 ? static_cast<int>(std::lround(
+                        (((a.color >> shift) & 255) * a.opacity * (1 - amount) +
+                            ((b.color >> shift) & 255) * b.opacity * amount) / alpha)) : 0;
+                };
+                fill = {channel(16), channel(8), channel(0)};
+                opacity = static_cast<int>(std::lround(alpha * plateOpacity));
+            }
             const size_t index = static_cast<size_t>(y) * width + x;
             if (legacyExact && mask[index] > 0)
             {
@@ -458,7 +517,7 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
                     mask[index] - inner[index], 0, 255)) / mask[index];
                 fill = Mix(fill, automatic, edge);
             }
-            const int alpha = (mask[index] * plateOpacity + 127) / 255;
+            const int alpha = (mask[index] * opacity + 127) / 255;
             output[index] = PackPremultiplied(fill.r, fill.g, fill.b, alpha);
         }
     }
@@ -484,9 +543,42 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
     r = settings.filterTintR * gray;
     g = settings.filterTintG * gray;
     b = settings.filterTintB * gray;
-    r = originalR + (r - originalR) * settings.filterStrength;
-    g = originalG + (g - originalG) * settings.filterStrength;
-    b = originalB + (b - originalB) * settings.filterStrength;
+    if (settings.filterMode == 1)
+    {
+        // Set the tint's luminosity to the original pixel's, then compress into
+        // gamut about that luminosity. Black and white remain black and white.
+        const float tintLuma = settings.filterTintR * .299f + settings.filterTintG * .587f + settings.filterTintB * .114f;
+        r = settings.filterTintR + gray - tintLuma;
+        g = settings.filterTintG + gray - tintLuma;
+        b = settings.filterTintB + gray - tintLuma;
+        const float minimum = std::min({r, g, b});
+        if (minimum < 0 && gray > minimum)
+        {
+            const float factor = gray / (gray - minimum);
+            r = gray + (r - gray) * factor; g = gray + (g - gray) * factor; b = gray + (b - gray) * factor;
+        }
+        const float maximum = std::max({r, g, b});
+        if (maximum > 1 && maximum > gray)
+        {
+            const float factor = (1 - gray) / (maximum - gray);
+            r = gray + (r - gray) * factor; g = gray + (g - gray) * factor; b = gray + (b - gray) * factor;
+        }
+    }
+    else if (settings.filterMode == 2)
+    {
+        // A raster app icon often includes an opaque plate. Gradient mapping
+        // retains its mark and internal contrast where a flat alpha tint cannot.
+        const auto tone = [gray](float tint) { return std::lerp(tint * .16f, .88f + tint * .12f, gray); };
+        r = tone(settings.filterTintR); g = tone(settings.filterTintG); b = tone(settings.filterTintB);
+    }
+    // Preserve the legacy byte rounding for migrated settings. New treatments
+    // keep their exact endpoint, avoiding one-byte variation at a color endpoint.
+    if (settings.filterMode == 0 || settings.filterStrength < 1.f)
+    {
+        r = originalR + (r - originalR) * settings.filterStrength;
+        g = originalG + (g - originalG) * settings.filterStrength;
+        b = originalB + (b - originalB) * settings.filterStrength;
+    }
     return PackPremultiplied(
         static_cast<int>(std::round(std::clamp(r, 0.0f, 1.0f) * 255.0f)),
         static_cast<int>(std::round(std::clamp(g, 0.0f, 1.0f) * 255.0f)),
@@ -495,14 +587,14 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
 }
 
 void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale)
 {
     if (settings.textureHighlightStrength <= 0.0005f &&
         settings.textureShadeStrength <= 0.0005f &&
         settings.textureEdgeHighlight <= 0.0005f)
         return;
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
-    const auto& inner = CachedMask(settings.shape, width, height, 1.5f);
+    const auto& inner = CachedMask(settings.shape, width, height, 1.5f * rasterScale);
     for (int y = 0; y < height; ++y)
     {
         const float yt = (static_cast<float>(y) + 0.5f) / height;
@@ -537,7 +629,7 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale = 1)
 {
     if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
     const auto& outline = OutlineFor(settings.shape);
@@ -572,13 +664,15 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float distance = std::sqrt(nearest) - rimInset;
         const float lighting = material.Lighting((static_cast<float>(x) + .5f) / wf,
             (static_cast<float>(y) + .5f) / hf);
-        const float light = material.Intensity(distance, depth, lighting);
+        // Evaluate in native units so the evaluator's fixed outer support is
+        // supersampled together with the normalized contour and depth.
+        const float light = material.Intensity(distance / rasterScale, depth / rasterScale, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
         if (material.settings.shadowStrength > 0.f)
         {
             const int shadowAlpha = static_cast<int>(std::lround(
-                material.Occlusion(distance, depth, lighting) *
+                material.Occlusion(distance / rasterScale, depth / rasterScale, lighting) *
                 settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
@@ -587,7 +681,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
 }
 
 void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale)
 {
     if (!settings.outlineEnabled || settings.outlineWidth <= 0.0f)
         return;
@@ -595,7 +689,7 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
         settings.outlineR, settings.outlineG, settings.outlineB);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     const float outlineWidth = settings.glassEnabled
-        ? settings.outlineWidth * std::min(width, height) / 52.0f : settings.outlineWidth;
+        ? settings.outlineWidth * std::min(width, height) / 52.0f : settings.outlineWidth * rasterScale;
     const auto& inner = CachedMask(settings.shape, width, height, outlineWidth);
     const int opacity = static_cast<int>(std::round(settings.outlineOpacity * 255.0f));
     for (size_t i = 0; i < output.size(); ++i)
@@ -630,7 +724,10 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     settings.edgeHighlightStrength = std::isfinite(settings.edgeHighlightStrength) ?
         std::clamp(settings.edgeHighlightStrength, 0.0f, 1.0f) : 0.40f;
     settings.edgeLight = NormalizeEdgeLight(settings.edgeLight);
-    settings.mode = std::clamp(settings.mode, 0, 1);
+    settings.mode = std::clamp(settings.mode, 0, 2);
+    settings.backgroundSource = std::clamp(settings.backgroundSource, 0, 2);
+    settings.filterMode = std::clamp(settings.filterMode, 0, 2);
+    if (!ValidatePanelGradient(settings.backgroundGradient)) settings.backgroundGradient = {};
     settings.backgroundOpacity = std::clamp(settings.backgroundOpacity, 0.0f, 1.0f);
     settings.gradientDirection = std::clamp(settings.gradientDirection, 0, 3);
     settings.backgroundStartR = std::clamp(settings.backgroundStartR, 0.0f, 1.0f);
@@ -675,6 +772,29 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     return settings;
 }
 
+PanelGradient BackgroundGradient(const IconBeautifySettings& settings)
+{
+    if (settings.backgroundGradient.enabled || !settings.gradientEnabled) return settings.backgroundGradient;
+    PanelGradient gradient;
+    gradient.enabled = settings.gradientEnabled;
+    constexpr double angles[]{90, 0, 45, 315};
+    gradient.angle = angles[std::clamp(settings.gradientDirection, 0, 3)];
+    const auto rgb = [](float r, float g, float b) {
+        const auto c = ColorFromFloats(r, g, b);
+        return static_cast<unsigned>(c.r << 16 | c.g << 8 | c.b);
+    };
+    gradient.stops = {{0, rgb(settings.backgroundStartR, settings.backgroundStartG, settings.backgroundStartB), 1},
+        {1, rgb(settings.backgroundEndR, settings.backgroundEndG, settings.backgroundEndB), 1}};
+    return gradient;
+}
+
+IconBeautifySettings NormalizeGlobal(IconBeautifySettings settings)
+{
+    settings = Normalize(settings);
+    if (settings.mode == 2) settings.mode = 0;
+    return settings;
+}
+
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
 {
     const IconBeautifySettings a = Normalize(lhs);
@@ -682,6 +802,7 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
     auto eq = [](float x, float y) { return std::abs(x - y) <= 0.0005f; };
     return a.enabled == b.enabled && a.preset == b.preset &&
         a.mode == b.mode &&
+        a.backgroundSource == b.backgroundSource && a.backgroundGradient == b.backgroundGradient && a.filterMode == b.filterMode &&
         eq(a.backgroundOpacity, b.backgroundOpacity) &&
         a.glassEnabled == b.glassEnabled && eq(a.glassBlurRadius, b.glassBlurRadius) &&
         a.edgeHighlightEnabled == b.edgeHighlightEnabled &&
@@ -715,7 +836,7 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
 {
     const IconBeautifySettings s = Normalize(settings);
-    return s.shape == IconBeautifyShape::LegacyRounded &&
+    return s.shape == IconBeautifyShape::LegacyRounded && !s.backgroundGradient.enabled && s.backgroundSource == 0 &&
         s.textureHighlightStrength <= 0.0005f &&
         s.textureShadeStrength <= 0.0005f &&
         s.textureEdgeHighlight <= 0.0005f && !s.filterEnabled &&
@@ -810,6 +931,7 @@ IconBeautifySettings ResolvePersistedSettings(IconBeautifySettings settings,
     }
     if (settings.preset == IconBeautifyPreset::Custom) return settings;
     auto current = MakePreset(settings.preset);
+    current.mode = settings.mode;
     if (current.preset != IconBeautifyPreset::None)
         current.enabled = settings.enabled;
     return current;
@@ -862,6 +984,7 @@ IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
     {
         IconBeautifySettings candidate = MakePreset(preset);
         candidate.preset = normalized.preset;
+        candidate.mode = normalized.mode;
         if (Equal(normalized, candidate))
             return preset;
     }
@@ -900,59 +1023,110 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     return pixels;
 }
 
-std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
+static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
-    std::optional<EdgeColor> detectedEdgeFill)
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
         return source;
-    const IconBeautifySettings settings = Normalize(rawSettings);
+    IconBeautifySettings settings = Normalize(rawSettings);
     if (!settings.enabled)
         return source;
     const Bounds bounds = VisibleBounds(source, width, height);
     if (!bounds.valid) return source;
+    const Bounds contentBounds = settings.mode == 1 ? Bounds{true, 0, 0, width - 1, height - 1} : bounds;
+    if (settings.mode != 0) detectedEdgeFill.reset();
+    if (!detectedEdgeFill && settings.backgroundSource != 0)
+    {
+        auto seed = settings.backgroundSource == 1 ? DetectPlateFill(source, width, height) : std::nullopt;
+        if (!seed)
+        {
+            // Score opaque color clusters rather than averaging unrelated hues.
+            // Chroma weighting keeps a large white icon plate from hiding its mark.
+            struct Bucket { double weight = 0, r = 0, g = 0, b = 0; };
+            std::array<Bucket, 512> buckets{};
+            for (auto pixel : source)
+            {
+                const int a = PixelA(pixel); if (a < 32) continue;
+                const int r = std::min(255, static_cast<int>((pixel >> 16) & 255) * 255 / a);
+                const int g = std::min(255, static_cast<int>((pixel >> 8) & 255) * 255 / a);
+                const int b = std::min(255, static_cast<int>(pixel & 255) * 255 / a);
+                const double chroma = (std::max({r, g, b}) - std::min({r, g, b})) / 255.;
+                const double weight = a * (.025 + chroma * chroma);
+                auto& bucket = buckets[(r >> 5) * 64 + (g >> 5) * 8 + (b >> 5)];
+                bucket.weight += weight; bucket.r += r * weight; bucket.g += g * weight; bucket.b += b * weight;
+            }
+            const auto best = std::max_element(buckets.begin(), buckets.end(),
+                [](const auto& a, const auto& b) { return a.weight < b.weight; });
+            if (best->weight > 0) seed = EdgeColor{static_cast<int>(std::lround(best->r / best->weight)),
+                static_cast<int>(std::lround(best->g / best->weight)), static_cast<int>(std::lround(best->b / best->weight))};
+        }
+        if (seed)
+        {
+            settings.backgroundStartR = static_cast<float>(seed->r) / 255.f;
+            settings.backgroundStartG = static_cast<float>(seed->g) / 255.f;
+            settings.backgroundStartB = static_cast<float>(seed->b) / 255.f;
+            settings.backgroundEndR = settings.backgroundStartR; settings.backgroundEndG = settings.backgroundStartG; settings.backgroundEndB = settings.backgroundStartB;
+            settings.backgroundGradient = BackgroundGradient(settings);
+            for (auto& stop : settings.backgroundGradient.stops)
+            {
+                const auto color = Mix(*seed, {255, 255, 255}, static_cast<float>(.35 * (1 - stop.position)));
+                stop.color = static_cast<unsigned>(color.r << 16 | color.g << 8 | color.b);
+            }
+        }
+    }
     const bool legacyExact = UsesLegacyGeometryDefaults(settings);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     std::vector<std::uint32_t> output(source.size(), 0);
 
-    if (detectedEdgeFill)
+    if (detectedEdgeFill || settings.mode == 2)
     {
-        const EdgeColor edge = *detectedEdgeFill;
-        const std::uint32_t background = ApplyFilter(
-            PackPremultiplied(edge.r, edge.g, edge.b, 255), settings);
-        // Smart recognition only clips the original icon to the selected shape.
-        // Content scaling is reserved for the explicit shrink-and-background mode.
+        // Smart recognition fills a detected original plate. Explicit theme
+        // backgrounds retain the source canvas without overriding theme colors.
+        std::uint32_t background = 0;
+        if (detectedEdgeFill)
+        {
+            const auto edge = *detectedEdgeFill;
+            background = ApplyFilter(PackPremultiplied(edge.r, edge.g, edge.b, 255), settings);
+        }
+        else FillPlate(output, width, height, settings, legacyExact, rasterScale);
         for (size_t i = 0; i < output.size(); ++i)
-            output[i] = ScalePixel(SourceOver(
-                ApplyFilter(source[i], settings), background), mask[i]);
-        ApplyTexture(output, width, height, settings);
-        ApplyOutline(output, width, height, settings);
-        ApplyEdgeReflection(output, width, height, settings);
+        {
+            const auto foreground = ApplyFilter(source[i], settings);
+            output[i] = detectedEdgeFill ? ScalePixel(SourceOver(foreground, background), mask[i]) :
+                SourceOver(ScalePixel(foreground, mask[i]), output[i]);
+        }
+        ApplyTexture(output, width, height, settings, rasterScale);
+        ApplyOutline(output, width, height, settings, rasterScale);
+        ApplyEdgeReflection(output, width, height, settings, rasterScale);
         return output;
     }
 
-    FillPlate(output, width, height, settings, legacyExact);
-    const int sourceW = std::max(1, bounds.right - bounds.left + 1);
-    const int sourceH = std::max(1, bounds.bottom - bounds.top + 1);
+    FillPlate(output, width, height, settings, legacyExact, rasterScale);
+    const int sourceW = std::max(1, contentBounds.right - contentBounds.left + 1);
+    const int sourceH = std::max(1, contentBounds.bottom - contentBounds.top + 1);
     int maxW = 0;
     int maxH = 0;
     if (legacyExact)
     {
         const int padding = std::max(5,
-            static_cast<int>(std::round(std::min(width, height) * 0.16f)));
+            static_cast<int>(std::round(static_cast<float>(std::min(width, height)) / rasterScale * 0.16f))) * rasterScale;
         maxW = std::max(1, width - padding * 2);
         maxH = std::max(1, height - padding * 2);
     }
     else
     {
-        maxW = std::max(1, static_cast<int>(std::round(width * settings.contentScale)));
-        maxH = std::max(1, static_cast<int>(std::round(height * settings.contentScale)));
+        maxW = std::max(1, static_cast<int>(std::round(static_cast<float>(width) / rasterScale * settings.contentScale))) * rasterScale;
+        maxH = std::max(1, static_cast<int>(std::round(static_cast<float>(height) / rasterScale * settings.contentScale))) * rasterScale;
     }
-    const float scale = std::min(static_cast<float>(maxW) / sourceW,
+    const float fit = std::min(static_cast<float>(maxW) / sourceW,
         static_cast<float>(maxH) / sourceH);
-    const int destW = std::max(1, static_cast<int>(std::round(sourceW * scale)));
-    const int destH = std::max(1, static_cast<int>(std::round(sourceH * scale)));
+    const bool nativeMargins = sourceKind == SourceKind::NativeControl;
+    const float scale = nativeMargins ? std::min(1.0f, fit) : fit;
+    int destW = std::max(1, static_cast<int>(std::round(sourceW * scale / rasterScale))) * rasterScale;
+    int destH = std::max(1, static_cast<int>(std::round(sourceH * scale / rasterScale))) * rasterScale;
+    if (nativeMargins) { destW = std::min(sourceW, destW); destH = std::min(sourceH, destH); }
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 
@@ -962,9 +1136,9 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     for (int y = 0; y < destH; ++y)
         for (int x = 0; x < destW; ++x)
         {
-            const float sx = bounds.left +
+            const float sx = contentBounds.left +
                 ((static_cast<float>(x) + 0.5f) / destW) * sourceW - 0.5f;
-            const float sy = bounds.top +
+            const float sy = contentBounds.top +
                 ((static_cast<float>(y) + 0.5f) / destH) * sourceH - 0.5f;
             const std::uint32_t sampled = SampleBilinear(source, width, height, sx, sy);
             if (PixelA(sampled) == 0) continue;
@@ -972,8 +1146,8 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             const int oy = destTop + y;
             for (const auto& [dx, dy, baseOpacity] : passes)
             {
-                const int px = ox + dx;
-                const int py = oy + dy;
+                const int px = ox + dx * rasterScale;
+                const int py = oy + dy * rasterScale;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
                 const size_t index = static_cast<size_t>(py) * width + px;
                 const int opacity = static_cast<int>(std::round(baseOpacity * settings.shadowStrength));
@@ -987,9 +1161,9 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     for (int y = 0; y < destH; ++y)
         for (int x = 0; x < destW; ++x)
         {
-            const float sx = bounds.left +
+            const float sx = contentBounds.left +
                 ((static_cast<float>(x) + 0.5f) / destW) * sourceW - 0.5f;
-            const float sy = bounds.top +
+            const float sy = contentBounds.top +
                 ((static_cast<float>(y) + 0.5f) / destH) * sourceH - 0.5f;
             const int ox = destLeft + x;
             const int oy = destTop + y;
@@ -1000,10 +1174,25 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             output[index] = SourceOver(sampled, output[index]);
         }
 
-    ApplyTexture(output, width, height, settings);
-    ApplyOutline(output, width, height, settings);
-    ApplyEdgeReflection(output, width, height, settings);
+    ApplyTexture(output, width, height, settings, rasterScale);
+    ApplyOutline(output, width, height, settings, rasterScale);
+    ApplyEdgeReflection(output, width, height, settings, rasterScale);
     return output;
+}
+
+std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
+    int width, int height, const IconBeautifySettings& settings,
+    std::optional<EdgeColor> detectedEdgeFill, SourceKind sourceKind)
+{
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind);
+}
+
+std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& source,
+    int width, int height, const IconBeautifySettings& settings,
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
+{
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill,
+        std::clamp(rasterScale, 1, 4), sourceKind);
 }
 
     static EdgeColor StraightPlateColor(std::uint32_t pixel)
@@ -1034,8 +1223,8 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             return std::nullopt;
 
         constexpr int kEdgeAlpha = 16;
-        constexpr int kReliableAlpha = 160;
-        constexpr int kMaxInnerProbe = 4;
+        // Probe inside the contour, past a decorative rim and tiny alpha gaps.
+        const int kMaxInnerProbe = std::clamp(std::min(width, height) / 32, 2, 8);
         constexpr int kColorBucketSize = 24;
         constexpr int kEdgeColorToleranceSq = 30 * 30 * 3;
         constexpr float kMinimumFillRatio = 0.992f;
@@ -1140,9 +1329,7 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             for (int x = rowLeft; x <= rowRight; ++x)
             {
                 ++expectedPixels;
-                if (!isVisible(x, y))
-                    return std::nullopt;
-                ++filledPixels;
+                if (isVisible(x, y)) ++filledPixels;
             }
         }
         const float fillRatio = expectedPixels > 0
@@ -1151,29 +1338,30 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         if (fillRatio < kMinimumFillRatio)
             return std::nullopt;
 
-        auto stableEdgeColor = [&](int x, int y, int dx, int dy) {
+        auto stableEdgeColor = [&](int x, int y) {
+            const float dx = static_cast<float>(boundsLeft + boundsRight) * .5f - static_cast<float>(x);
+            const float dy = static_cast<float>(boundsTop + boundsBottom) * .5f - static_cast<float>(y);
+            const float span = std::max({std::abs(dx), std::abs(dy), 1.f});
             int bestX = x;
             int bestY = y;
             int bestAlpha = PixelA(pixels[static_cast<size_t>(y) * width + x]);
 
             for (int step = 1; step <= kMaxInnerProbe; ++step)
             {
-                const int nx = x + dx * step;
-                const int ny = y + dy * step;
+                const int nx = x + static_cast<int>(std::lround(dx / span * step));
+                const int ny = y + static_cast<int>(std::lround(dy / span * step));
                 if (nx < 0 || ny < 0 || nx >= width || ny >= height)
                     break;
 
                 const int alpha = PixelA(pixels[static_cast<size_t>(ny) * width + nx]);
                 if (alpha <= kEdgeAlpha)
-                    break;
-                if (alpha > bestAlpha)
+                    continue;
+                if (alpha >= bestAlpha)
                 {
                     bestAlpha = alpha;
                     bestX = nx;
                     bestY = ny;
                 }
-                if (alpha >= kReliableAlpha)
-                    break;
             }
 
             return StraightPlateColor(pixels[static_cast<size_t>(bestY) * width + bestX]);
@@ -1216,9 +1404,9 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         {
             const int rowLeft = left[static_cast<size_t>(y)];
             const int rowRight = right[static_cast<size_t>(y)];
-            addSample(stableEdgeColor(rowLeft, y, 1, 0), rowLeft, y);
+            addSample(stableEdgeColor(rowLeft, y), rowLeft, y);
             if (rowRight != rowLeft)
-                addSample(stableEdgeColor(rowRight, y, -1, 0), rowRight, y);
+                addSample(stableEdgeColor(rowRight, y), rowRight, y);
         }
 
         for (int x = boundsLeft; x <= boundsRight; ++x)
@@ -1228,9 +1416,9 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             if (colTop < 0 || colBottom < colTop)
                 return std::nullopt;
 
-            addSample(stableEdgeColor(x, colTop, 0, 1), x, colTop);
+            addSample(stableEdgeColor(x, colTop), x, colTop);
             if (colBottom != colTop)
-                addSample(stableEdgeColor(x, colBottom, 0, -1), x, colBottom);
+                addSample(stableEdgeColor(x, colBottom), x, colBottom);
         }
 
         if (edgeSamples.empty())

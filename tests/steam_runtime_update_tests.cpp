@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -546,18 +547,27 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
 {
     const auto oldRuntime = PrepareRuntime(
         root, "1.0.5.0-1111111111111111", "host old", "dll old");
-    const auto preserved = PrepareRuntime(root, "1.0.5.0-3333333333333333");
+    const auto predecessor = PrepareRuntime(root, "1.0.5.0-3333333333333333");
     std::string confirmationError;
-    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, preserved.executable, confirmationError),
+    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, predecessor.executable, confirmationError),
         "the predecessor is confirmed before preparing the new runtime");
     const auto currentRuntime = PrepareRuntime(
         root, "1.0.5.0-2222222222222222", "host current", "dll current");
-    if (!oldRuntime.ok || !currentRuntime.ok)
+    if (!oldRuntime.ok || !predecessor.ok || !currentRuntime.ok)
         return;
+    const auto beforeReady = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+        root, currentRuntime.executable);
+    Check(beforeReady.ok && beforeReady.removed == 0 &&
+            std::filesystem::exists(oldRuntime.executable) &&
+            std::filesystem::exists(predecessor.executable),
+        "preparing a new runtime keeps all predecessors until readiness");
     Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, currentRuntime.executable, confirmationError),
         "only a confirmed new runtime may request retirement");
 
     const auto runtimeRoot = root / L".snowdesktop" / L"runtime";
+    const auto legacyPrevious = root / L".snowdesktop" / L"previous-runtime.txt";
+    WriteText(legacyPrevious, "invalid/legacy-selection\n");
+    WriteText(root / L"data" / L"layout.json", "stable user layout");
     WriteText(oldRuntime.executable.parent_path() / L"imgui.ini",
         "unexpected runtime residue");
     WriteText(oldRuntime.executable.parent_path() / L"data" /
@@ -577,13 +587,15 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
         const auto retained =
             snowdesktop::steam_runtime::PruneInactiveRuntimes(
                 root, currentRuntime.executable);
-        Check(retained.ok && retained.removed == 0 &&
+        Check(retained.ok && retained.removed == 1 &&
                 retained.retained == 1 &&
                 std::filesystem::exists(oldRuntime.executable) &&
+                !std::filesystem::exists(predecessor.executable.parent_path()) &&
                 std::filesystem::exists(currentRuntime.executable),
-            "runtime pruning retains an occupied old runtime without touching the current runtime");
+            "confirmed startup removes the predecessor despite a damaged legacy record and defers occupied runtimes");
     }
 
+    std::filesystem::remove(legacyPrevious);
     const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
         root, currentRuntime.executable);
     Check(pruned.ok && pruned.removed == 1 && pruned.retained == 0 &&
@@ -594,8 +606,9 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
         "runtime pruning preserves an unrelated directory in the managed root");
     Check(std::filesystem::exists(similarUnknownDirectory / L"keep.txt"),
         "runtime pruning preserves a directory outside launcher naming rules");
-    Check(std::filesystem::exists(preserved.executable),
-        "runtime pruning preserves the last confirmed predecessor");
+    Check(ReadText(root / L"data" / L"layout.json") == "stable user layout" &&
+            ReadText(root / L"distribution" / L"SnowDesktop.exe") == "host current",
+        "retiring old runtimes leaves shared user data and the Steam distribution unchanged");
 }
 
 void CorruptDistributionLibrary(const std::filesystem::path& root)
@@ -1701,12 +1714,13 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     Check(!std::filesystem::exists(state / L"failed-launch-manifest.txt"),
         "successful readiness clears only its distribution's failure record");
     const auto pruned = PruneInactiveRuntimes(root, retry.executable);
-    Check(pruned.ok && pruned.removed == 0 && std::filesystem::exists(first.executable),
-        "confirmed startup keeps its predecessor for recovery");
+    Check(pruned.ok && pruned.removed == 1 && !std::filesystem::exists(first.executable.parent_path()) &&
+            std::filesystem::exists(retry.executable),
+        "confirmed startup retires its predecessor after the recovery boundary ends");
     WriteText(state / L"previous-runtime.txt", "invalid/selection\n");
-    const auto unsafeCleanup = PruneInactiveRuntimes(root, retry.executable);
-    Check(!unsafeCleanup.ok && unsafeCleanup.removed == 0 && std::filesystem::exists(first.executable),
-        "a damaged predecessor record prevents cleanup from discarding recovery data");
+    const auto repeatedCleanup = PruneInactiveRuntimes(root, retry.executable);
+    Check(repeatedCleanup.ok && repeatedCleanup.removed == 0 && std::filesystem::exists(retry.executable),
+        "repeated cleanup ignores obsolete predecessor metadata and keeps the confirmed runtime");
 }
 
 void TestConcurrentLaunchRecovery(const std::filesystem::path& root)
@@ -1764,6 +1778,41 @@ int RunLauncherFixtureHost(int argc, wchar_t** argv)
     return 0;
 }
 
+void MakeGuiLauncherFixture(const std::filesystem::path& payload)
+{
+    // The test runner remains a console program, but its copied host must
+    // match SnowDesktop's GUI subsystem. Reattaching console-host fixtures
+    // during immediate recovery can fail in Windows DLL initialization,
+    // before this fixture's entry point or the startup protocol executes.
+    // Change only the subsystem word in the disposable, unsigned copy; its
+    // existing wmain CRT entry point and all business assertions stay intact.
+    std::fstream file(payload, std::ios::binary | std::ios::in | std::ios::out);
+    IMAGE_DOS_HEADER dos{};
+    file.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+    if (!file || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0)
+    {
+        Check(false, "the copied launcher host has a valid DOS header");
+        return;
+    }
+    file.seekg(dos.e_lfanew);
+    IMAGE_NT_HEADERS nt{};
+    file.read(reinterpret_cast<char*>(&nt), sizeof(nt));
+    if (!file || nt.Signature != IMAGE_NT_SIGNATURE ||
+        nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC)
+    {
+        Check(false, "the copied launcher host has native PE headers");
+        return;
+    }
+    const auto subsystemOffset = static_cast<std::streamoff>(dos.e_lfanew) +
+        static_cast<std::streamoff>(offsetof(IMAGE_NT_HEADERS, OptionalHeader)) +
+        static_cast<std::streamoff>(offsetof(IMAGE_OPTIONAL_HEADER, Subsystem));
+    const WORD subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
+    file.seekp(subsystemOffset);
+    file.write(reinterpret_cast<const char*>(&subsystem), sizeof(subsystem));
+    file.flush();
+    Check(file.good(), "the disposable launcher host matches the product GUI subsystem");
+}
+
 void WriteLauncherDistribution(const std::filesystem::path& root,
     const std::filesystem::path& host, std::string_view id,
     std::string_view mode, bool protocol = true, bool invalidExecutable = false)
@@ -1772,7 +1821,11 @@ void WriteLauncherDistribution(const std::filesystem::path& root,
     std::filesystem::create_directories(distribution);
     const auto payload = distribution / L"SnowDesktop.exe";
     if (invalidExecutable) WriteText(payload, "not an executable");
-    else std::filesystem::copy_file(host, payload, std::filesystem::copy_options::overwrite_existing);
+    else
+    {
+        std::filesystem::copy_file(host, payload, std::filesystem::copy_options::overwrite_existing);
+        MakeGuiLauncherFixture(payload);
+    }
     WriteText(distribution / L"mode.txt", mode);
     std::ostringstream manifest;
     manifest << "{\"schemaVersion\":1,\"kind\":\"steam-managed\",\"version\":\"1.0.7.0\",\"buildId\":\""
@@ -1802,16 +1855,64 @@ DWORD RunLauncherProcess(const std::filesystem::path& root, std::wstring_view ar
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = SW_HIDE;
+    // Ready lets the production launcher return before its temporary fixture
+    // host exits. Own and drain that process tree before the next scenario;
+    // otherwise a still-exiting predecessor is legitimately in use at prune.
+    const HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) return GetLastError();
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    {
+        const auto error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(launcher.c_str(), command.data(), nullptr, nullptr,
-            FALSE, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process))
-        return GetLastError();
+            FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, root.c_str(), &startup, &process))
+    {
+        const auto error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
+    if (!AssignProcessToJobObject(job, process.hProcess) || ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+    {
+        const auto error = GetLastError();
+        TerminateProcess(process.hProcess, error);
+        TerminateJobObject(job, error);
+        WaitForSingleObject(process.hProcess, 5000);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        CloseHandle(job);
+        return error;
+    }
     CloseHandle(process.hThread);
+    const auto started = GetTickCount64();
     const auto waited = WaitForSingleObject(process.hProcess, 30000);
     DWORD result = ERROR_TIMEOUT;
     if (waited == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &result);
-    else TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+    else TerminateJobObject(job, ERROR_TIMEOUT);
+    for (;;)
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
+                &accounting, sizeof(accounting), nullptr))
+        {
+            result = GetLastError();
+            break;
+        }
+        if (accounting.ActiveProcesses == 0) break;
+        if (GetTickCount64() - started >= 30000)
+        {
+            result = ERROR_TIMEOUT;
+            TerminateJobObject(job, ERROR_TIMEOUT);
+            break;
+        }
+        Sleep(10);
+    }
     CloseHandle(process.hProcess);
+    CloseHandle(job);
     return result;
 }
 
@@ -1851,9 +1952,15 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "the real child receives empty, spaced, quoted and trailing-backslash arguments without inheriting startup identity");
 
     WriteLauncherDistribution(root, host, b, "fail-before");
-    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
-            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n" &&
-            ReadText(state / L"launcher.log").find("before data access") != std::string::npos,
+    const auto recoveryExit = RunLauncherProcess(root, L"--launcher-test-host");
+    const auto recoveredSelection = ReadText(state / kCurrentRuntimeFilename);
+    const auto recoveryLog = ReadText(state / L"launcher.log");
+    if (recoveryExit != 0 || recoveredSelection != std::string(a) + "\n" ||
+        recoveryLog.find("before data access") == std::string::npos)
+        std::cerr << "Pre-data recovery: exit=" << recoveryExit << ", selection=" <<
+            recoveredSelection << ", launcher log=" << recoveryLog << '\n';
+    Check(recoveryExit == 0 && recoveredSelection == std::string(a) + "\n" &&
+            recoveryLog.find("before data access") != std::string::npos,
         "pre-data child exit is diagnosed and recovers the previous host through the real launcher");
     const auto beforeRetry = ReadText(output);
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
@@ -1895,12 +2002,15 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "cleanup while a newer distribution is available never activates that distribution");
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
             ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
-            std::filesystem::exists(runtime / a) && !std::filesystem::exists(runtime / b),
-        "successful initialization cleans old attempts while retaining the confirmed predecessor");
+            std::filesystem::exists(runtime / g) &&
+            !std::filesystem::exists(runtime / a) && !std::filesystem::exists(runtime / b) &&
+            !std::filesystem::exists(runtime / c) && !std::filesystem::exists(runtime / d) &&
+            !std::filesystem::exists(runtime / e) && !std::filesystem::exists(runtime / f),
+        "the real launcher retires every old runtime after successful initialization");
     WriteLauncherDistribution(root, host, b, "ready", false);
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
             ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
-            std::filesystem::exists(runtime / a),
+            std::filesystem::exists(runtime / g) && std::filesystem::exists(runtime / b),
         "legacy hosts remain launchable without a fabricated readiness result or cleanup");
     Check(ReadText(root / L"data" / L"sentinel.txt") == "preserve user layout",
         "all real launcher paths preserve stable user data");

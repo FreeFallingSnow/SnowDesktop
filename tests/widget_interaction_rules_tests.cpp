@@ -2,6 +2,8 @@
 #include "../src/app/widgets/widget_group_transition.h"
 #include "../src/widgets/widget_pair_drop.h"
 #include "app/widgets/widget_pair_drag_source.h"
+#include "app/widgets/widget_right_drag_actions.h"
+#include "widgets/widget_group_drop.h"
 #include "desktop/desktop_hover_rules.h"
 #include "dock/dock_magnification.h"
 #include "drag_drop/drag_input_rules.h"
@@ -14,6 +16,9 @@
 #include "drag_drop/pending_drop_rules.h"
 #include "layout/list_detail_rules.h"
 #include "layout/popup_icon_load_rules.h"
+#include "layout/collection_popup_layout.h"
+#include "layout/item_layout_rules.h"
+#include "test_source_boundary.h"
 #include "widget/runtime/widget_menu_catalogue.h"
 
 #include <algorithm>
@@ -51,6 +56,26 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void TestCollectionTitleSettingScope()
+{
+    using snowdesktop::item_layout_rules::ResolveTitleLines;
+    // Exercise opposite settings, so accidentally applying the large-folder
+    // preference to its popup cannot pass with the default two-line values.
+    for (const int largeFolderLines : {1, 2})
+    {
+        const int scrollingLines = 3 - largeFolderLines;
+        Check(ResolveTitleLines(true, true, false, 2, largeFolderLines, scrollingLines) == largeFolderLines,
+            "desktop large-folder preview follows its own label-line preference");
+        Check(ResolveTitleLines(true, true, true, 2, largeFolderLines, scrollingLines) == scrollingLines,
+            "expanding a large folder uses scrolling labels instead of its desktop-preview preference");
+        Check(ResolveTitleLines(true, false, true, 2, largeFolderLines, scrollingLines) == scrollingLines &&
+            ResolveTitleLines(true, false, false, 2, largeFolderLines, scrollingLines) == scrollingLines,
+            "scrolling collections and folder mappings retain their label preference on both surfaces");
+        Check(ResolveTitleLines(false, false, false, 1, largeFolderLines, scrollingLines) == 1,
+            "desktop icon labels stay independent of both container preferences");
+    }
 }
 
 void TestWidgetMenuMetadataReuse()
@@ -1148,6 +1173,46 @@ void TestDockDesktopHoverHandoff()
         "negative control must reject the old route that restarts hover and leaves desktop tracking unarmed");
 }
 
+void TestRetainedDockLeaveDoesNotFeedBack()
+{
+    hoverRules::RetainedDockLeaveTracking tracking;
+    snowdesktop::dock_magnification::HoverEntryAnimation entry;
+    entry.SetHovered(true, 1000.0, 1.0);
+    entry.Advance(1160.0);
+    int contentSubscriptions = 0, desktopSubscriptions = 0;
+    const auto leave = [&](bool content, bool backdrop, bool desktop, int x, int y) {
+        const bool retained = hoverRules::RetainDockSurfaceMouseLeave(
+            content, backdrop, desktop, [&](bool trackContent) {
+                if (!hoverRules::TryRearmRetainedDockLeave(tracking, trackContent, x, y)) return;
+                if (trackContent) ++contentSubscriptions;
+                else ++desktopSubscriptions;
+            });
+        if (!retained) entry.SetHovered(false, 1200.0, 1.0);
+        return retained;
+    };
+    // Model User32 immediately posting another WM_MOUSELEAVE after each
+    // subscription at the recorded stationary bottom-edge position.
+    for (int i = 0; i < 256; ++i)
+        Check(leave(true, false, false, 1402, 1439),
+            "repeated native leaves must retain the logical Dock hover");
+    Check(contentSubscriptions == 1 && entry.FocusScale(2.0f) == 2.0f,
+        "stationary retained leaves must not continuously resubscribe or restart magnification");
+    hoverRules::ObserveRetainedDockLeavePointer(tracking, 1402, 1439);
+    Check(leave(true, false, false, 1402, 1439) && contentSubscriptions == 1,
+        "a synthetic move at the same position must not reopen the leave loop");
+    Check(leave(false, true, false, 1402, 1439) && contentSubscriptions == 1 &&
+        desktopSubscriptions == 0, "backdrop handoff retains hover without subscribing content");
+    for (int i = 0; i < 256; ++i)
+        Check(leave(false, false, true, 1402, 1439), "desktop handoff must retain hover");
+    Check(desktopSubscriptions == 1,
+        "the desktop surface gets one independent subscription at a stationary handoff");
+    hoverRules::ObserveRetainedDockLeavePointer(tracking, 1403, 1439);
+    Check(leave(true, false, false, 1403, 1439) && contentSubscriptions == 2,
+        "real pointer movement restores the next native leave subscription");
+    Check(!leave(false, false, false, 1403, 1439) && entry.FocusScale(2.0f) == 1.0f,
+        "a real exit still clears Dock magnification");
+}
+
 void TestDragInputSampling()
 {
     Check(
@@ -1640,6 +1705,331 @@ void TestGroupedLabelPairDrops()
         "stale Dock widget entries must not arm a pair drop");
 }
 
+void TestDesktopIconSourceVacatesItsHitBlock()
+{
+    namespace drag = snowdesktop::widget_pair_drag;
+    for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
+            DesktopWidgetType::FolderMapping, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        DesktopWidget source;
+        source.id = L"dragged-entrance";
+        source.type = type;
+        source.gridCell = {L"desktop-page", 2, 3};
+        source.gridSpan = {1, 1};
+        source.singleCellIconMode = true;
+        source.selected = true;
+        DragSourceList list;
+        list.hasWidgets = true;
+        list.hasOriginSurface = true;
+        list.originSurface = snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::Widget;
+        entry.desktopWidgetIcon = true;
+        entry.widgetId = source.id;
+        entry.widgetType = type;
+        list.entries.push_back(entry);
+        // The host's native container uses this exact predicate before its
+        // geometry hit, so a rejected widget target cannot block its old cell.
+        Check(drag::IsCapturedDesktopIcon(list, source),
+            "all five captured icon entrances expose the desktop landing underneath their original position");
+        auto other = source;
+        other.id = L"selected-but-not-dragged";
+        Check(!drag::IsCapturedDesktopIcon(list, other),
+            "selection alone never removes another component's target hit block");
+        DragSourceEntry file;
+        file.kind = DropSourceKind::DesktopIcon;
+        list.entries.push_back(file);
+        list.hasDesktopIcons = true;
+        Check(drag::IsCapturedDesktopIcon(list, source),
+            "mixed selection also vacates each captured native entrance");
+        source.selected = false;
+        Check(drag::IsCapturedDesktopIcon(list, source),
+            "captured identity remains authoritative across selection changes during a drag");
+        source.singleCellIconMode = false;
+        Check(!drag::IsCapturedDesktopIcon(list, source),
+            "component-mode storage retains its independent container semantics");
+        source.singleCellIconMode = true;
+        list.entries.front().fromDock = true;
+        Check(!drag::IsCapturedDesktopIcon(list, source),
+            "Dock captures must not vacate an independent desktop component");
+        list.entries.front().fromDock = false;
+        list.hasOriginWidget = true;
+        Check(!drag::IsCapturedDesktopIcon(list, source),
+            "popup members do not vacate their parent's desktop footprint");
+    }
+}
+
+void TestWidgetRightDragMenuActions()
+{
+    namespace menu = snowdesktop::widget_right_drag;
+    namespace pair = snowdesktop::widget_pair_drop;
+    using Action = pair::Action;
+    Check(menu::MoveModifiers(true) == 0 && menu::MoveModifiers(false) == MK_SHIFT,
+        "right-menu Move never accidentally becomes Shift-merge for widgets, while files keep their Shell move verb");
+    const auto collections = menu::PairChoices(DesktopWidgetType::Collection,
+        pair::GetOptions(DesktopWidgetType::Collection, DesktopWidgetType::Collection), true);
+    Check(collections.size() == 2 && collections[0].action == Action::Merge &&
+            collections[0].modifiers == MK_SHIFT && collections[1].action == Action::CreateCollectionGroup &&
+            collections[1].modifiers == MK_CONTROL && collections[0].command != collections[1].command,
+        "collection right-drop offers independent merge and group commands with the existing modifier semantics");
+    const auto files = menu::PairChoices(DesktopWidgetType::FileCategories,
+        pair::GetOptions(DesktopWidgetType::FileCategories, DesktopWidgetType::FileCategories), true);
+    Check(files.size() == 2 && files[0].action == Action::Merge && files[1].action == Action::CreateFileGroup,
+        "desktop files offer their own merge and file-group actions");
+    const auto mapping = menu::PairChoices(DesktopWidgetType::FolderMapping,
+        pair::GetOptions(DesktopWidgetType::FolderMapping, DesktopWidgetType::FileCategories), true);
+    Check(mapping.size() == 1 && mapping[0].action == Action::CreateFileGroup,
+        "folder mappings offer grouping without pretending their filesystem contents can be merged");
+    Check(menu::PairChoices(DesktopWidgetType::Collection,
+            pair::GetOptions(DesktopWidgetType::Collection, DesktopWidgetType::FileCategories), true).empty(),
+        "incompatible pairs expose no destructive component verbs");
+    const auto noGroupSpace = menu::PairChoices(DesktopWidgetType::Collection,
+        pair::GetOptions(DesktopWidgetType::Collection, DesktopWidgetType::Collection), false);
+    Check(noGroupSpace.size() == 1 && noGroupSpace[0].action == Action::Merge &&
+            menu::PairChoices(DesktopWidgetType::FolderMapping,
+                pair::GetOptions(DesktopWidgetType::FolderMapping, DesktopWidgetType::FolderMapping), false).empty(),
+        "insufficient group space removes only unavailable actions");
+
+    for (const auto& choice : collections)
+    {
+        std::vector<DesktopWidget> widgets(2);
+        for (size_t i = 0; i < widgets.size(); ++i)
+        {
+            widgets[i].id = i == 0 ? L"source" : L"target";
+            widgets[i].type = DesktopWidgetType::Collection;
+            widgets[i].itemKeys = {i == 0 ? L"source-item" : L"target-item"};
+        }
+        const auto action = pair::ResolveAction(pair::GetOptions(widgets[0].type, widgets[1].type),
+            (choice.modifiers & MK_CONTROL) != 0, (choice.modifiers & MK_SHIFT) != 0, false);
+        DesktopWidget group;
+        group.id = L"created-by-right-menu";
+        std::vector<DockEntry> dock;
+        Check(action == choice.action && pair::Apply(widgets, dock, 0, 1, action, std::move(group),
+                [](const std::wstring& key) { return key; }),
+            "the returned menu choice reaches the real model transaction");
+        if (choice.action == Action::Merge)
+            Check(widgets.size() == 1 && widgets[0].id == L"target" && widgets[0].itemKeys.size() == 2,
+                "menu merge consumes its source exactly once and retains both contents");
+        else
+            Check(widgets.size() == 3 && widgets.back().childWidgetIds == std::vector<std::wstring>{L"target", L"source"},
+                "menu grouping preserves both children in target-then-source order");
+    }
+}
+
+void TestRightDragIconSourcesAfterMenu()
+{
+    namespace menu = snowdesktop::widget_right_drag;
+    using Type = DesktopWidgetType;
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping, Type::CollectionGroup, Type::FileGroup})
+    {
+        DesktopWidget widget;
+        widget.id = L"captured-icon";
+        widget.type = type;
+        widget.gridCell = {L"desktop", 2, 3};
+        widget.gridSpan = {1, 1};
+        widget.singleCellIconMode = true;
+        DragSourceList source;
+        source.hasWidgets = source.hasOriginSurface = true;
+        source.originSurface = snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+        DragSourceEntry entry;
+        entry.desktopWidgetIcon = true;
+        entry.kind = DropSourceKind::Widget;
+        entry.widgetId = widget.id;
+        entry.widgetType = type;
+        entry.originalCell = widget.gridCell;
+        entry.originalSpan = widget.gridSpan;
+        source.entries.push_back(entry);
+        std::vector<DesktopWidget> widgets = {widget};
+        Check(menu::CapturedIconsCurrent(source, widgets),
+            "right-menu continuation uses captured identities even without any surviving runtime Item");
+        widgets.insert(widgets.begin(), DesktopWidget{});
+        Check(menu::CapturedIconsCurrent(source, widgets),
+            "runtime rebuilds and model reordering preserve the captured native source");
+        auto changed = widgets;
+        changed.back().gridCell.column++;
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot move an entrance whose position changed while open");
+        changed = widgets;
+        changed.back().singleCellIconMode = false;
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot resume after an entrance changes presentation");
+        changed = widgets;
+        changed.front().childWidgetIds = {widget.id};
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot steal a source acquired by another group");
+        changed = widgets;
+        changed.push_back(widget);
+        Check(!menu::CapturedIconsCurrent(source, changed), "duplicate source identities cancel rather than picking an arbitrary component");
+        changed.pop_back();
+        changed.pop_back();
+        Check(!menu::CapturedIconsCurrent(source, changed), "removed sources cancel menu continuation");
+        DragSourceEntry file;
+        file.kind = DropSourceKind::DesktopIcon;
+        source.entries.push_back(file);
+        source.hasDesktopIcons = true;
+        Check(menu::CapturedIconsCurrent(source, widgets), "mixed file and component selections retain native source validation");
+    }
+}
+
+void TestWidgetGroupMembershipMatrix()
+{
+    namespace groups = snowdesktop::widget_group_drop;
+    using Type = DesktopWidgetType;
+    for (const auto groupType : {Type::CollectionGroup, Type::FileGroup})
+        for (const auto sourceType : {Type::Collection, Type::FileCategories, Type::FolderMapping, Type::CollectionGroup, Type::FileGroup})
+            for (const int presentation : {0, 1, 2})
+            {
+                std::vector<DesktopWidget> widgets(3);
+                widgets[0].id = L"target-group";
+                widgets[0].type = groupType;
+                widgets[0].gridSpan = presentation == 2 ? GridSpan{3, 3} : GridSpan{1, 1};
+                widgets[0].singleCellIconMode = presentation == 1;
+                widgets[0].childWidgetIds = {L"existing-child"};
+                widgets[0].activeCategoryId = L"existing-child";
+                widgets[1].id = L"existing-child";
+                widgets[1].type = groupType == Type::CollectionGroup ? Type::Collection : Type::FileCategories;
+                widgets[2].id = L"moving-icon";
+                widgets[2].type = sourceType;
+                widgets[2].gridCell = {L"desktop", 4, 5};
+                widgets[2].gridSpan = {1, 1};
+                widgets[2].singleCellIconMode = true;
+                widgets[2].sourceFolderPath = L"C:\\mapping-target";
+                widgets[2].itemKeys = {L"retained-source-file"};
+                std::vector<DockEntry> dock;
+                const bool accepted = groupType == Type::CollectionGroup ? sourceType == Type::Collection
+                    : sourceType == Type::FileCategories || sourceType == Type::FolderMapping;
+                Check(groups::Apply(widgets, dock, 0, {L"moving-icon"}, 1) == accepted,
+                    "all five entrance types use the same existing-group membership rules across all three target presentations");
+                Check(widgets.size() == 3 && widgets[2].itemKeys == std::vector<std::wstring>{L"retained-source-file"} &&
+                        widgets[2].sourceFolderPath == L"C:\\mapping-target" && widgets[2].singleCellIconMode &&
+                        widgets[2].gridCell.column == 4 && widgets[0].singleCellIconMode == (presentation == 1) &&
+                        widgets[0].gridSpan.columns == (presentation == 2 ? 3 : 1),
+                    "grouping retains source settings, contents and return cell as well as the target presentation");
+                Check(widgets[0].childWidgetIds == (accepted
+                        ? std::vector<std::wstring>{L"existing-child", L"moving-icon"}
+                        : std::vector<std::wstring>{L"existing-child"}) && widgets[0].activeCategoryId == L"existing-child",
+                    "membership changes exactly once on accepted moves and rejected nesting leaves ownership intact");
+            }
+    std::vector<DesktopWidget> widgets(4);
+    widgets[0].id = L"file-group";
+    widgets[0].type = Type::FileGroup;
+    widgets[1].id = L"desktop-files";
+    widgets[1].type = Type::FileCategories;
+    widgets[2].id = L"mapping";
+    widgets[2].type = Type::FolderMapping;
+    widgets[3].id = L"collection";
+    widgets[3].type = Type::Collection;
+    std::vector<DockEntry> dock{{DockEntryType::FolderMapping, L"mapping", false}};
+    Check(!groups::Apply(widgets, dock, 0, {L"desktop-files", L"collection"}, 0) &&
+            widgets[0].childWidgetIds.empty() && dock.size() == 1,
+        "a rejected mixed membership transaction never detaches a valid source first");
+    Check(groups::Apply(widgets, dock, 0, {L"desktop-files", L"mapping", L"mapping"}, 0) && dock.empty() &&
+            widgets[0].childWidgetIds == std::vector<std::wstring>{L"desktop-files", L"mapping"},
+        "compatible source kinds enter once in selection order and retire their Dock ownership");
+    Check(groups::Apply(widgets, dock, 0, {L"desktop-files"}, 2) &&
+            widgets[0].childWidgetIds == std::vector<std::wstring>{L"mapping", L"desktop-files"},
+        "existing children reorder with the same insertion-index adjustment");
+    Check(!groups::Apply(widgets, dock, 0, {}, 0) && !groups::Apply(widgets, dock, 0, {L"missing-source"}, 0) &&
+            widgets[0].childWidgetIds == std::vector<std::wstring>{L"mapping", L"desktop-files"},
+        "empty/cancelled and stale-ID decisions preserve membership");
+}
+
+void TestDesktopIconModePairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    namespace drag = snowdesktop::widget_pair_drag;
+    using Type = DesktopWidgetType;
+    using Action = pair::Action;
+    // The real desktop drag payload enters the same source resolver and model
+    // transaction as Dock/label drags. Runtime Item wrappers are not required.
+    struct Case { Type source, target; Action shift, control; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection, Action::Merge, Action::CreateCollectionGroup},
+        {Type::FileCategories, Type::FileCategories, Action::Merge, Action::CreateFileGroup},
+        {Type::FileCategories, Type::FolderMapping, Action::None, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FileCategories, Action::None, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FolderMapping, Action::None, Action::CreateFileGroup},
+        {Type::CollectionGroup, Type::Collection, Action::None, Action::None},
+        {Type::FileGroup, Type::FileCategories, Action::None, Action::None},
+    };
+    for (const auto& test : cases)
+        for (const bool control : {false, true})
+        {
+            std::vector<DesktopWidget> widgets(2);
+            widgets[0].id = L"source";
+            widgets[0].type = test.source;
+            widgets[0].gridCell = {L"page", 1, 2};
+            widgets[0].gridSpan = {1, 1};
+            widgets[0].singleCellIconMode = true;
+            widgets[0].itemKeys = {L"shared", L"source-only"};
+            widgets[0].sourceFolderPath = L"C:\\mapped-source";
+            widgets[1].id = L"target";
+            widgets[1].type = test.target;
+            widgets[1].gridCell = {L"page", 3, 2};
+            widgets[1].itemKeys = {L"target-first", L"shared"};
+            DragSourceList list;
+            list.hasWidgets = list.hasOriginSurface = true;
+            list.originSurface = snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+            DragSourceEntry entry;
+            entry.kind = DropSourceKind::Widget;
+            entry.widgetId = L"source";
+            entry.widgetType = test.source;
+            entry.desktopWidgetIcon = true;
+            list.entries.push_back(entry);
+            std::vector<DockEntry> dock;
+            const auto source = drag::ResolveSource(list, widgets, dock);
+            Check(source.widgetIndex == 0 && source.groupId.empty(),
+                "a single desktop icon-mode component resolves by captured identity");
+            std::swap(widgets[0], widgets[1]);
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex == 1,
+                "container rebuilds must resolve the captured entrance ID rather than its old index");
+            std::swap(widgets[0], widgets[1]);
+            widgets[0].singleCellIconMode = false;
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "a mode change during drag must not consume a stale icon-mode entrance");
+            widgets[0].singleCellIconMode = true;
+
+            // Check mixed-selection rejection while the source is still valid,
+            // so this cannot pass merely because a prior transaction removed it.
+            list.entries.push_back(entry);
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "multiple selected entrances cannot arm a two-component pair transaction");
+            list.entries.back().kind = DropSourceKind::DesktopIcon;
+            list.entries.back().desktopWidgetIcon = false;
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "a mixed file/entrance selection cannot arm a partial merge or group");
+            list.entries.resize(1);
+            const auto options = pair::GetOptions(test.source, test.target);
+            const auto action = pair::ResolveAction(options, control, !control, false);
+            Check(action == (control ? test.control : test.shift) &&
+                    pair::ResolveAction(options, false, false, false) == Action::None &&
+                    pair::ResolveAction(options, true, true, false) == Action::None &&
+                    pair::ResolveAction(options, control, !control, true) == Action::None,
+                "icon-mode sources use existing Shift merge and Ctrl group rules, including cancellation keys");
+            DesktopWidget group;
+            group.id = L"new-group";
+            Check(pair::Apply(widgets, dock, source.widgetIndex, 1, action, group,
+                    [](const std::wstring& key) { return key; }) == (action != Action::None),
+                "only a compatible armed icon-mode pair commits an ownership transaction");
+            if (action == Action::None)
+                Check(widgets.size() == 2 && widgets[0].itemKeys.size() == 2 &&
+                        widgets[0].gridCell.column == 1 && widgets[0].sourceFolderPath == L"C:\\mapped-source",
+                    "unsupported or unarmed pairs retain both source content and placement");
+            else if (action == Action::Merge)
+                Check(widgets.size() == 1 && widgets.front().id == L"target" &&
+                        widgets.front().itemKeys == std::vector<std::wstring>{L"target-first", L"shared", L"source-only"},
+                    "Shift transfers and deduplicates source contents once before removing its entrance");
+            else
+                Check(widgets.size() == 3 && widgets.back().childWidgetIds ==
+                        std::vector<std::wstring>{L"target", L"source"} &&
+                        widgets.back().type == (control && test.control == Action::CreateCollectionGroup
+                            ? Type::CollectionGroup : Type::FileGroup) &&
+                        widgets[0].sourceFolderPath == L"C:\\mapped-source",
+                    "Ctrl creates the matching group and retains each child and its mapping settings");
+            if (action != Action::None)
+                Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                    "a consumed or newly grouped desktop entrance cannot commit the captured pair twice");
+
+        }
+}
+
 void TestDockComponentInsertionHints()
 {
     for (const bool control : {false, true})
@@ -1994,8 +2384,125 @@ void TestListDetailRules()
 }
 }
 
+namespace
+{
+void TestPopupChromeScaling()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    // Reproduce the reported 2x page: controls must be measured on the popup
+    // page, and nondefault tab heights must reserve the complete painted header.
+    const auto doubled = popup::ResolveMetrics(184, 232, 184, 232, 2.0f);
+    Check(popup::ResolveTitleFontSize(doubled.scale) == 32.0f &&
+            popup::ResolveControlFontSize(doubled.scale) == 28.0f,
+        "popup titles and sort labels use their own readable 2x fonts");
+    Check(popup::ResolveDetailsHeaderHeight(doubled, 24.0f) == 40 &&
+            popup::ResolveDetailsHeaderHeight(doubled, 34.0f) == 60 &&
+            popup::ResolveDetailsHeaderHeight(doubled, 48.0f) == 88,
+        "popup headers reserve the actual configured height instead of fixed 60 pixels");
+    const auto fractional = popup::ResolveMetrics(138, 174, 138, 174, 1.5f);
+    Check(popup::ResolveDetailsHeaderHeight(fractional, 35.5f) == 47,
+        "popup header geometry preserves fractional stored heights before pixel rounding");
+    const auto dense = popup::ResolveMetrics(9, 12, 9, 12, 0.1f);
+    const auto bounds = popup::ResolveHeaderVerticalBounds(dense.scale);
+    Check(dense.scale == 0.75f && dense.headerHeight == 41 &&
+            popup::ResolveTitleFontSize(dense.scale) == 12.0f &&
+            bounds.titleBottom - bounds.titleTop >= 18 &&
+            popup::ResolveDetailsHeaderHeight(dense, 24.0f) == 15,
+        "dense desktop grids retain legible popup titles and control heights");
+    Check(popup::ResolveChromeScale(std::numeric_limits<float>::quiet_NaN()) == 1.0f &&
+            popup::ResolveChromeScale(std::numeric_limits<float>::infinity()) == 1.0f,
+        "invalid popup scaling falls back to readable finite geometry");
+    // Negative architecture boundary: this user-requested independent title
+    // must never silently pick up icon title size again. Not rendering proof.
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    Check(snowdesktop::test::CheckSourceBoundaries(root, {
+        {"src/app/popup/app_popup_render.cpp", "", "",
+            {"itemTextFormat_", "itemFontSizeCu_"}},
+        {"src/app/input/app_rename_begin.cpp", "if (popupTitleRename)",
+            "else if (IsGroupedCollection", {"itemTextFormat_", "itemFontSizeCu_"}},
+        {"src/app/popup/app_popup_render.cpp", "if (dockFolderPopupOpen_)",
+            "RECT content =", {"OffsetRect(&sortTextRect"}}
+    }), "popup title independence and sort centering retain their rendering boundaries");
+}
+
+void TestBalancedPopupColumns()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    const auto metrics = popup::ResolveMetrics(92, 116, 84, 108, 1.0f);
+    const auto measure = [&](std::size_t count, int columns, int controlsHeight) {
+        const int rows = popup::RequiredRowCount(count, columns);
+        return std::pair{
+            popup::ResolveFixedGridFrameWidth(metrics, columns),
+            metrics.headerHeight + controlsHeight + rows * metrics.cellHeight +
+                (rows - 1) * metrics.gapY + metrics.bottomPadding};
+    };
+    const auto nineItems = [&](int columns) { return measure(9, columns, 80); };
+    Check(popup::ResolveBalancedColumnCount(9, 5, 640, nineItems) == 4,
+        "nine-item popups add a third row and reduce columns when the full frame fits");
+    Check(popup::ResolveBalancedColumnCount(9, 5, 410, nineItems) == 5,
+        "short work areas preserve a fitting wider popup instead of adding scrolling");
+    Check(popup::ResolveBalancedColumnCount(9, 2, 640, nineItems) == 2,
+        "narrow work areas never request unavailable grid columns");
+    Check(popup::ResolveBalancedColumnCount(0, 5, 640, nineItems) == 3 &&
+            popup::ResolveBalancedColumnCount(2, 5, 640,
+                [&](int columns) { return measure(2, columns, 80); }) == 3,
+        "empty and tiny collections preserve their compact baseline footprint");
+    Check(popup::ResolveBalancedColumnCount(25, 5, 640,
+            [&](int columns) { return measure(25, columns, 80); }) == 5,
+        "large collections minimize required scrolling before optimizing aspect ratio");
+    Check(popup::ResolveBalancedColumnCount(9, 5, 1280,
+            [&](int columns) {
+                const auto size = nineItems(columns);
+                return std::pair{size.first * 2, size.second * 2};
+            }) == 4,
+        "uniform high-DPI scaling preserves the chosen popup proportions");
+}
+
+void TestWholeColumnPopupWidth()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    // The reported page needs a 296 cu three-column frame, not a 320 cu frame
+    // with centered tracks. Search and category controls must follow that width.
+    for (const float scale : {0.75f, 1.0f, 1.25f, 2.0f})
+    {
+        const auto metrics = popup::ResolveMetrics(
+            popup::ScaleDimension(80, scale), popup::ScaleDimension(106, scale),
+            popup::ScaleDimension(74, scale), popup::ScaleDimension(100, scale), scale);
+        for (const int columns : {3, 4})
+        {
+            const int frameWidth = popup::ResolveFixedGridFrameWidth(metrics, columns);
+            const RECT viewport{-600 + metrics.paddingX, -200,
+                -600 + frameWidth - metrics.paddingX, 200};
+            const RECT first = popup::ResolveFixedGridItemRect(metrics, viewport, 0);
+            const RECT last = popup::ResolveFixedGridItemRect(metrics, viewport, columns - 1);
+            const RECT nextRow = popup::ResolveFixedGridItemRect(metrics, viewport, columns, 17);
+            Check(popup::ResolveFixedGridColumnCount(metrics,
+                        static_cast<int>(viewport.right - viewport.left)) == columns &&
+                    first.left == viewport.left && last.right == viewport.right,
+                "three- and four-column frames have exactly the normal popup padding at both edges");
+            Check(nextRow.left == first.left && nextRow.right == first.right &&
+                    nextRow.top == first.top + metrics.cellHeight + metrics.gapY - 17 &&
+                    popup::RequiredRowCount(3, columns) == 2,
+                "whole popup tracks align across rows while preserving scrolling and the two-row floor");
+        }
+    }
+    const auto metrics = popup::ResolveMetrics(92, 116, 84, 108, 1.0f);
+    const RECT exact{-600, -200, -304, 200};
+    const RECT first = popup::ResolveFixedGridItemRect(metrics, exact, 0);
+    const RECT last = popup::ResolveFixedGridItemRect(metrics, exact, 2);
+    Check(first.left == exact.left && last.right == exact.right,
+        "whole-track popup widths retain their existing symmetric baseline insets");
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    Check(snowdesktop::test::CheckSourceBoundaries(root, {
+        {"src/app/popup/app_popup_geometry.cpp", "RECT DesktopApp::GetCollectionPopupRect(",
+            "snowdesktop::collection_popup_layout::Metrics", {"ScaleDimension(320"}}
+    }), "grid popup frame sizing must not regain a control-width floor between complete columns");
+}
+}
+
 int main()
 {
+    TestCollectionTitleSettingScope();
     TestWidgetMenuMetadataReuse();
     TestMarqueeUsesContentCoordinates();
     TestViewportClipping();
@@ -2014,17 +2521,26 @@ int main()
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
     TestDockDesktopHoverHandoff();
+    TestRetainedDockLeaveDoesNotFeedBack();
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
     TestDragHintPlacementRules();
     TestWidgetPairDrops();
     TestGroupedLabelPairDrops();
+    TestDesktopIconModePairDrops();
+    TestDesktopIconSourceVacatesItsHitBlock();
+    TestWidgetRightDragMenuActions();
+    TestRightDragIconSourcesAfterMenu();
+    TestWidgetGroupMembershipMatrix();
     TestDockComponentInsertionHints();
     TestPairGroupsDissolveAndDockOwnership();
     TestGroupRestorationPublishesOnlyTheFinalFrame();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();
+    TestPopupChromeScaling();
+    TestBalancedPopupColumns();
+    TestWholeColumnPopupWidth();
     if (failures != 0)
     {
         std::cerr << failures

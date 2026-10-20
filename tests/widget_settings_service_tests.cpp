@@ -1,4 +1,5 @@
 #include "widget/settings/widget_settings_service.h"
+#include "app/widgets/widget_reference_picker.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -76,8 +77,10 @@ public:
     bool ordinaryAvailable = true;
     bool opaqueAvailable = true;
     bool searchAvailable = true;
+    bool deferredReferencePicker = false;
     int ordinaryCalls = 0;
     int secretCalls = 0;
+    int secretReadCalls = 0;
     int handleCalls = 0;
     int referenceCalls = 0;
     int previewCalls = 0;
@@ -313,6 +316,16 @@ public:
         return Ok();
     }
 
+    WidgetSettingsBackendResult ReadSecret(
+        const WidgetSettingsBackendDescriptor&,
+        const WidgetSettingMutationGuard&,
+        const WidgetSettingFieldSchema&, std::string& plaintext) override
+    {
+        ++secretReadCalls;
+        plaintext = "offline-readback";
+        return mutationResult;
+    }
+
     WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard&,
@@ -381,6 +394,7 @@ public:
         lastOwnerWidget = widget.widgetId;
         lastOwnerPackage = widget.packageId;
         lastOpaqueKey = field.key;
+        if (deferredReferencePicker && mutationResult.Succeeded()) return Ok(false);
         if (mutationResult.Succeeded())
             opaque[field.key] = {
                 true, true, true, true, "Calculator" };
@@ -517,11 +531,135 @@ FakeBackend MakeBackend()
     backend.descriptor.scriptPresets.push_back(preset);
     return backend;
 }
+
+void TestDeferredReferencePickerCompletion(bool completedBeforeSelection)
+{
+    // The real host completion coordinator and service are exercised here.
+    // Only the engine binding/persistence boundary is replaced by this backend.
+    auto backend = MakeBackend();
+    backend.deferredReferencePicker = true;
+    WidgetSettingsService service(backend);
+    auto loaded = service.Load(L"widget-1");
+    auto guard = WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);
+    const auto opened = service.OpenEntityReferencePicker(guard, "app");
+    auto before = *service.Snapshot(L"widget-1");
+    Check(opened.status == WidgetSettingMutationStatus::Unchanged &&
+            !Find(before, "app")->opaque.configured,
+        "opening an asynchronous picker must not pretend that a reference was selected");
+
+    int changes = 0;
+    int notifications = 0;
+    int bindings = 0;
+    service.SetEventCallbacks([&](auto) { ++changes; }, {});
+    (void)service.StartSearch(WidgetSettingMutationGuard::FromSnapshot(before), "app", "qq");
+    if (completedBeforeSelection)
+        backend.Complete(0, {{"old-result", "Old query", {}, {}}});
+    LogicalSlotItem item;
+    item.kind = "app.reference";
+    item.title = "QQ Music";
+    item.target = "private-launch-target";
+    std::string error;
+    const auto bind = [&](LogicalSlotItem selected, LogicalSlotChange& change, std::string&) {
+        ++bindings;
+        backend.opaque["app"] = {true, true, true, true, selected.title};
+        change.operation = "bind";
+        return true;
+    };
+    const bool committed = snowdesktop::CommitWidgetReferencePicker(&service,
+        before.widgetId, before.generation, "appBinding", item, bind,
+        [&](const auto& keys) {
+            ++notifications;
+            Check(keys == std::vector<std::string>{"app"},
+                "picker completion notifies only settings bound to the selected logical slot");
+        }, error);
+    const auto selected = *service.Snapshot(before.widgetId);
+    Check(committed && bindings == 1 &&
+            Find(selected, "app")->opaque.configured &&
+            Find(selected, "app")->opaque.displayLabel == "QQ Music" &&
+            selected.revision > before.revision && changes == 1 && notifications == 1,
+        "a delayed picker selection refreshes the authoritative label and publishes one settings snapshot");
+    Check(!service.SearchSnapshot(before.widgetId, "app") &&
+            !backend.ordinary.contains("app") && backend.transactions.empty(),
+        "picker completion retires old searches without writing launch targets into ordinary settings");
+    backend.Complete(0, {{"late-result", "Old query", {}, {}}});
+    Check(!service.SearchSnapshot(before.widgetId, "app"),
+        "a late search cannot resurrect results after a separate picker committed");
+    const auto stale = service.ClearOpaque(WidgetSettingMutationGuard::FromSnapshot(before), "app");
+    Check(stale.status == WidgetSettingMutationStatus::StaleSnapshot &&
+            Find(*service.Snapshot(before.widgetId), "app")->opaque.configured,
+        "the pre-selection guard cannot clear a newly selected reference");
+
+    Check(!snowdesktop::CommitWidgetReferencePicker(&service, before.widgetId,
+            before.generation + 1, "appBinding", item, bind, [](auto) {}, error) &&
+            bindings == 1,
+        "a stale runtime is rejected before the binding boundary executes");
+    const auto failedBind = [](auto, auto&, auto& detail) {
+        detail = "persistence failed";
+        return false;
+    };
+    Check(!snowdesktop::CommitWidgetReferencePicker(&service, before.widgetId,
+            before.generation, "appBinding", item, failedBind, [](auto) {}, error) &&
+            changes == 1 && notifications == 1 &&
+            service.Snapshot(before.widgetId)->revision == selected.revision,
+        "a failed binding does not publish a successful reference change");
+
+    const auto unchangedBind = [](auto, auto& change, auto&) {
+        change.operation = "unchanged";
+        return true;
+    };
+    const bool unchanged = snowdesktop::CommitWidgetReferencePicker(&service,
+        before.widgetId, before.generation, "appBinding", item, unchangedBind,
+        [&](auto) { ++notifications; }, error);
+    Check(unchanged && notifications == 1 && changes == 2,
+        "selecting the existing reference still refreshes the view without duplicating the Lua change event");
+    const auto beforeUnrelated = service.Snapshot(before.widgetId)->revision;
+    Check(snowdesktop::CommitWidgetReferencePicker(&service, before.widgetId,
+            before.generation, "unrelatedBinding", item, unchangedBind, [](auto) {}, error) &&
+            service.Snapshot(before.widgetId)->revision == beforeUnrelated,
+        "an unrelated slot does not reload this settings session");
+
+    Check(snowdesktop::CommitWidgetReferencePicker(&service, before.widgetId,
+            before.generation, "appBinding", item, bind,
+            [&](auto) { service.Close(before.widgetId); }, error) &&
+            !service.Snapshot(before.widgetId),
+        "a session closed during change notification is never reopened by picker completion");
+    Check(snowdesktop::CommitWidgetReferencePicker(&service, before.widgetId,
+            before.generation, "appBinding", item, bind, [](auto) {}, error) &&
+            !service.Snapshot(before.widgetId),
+        "a picker may finish without creating a settings session after its window closes");
+}
 }
 
 int main()
 {
     using namespace snowdesktop::widget_runtime;
+    {
+        auto durationBackend = MakeBackend();
+        auto duration = Field("focus", "duration", MakeWidgetSettingInteger(25));
+        duration.schema.durationUnit = "minutes";
+        duration.schema.minimum = 1; duration.schema.maximum = 120; duration.schema.step = 1;
+        durationBackend.descriptor.manifestFields.push_back(duration);
+        WidgetSettingsService durationService(durationBackend);
+        auto snapshot = durationService.Load(L"widget-1").snapshot;
+        if (!snapshot || !Find(*snapshot, "focus"))
+        {
+            Check(false, "duration service fixture loads a settings session");
+            return EXIT_FAILURE;
+        }
+        Check(Find(*snapshot, "focus")->currentValue.integer == 25, "duration default keeps declared minute units");
+        Check(durationService.SetOrdinary(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus", MakeWidgetSettingInteger(60)).Succeeded(),
+            "duration ordinary writes use the guarded settings service");
+        snapshot = durationService.Snapshot(L"widget-1");
+        Check(!durationService.SetOrdinary(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus", MakeWidgetSettingInteger(121)).Succeeded() &&
+            Find(*durationService.Snapshot(L"widget-1"), "focus")->currentValue.integer == 60,
+            "invalid duration writes retain the prior persisted value");
+        Check(durationService.ResetField(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus").Succeeded() &&
+            Find(*durationService.Snapshot(L"widget-1"), "focus")->currentValue.integer == 25,
+            "duration reset restores the original declared units");
+    }
+
+    TestDeferredReferencePickerCompletion(false);
+    TestDeferredReferencePickerCompletion(true);
 
     FakeBackend backend = MakeBackend();
     backend.ordinary["enabled"] = MakeWidgetSettingBoolean(false);
@@ -825,6 +963,22 @@ int main()
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    Check(backend.secretReadCalls == 0,
+        "loading, snapshots and writes never request secret plaintext");
+    auto read = service.ReadSecret(guard, "token");
+    Check(read.result.Succeeded() && read.plaintext == "offline-readback" &&
+            backend.secretReadCalls == 1 && service.Snapshot(L"widget-1")->revision == guard.revision,
+        "an explicit owner-scoped secret read leaves the settings revision unchanged");
+    read.ClearPlaintext();
+    Check(service.ReadSecret(guard, "scale").result.status == WidgetSettingMutationStatus::WrongValueChannel &&
+            service.ReadSecret({guard.widgetId, guard.generation, guard.revision - 1}, "token").result.status ==
+                WidgetSettingMutationStatus::StaleSnapshot && backend.secretReadCalls == 1,
+        "ordinary fields and stale guards cannot read plaintext");
+    backend.mutationResult = {WidgetSettingsBackendStatus::Unavailable, "secretReadFailed", {}};
+    auto denied = service.ReadSecret(guard, "token");
+    Check(!denied.result.Succeeded() && denied.plaintext.empty(),
+        "failed reads never return a backend's partial plaintext");
+    backend.mutationResult = Ok();
     WidgetSettingMutationResult handle =
         service.ChooseFilesystemHandle(guard, "file");
     snapshot = service.Snapshot(L"widget-1");

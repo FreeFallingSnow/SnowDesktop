@@ -1,5 +1,7 @@
 #pragma once
 
+#include "system/controls/system_controls.h"
+
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -10,6 +12,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
@@ -41,7 +44,8 @@ class WidgetMediaTaskExecutor
 {
 public:
     using Runner = std::function<WidgetMediaTaskRunResult(
-        const WidgetMediaTaskRequest& request)>;
+        const WidgetMediaTaskRequest& request,
+        const system_control::Cancellation& cancellation)>;
 
     explicit WidgetMediaTaskExecutor(Runner runner = {});
     ~WidgetMediaTaskExecutor();
@@ -64,10 +68,12 @@ private:
     {
         std::uint64_t id = 0;
         WidgetMediaTaskRequest request;
+        std::shared_ptr<std::atomic_bool> canceled;
     };
 
     static WidgetMediaTaskRunResult RunSystemAction(
-        const WidgetMediaTaskRequest& request);
+        const WidgetMediaTaskRequest& request,
+        const system_control::Cancellation& cancellation);
     void WorkerMain(std::stop_token stopToken);
 
     Runner runner_;
@@ -76,6 +82,7 @@ private:
     std::deque<QueuedRequest> requests_;
     std::unordered_set<std::uint64_t> active_;
     std::unordered_set<std::uint64_t> canceled_;
+    std::unordered_map<std::uint64_t, std::shared_ptr<std::atomic_bool>> cancellationFlags_;
     std::vector<WidgetMediaTaskCompletion> completions_;
     std::jthread worker_;
     bool stopping_ = false;

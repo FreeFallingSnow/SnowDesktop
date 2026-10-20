@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 
 namespace snowdesktop::widget_item_layout
@@ -93,7 +94,7 @@ inline int DesiredGap(int pitch, float percent, float spacingScale)
 {
     return std::max(0, static_cast<int>(std::round(
         std::max(1, pitch) * percent *
-        std::clamp(spacingScale, 0.5f, 2.0f))));
+        layout_spacing_rules::ClampScale(spacingScale))));
 }
 
 inline Axis ResolveBoundedAxis(int start, int extent, int count,
@@ -119,35 +120,55 @@ inline Axis ResolveScrollingAxis(int start, int minimumCell,
     result.start = start;
     result.extent = std::max(1, minimumCell);
     result.cell = std::max(1, minimumCell);
-    result.gap = DesiredGap(
-        result.cell, gapPercent, spacingScale);
+    result.gap = std::max(0, static_cast<int>(std::round(
+        result.cell * gapPercent *
+        layout_spacing_rules::ClampRowSpacingScale(spacingScale))));
     result.edge = result.gap / 2;
+    return result;
+}
+
+// Scrolling columns always use the baseline horizontal geometry. Row spacing
+// must not change the title widths, column capacity or either outside padding.
+inline Axis ResolveScrollingColumns(int start, int extent, int columns,
+    int minimumCell)
+{
+    const int count = std::clamp(columns, 1, 50);
+    auto result = ResolveBoundedAxis(start, extent, count,
+        minimumCell, kGapPercentX, 1.0f);
+    result.edge = std::max(0, (result.extent - count * result.cell -
+        (count - 1) * result.gap) / 2);
+    // Distribute integer rounding between cells rather than into the right
+    // padding, so both outside edges retain their baseline geometry.
+    result.visualItemSize = result.cell;
+    result.visualOuterPadding = result.edge;
     return result;
 }
 
 inline Layout ResolveGrid(RECT viewport, int columns,
     int fixedRows, int minimumCellWidth, int minimumCellHeight,
-    float spacingScale)
+    layout_spacing_rules::ContentSpacing spacing)
 {
     Layout result;
     result.viewport = viewport;
     result.scrolling = fixedRows <= 0;
-    result.horizontal = ResolveBoundedAxis(
-        viewport.left, viewport.right - viewport.left,
-        columns, minimumCellWidth, kGapPercentX, spacingScale);
+    result.horizontal = result.scrolling
+        ? ResolveScrollingColumns(viewport.left, viewport.right - viewport.left,
+            columns, minimumCellWidth)
+        : ResolveBoundedAxis(viewport.left, viewport.right - viewport.left,
+            columns, minimumCellWidth, kGapPercentX, spacing.horizontal);
     result.vertical = result.scrolling
         ? ResolveScrollingAxis(
             viewport.top, minimumCellHeight,
-            kGapPercentY, spacingScale)
+            kGapPercentY, spacing.vertical)
         : ResolveBoundedAxis(
             viewport.top, viewport.bottom - viewport.top,
             fixedRows, minimumCellHeight,
-            kGapPercentY, spacingScale);
+            kGapPercentY, spacing.vertical);
     return result;
 }
 
 inline Layout ResolveList(RECT viewport, int minimumRowHeight,
-    float spacingScale)
+    layout_spacing_rules::ContentSpacing spacing, int columns = 1)
 {
     Layout result;
     result.viewport = viewport;
@@ -155,16 +176,22 @@ inline Layout ResolveList(RECT viewport, int minimumRowHeight,
     result.horizontal.start = viewport.left;
     result.horizontal.extent = std::max<int>(
         1, viewport.right - viewport.left);
-    result.horizontal.count = 1;
+    result.horizontal.count = std::clamp(columns, 1, 4);
     result.horizontal.edge = std::min(
         std::max(0, (result.horizontal.extent - 1) / 2),
-        DesiredGap(minimumRowHeight, kGapPercentX, spacingScale) / 2);
+        DesiredGap(minimumRowHeight, kGapPercentX, spacing.horizontal) / 2);
     result.horizontal.cell = std::max(
         1, result.horizontal.extent - result.horizontal.edge * 2);
-    result.horizontal.gap = 0;
+    result.horizontal.gap = result.horizontal.count > 1
+        ? std::min(DesiredGap(minimumRowHeight, kGapPercentX, spacing.horizontal),
+            std::max(0, (result.horizontal.cell - result.horizontal.count) /
+                (result.horizontal.count - 1))) : 0;
+    result.horizontal.cell = std::max(1,
+        (result.horizontal.cell - (result.horizontal.count - 1) * result.horizontal.gap) /
+            result.horizontal.count);
     result.vertical = ResolveScrollingAxis(
         viewport.top, minimumRowHeight,
-        kGapPercentY, spacingScale);
+        kGapPercentY, spacing.vertical);
     return result;
 }
 
@@ -237,8 +264,9 @@ inline RECT ItemRect(const Layout& layout, std::size_t index,
         static_cast<std::size_t>(columns));
     const int row = static_cast<int>(index /
         static_cast<std::size_t>(columns));
-    const int left = BoundedAxisCellStart(
-        layout.horizontal, column);
+    const int left = layout.scrolling && layout.horizontal.visualOuterPadding < 0
+        ? AxisCellStart(layout.horizontal, column)
+        : BoundedAxisCellStart(layout.horizontal, column);
     const int top = (layout.scrolling
         ? AxisCellStart(layout.vertical, row)
         : BoundedAxisCellStart(layout.vertical, row)) - scrollOffset;
@@ -279,6 +307,36 @@ inline std::pair<std::size_t, std::size_t> VisibleRange(
         std::min(itemCount,
             static_cast<std::size_t>(std::max(firstRow, lastRow)) * columns)
     };
+}
+
+// Date groups can end with partial rows. Use the displayed rows rather than
+// an index/column quotient when moving vertically across their headers.
+template<class Bounds>
+inline int VerticalNeighbor(std::size_t count, int current, bool down, Bounds bounds)
+{
+    if (current < 0 || static_cast<std::size_t>(current) >= count) return current;
+    const RECT origin = bounds(static_cast<std::size_t>(current));
+    int result = current;
+    auto bestRow = std::numeric_limits<long long>::max();
+    auto bestColumn = bestRow;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const RECT candidate = bounds(index);
+        if (candidate.right <= candidate.left || candidate.bottom <= candidate.top) continue;
+        const long long row = down ? static_cast<long long>(candidate.top) - origin.top
+            : static_cast<long long>(origin.top) - candidate.top;
+        if (row <= 0) continue;
+        const long long dx = static_cast<long long>(candidate.left) + candidate.right -
+            origin.left - origin.right;
+        const long long column = dx < 0 ? -dx : dx;
+        if (row < bestRow || (row == bestRow && column < bestColumn))
+        {
+            bestRow = row;
+            bestColumn = column;
+            result = static_cast<int>(index);
+        }
+    }
+    return result;
 }
 
 inline int ScrollOffsetToReveal(

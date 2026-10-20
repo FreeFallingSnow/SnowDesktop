@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 #include "theme/edge_light_settings.h"
+#include "theme/panel_gradient.h"
 
 namespace snowdesktop
 {
@@ -63,6 +64,7 @@ struct IconBeautifySettings
 {
     bool enabled = false;
     IconBeautifyPreset preset = IconBeautifyPreset::None;
+    // 0 smart; 1 add theme background and shrink; 2 add theme background without resizing (per icon only).
     int mode = 0;
     float backgroundOpacity = 0.65f;
     bool glassEnabled = false;
@@ -79,6 +81,9 @@ struct IconBeautifySettings
     float backgroundEndR = 222.0f / 255.0f;
     float backgroundEndG = 228.0f / 255.0f;
     float backgroundEndB = 240.0f / 255.0f;
+    // 0: custom, 1: original icon plate, 2: icon accent. Resolved per icon.
+    int backgroundSource = 0;
+    PanelGradient backgroundGradient{false, 90, 0, 1, {{0, 0xe8ecf4, 1}, {1, 0xdee4f0, 1}}};
 
     IconBeautifyShape shape = IconBeautifyShape::LegacyRounded;
     float contentScale = 0.68f;
@@ -88,6 +93,8 @@ struct IconBeautifySettings
     float textureShadeStrength = 0.0f;
     float textureEdgeHighlight = 0.0f;
     bool filterEnabled = false;
+    // 0 retains the legacy multiply filter; 1 preserves luminosity; 2 maps luminosity to two tones.
+    int filterMode = 0;
     float filterStrength = 1.0f;
     float filterTintR = 90.0f / 255.0f;
     float filterTintG = 140.0f / 255.0f;
@@ -117,6 +124,8 @@ struct ShapePoint
 };
 
 IconBeautifySettings Normalize(IconBeautifySettings settings);
+IconBeautifySettings NormalizeGlobal(IconBeautifySettings settings);
+PanelGradient BackgroundGradient(const IconBeautifySettings& settings);
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
 IconBeautifySettings MakePreset(IconBeautifyPreset preset);
@@ -132,12 +141,21 @@ std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
 /** Normalized closed outline shared by vector UI plates and bitmap masks. */
 const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape);
 
+// Native controls carry intentional optical margins independently of the
+// user-selected processing mode. This is render metadata, never persisted.
+enum class SourceKind { Image, NativeControl };
+
+// Beautification shapes use a square canvas. Center rectangular sources with
+// transparent padding so the chosen outline never inherits a thumbnail's ratio.
+bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled);
+
 std::vector<std::uint32_t> Render(
     const std::vector<std::uint32_t>& source,
     int width,
     int height,
     const IconBeautifySettings& settings,
-    std::optional<EdgeColor> detectedEdgeFill = std::nullopt);
+    std::optional<EdgeColor> detectedEdgeFill = std::nullopt,
+    SourceKind sourceKind = SourceKind::Image);
 
 /** Directional reflection without a fill or glyph, for vector control plates. */
 std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,

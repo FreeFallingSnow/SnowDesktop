@@ -2,17 +2,24 @@
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_app_identity.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "layout/collection_titleless_rules.h"
+#include "desktop/desktop_membership_recovery.h"
+#include "platform/user_object_recovery.h"
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
 void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
+    if(GetTickCount64()-iconWorkshopLastPoll_>=60000)
+    {
+        iconWorkshopLastPoll_=GetTickCount64();snowdesktop::IconLibraryRequest request;request.action="autoSyncSubscriptions";(void)EditIconLibrary(request);
+    }
     if (!widgetEngine_) return;
 
     std::optional<SteamWorkshopSubscriptionPollState::ReadyQuery> ready;
@@ -26,6 +33,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     }
     if (ready)
     {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+            "phase=poll.apply_ready");
         const bool hostReloadWouldDefer =
             shellFileOperationInFlight_ > 0 || reloading_ ||
             snowdesktop::drag_input_rules::ShouldDeferModelReload(
@@ -55,6 +64,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         }
         if (settingsCompletionReady)
         {
+            snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+                "phase=poll.deferred reason=host_reload_busy");
             // A settings operation is complete only after ReloadItems has
             // actually reconciled the persistent desktop instance table.
             // Retain the authoritative query while drag/Shell/reload state
@@ -170,6 +181,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         }
         if (settingsWindow_)
             settingsWindow_->RefreshWidgetsPage();
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+            "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
+            " hostReloaded=" + std::to_string(hostReloaded));
 
         const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
         for (auto& completion : completions)
@@ -245,6 +259,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     const auto installedPackages = widgetEngine_->ListWidgetPackages();
     const auto subscriptionHistory =
         WidgetEngine::GetSteamWorkshopSubscriptionHistory();
+    const auto libraryHistory =
+        WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory();
     const auto packageStaging =
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
@@ -262,10 +278,17 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
+    snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId,
+        "phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+        std::to_string(installedPackages.size()));
     std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, packageStaging,
+        installedPackages, subscriptionHistory, libraryHistory, packageStaging,
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
+        const auto trace = [queryId](std::string_view message) {
+            snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
+        };
+        trace("phase=theme_probe.begin");
         // Local cache inspection decides whether theme work is relevant. All
         // online theme requests still go through the independently capable bridge.
         try
@@ -285,14 +308,15 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
         }
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
+        trace("phase=theme_probe.end");
         auto snapshot =
-            WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+            WidgetEngine::QuerySteamWorkshopSubscriptions(locale, queryId);
         // Completions are queued only after the bridge accepts the user's
         // unsubscribe, and this query began after that acknowledgement.
         snapshot.confirmedUnsubscribedPublishedFileIds =
             std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory, installedPackages);
+            snapshot, subscriptionHistory, installedPackages, libraryHistory);
         WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
             installedPackages, packageStaging);
         {
@@ -303,6 +327,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 state->activeQueryId = 0;
             state->queryInFlight.store(false);
         }
+        trace("phase=poll.ready");
         if (notifyWindow)
             PostMessageW(notifyWindow,
                 kSteamWorkshopSubscriptionReadyMessage, 0, 0);
@@ -538,9 +563,49 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
+        // Sample before maintenance can request more windows/hooks. The timer
+        // already exists, so recovery remains reachable when USER creation fails.
+        static snowdesktop::user_object_recovery::Monitor resourceRecovery;
+        static const DWORD userQuota = snowdesktop::user_object_recovery::ProcessQuota();
+        const auto safeToRestart = [this] { return startupInitializationComplete_ && desktopItemsReady_ &&
+            !exitRequested_ && !preparedRestart_ && !reloading_ && !layoutReload_.Pending() &&
+            shellFileOperationInFlight_ == 0 && pendingRenames_.empty() &&
+            !dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+            !mouseDown_ && !marqueeActive_ && !middleButtonWidgetMove_ &&
+            !detailColumnResizeActive_ && !luaWidgetPanelMouseDown_ &&
+            widgetAction_ == WidgetAction::None && !renameController_.IsActive() && !luaInlineEdit_ &&
+            shellPopupMenuLayerDepth_ == 0 && !snowdesktop::modern_menu::IsActive() &&
+            !settingsWindowOpening_ && !GetCapture(); };
+        if (resourceRecovery.Poll(GetTickCount64(), userQuota, safeToRestart(),
+                [] { return GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS); },
+                [this, &safeToRestart] { return SaveLayoutSlots(false) && safeToRestart(); },
+                [](ULONGLONG now) { return snowdesktop::user_object_recovery::ReserveRestart(now); },
+                [this, &safeToRestart] { return safeToRestart() && RequestRestart(); },
+                [](snowdesktop::user_object_recovery::Event event,
+                    DWORD count, DWORD quota, LSTATUS error) {
+                    using Event = snowdesktop::user_object_recovery::Event;
+                    const wchar_t* phase = event == Event::Pressure ? L"pressure" :
+                        event == Event::CheckpointFailed ? L"checkpoint-declined" :
+                        event == Event::RestartLimited ? L"restart-limited" :
+                        event == Event::CallbackFailed ? L"callback-failed" :
+                        event == Event::Restarting ? L"restarting" : L"restart-failed";
+                    wchar_t message[256]{};
+                    swprintf_s(message,
+                        L"UserObjectRecovery phase=%ls pid=%lu userObjects=%lu quota=%lu error=%ld",
+                        phase, GetCurrentProcessId(), count, quota, error);
+                    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+                }))
+            return;
         PollInitialShellRead();
         DrainBackgroundShellWork();
+        if (desktopItemsReady_ && !reloading_ && !layoutReload_.Pending() &&
+            shellFileOperationInFlight_ == 0 && !dragSession_.HasContext() &&
+            !dragDropController_.IsTransportActive() &&
+            snowdesktop::desktop_membership_recovery::PruneExpired(
+                widgets_, snowdesktop::desktop_membership_recovery::NowSeconds()))
+            SaveLayoutSlots();
         RefreshIconBitmapResolution();
+        ScheduleIconCustomizationCleanup();
         // A failed mapped-folder icon has a retry deadline. Wake a stationary
         // Dock from the existing maintenance timer too, not only from hover or
         // unrelated repaints. Read advances an expired ticket once; the async

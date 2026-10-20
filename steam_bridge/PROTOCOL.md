@@ -207,3 +207,53 @@ This protocol does not authorize an unattended online publication, agreement
 acceptance or credential handling. Offline tests replace only Steam boundary
 calls; live ownership, creation, download and Settings UI behavior require a
 separate authorized runtime acceptance.
+
+## Icon pack workflow v1
+
+Configuration advertises `iconPackWorkflowProtocolVersion: 1` and capability
+`workshop.icon-pack.v1`. Widget and theme workflow versions remain unchanged.
+
+```text
+workshop icon-pack-plan --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY
+workshop icon-pack-publish --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY --package-sha256 HASH --cover-sha256 HASH --preparation-sha256 HASH --confirm-create
+workshop icon-pack-publish --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY --package-sha256 HASH --cover-sha256 HASH --preparation-sha256 HASH --confirm-update
+```
+
+The host creates `package.snowicons`, a 1024 square PNG `cover.png` strictly below
+1 MiB, and `icon-pack-preparation.json`. The private preparation records format
+`snowdesktop.icon-pack-preparation`, version 1, packageId, title, description,
+snapshotHash, packageSha256, coverSha256 and preparedAt (Unix seconds). Preparation
+expires after 30 minutes. The bridge validates file boundaries and frozen hashes;
+image decoding, rendering and package installation remain host responsibilities.
+The host rechecks current group contents and sharing information before launch.
+The preparation hash freezes the entire sharing descriptor across process launch.
+
+Uploaded content contains only `package.snowicons`; the cover is staged separately.
+The exact canonical upload tag is `Icon Pack`. Metadata is:
+
+```json
+{"format":"snowdesktop-icon-pack","artifact":"package.snowicons","iconPackWorkflowProtocolVersion":1,"packageId":"group-32-lowercase-hex","packageSha256":"SHA256"}
+```
+
+Authored bindings live in `IconPackWorkshop/publications/<packageId>.json`.
+An exclusive per-package lock, explicit create/update confirmation, account and
+remote owner checks, and durable pre-create/created-ID journals protect retries.
+An exclusive file lease under `IconPackWorkshop/locks` also prevents concurrent
+publishers in different Windows sessions; this scratch directory is not backed up.
+An uncertain creation with no returned ID blocks another create. Cancellation
+terminates the one-shot bridge child; retained IDs are reused for upload retries.
+`icon-pack-progress` events carry the publication stage. The terminal result
+includes the independent workflow version and a string publishedFileId.
+
+The host reads the existing authoritative `list-subscribed --details` response.
+Only complete, installed, metadata/hash-matching packages replace managed groups.
+Display titles never identify a group: each Workshop item has an isolated local
+group identity, per-account ownership, and per-group image names. Shared image
+bytes retain independent local/group/subscription ownership. Synchronization does
+not rewrite applied Dock or large-icon references. Full backups retain the v3
+library index and publication journals; covers and temporary preparations rebuild.
+Settings IPC is version 46 and carries metadata and image paths only.
+
+Steamworks category-title CSV import currently ignores the exported title keys;
+the configured canonical `Icon Pack` tag and its ten translations remain usable.
+No workflow command accepts the Steam agreement or publishes without confirmation.

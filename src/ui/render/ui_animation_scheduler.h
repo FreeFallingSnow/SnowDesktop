@@ -105,6 +105,11 @@ public:
     // synchronously. This never adds another timer or delays to the next frame.
     void RequestFramePresentation(const void* owner, std::function<void()> callback);
 
+    // Coalesce a component's presentation within the current deadline/frame
+    // snapshot. Outside scheduled callbacks it remains synchronous, including
+    // its failure result. No additional wakeup or frame delay is introduced.
+    bool RequestScheduledPresentation(const void* owner, std::function<bool()> callback);
+
     void SetSoftwareRendering(bool softwareRendering);
     void RefreshDisplayRate();
 
@@ -135,6 +140,8 @@ private:
 
     UiScheduleToken NextToken();
     void ArmNextWakeup();
+    void QueuePresentation(const void* owner, std::function<void()> callback);
+    void FlushPresentations();
     void UpdateAdaptiveRate(double frameWorkMilliseconds);
     [[nodiscard]] double EffectiveFrameIntervalMs() const noexcept;
     static void PushSample(
@@ -156,6 +163,7 @@ private:
     bool softwareRendering_ = false;
     bool diagnosticsEnabled_ = false;
     bool dispatching_ = false;
+    bool dispatchingTimers_ = false;
     bool advancingFrame_ = false;
     struct PendingPresentation
     {

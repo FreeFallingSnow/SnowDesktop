@@ -470,6 +470,8 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    externalFileDropPaths_.clear();
+    externalOwnedContent_ = false;
     HideDragHintWindow();
     rightButtonItemDrag_ = false;
     widgetPairTargetIndex_ = static_cast<size_t>(-1);

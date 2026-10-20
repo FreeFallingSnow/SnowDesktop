@@ -66,6 +66,11 @@ public:
         try { return channel_.Call<WidgetSettingMutationResult>("widget.SetSearchQuery", guard, std::string(key), query); }
         catch (...) { return {}; }
     }
+    WidgetSettingSecretReadResult ReadSecret(const WidgetSettingMutationGuard& guard, std::string_view key) override
+    {
+        try { return channel_.Call<WidgetSettingSecretReadResult>("widget.ReadSecret", guard, std::string(key)); }
+        catch (...) { return {}; }
+    }
     WidgetSettingMutationResult SetSecret(const WidgetSettingMutationGuard& guard, std::string_view key, std::string_view plaintext) override
     {
         try { return channel_.Call<WidgetSettingMutationResult>("widget.SetSecret", guard, std::string(key), std::string(plaintext)); }
@@ -174,6 +179,9 @@ void BindWidgetService(Channel& channel, IWidgetSettingsService& service)
     });
     channel.Bind<WidgetSettingMutationResult, WidgetSettingMutationGuard, std::string, std::string>("widget.SetSearchQuery", [&](WidgetSettingMutationGuard guard, std::string key, std::string query) {
         return service.SetSearchQuery(guard, key, query);
+    });
+    channel.Bind<WidgetSettingSecretReadResult, WidgetSettingMutationGuard, std::string>("widget.ReadSecret", [&](WidgetSettingMutationGuard guard, std::string key) {
+        return service.ReadSecret(guard, key);
     });
     channel.Bind<WidgetSettingMutationResult, WidgetSettingMutationGuard, std::string, std::string>("widget.SetSecret", [&](WidgetSettingMutationGuard guard, std::string key, std::string plaintext) {
         return service.SetSecret(guard, key, plaintext);

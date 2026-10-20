@@ -33,7 +33,7 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     const bool listMode = owner < widgets_.size() && widgets_[owner].listMode;
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(listMode, !listMode);
     renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
+        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].DisplayName().c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
@@ -64,7 +64,7 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
-            widgets_[widgetIndex].folderEntries[memberIndex].name,
+            widgets_[widgetIndex].folderEntries[memberIndex].DisplayName(),
             widgets_[widgetIndex].folderEntries[memberIndex].fullPath,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameInputWindow_);
@@ -188,6 +188,15 @@ BeginRenameDockFolderPopupEntry(
         return;
 
     ShowAllCollectionPopupItems();
+    // memberIndex addresses the source folder; geometry addresses the
+    // filtered visible order. A hidden entry has no rename anchor.
+    const size_t visibleCount = GetPopupItemCount(dockFolderPopupWidget_);
+    size_t visibleIndex = 0;
+    while (visibleIndex < visibleCount &&
+        GetPopupFolderEntryIndex(dockFolderPopupWidget_, visibleIndex) != memberIndex)
+        ++visibleIndex;
+    if (visibleIndex == visibleCount) return;
+
     ClearSelection();
     for (auto& entry :
          dockFolderPopupWidget_.folderEntries)
@@ -203,9 +212,18 @@ BeginRenameDockFolderPopupEntry(
     const RECT popup =
         GetCollectionPopupRect(
             dockFolderPopupWidget_);
-    RECT itemRect =
-        GetCollectionPopupItemRect(
-            popup, memberIndex);
+    RECT itemRect = GetCollectionPopupItemRect(popup, visibleIndex);
+    if (!UsesCollectionPopupFan(dockFolderPopupWidget_))
+    {
+        const RECT content = GetCollectionPopupContentRect(popup);
+        if (itemRect.top < content.top)
+            popupScrollOffset_ -= content.top - itemRect.top;
+        else if (itemRect.bottom > content.bottom)
+            popupScrollOffset_ += itemRect.bottom - content.bottom;
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+            GetCollectionPopupMaxScrollOffset(dockFolderPopupWidget_, popup));
+        itemRect = GetCollectionPopupItemRect(popup, visibleIndex);
+    }
     RECT rect =
         UsesCollectionPopupList(dockFolderPopupWidget_)
             ? GetCollectionPopupItemTextRect(itemRect)
@@ -230,7 +248,7 @@ BeginRenameDockFolderPopupEntry(
     renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
-        snowdesktop::text_input::WindowClass(), entry.name.c_str(),
+        snowdesktop::text_input::WindowClass(), entry.DisplayName().c_str(),
         style,
         screenRect.left,
         screenRect.top,
@@ -292,7 +310,7 @@ BeginRenameDockFolderPopupEntry(
     SendMessageW(
         renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
-            entry.name,
+            entry.DisplayName(),
             entry.fullPath,
             entry.isDirectory));
     SetFocus(renameInputWindow_);

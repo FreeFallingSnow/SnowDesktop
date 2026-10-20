@@ -1,5 +1,7 @@
+#include "platform/force_restart_hotkey.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "system/tray/tray_service.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
@@ -744,6 +746,8 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
+    desktop.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
+    desktop.listRowSpacingScale = listRowSpacingScale_;
     desktop.itemIconSizeScale = itemIconSizeScale_;
     desktop.itemFontSizeCu = itemFontSizeCu_;
     desktop.listItemFontSizeCu = listItemFontSizeCu_;
@@ -754,6 +758,8 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.scrollingTitleLines = scrollingTitleLines_;
     desktop.titleEllipsis = titleEllipsis_;
     desktop.shortcutArrowMode = shortcutArrowMode_;
+    desktop.groupComponentBadges = groupComponentBadges_;
+    desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
         settingsController_->SynchronizeGeneral(generalSettings_);
@@ -984,6 +990,8 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
+            if (app_.dockWindowPreview_)
+                app_.dockWindowPreview_->SetPinBorderAppearance(app_.personalizationSettings_);
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
@@ -1034,6 +1042,9 @@ public:
             app_.scrollingTitleLines_ = std::clamp(snapshot.values.desktop.scrollingTitleLines, 1, 2);
             app_.titleEllipsis_ = snapshot.values.desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
+            app_.PreviewContentSpacing(
+                snapshot.values.desktop.scrollingIconSpacingYScale,
+                snapshot.values.desktop.listRowSpacingScale);
             app_.PreviewIconSpacing(
                 snapshot.values.desktop.iconSpacingScale);
             app_.PreviewItemIconSize(
@@ -1048,6 +1059,7 @@ public:
                 snapshot.values.desktop.itemFontWeight));
             app_.SetIconBeautifySettings(
                 snapshot.values.desktop.iconBeautify,
+                snapshot.values.desktop.beautifyFileThumbnails,
                 snowdesktop::IconBeautifyUpdateKind::Preview);
         }
         return snowdesktop::SettingsActionResult::Success(domains);
@@ -1087,6 +1099,8 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
@@ -1153,6 +1167,8 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
+            if (app_.dockWindowPreview_)
+                app_.dockWindowPreview_->SetPinBorderAppearance(app_.personalizationSettings_);
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
@@ -1202,6 +1218,8 @@ public:
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
@@ -1236,8 +1254,12 @@ public:
         {
             const bool collectionPolicyChanged = app_.categorySettings_.collectProgramsEnabled !=
                 snapshot.values.category.collectProgramsEnabled ||
-                GetProgramCategoryExtensions(app_.categorySettings_) !=
-                    GetProgramCategoryExtensions(snapshot.values.category);
+                app_.categorySettings_.rules.size() != snapshot.values.category.rules.size() ||
+                !std::equal(app_.categorySettings_.rules.begin(), app_.categorySettings_.rules.end(),
+                    snapshot.values.category.rules.begin(), [](const CategoryRule& before, const CategoryRule& after) {
+                        return before.id == after.id && before.enabled == after.enabled &&
+                            before.extensions == after.extensions;
+                    });
             app_.categorySettings_ = snapshot.values.category;
             NormalizeCategorySettings(app_.categorySettings_);
             for (auto& container : app_.containers_)
@@ -1273,6 +1295,8 @@ public:
             app_.titleEllipsis_ = desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
             app_.SetIconSpacing(desktop.iconSpacingScale);
+            app_.SetContentSpacing(desktop.scrollingIconSpacingYScale,
+                desktop.listRowSpacingScale);
             app_.SetItemIconSize(desktop.itemIconSizeScale);
             app_.SetItemFontSize(desktop.itemFontSizeCu);
             app_.SetListItemFontSize(desktop.listItemFontSizeCu);
@@ -1280,8 +1304,10 @@ public:
             app_.SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
+            app_.SetGroupComponentBadges(desktop.groupComponentBadges);
             app_.SetIconBeautifySettings(
                 desktop.iconBeautify,
+                desktop.beautifyFileThumbnails,
                 snowdesktop::IconBeautifyUpdateKind::Commit);
         }
         if (app_.hwnd_)
@@ -1292,6 +1318,11 @@ public:
     snowdesktop::SettingsActionResult OnSettingsRouteChanged(
         const snowdesktop::SettingsRoute& route) override
     {
+        if (!app_.iconAppearanceTarget_.empty() && route.page != snowdesktop::SettingsPage::AppearanceIconBeautification)
+        {
+            snowdesktop::IconAppearanceRequest close; close.action = "close";
+            (void)app_.EditIconAppearance(std::move(close));
+        }
         // Windows owns these taskbar values. Reconcile them whenever the
         // already-open settings window enters either route that exposes them;
         // reopening the window is not the only way to reveal those controls.
@@ -1310,6 +1341,8 @@ public:
             app_.ApplyLanguageChange();
             break;
         case Action::RegisterHotkeys:
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
@@ -1329,6 +1362,7 @@ public:
             app_.LayoutItems();
             break;
         case Action::GetDockRunningApplications:
+        case Action::GetDockTrayApplications:
         {
             auto result = snowdesktop::SettingsActionResult::Success();
             result.dockApplications = snowdesktop::dock_fullscreen::CollectApplications(
@@ -1347,6 +1381,18 @@ public:
                     if (name.empty()) name = std::filesystem::path(path).filename().wstring();
                     return DockFullscreenApplication{name, path};
                 });
+            if (request.action == Action::GetDockTrayApplications)
+            {
+                const auto snapshot = app_.EnsureDockTrayService()->Current();
+                for (const auto& icon : snapshot.icons)
+                {
+                    if (icon.application.empty() || (icon.state & NIS_HIDDEN)) continue;
+                    if (std::none_of(result.dockApplications.begin(), result.dockApplications.end(), [&](const auto& application) {
+                            return snowdesktop::dock_fullscreen::SameExecutable(application.executable, icon.application);
+                        }))
+                        result.dockApplications.push_back({std::filesystem::path(icon.application).filename().wstring(), icon.application});
+                }
+            }
             return result;
         }
         case Action::ApplyTaskbar:
@@ -1548,6 +1594,8 @@ private:
             return "app.settings.quick_navigation";
         case HotkeyTarget::DesktopPassthrough:
             return "app.settings.desktop_passthrough_hotkey";
+        case HotkeyTarget::ForceRestart:
+            return "settings.debug.forceRestartHotkey";
         case HotkeyTarget::SoftwareDesktop:
             return "app.settings.software_desktop_hotkey";
         case HotkeyTarget::FloatingDock:
@@ -1599,6 +1647,11 @@ private:
                 app_.generalSettings_.desktopPassthroughHotkeyModifiers,
                 app_.generalSettings_.desktopPassthroughHotkeyVirtualKey))
             return { false, HotkeyTarget::DesktopPassthrough };
+        if (conflictsWith(HotkeyTarget::ForceRestart,
+                app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers,
+                app_.generalSettings_.forceRestartHotkeyVirtualKey))
+            return { false, HotkeyTarget::ForceRestart };
         if (conflictsWith(HotkeyTarget::SoftwareDesktop,
                 app_.generalSettings_.softwareDesktopHotkeyEnabled,
                 app_.generalSettings_.softwareDesktopHotkeyModifiers,
@@ -1640,6 +1693,13 @@ private:
 
         switch (target)
         {
+        case HotkeyTarget::ForceRestart:
+            if (app_.generalSettings_.forceRestartHotkeyEnabled &&
+                matches(app_.generalSettings_.forceRestartHotkeyModifiers,
+                    app_.generalSettings_.forceRestartHotkeyVirtualKey))
+                return { snowdesktop::EmergencyRestartHotkey().Matches(modifiers, virtualKey),
+                    HotkeyTarget::None };
+            break;
         case HotkeyTarget::SoftwareDesktop:
             if (app_.generalSettings_.softwareDesktopHotkeyEnabled &&
                 matches(app_.generalSettings_.softwareDesktopHotkeyModifiers,

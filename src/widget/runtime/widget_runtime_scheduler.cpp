@@ -318,6 +318,7 @@ bool AnimationFrameRequests::Cancel(std::string_view name)
     const bool removed = found != pending_.end();
     if (removed) pending_.erase(found);
     previousFrames_.erase(std::string(name));
+    std::erase(frameHistoryOrder_, name);
     return removed;
 }
 
@@ -359,7 +360,14 @@ AnimationFrameRequests::Consume(TimePoint now)
                     now - previous->second).count(),
                 0, MaximumDeltaMilliseconds);
         }
+        std::erase(frameHistoryOrder_, name);
+        if (previous == previousFrames_.end() && previousFrames_.size() >= MaxFrameHistory)
+        {
+            previousFrames_.erase(frameHistoryOrder_.front());
+            frameHistoryOrder_.erase(frameHistoryOrder_.begin());
+        }
         previousFrames_.insert_or_assign(name, now);
+        frameHistoryOrder_.push_back(name);
         result.push_back({ std::move(name), deltaMilliseconds });
     }
     return result;
@@ -369,6 +377,7 @@ void AnimationFrameRequests::Clear()
 {
     pending_.clear();
     previousFrames_.clear();
+    frameHistoryOrder_.clear();
     dataRefreshPending_ = false;
 }
 

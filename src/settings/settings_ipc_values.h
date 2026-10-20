@@ -5,6 +5,7 @@
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"
+#include "icons/icon_appearance.h"
 #include "settings_search_index.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -25,24 +26,30 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength, v.edgeLight,
     v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.widgetTransformCursors, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.popupCloseOnMouseLeave, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
-    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
+    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient,
+    v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs,
+    v.windowPinBorderEnabled, v.windowPinBorderR, v.windowPinBorderG, v.windowPinBorderB,
+    v.windowPinBorderWidth, v.windowPinBorderOpacity);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
 SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
 SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
+SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
 SD_IPC_FIELDS(DockSettings,
-    v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
-    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
-    v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
+    v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,
+    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.summonOnAppMinimize, v.edgeRevealGesture, v.edgeHoverDelayMs, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
+    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
-    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
+    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
+    v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset);
 SD_IPC_FIELDS(NavigationSettings,
-    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
+    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
+    v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
     v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
     v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,
@@ -62,11 +69,12 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
     v.clockSystemPanel, v.controlCenterSystemPanel, v.inputMethodSystemPanel, v.leftOrder, v.rightOrder,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
-    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned);
+    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
+    v.forceRestartHotkeyEnabled, v.forceRestartHotkeyModifiers, v.forceRestartHotkeyVirtualKey,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
     v.pageNavigationPreviousModifiers, v.pageNavigationPreviousVirtualKey, v.pageNavigationNextModifiers, v.pageNavigationNextVirtualKey,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
@@ -74,7 +82,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
     v.globalCollectionPopupAppearance, v.shellExtensions, v.statusBar,
-    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.tooltipFontSize);
+    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.contextMenuHideMoreManagement, v.tooltipFontSize);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,
@@ -89,13 +97,26 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.textureHighlightAngle, v.textureShadeStrength, v.textureEdgeHighlight, v.filterEnabled,
     v.filterStrength, v.filterTintR, v.filterTintG, v.filterTintB,
     v.outlineEnabled, v.outlineWidth, v.outlineOpacity, v.outlineR,
-    v.outlineG, v.outlineB, v.shadowStrength);
+    v.outlineG, v.outlineB, v.shadowStrength, v.backgroundSource, v.backgroundGradient, v.filterMode);
 SD_IPC_FIELDS(DesktopDisplaySettings,
-    v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
-    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);
+    v.dockEnabled, v.iconSpacingScale,
+    v.scrollingIconSpacingYScale, v.listRowSpacingScale,
+    v.itemIconSizeScale, v.itemFontSizeCu,
+    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis, v.groupComponentBadges, v.beautifyFileThumbnails);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
+SD_IPC_FIELDS(IconAppearanceRecord, v.target, v.name, v.settings, v.themeId, v.available, v.followGlobalTheme);
+SD_IPC_FIELDS(IconAppearanceChoice, v.id, v.name, v.settings);
+SD_IPC_FIELDS(IconAppearanceRequest, v.action, v.target, v.session, v.revision, v.settings, v.themeId, v.followGlobalTheme);
+SD_IPC_FIELDS(IconAppearanceSnapshot, v.entries, v.themes, v.current, v.session, v.revision,
+    v.succeeded, v.available, v.independent, v.error, v.previewPng, v.nativeControlSource, v.globalSettings);
+SD_IPC_FIELDS(IconLibraryGroup, v.id, v.name, v.source, v.packageId, v.packageVersion, v.sourceUri, v.shareTitle, v.description, v.license, v.author, v.rightsConfirmed, v.workshopItem, v.workshopOwner, v.workshopHash, v.publishedUrl, v.accounts);
+SD_IPC_FIELDS(IconLibraryEntry, v.id, v.format, v.name, v.previewPath, v.width, v.height, v.missing,
+    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses, v.groupIds, v.localOwned, v.groupNames);
+SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision, v.groupId, v.title, v.description, v.license, v.coverPath, v.rightsConfirmed, v.preparationId, v.operationId);
+SD_IPC_FIELDS(IconLibrarySnapshot, v.groups, v.entries, v.imported, v.importedGroupId, v.failures, v.revision, v.session, v.busy, v.succeeded,
+    v.error, v.target, v.targetName, v.workshopAvailable, v.coverPath, v.preparationId, v.publishedUrl, v.completedAction, v.operationId, v.progress);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
     v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,
@@ -157,7 +178,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldSchema,
     v.access, v.emptyLabel, v.noResultsLabel, v.minimum,
     v.maximum, v.step, v.minimumLength, v.maximumLength,
     v.required, v.showWhen, v.enabledWhen, v.dependsOn,
-    v.options, v.extensions);
+    v.options, v.extensions, v.durationUnit);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingGroupSchema,
     v.id, v.label, v.description, v.collapsible,
     v.defaultExpanded);
@@ -176,7 +197,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetHostAppearancePatch,
     v.acrylicEnabled, v.contentTheme, v.clearContentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOpaqueState,
     v.configured, v.available, v.canChoose, v.canClear,
-    v.displayLabel);
+    v.displayLabel, v.secretLength);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldState,
     v.schema, v.currentValue, v.defaultValue, v.hasStoredValue,
     v.visible, v.enabled, v.valid, v.validationError,
@@ -190,6 +211,8 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingMutationGuard,
 SD_IPC_FIELDS(widget_runtime::WidgetSettingMutationResult,
     v.status, v.generation, v.revision, v.errorCode,
     v.message);
+SD_IPC_FIELDS(widget_runtime::WidgetSettingSecretReadResult,
+    v.result, v.plaintext);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingSearchResult,
     v.id, v.title, v.source, v.type);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingSearchSnapshot,

@@ -303,7 +303,7 @@ end
 return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPersonalizationDefault=true,
     bg=0x18202A,border=0xFFFFFF,alpha=0.42,borderAlpha=0.18,gradientEndA=0.28,
     settings={fields={
-        {key="interval",label=l10n.tr("album.interval"),type="range",min=3,max=300,step=1,default=5},
+        {key="interval",label=l10n.tr("album.interval"),type="duration",min=3,max=300,step=1,default=5},
         {key="shuffle",label=l10n.tr("album.shuffle"),type="bool",default=false},
         {key="fill",label=l10n.tr("album.fill"),type="bool",default=true},
     }},

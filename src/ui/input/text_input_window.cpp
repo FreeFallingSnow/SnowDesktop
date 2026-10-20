@@ -563,9 +563,10 @@ void Paint(State& state, HDC dc)
     target->BeginDraw(); target->Clear(Color(state.colors.background)); Render(state,target.Get(),D2D1::RectF(0,0,static_cast<float>(state.width),static_cast<float>(state.height)),1,true);
     if (FAILED(target->EndDraw())) state.dcTarget.Reset();
 }
-void Copy(State& state)
+bool Copy(State& state)
 {
-    if (state.password || state.cursor == state.anchor || !OpenClipboard(state.window)) return;
+    if (state.password || state.cursor == state.anchor || !OpenClipboard(state.window)) return false;
+    bool copied = false;
     const auto selection = state.Value().substr((std::min)(state.cursor,state.anchor),
         (std::max)(state.cursor,state.anchor)-(std::min)(state.cursor,state.anchor));
     const auto memory = GlobalAlloc(GMEM_MOVEABLE,(selection.size()+1)*sizeof(wchar_t));
@@ -574,11 +575,13 @@ void Copy(State& state)
         if (auto* destination=static_cast<wchar_t*>(GlobalLock(memory)))
         {
             std::memcpy(destination,selection.data(),selection.size()*sizeof(wchar_t)); destination[selection.size()]=0; GlobalUnlock(memory);
-            EmptyClipboard(); if (!SetClipboardData(CF_UNICODETEXT,memory)) GlobalFree(memory);
+            copied = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT,memory) != nullptr;
+            if (!copied) GlobalFree(memory);
         }
         else GlobalFree(memory);
     }
-    CloseClipboard();
+    const bool closed = CloseClipboard() != FALSE;
+    return copied && closed;
 }
 void Paste(State& state)
 {
@@ -586,20 +589,21 @@ void Paste(State& state)
     struct ClipboardSession { ~ClipboardSession(){CloseClipboard();} } clipboardSession;
     std::wstring value;
     SecureBuffer protectedValue;
-    if (const auto data=GetClipboardData(CF_UNICODETEXT))
+    const auto data=GetClipboardData(CF_UNICODETEXT);
+    if (!data) return;
+    const auto bytes=GlobalSize(data);
+    if (bytes < sizeof(wchar_t)) return;
+    const auto* source=static_cast<const wchar_t*>(GlobalLock(data));
+    if (!source) return;
     {
-        const auto bytes=GlobalSize(data);
-        if (const auto* source=static_cast<const wchar_t*>(GlobalLock(data)))
+        struct Unlock { HANDLE data; ~Unlock(){GlobalUnlock(data);} } unlock{data};
+        const auto capacity=(std::min)(bytes/sizeof(wchar_t),static_cast<SIZE_T>(1048576));
+        if(state.password)protectedValue.storage.resize(capacity+1);
+        for (SIZE_T i=0;i<capacity&&source[i];++i)
         {
-            struct Unlock { HANDLE data; ~Unlock(){GlobalUnlock(data);} } unlock{data};
-            const auto capacity=(std::min)(bytes/sizeof(wchar_t),static_cast<SIZE_T>(1048576));
-            if(state.password)protectedValue.storage.resize(capacity+1);
-            for (SIZE_T i=0;i<capacity&&source[i];++i)
-            {
-                if(source[i]==L'\r')continue;
-                const auto ch=state.singleLine&&(source[i]==L'\n'||source[i]==L'\t')?L' ':source[i];
-                if(state.password)protectedValue.storage[protectedValue.length++]=ch;else value.push_back(ch);
-            }
+            if(source[i]==L'\r')continue;
+            const auto ch=state.singleLine&&(source[i]==L'\n'||source[i]==L'\t')?L' ':source[i];
+            if(state.password)protectedValue.storage[protectedValue.length++]=ch;else value.push_back(ch);
         }
     }
     state.Replace(state.password?protectedValue.View():std::wstring_view(value));
@@ -674,7 +678,7 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
     case EM_SCROLLCARET:state->layout.Reset();state->Layout();state->Dirty();return 0;
     case EM_REPLACESEL:if(lp)state->Replace(reinterpret_cast<const wchar_t*>(lp));return 0;
     case WM_COPY:Copy(*state);return 0;
-    case WM_CUT:if(!state->password&&state->Mutable()){Copy(*state);state->Replace(L"");}return 0;
+    case WM_CUT:if(!state->password&&state->Mutable()&&Copy(*state))state->Replace(L"");return 0;
     case WM_PASTE:Paste(*state);return 0;
     case WM_CLEAR:state->Replace(L"");return 0;
     case WM_UNDO:case EM_UNDO:

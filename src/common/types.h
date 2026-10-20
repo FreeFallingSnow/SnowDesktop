@@ -298,7 +298,9 @@ struct DesktopItem
  */
 struct FolderEntry
 {
+    // Keep the filesystem name for classification, search and public callers.
     std::wstring name;
+    std::wstring displayName;
     std::wstring fullPath;
     std::wstring typeName;
     bool isDirectory = false;
@@ -318,8 +320,14 @@ struct FolderEntry
 
     FolderEntry() = default;
 
+    const std::wstring& DisplayName() const
+    {
+        return displayName.empty() ? name : displayName;
+    }
+
     FolderEntry(const FolderEntry& other)
         : name(other.name),
+          displayName(other.displayName),
           fullPath(other.fullPath),
           typeName(other.typeName),
           isDirectory(other.isDirectory),
@@ -354,6 +362,7 @@ struct FolderEntry
                 iconBitmapSize = {};
             }
             name = other.name;
+            displayName = other.displayName;
             fullPath = other.fullPath;
             typeName = other.typeName;
             isDirectory = other.isDirectory;
@@ -411,6 +420,7 @@ public:
 
     FolderEntry(FolderEntry&& other) noexcept
         : name(std::move(other.name)),
+          displayName(std::move(other.displayName)),
           fullPath(std::move(other.fullPath)),
           typeName(std::move(other.typeName)),
           isDirectory(other.isDirectory),
@@ -441,6 +451,7 @@ public:
                 DeleteObject(iconBitmap);
             }
             name = std::move(other.name);
+            displayName = std::move(other.displayName);
             fullPath = std::move(other.fullPath);
             typeName = std::move(other.typeName);
             isDirectory = other.isDirectory;
@@ -464,6 +475,16 @@ public:
     }
 };
 
+// Saved ownership for a desktop member temporarily removed by an installer.
+struct MissingDesktopWidgetItem
+{
+    std::wstring key;
+    size_t index = 0;
+    std::int64_t missingSince = 0; // UTC Unix seconds; survives host restarts.
+
+    bool operator==(const MissingDesktopWidgetItem&) const = default;
+};
+
 /**
  * @brief 桌面组件
  * @details 表示桌面上的一个组件实例，可以是集合、文件分类、文件夹映射或 Lua 脚本组件。
@@ -478,6 +499,8 @@ struct DesktopWidget
     std::wstring scriptTitle;
     // Empty means Demo Mode infers a category from the collection contents.
     std::wstring demoIconCategory;
+    // Presentation of this component's Dock entrance; retained on the desktop.
+    std::string dockIconAssetId;
     std::wstring sourceFolderPath;
     // Original icon replaced by an explicit folder/shortcut conversion. This
     // is separate from itemKeys, which orders the mapped directory contents.
@@ -490,8 +513,11 @@ struct DesktopWidget
     float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
     bool selected = false;
     bool autoCollect = false;
+    // Empty preserves the legacy All scope; IDs reference category settings.
+    std::vector<std::wstring> autoCollectCategoryIds;
     bool dissolveWhenSingle = false; // Only groups created by the pair-drop gesture.
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false; // Per-object popup layout; preserves the inline view.
     bool showDetails = false;
     bool detailShowModified = false;
@@ -524,6 +550,8 @@ struct DesktopWidget
     bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    // Applies only to a standalone 1x1 native storage widget.
+    bool singleCellIconMode = false;
     bool titleBarCollapsed = false;
     bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;
@@ -532,6 +560,8 @@ struct DesktopWidget
     bool showFileCategories = false;
     bool showSearchBox = false;
     std::vector<std::wstring> itemKeys;
+    // Temporarily absent desktop members never occupy visible collection slots.
+    std::vector<MissingDesktopWidgetItem> missingItems;
     std::vector<std::wstring> childWidgetIds;
     std::vector<FolderEntry> folderEntries;
 };
@@ -602,9 +632,11 @@ struct DockEntry
     // options on the Dock entry so they can use the same list/detail view as
     // widget-backed folder popups.
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;
+    bool dateHeaders = false;
     std::vector<std::wstring> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;
@@ -615,6 +647,9 @@ struct DockEntry
         snowdesktop::list_detail_rules::kDefaultTypePosition;
     float detailSizePosition =
         snowdesktop::list_detail_rules::kDefaultSizePosition;
+    // Runtime rank from the saved array or an explicit Dock edit. Shell
+    // classification may regroup entries but must not overwrite this order.
+    std::optional<size_t> userOrder;
 };
 
 struct DockUsageRecord
@@ -633,7 +668,6 @@ struct DesktopWindows
     HWND defView = nullptr;
     HWND listView = nullptr;
     HWND host = nullptr;
-    bool listViewWasVisible = false;
 };
 
 /**

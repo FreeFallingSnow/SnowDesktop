@@ -12,7 +12,10 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
+
+struct IMMDeviceEnumerator;
 
 namespace snowdesktop::widget_runtime
 {
@@ -46,6 +49,27 @@ struct WidgetAudioAnalysisConfiguration
     bool peak = true;
     std::size_t waveformPoints = 128;
     std::size_t spectrumBins = 64;
+    bool operator==(const WidgetAudioAnalysisConfiguration&) const = default;
+};
+
+bool IsRepeatedSilentWidgetAudioSnapshot(
+    const WidgetAudioAnalysisDataSnapshot& previous,
+    const WidgetAudioAnalysisDataSnapshot& next) noexcept;
+
+// The capture worker and deterministic regression fixture use the same
+// publication state. The provider serializes it with its snapshot mutex.
+class WidgetAudioAnalysisPublication
+{
+public:
+    bool Publish(WidgetAudioAnalysisDataSnapshot snapshot);
+    bool DrainChanged() noexcept { return std::exchange(changed_, false); }
+    const std::optional<WidgetAudioAnalysisDataSnapshot>& Latest() const noexcept { return snapshot_; }
+    void Reset() noexcept;
+
+private:
+    std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
+    WidgetDataSemanticDebouncer semanticDebouncer_;
+    bool changed_ = false;
 };
 
 WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
@@ -69,7 +93,12 @@ public:
     static constexpr std::chrono::milliseconds MinimumInterval{ 16 };
     static constexpr std::chrono::milliseconds MaximumInterval{ 1000 };
 
-    WidgetAudioAnalysisProvider() = default;
+    struct Initialization
+    {
+        std::function<long(IMMDeviceEnumerator**)> createEnumerator;
+        std::function<void*()> createEndpointEvent;
+    };
+    explicit WidgetAudioAnalysisProvider(Initialization initialization = {});
     ~WidgetAudioAnalysisProvider();
 
     WidgetAudioAnalysisProvider(const WidgetAudioAnalysisProvider&) = delete;
@@ -91,14 +120,13 @@ private:
     WidgetAudioAnalysisConfiguration Configuration() const;
 
     mutable std::mutex mutex_;
-    std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
-    WidgetDataSemanticDebouncer semanticDebouncer_;
+    WidgetAudioAnalysisPublication publication_;
     WidgetAudioAnalysisConfiguration configuration_;
     ChangedCallback changedCallback_;
-    bool changed_ = false;
     std::jthread worker_;
     std::atomic<std::int64_t> intervalMs_{ 33 };
     std::atomic<bool> resourcesActive_{ false };
     void* stopEvent_ = nullptr;
+    Initialization initialization_;
 };
 }

@@ -2,14 +2,18 @@
 #include "navigation/quick_navigation_query.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
 #include "navigation/quick_navigation_rules.h"
 #include "../src/app/navigation/quick_navigation_theme.h"
+#include "../src/app/navigation/quick_navigation_helpers.h"
+#include "../src/app/render/desktop_backdrop_update_rules.h"
 
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rules =
@@ -69,6 +73,9 @@ void TestViewModePersistenceValues()
                 QuickNavigationDesktopViewMode::Initial &&
             rules::NextQuickNavigationDesktopViewMode(
                 QuickNavigationDesktopViewMode::Initial) ==
+                QuickNavigationDesktopViewMode::Frequency &&
+            rules::NextQuickNavigationDesktopViewMode(
+                QuickNavigationDesktopViewMode::Frequency) ==
                 QuickNavigationDesktopViewMode::Tile,
         "view mode button must cycle through all modes");
     Check(
@@ -112,11 +119,16 @@ void TestViewModeFilePersistence()
         QuickNavigationDesktopViewMode::Tile,
         QuickNavigationDesktopViewMode::Source,
         QuickNavigationDesktopViewMode::Initial,
+        QuickNavigationDesktopViewMode::Frequency,
     };
     for (const auto mode : modes)
     {
         NavigationSettings saved;
         saved.desktopViewMode = mode;
+        saved.appSuggestionsEnabled = mode != QuickNavigationDesktopViewMode::Tile;
+        saved.mappingViewMode = mode == QuickNavigationDesktopViewMode::Tile
+            ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
+        saved.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}, {"escaped-\"id\\", true}};
         Check(
             SaveNavigationSettings(
                 path.c_str(), saved),
@@ -127,6 +139,11 @@ void TestViewModeFilePersistence()
                 path.c_str(), loaded) &&
                 loaded.desktopViewMode == mode,
             "navigation view mode must round trip");
+        Check(loaded.appSuggestionsEnabled == saved.appSuggestionsEnabled,
+            "enabled and disabled suggestion preferences survive reload");
+        Check(loaded.mappingViewMode == saved.mappingViewMode &&
+                loaded.widgetSortByInitial == saved.widgetSortByInitial,
+            "mapping and each stable widget ID retain independent choices after reload");
     }
 
     {
@@ -141,12 +158,20 @@ void TestViewModeFilePersistence()
     NavigationSettings legacyLoaded;
     legacyLoaded.desktopViewMode =
         QuickNavigationDesktopViewMode::Source;
+    legacyLoaded.mappingViewMode = QuickNavigationDesktopViewMode::Initial;
+    legacyLoaded.widgetSortByInitial = {{"old-widget", true}};
+    legacyLoaded.appSuggestionsEnabled = true;
     Check(
         LoadNavigationSettings(
             path.c_str(), legacyLoaded) &&
             legacyLoaded.desktopViewMode ==
                 QuickNavigationDesktopViewMode::Tile,
         "legacy settings must default to tile");
+    Check(legacyLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
+            legacyLoaded.widgetSortByInitial.empty(),
+        "old files default mapping to source and widgets to original order without stale reused state");
+    Check(!legacyLoaded.appSuggestionsEnabled,
+        "legacy settings keep suggestions off, even when reusing a populated object");
 
     {
         std::ofstream invalid(
@@ -154,7 +179,9 @@ void TestViewModeFilePersistence()
                 std::ios::trunc);
         invalid <<
             "{\"desktopViewMode\":"
-            "\"unsupported\"}";
+            "\"unsupported\",\"mappingViewMode\":\"unsupported\","
+            "\"appSuggestionsEnabled\":\"true\","
+            "\"widgetSortByInitial\":{\"valid\":true,\"invalid\":\"initial\"}}";
     }
     NavigationSettings invalidLoaded;
     invalidLoaded.desktopViewMode =
@@ -165,7 +192,53 @@ void TestViewModeFilePersistence()
             invalidLoaded.desktopViewMode ==
                 QuickNavigationDesktopViewMode::Tile,
         "invalid settings must default to tile");
+    Check(invalidLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
+            invalidLoaded.widgetSortByInitial == std::map<std::string, bool>{{"valid", true}},
+        "invalid mapping modes use source and malformed sorting values cannot invent a choice");
+    Check(!invalidLoaded.appSuggestionsEnabled, "malformed suggestion values cannot enable the feature");
+    NavigationSettings mappingOnly;
+    mappingOnly.mappingViewMode = QuickNavigationDesktopViewMode::Frequency;
+    NormalizeNavigationSettings(mappingOnly);
+    Check(mappingOnly.mappingViewMode == QuickNavigationDesktopViewMode::Source,
+        "the desktop-only frequency mode cannot enter folder mapping preferences");
     DeleteFileW(path.c_str());
+}
+
+void TestLaunchFrequencyAndSuggestions()
+{
+    // Tile identities: unrecorded Dock pin, used collection shortcut, another
+    // unrecorded shortcut, most-used loose shortcut, tied collection shortcut.
+    // Frequency must not fall back to alphabetical or unordered-map iteration.
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}) == std::vector<size_t>{3, 1, 4, 0, 2},
+        "recorded apps lead by count; equal and missing counts retain Tile order");
+    Check(rules::LaunchFrequencyOrder({0, 0, 0}) == std::vector<size_t>{0, 1, 2},
+        "a new installation retains Tile order in frequency mode");
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 2) == std::vector<size_t>{3, 1},
+        "suggestions select only recorded applications up to the current column count");
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 1) == std::vector<size_t>{3} &&
+        rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 8) == std::vector<size_t>{3, 1, 4},
+        "narrow rows clip suggestions and wide rows never pad with unrecorded apps");
+    Check(rules::LaunchFrequencyOrder({0, -1, 0}, true, 6).empty() &&
+        rules::LaunchFrequencyOrder({}, true, 6).empty(),
+        "empty or invalid usage history produces no suggestion section");
+    NavigationSettings settings;
+    Check(!rules::ShowAppSuggestions(settings, true, false, false, false),
+        "suggestions are off by default");
+    settings.appSuggestionsEnabled = true;
+    for (const auto mode : {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
+        QuickNavigationDesktopViewMode::Initial, QuickNavigationDesktopViewMode::Frequency})
+    {
+        settings.desktopViewMode = mode;
+        Check(rules::ShowAppSuggestions(settings, true, false, false, false) ==
+            (mode != QuickNavigationDesktopViewMode::Frequency),
+            "enabled suggestions appear only in desktop modes other than frequency");
+    }
+    settings.desktopViewMode = QuickNavigationDesktopViewMode::Tile;
+    Check(!rules::ShowAppSuggestions(settings, false, false, false, false) &&
+        !rules::ShowAppSuggestions(settings, true, true, false, false) &&
+        !rules::ShowAppSuggestions(settings, true, false, true, false) &&
+        !rules::ShowAppSuggestions(settings, true, false, false, true),
+        "widget tabs, search, slot pickers and collapsed lists retain their original content");
 }
 
 void TestPinyinInitials()
@@ -332,6 +405,58 @@ void TestMappingSectionsFollowTabOrder()
         "unregistered mappings must append stably after ordered tabs");
 }
 
+void TestGroupedCollectionTabs()
+{
+    // Production tab enumeration and persisted-order normalization must retain
+    // every collection, including inactive children hidden by a collection group.
+    std::vector<DesktopWidget> widgets(8);
+    widgets[0].id = L"standalone";
+    widgets[1].id = L"collection-group";
+    widgets[1].type = DesktopWidgetType::CollectionGroup;
+    widgets[1].childWidgetIds = {L"grouped-a", L"grouped-b"};
+    widgets[1].activeCategoryId = L"grouped-b";
+    widgets[2].id = L"grouped-a";
+    widgets[3].id = L"grouped-b";
+    widgets[4].id = L"file-group";
+    widgets[4].type = DesktopWidgetType::FileGroup;
+    widgets[4].childWidgetIds = {L"mapping", L"files"};
+    widgets[5].id = L"mapping";
+    widgets[5].type = DesktopWidgetType::FolderMapping;
+    widgets[6].id = L"files";
+    widgets[6].type = DesktopWidgetType::FileCategories;
+    widgets[7].id = L"lua";
+    widgets[7].type = DesktopWidgetType::LuaScript;
+
+    std::vector<std::wstring> tabOrder{
+        L"grouped-b", L"standalone", L"deleted", L"collection-group",
+        L"grouped-b", L"mapping", L"file-group", L"lua"};
+    const std::vector<size_t> expectedIndices{3, 0, 5, 2, 6};
+    const std::vector<std::wstring> expectedOrder{
+        L"grouped-b", L"standalone", L"mapping", L"grouped-a", L"files"};
+    Check(rules::OrderTabWidgetIndices(tabOrder, widgets) == expectedIndices,
+        "grouped collections must have individual tabs in saved order, with missing children appended");
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "persisted tab order must retain grouped collections and remove stale, duplicate and non-tab IDs");
+    Check(rules::OrderTabWidgetIndices(tabOrder, widgets) == expectedIndices,
+        "visible tab indices must match persisted order for clicks and drag reordering");
+
+    widgets[1].activeCategoryId = L"grouped-a";
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "changing a group's active collection must not hide or reorder other collection tabs");
+    widgets[1].childWidgetIds.clear();
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "ungrouping collections must preserve their quick-access tab order");
+
+    widgets.erase(widgets.begin() + 2);
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == std::vector<std::wstring>({
+        L"grouped-b", L"standalone", L"mapping", L"files"}),
+        "deleting a collection must remove only its tab from persisted order");
+}
+
 void TestSectionLayout()
 {
     const auto layouts =
@@ -389,6 +514,73 @@ void TestSectionLayout()
             rules::InitialJumpBucketIndex(L'W') == 22 &&
             rules::InitialJumpBucketIndex(L'#') == 26,
         "initial jump buckets must map A-Z and fallback consistently");
+}
+
+void TestTabDragWhileScrolling()
+{
+    // Keep the grabbed pixel at the same screen position while wheel scrolling,
+    // then move the pointer without letting the next mouse message undo it.
+    int scrollOffset = 40;
+    POINT startPoint{430, 100};
+    int dragDelta = 30;
+    const auto draggedLeft = [&]() { return 420 - scrollOffset + dragDelta; };
+    Check(draggedLeft() == 410, "drag fixture must preserve the original cursor grab offset");
+    rules::SetTabScrollOffset(100, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 410 && startPoint.x == 370,
+        "scrolling right during a drag must keep the floating tab under a stationary pointer");
+    dragDelta = 480 - startPoint.x;
+    Check(draggedLeft() == 430,
+        "moving the mouse after wheel scrolling must retain scroll compensation");
+    rules::SetTabScrollOffset(0, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 430,
+        "scrolling back to the left boundary must preserve the cursor grab offset");
+    rules::SetTabScrollOffset(0, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 430,
+        "a clamped wheel step must not introduce phantom drag displacement");
+    rules::SetTabScrollOffset(80, scrollOffset, false, startPoint, dragDelta);
+    Check(startPoint.x == 470 && dragDelta == 10 && scrollOffset == 80,
+        "scrolling without an active tab drag must leave the drag origin and delta alone");
+
+    scrollOffset = 40;
+    startPoint = {430, 100};
+    dragDelta = 0;
+    rules::SetTabScrollOffset(100, scrollOffset, true, startPoint, dragDelta);
+    Check(!rules::TabDragExceededThreshold(430 - startPoint.x, dragDelta, 4) &&
+        !rules::TabDragExceededThreshold(434 - startPoint.x, dragDelta, 4),
+        "scrolling a pressed tab before dragging must not count towards the pointer threshold");
+    Check(rules::TabDragExceededThreshold(440 - startPoint.x, dragDelta, 4) &&
+        rules::TabDragExceededThreshold(420 - startPoint.x, dragDelta, 4),
+        "real pointer movement must start a drag after scrolling in either direction");
+    dragDelta = 440 - startPoint.x;
+    Check(draggedLeft() == 390,
+        "starting the drag after scrolling must retain the original grabbed pixel");
+
+    const std::vector<int> centers{0, 0, 240, 360, 500, 680};
+    Check(rules::TabDragTarget(3, 360, centers) == 3,
+        "a dragged tab must stay in place until it crosses a neighboring midpoint");
+    Check(rules::TabDragTarget(3, 499, centers) == 3 &&
+        rules::TabDragTarget(3, 501, centers) == 4,
+        "rightward reordering must use neighboring tab centers rather than the source center");
+    Check(rules::TabDragTarget(3, 239, centers) == 2,
+        "leftward reordering must stop at the first scrollable tab");
+    Check(rules::TabDragTarget(2, 800, centers) == 5 &&
+        rules::TabDragTarget(5, 800, centers) == 5,
+        "dragging past the last tab must target the end instead of wrapping to the first tab");
+    const std::vector<int> scrolledCenters{0, 0, 180, 300, 440, 620};
+    Check(rules::TabDragTarget(3, 450, centers) == 3 &&
+        rules::TabDragTarget(3, 450, scrolledCenters) == 4,
+        "scrolling beneath a stationary floating tab must update the drop target");
+
+    // Unequal label widths move the rightward landing slot away from the
+    // target's old left edge. The preview must match the reordered empty space.
+    Check(rules::TabDropSlotLeft(2, 4, 300, 80, 160) == 380 &&
+        rules::TabDropSlotLeft(2, 4, 300, 160, 80) == 220,
+        "rightward drop frames must match the empty slot for wider and narrower target tabs");
+    Check(rules::TabDropSlotLeft(4, 2, 300, 80, 160) == 300 &&
+        rules::TabDropSlotLeft(3, 3, 300, 80, 80) == 300,
+        "leftward and unchanged drop frames must start at the destination's original edge");
+    Check(rules::TabDropSlotLeft(2, 4, 270, 80, 160) == 350,
+        "the drop frame must scroll with the destination slot rather than the floating tab");
 }
 
 void TestAnimationRules()
@@ -498,6 +690,209 @@ void TestAnimationRules()
         "reset returns to hidden");
 }
 
+void TestResizeAnimation()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect expanded{100, 80, 740, 650};
+    const ResizeRect collapsed{200, 80, 640, 280};
+    ResizeState resize;
+    resize.Start(expanded, collapsed, 1000, true, 1.0);
+    Check(resize.IsAnimating() && resize.Advance(1000, true) == expanded,
+        "collapse begins at the currently displayed bounds");
+    const auto halfway = resize.Advance(1090, true);
+    Check(halfway.left == 150 && halfway.right == 690 && halfway.bottom == 465,
+        "collapse smoothly interpolates width and height");
+    Check(halfway.top == expanded.top && halfway.left + halfway.right == expanded.left + expanded.right,
+        "resize preserves the search header anchor and horizontal center");
+    Check(resize.Envelope() == expanded,
+        "resize reserves both endpoints for the native host and render surface");
+
+    resize.Start(halfway, expanded, 1090, true, 1.0);
+    Check(resize.Advance(1090, true) == halfway,
+        "rapid reverse switching starts from the displayed frame without jumping");
+    const auto reversing = resize.Advance(1135, true);
+    Check(reversing.left < halfway.left && reversing.bottom > halfway.bottom,
+        "reversing a collapse grows back toward the expanded bounds");
+    Check(resize.Advance(1270, true) == expanded && !resize.IsAnimating(),
+        "reverse transition reaches exact final bounds and stops requesting frames");
+
+    resize.Start(collapsed, expanded, 2000, true, 2.0);
+    Check(resize.Advance(2180, true) == halfway && resize.IsAnimating(),
+        "resize follows the global duration scale");
+    Check(resize.Advance(2360, true) == expanded && !resize.IsAnimating(),
+        "scaled expansion completes at the requested size");
+
+    resize.Start(expanded, collapsed, 3000, true, 1.0);
+    const auto beforeResults = resize.Advance(3045, true);
+    const ResizeRect newResults{200, 80, 640, 400};
+    resize.Retarget(newResults, 3045);
+    Check(resize.Advance(3045, true) == beforeResults,
+        "new search results retarget an active resize without a discontinuity");
+    Check(resize.Advance(3225, true) == newResults && !resize.IsAnimating(),
+        "resize settles at the updated search result height");
+
+    resize.Start(expanded, collapsed, 4000, false, 1.0);
+    Check(!resize.IsAnimating() && resize.Advance(4000, false) == collapsed,
+        "disabled animations apply the target geometry immediately");
+    resize.Start(collapsed, expanded, 5000, true, 1.0);
+    resize.Advance(5045, true);
+    Check(resize.Advance(5045, false) == expanded && !resize.IsAnimating(),
+        "disabling animations during a resize completes it immediately");
+    resize.Start(expanded, expanded, 6000, true, 1.0);
+    Check(!resize.IsAnimating(), "identical panel sizes do not schedule an animation");
+
+    const ResizeRect centeredCollapsed{-320, -200, 120, 0};
+    const ResizeRect centeredExpanded{-420, -400, 220, 200};
+    resize.Start(centeredCollapsed, centeredExpanded, 6500, true, 1.0);
+    const auto centered = resize.Advance(6590, true);
+    Check(centered.left == -370 && centered.top == -300 &&
+        centered.right == 170 && centered.bottom == 100,
+        "centered transitions interpolate position as well as size on negative-coordinate monitors");
+    Check(resize.Envelope() == centeredExpanded &&
+        resize.Advance(6680, true) == centeredExpanded,
+        "the final centered placement is preserved without clipping the transition");
+
+    State state;
+    state.ShowImmediately();
+    state.Resize().Start(expanded, collapsed, 7000, true, 1.0);
+    state.Close(7045);
+    Check(!state.Resize().IsAnimating() && state.IsClosing(),
+        "closing cancels resizing and preserves the normal dismissal animation");
+    state.Resize().Start(expanded, collapsed, 8000, true, 1.0);
+    state.ResetHidden();
+    Check(!state.Resize().IsAnimating() && state.IsHidden(),
+        "destroying the panel clears resize state before the next opening");
+}
+
+void TestResizePresentationLifetime()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect expanded{100, 80, 740, 650};
+    const ResizeRect collapsed{200, 80, 640, 280};
+    ResizeState resize;
+    resize.Start(expanded, collapsed, 1000, true, 1.0);
+    RECT allocation{98, 78, 742, 652};
+    const RECT initialAllocation = allocation;
+    RECT surface{0, 0, 640, 570};
+    int hostChanges = 0;
+    int surfaceChanges = 0;
+    int glassReplacements = 0;
+    RECT previousPanel{expanded.left, expanded.top, expanded.right, expanded.bottom};
+    for (std::uint64_t now = 1000; now <= 1200; ++now)
+    {
+        const auto frame = resize.Advance(now, true);
+        const RECT panel{frame.left, frame.top, frame.right, frame.bottom};
+        const RECT requiredHost{panel.left - 2, panel.top - 2, panel.right + 2, panel.bottom + 2};
+        const RECT nextHost = QuickNavigationRetainedAllocation(allocation, requiredHost);
+        const RECT requiredSurface{0, 0, panel.right - panel.left, panel.bottom - panel.top};
+        const RECT nextSurface = QuickNavigationRetainedAllocation(surface, requiredSurface);
+        if (!EqualRect(&allocation, &nextHost)) ++hostChanges;
+        if (!EqualRect(&surface, &nextSurface)) ++surfaceChanges;
+        if (!snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                kQuickNavigationBackdropPanelOwner, previousPanel,
+                kQuickNavigationBackdropPanelOwner, panel)) ++glassReplacements;
+        allocation = nextHost;
+        surface = nextSurface;
+        previousPanel = panel;
+    }
+    Check(!resize.IsAnimating() && hostChanges == 0 && surfaceChanges == 0 && glassReplacements == 0,
+        "collapse, settling and idle frames retain the host allocation, surface capacity and glass identity");
+    Check(EqualRect(&allocation, &initialAllocation),
+        "the settling frame cannot resize either native popup target");
+    const RECT larger{-200, -100, 900, 800};
+    const RECT grown = QuickNavigationRetainedAllocation(allocation, larger);
+    const RECT retained = QuickNavigationRetainedAllocation(grown, allocation);
+    Check(EqualRect(&grown, &larger) && EqualRect(&retained, &larger),
+        "a larger or retargeted panel grows capacity once without shrinking it again");
+    const RECT newSession = QuickNavigationRetainedAllocation(RECT{}, previousPanel);
+    Check(EqualRect(&newSession, &previousPanel),
+        "a destroyed window's empty allocation starts the next session at its own size");
+    Check(!snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+            0, RECT{expanded.left, expanded.top, expanded.right, expanded.bottom}, 0, previousPanel),
+        "the old rectangle-only backdrop identity detects a replacement at the settling frame");
+}
+
+void TestResizeHostOrigin()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const RECT monitor{-1920, -240, 0, 840};
+    const ResizeRect collapsed{-1180, 360, -740, 560};
+    const ResizeRect expanded{-1280, 100, -640, 720};
+    const RECT compactPanel{collapsed.left, collapsed.top, collapsed.right, collapsed.bottom};
+    const RECT expandedPanel{expanded.left, expanded.top, expanded.right, expanded.bottom};
+    const RECT empty{};
+    const RECT initialHost = QuickNavigationHostAllocation(empty, compactPanel, monitor);
+    const LONG retainedOffsetX = compactPanel.left - initialHost.left;
+    const LONG retainedOffsetY = compactPanel.top - initialHost.top;
+    const RECT firstExpandHost = QuickNavigationHostAllocation(initialHost, expandedPanel, monitor);
+    Check(EqualRect(&initialHost, &firstExpandHost) &&
+            firstExpandHost.left + retainedOffsetX == compactPanel.left &&
+            firstExpandHost.top + retainedOffsetY == compactPanel.top,
+        "first expansion keeps the old compact frame at its screen position until the new frame is presented");
+
+    RECT host = initialHost;
+    ResizeState resize;
+    resize.Start(collapsed, expanded, 1000, true, 1.0);
+    for (std::uint64_t now = 1000; now <= 1300; ++now)
+    {
+        if (now == 1090)
+            resize.Start(resize.Advance(now, true), collapsed, now, true, 1.0);
+        const auto frame = resize.Advance(now, true);
+        const RECT panel{frame.left, frame.top, frame.right, frame.bottom};
+        host = QuickNavigationHostAllocation(host, panel, monitor);
+        Check(EqualRect(&host, &initialHost),
+            "expansion, reversal and settling share the initial native coordinate system");
+    }
+    Check(!resize.IsAnimating(), "the reversed transition settles inside the reserved host");
+    const RECT repeated = QuickNavigationHostAllocation(host, compactPanel, monitor);
+    Check(EqualRect(&repeated, &initialHost),
+        "repeated positioning does not accumulate the native host border");
+    const RECT restingFence = QuickNavigationWindowFence(compactPanel, expandedPanel, initialHost, false);
+    const POINT panelCorner{compactPanel.left - initialHost.left, compactPanel.top - initialHost.top};
+    const POINT outsidePanel{monitor.left + 10 - initialHost.left, monitor.top + 10 - initialHost.top};
+    Check(PtInRect(&restingFence, panelCorner) && !PtInRect(&restingFence, outsidePanel) &&
+            restingFence.right - restingFence.left == compactPanel.right - compactPanel.left,
+        "the retained host does not enlarge the resting panel's input fence");
+    const RECT openingFence = QuickNavigationWindowFence(compactPanel, expandedPanel, initialHost, true);
+    const POINT expandedCorner{expandedPanel.left - initialHost.left, expandedPanel.top - initialHost.top};
+    Check(PtInRect(&openingFence, panelCorner) && PtInRect(&openingFence, expandedCorner) &&
+            !PtInRect(&openingFence, outsidePanel),
+        "an expanded animation fence covers the actual path without claiming the entire monitor");
+
+    RECT oldHost = compactPanel;
+    InflateRect(&oldHost, 2, 2);
+    RECT oldEnvelope = expandedPanel;
+    InflateRect(&oldEnvelope, 2, 2);
+    const RECT oldExpandedHost = QuickNavigationRetainedAllocation(oldHost, oldEnvelope);
+    const POINT oldFrameAfterMove{oldExpandedHost.left + compactPanel.left - oldHost.left,
+        oldExpandedHost.top + compactPanel.top - oldHost.top};
+    Check(oldFrameAfterMove.x == expandedPanel.left && oldFrameAfterMove.y == expandedPanel.top,
+        "the previous panel-only reservation moves the stale compact frame to the expanded top-left");
+
+    const RECT detachedAnchor{-2050, 0, -2030, 20};
+    const RECT required = QuickNavigationRetainedAllocation(compactPanel, detachedAnchor);
+    const RECT dockHost = QuickNavigationHostAllocation(empty, required, monitor);
+    Check(dockHost.left <= detachedAnchor.left && dockHost.right >= monitor.right,
+        "the stable monitor envelope still includes an anchor on an adjacent screen");
+    const auto attractionRect = [](const RECT& rect) {
+        return snowdesktop::dock_attraction::Rect{static_cast<double>(rect.left),
+            static_cast<double>(rect.top), static_cast<double>(rect.right), static_cast<double>(rect.bottom)};
+    };
+    const auto reservedWarp = snowdesktop::dock_attraction::Bounds(
+        attractionRect(monitor), attractionRect(detachedAnchor));
+    for (const RECT panel : {compactPanel, expandedPanel})
+    {
+        const auto warp = snowdesktop::dock_attraction::Bounds(
+            attractionRect(panel), attractionRect(detachedAnchor));
+        Check(reservedWarp.left <= warp.left && reservedWarp.top <= warp.top &&
+                reservedWarp.right >= warp.right && reservedWarp.bottom >= warp.bottom,
+            "the fixed attraction reserve contains compact and expanded Dock trajectories");
+    }
+    const RECT fallback = QuickNavigationHostAllocation(empty, compactPanel, empty);
+    Check(fallback.left == compactPanel.left - 2 && fallback.bottom == compactPanel.bottom + 2,
+        "missing monitor bounds retain the panel-only allocation fallback");
+}
+
 void TestAnimationEffects()
 {
     using namespace snowdesktop::quick_navigation_animation_rules;
@@ -512,12 +907,18 @@ void TestAnimationEffects()
         {true, 1, 0, Effect::Scale},
         {true, 2, 2, Effect::Fade},
         {true, 3, 1, Effect::Genie},
+        {true, 4, 0, Effect::Attraction},
+        {true, 4, 1, Effect::Attraction},
+        {true, 4, 2, Effect::Attraction},
         {true, 0, 0, Effect::None},
         {true, 0, 1, Effect::Fade},
         {true, 0, 2, Effect::Scale},
         {false, 3, 0, Effect::None},
         {false, 3, 1, Effect::Fade},
         {false, 3, 2, Effect::Scale},
+        {false, 4, 0, Effect::None},
+        {false, 4, 1, Effect::Fade},
+        {false, 4, 2, Effect::Scale},
     };
     for (const auto& item : cases)
     {
@@ -530,6 +931,11 @@ void TestAnimationEffects()
     }
 
     State genie;
+    genie.Configure(Effect::Attraction, 0.7, true);
+    Check(IsDeformationEffect(genie.GetEffect()) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 294.0f) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(false)), 294.0f),
+        "Dock Attraction uses the window transition's 420ms duration with the selected speed in both directions");
     genie.Configure(Effect::Genie, 0.7, true);
     Check(genie.GetEffect() == Effect::Genie &&
             NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 252.0f) &&
@@ -591,6 +997,85 @@ void TestAnimationEffects()
     genie.Open(3200);
     Check(genie.GetVisual().opacity == 1.0f && !genie.IsAnimating(),
         "None must open immediately at full opacity");
+}
+
+void TestAttractionAnimationAndSurface()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    namespace attraction = snowdesktop::dock_attraction;
+    State state;
+    state.Configure(Effect::Attraction, 1.0, true);
+    Check(state.GetVisual().opacity == 0 && state.HiddenScale() == 1,
+        "hidden Attraction is transparent without adding a uniform scale");
+    state.Open(1000);
+    state.Advance(1105);
+    const auto opening = state.GetVisual();
+    Check(state.IsOpening() && opening.progress == 0.25f && opening.opacity == 1 && opening.scale == 1,
+        "Attraction opening exposes the curved surface before its final size");
+    state.Close(1105);
+    Check(state.IsClosing() && state.GetVisual().opacity == opening.opacity &&
+            state.GetVisual().progress == opening.progress,
+        "interrupting Attraction preserves the exact deformation and opacity");
+    state.Advance(1175);
+    const auto closing = state.GetVisual();
+    Check(closing.opacity > 0 && closing.opacity < 1,
+        "Attraction fades at its collapsed endpoint");
+    state.Open(1175);
+    Check(state.IsOpening() && state.GetVisual().progress == closing.progress &&
+            state.GetVisual().opacity == closing.opacity,
+        "reopening Attraction preserves both geometry and opacity");
+    state.Advance(1600);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1,
+        "reversed Attraction settles at full visibility");
+    state.Close(2000);
+    state.Advance(2420);
+    Check(state.IsHidden() && !state.IsAnimating() && state.GetVisual().opacity == 0,
+        "completed Attraction close releases the visible frame");
+    state.Open(3000);
+    state.Advance(3105);
+    state.Configure(Effect::None, 1.0);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1,
+        "disabling Attraction settles the requested visible state");
+
+    // The glass silhouette must follow the same mesh as the content, on all
+    // four Dock sides, negative monitor coordinates and fractional DPI.
+    for (const auto size : {std::pair{481.375, 613.625}, std::pair{1281.2, 721.6}})
+    {
+        const attraction::Rect panel{-1840.25, -900.75, -1840.25 + size.first, -900.75 + size.second};
+        const attraction::Rect docks[] = {
+            {panel.left + 140, panel.bottom + 24, panel.left + 188, panel.bottom + 72},
+            {panel.right - 188, panel.top - 72, panel.right - 140, panel.top - 24},
+            {panel.left - 72, panel.top + 140, panel.left - 24, panel.top + 188},
+            {panel.right + 24, panel.bottom - 188, panel.right + 72, panel.bottom - 140}};
+        for (const auto dock : docks)
+        for (const double collapsed : {0.0, 0.12, 0.33, 0.55, 0.81, 0.94, 1.0})
+        {
+            const auto frame = attraction::MeshFrame(panel, dock, collapsed);
+            const auto patch = attraction::ControlPoints(panel, dock, collapsed);
+            for (std::size_t i = 0; i < attraction::TriangleCount; ++i)
+            {
+                const auto cell = attraction::SourceCell(i / 2);
+                const double us[] = {cell.left, cell.right, cell.left, cell.right};
+                const double vs[] = {cell.top, cell.top, cell.bottom, cell.bottom};
+                const int corners[2][3] = {{0, 1, 2}, {3, 2, 1}};
+                for (const auto corner : corners[i % 2])
+                {
+                    const auto mapped = AttractionMeshPoint(frame, us[corner], vs[corner]);
+                    const auto expected = attraction::Surface(patch, us[corner], vs[corner]);
+                    Check(std::abs(mapped.x - expected.x) < 1e-8 &&
+                            std::abs(mapped.y - expected.y) < 1e-8,
+                        "Attraction glass and content share the curved patch vertices");
+                }
+                const double u = (cell.left + cell.right) * 0.5, v = (cell.top + cell.bottom) * 0.5;
+                const auto glass = AttractionMeshPoint(frame, u, v);
+                const auto first = attraction::Surface(patch, cell.right, cell.top);
+                const auto last = attraction::Surface(patch, cell.left, cell.bottom);
+                Check(std::abs(glass.x - (first.x + last.x) * 0.5) < 1e-8 &&
+                        std::abs(glass.y - (first.y + last.y) * 0.5) < 1e-8,
+                    "glass follows the content's diagonal interpolation rather than a different curved sample");
+            }
+        }
+    }
 }
 
 void TestGenieTranslucentContentCoverage()
@@ -1041,20 +1526,55 @@ void TestResultColorOpacity()
         !snowdesktop::DecodeRgbaColor("12345680",color), "RGBA codec has explicit channel order and rejects malformed values");
 }
 
+void TestGridColumnsRespectLayoutBounds()
+{
+    Check(rules::GridColumnCount(408, 192, 48) == 1,
+        "440-wide navigation with 96px icons and 48px gaps safely reduces two columns to one");
+    // Exercise actual scaled layout inputs. The independent occupancy check
+    // covers every valid width, boundary padding/icon/gap values and DPIs.
+    bool fits = true, maximal = true;
+    for (int dpi : {96, 120, 144, 168, 192, 240, 288, 384})
+    for (int width = 400; width <= 1800; ++width)
+    for (int icon : {24, 48, 96})
+    for (int gap : {4, 24, 48})
+    for (int padding : {8, 16, 40})
+    {
+        const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
+        const int available = scale(width) - 2 * scale(padding);
+        const int cell = scale(std::max(96, icon + 2 * gap));
+        const int spacing = scale(gap);
+        const int columns = rules::GridColumnCount(available, cell, spacing);
+        fits = fits && columns >= 1 &&
+            (columns == 1 || columns * cell + (columns - 1) * spacing <= available);
+        maximal = maximal &&
+            (columns + 1) * cell + columns * spacing > available;
+    }
+    Check(fits, "all valid navigation widths keep at least one column and fit each multi-column grid");
+    Check(maximal, "navigation grids retain every column that fits the requested minimum spacing");
+}
+
 int main()
 {
+    TestGridColumnsRespectLayoutBounds();
     TestResultColorOpacity();
     TestExtendedSearchAndConfiguration();
     TestViewModePersistenceValues();
     TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();
+    TestLaunchFrequencyAndSuggestions();
     TestPinyinInitials();
     TestApplicationIconCacheIdentity();
     TestSourceOwnership();
     TestMappingSectionsFollowTabOrder();
+    TestGroupedCollectionTabs();
     TestSectionLayout();
+    TestTabDragWhileScrolling();
     TestAnimationRules();
+    TestResizeAnimation();
+    TestResizePresentationLifetime();
+    TestResizeHostOrigin();
     TestAnimationEffects();
+    TestAttractionAnimationAndSurface();
     TestGenieTranslucentContentCoverage();
     TestGenieDestinationPixelCoverage();
     TestDeactivateRules();

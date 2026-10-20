@@ -1,13 +1,16 @@
+#include "platform/force_restart_hotkey.h"
 #include "app/app.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
+#include "desktop/desktop_input_activation.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
 #include "platform/shell_overlay_window.h"
 #include "platform/foreground_fullscreen.h"
+#include "platform/owned_window_shutdown.h"
 #include "shell/shell_extension_service.h"
 
 // Desktop host lifecycle.
@@ -16,6 +19,8 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::EmergencyRestartHotkey().Stop();
+    StopRecycleBinWatcher();
     dockExternalMinimize_.reset();
     snowdesktop::SoftwareDesktopHotkey().Unregister();
     dataCleanupWorker_.Stop();
@@ -24,6 +29,8 @@ DesktopApp::~DesktopApp()
     CancelStatusBarActivation();
     dockAppBars_.reset();
     statusBar_.reset();
+    ResetDockTrayPopup();
+    dockTrayService_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
@@ -95,12 +102,9 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
-    // The restart handoff may display an error after this object is destroyed.
-    // Retire the last HWND carrying this pointer while members are still alive,
-    // so that dialog's message loop cannot call back into a destroyed host.
-    if (controlHwnd_ && IsWindow(controlHwnd_))
-        DestroyWindow(controlHwnd_);
-    controlHwnd_ = nullptr;
+    // Startup can fail before the control window exists. Retire every host
+    // window before the startup failure dialog starts another message loop.
+    snowdesktop::RetireOwnedWindows({ &inputHwnd_, &hwnd_, &controlHwnd_ });
 }
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
@@ -135,40 +139,28 @@ void DesktopApp::HideExplorerIcons()
     // Never remove the usable native desktop before our first frame is ready.
     if (desktopStartupPresentationPending_)
         return;
-    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
-        return;
-
-    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
-        kHiddenBySnowDesktopProp) != nullptr;
-    const bool shouldHide = IsWindowVisible(desktopWindows_.listView) != FALSE ||
-        hiddenBySnowDesktop;
-    desktopWindows_.listViewWasVisible = shouldHide;
-    if (!shouldHide)
-        return;
-
-    SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp,
-        reinterpret_cast<HANDLE>(1));
-    ShowWindow(desktopWindows_.listView, SW_HIDE);
+    explorerIconVisibility_.Hide(FindDesktopWindows().listView);
 }
 
 /**
  * @brief 恢复显示资源管理器桌面图标
  *
- * 若之前由 SnowDesktop 隐藏且记录为可见状态，
- * 则调用 ShowWindow(SW_SHOW) 恢复 ListView 显示，
- * 并清除隐藏标记属性。
+ * 重新查找 Explorer 当前的图标层；切回原生桌面时明确请求显示图标。
+ * 确认图标层可见后才清除恢复请求，窗口重建期间由宿主监视器继续处理。
  */
-void DesktopApp::RestoreExplorerIcons()
+void DesktopApp::RestoreExplorerIcons(bool force)
 {
-    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
-        return;
+    explorerIconVisibility_.RequestRestore(force);
+    explorerIconVisibility_.TryRestore(FindDesktopWindows().listView);
+}
 
-    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
-        kHiddenBySnowDesktopProp) != nullptr;
-    if (desktopWindows_.listViewWasVisible || hiddenBySnowDesktop)
-        ShowWindow(desktopWindows_.listView, SW_SHOW);
-    RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
-    desktopWindows_.listViewWasVisible = false;
+void DesktopApp::RestoreExplorerIconsOnExit()
+{
+    if (!explorerIconVisibility_.RestoreWhenReady(
+            [] { return FindDesktopWindows().listView; }))
+        WriteDiagnosticLogEntry(
+            L"Explorer icon restoration incomplete at exit: current desktop layer is not visible",
+            DiagnosticLogLevel::Warning);
 }
 
 /**
@@ -199,6 +191,19 @@ void DesktopApp::RegisterOleDropTarget()
 
 void DesktopApp::ResetDesktopWindowResources()
 {
+    // Dock hosts are application-owned top-level windows. Recreating the
+    // Explorer-owned overlay must not retire their monitor-local reveal state
+    // or reset the shared strip to hidden. Device recovery and exit still
+    // release every Dock window and its composition resources.
+    // WM_DESTROY can arrive before TaskbarCreated marks the replacement.
+    DWORD currentExplorerProcessId = 0;
+    GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr),
+        &currentExplorerProcessId);
+    const bool replacingExplorer = explorerDesktopRecreatePending_ ||
+        (desktopHostExplorerProcessId_ &&
+            currentExplorerProcessId != desktopHostExplorerProcessId_);
+    const bool preserveDockHosts = replacingExplorer &&
+        !exitRequested_ && !graphicsDeviceRecovery_.Pending();
     if (widgetAccessibilityProvider_ && hwnd_)
         widgetAccessibilityProvider_->DetachWindow(hwnd_);
     EndDesktopPassthrough(false);
@@ -269,7 +274,8 @@ void DesktopApp::ResetDesktopWindowResources()
     DestroyDragHintWindow();
     DestroyDragPreviewWindow();
     DestroyFloatingPopupWindow();
-    DestroyFloatingDockWindow();
+    if (!preserveDockHosts)
+        DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))
         DestroyWindow(inputHwnd_);
@@ -684,15 +690,18 @@ void DesktopApp::EndFloatingDockKeyboardSession(
     }
 }
 
-void DesktopApp::RestoreInteractionInputFocus()
+void DesktopApp::RestoreInteractionInputFocus(bool pointerPress)
 {
-    if (floatingDockKeyboardSessionActive_ &&
-        floatingDockVisible_)
-    {
-        RefocusFloatingDockKeyboardSession();
-        return;
-    }
-    FocusDesktopInputWindow();
+    snowdesktop::desktop_input_activation::RestoreInteractionFocus(
+        systemPanel_ && systemPanel_->IsOpen(), pointerPress,
+        [this] { systemPanel_->Hide(); },
+        [this] {
+            if (floatingDockKeyboardSessionActive_ &&
+                floatingDockVisible_)
+                RefocusFloatingDockKeyboardSession();
+            else
+                FocusDesktopInputWindow();
+        });
 }
 
 HWND DesktopApp::ResolveDockSemanticForegroundWindow()
@@ -946,12 +955,14 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     // Do not accidentally show SnowDesktop again when the user selected the
     // native desktop before Explorer restarted.
     if (!customDesktopVisible_)
+    {
+        if (explorerIconVisibility_.RestorePending())
+            RestoreExplorerIcons();
         return;
+    }
 
-    // Only an actual Explorer process replacement is allowed to request a new
-    // WorkerW. Ordinary host polling and same-process shell changes stay read-only.
-    if (explorerDesktopRecreatePending_)
-        EnsureDesktopWorkerWindow();
+    // Reuse the new Explorer's own desktop host. Creating a wallpaper WorkerW
+    // here would also disturb other desktop clients after a real Shell restart.
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;
@@ -1011,7 +1022,11 @@ void DesktopApp::WatchDesktopHost()
     PollDisplayTopology();
 
     if (!customDesktopVisible_)
+    {
+        if (explorerIconVisibility_.RestorePending())
+            RestoreExplorerIcons();
         return;
+    }
 
     // A pending Explorer restart must rebuild the DComp target even if Windows
     // automatically reparented the old HWND and it still reports as visible.
@@ -1106,7 +1121,7 @@ void DesktopApp::CompleteExitRequest()
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
-    RestoreExplorerIcons();
+    RestoreExplorerIconsOnExit();
     if (hwnd_ && IsWindow(hwnd_))
     {
         DestroyWindow(hwnd_);

@@ -18,11 +18,13 @@ class PanelAppearanceEditor : public std::enable_shared_from_this<PanelAppearanc
 public:
     using Localize = PanelGradientEditor::Localize;
     using Change = std::function<void(const PersonalizationSettings&, bool)>;
-    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change, bool borderOnly = false)
+    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change,
+        bool borderOnly = false, bool inlineSurface = false)
     {
         auto result = std::make_shared<PanelAppearanceEditor>();
         result->localize_ = std::move(localize); result->change_ = std::move(change);
         result->borderOnly_ = borderOnly;
+        result->inlineSurface_ = inlineSurface;
         std::weak_ptr<PanelAppearanceEditor> weak = result;
         result->preview_.Initialize([weak](auto const& value) {
             if (auto self = weak.lock(); self && self->change_) self->change_(value, false);
@@ -84,6 +86,7 @@ private:
     presenter_controls::CoalescedPreviewTimer<PersonalizationSettings> preview_;
     bool syncing_ = false, dirty_ = false, closed_ = false;
     bool borderOnly_ = false;
+    bool inlineSurface_ = false;
     std::wstring L(const char* key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
@@ -91,6 +94,7 @@ private:
         gradient_->SetValue(value_.panelGradient);
         if (edge_) edge_->SetValue(value_.edgeLight);
         for (auto const& sync : sync_) sync();
+        sections_.UpdateRows();
         syncing_ = false;
     }
     void Apply(Edit edit, bool commit)
@@ -105,7 +109,8 @@ private:
     void Row(Panel parent, const char* key, Element control, Edit reset, Condition visible = {})
     {
         namespace x = winrt::Microsoft::UI::Xaml; namespace c = x::Controls;
-        c::Grid group; group.ColumnSpacing(8);
+        if (auto toggle = control.try_as<c::ToggleSwitch>()) toggle.MinWidth(0);
+        c::Grid group; group.ColumnSpacing(presenter_controls::kSettingControlGap);
         c::ColumnDefinition main; main.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
         c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::Auto());
         group.ColumnDefinitions().Append(main); group.ColumnDefinitions().Append(tail);
@@ -114,7 +119,10 @@ private:
         c::Grid::SetColumn(restore, 1); group.Children().Append(restore);
         std::weak_ptr<PanelAppearanceEditor> weak = shared_from_this();
         restore.Click([weak, reset](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply(reset, true); });
-        presenter_controls::SettingRow row; row.Initialize(group, presenter_controls::kSettingControlWidth + 40);
+        presenter_controls::SettingRow row; row.Initialize(group);
+        row.SetCompactEditor(control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>());
+        if (control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>())
+            row.SetControlAlignment(x::HorizontalAlignment::Right);
         row.SetText(L(key)); row.root.MinHeight(44); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(control, L(key));
         targets_.insert_or_assign(key, control.as<x::FrameworkElement>());
@@ -128,7 +136,7 @@ private:
         for (int i = 0; i < 3; ++i)
         {
             c::ColumnDefinition column;
-            column.Width(i == 0 ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) : i == 1 ? x::GridLengthHelper::FromValueAndType(70, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
+            column.Width(i == 0 ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) : i == 1 ? x::GridLengthHelper::FromValueAndType(presenter_controls::kSettingNumberWidth, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
             pair.ColumnDefinitions().Append(column);
         }
         c::Slider slider; slider.Minimum(minimum); slider.Maximum(maximum); slider.StepFrequency(step); slider.VerticalAlignment(x::VerticalAlignment::Center);
@@ -178,7 +186,7 @@ private:
         for (auto& editor : colors_) editor->Close(); colors_.clear();
         if (gradient_) gradient_->Close();
         if (edge_) edge_->Close();
-        root_.Children().Clear(); sync_.clear(); targets_.clear(); root_.Spacing(8);
+        root_.Children().Clear(); sync_.clear(); targets_.clear(); root_.Spacing(inlineSurface_ ? 0 : 8);
         sections_ = {};
         if (borderOnly_) sections_.border = root_;
         else { sections_.Initialize(root_); sections_.RefreshLocalizedText(localize_); }
@@ -226,6 +234,8 @@ private:
         });
         sections_.border.Children().Append(edge_->Content());
         sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
+        if (inlineSurface_)
+            presenter_controls::JoinSettingsSections(root_);
         Sync();
     }
 };

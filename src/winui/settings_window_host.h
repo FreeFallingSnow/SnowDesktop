@@ -5,6 +5,8 @@
 #include "settings/settings_controller.h"
 #include "shell/shell_extension_service.h"
 #include "icons/large_icon_settings.h"
+#include "icons/icon_library.h"
+#include "icons/icon_appearance.h"
 #include "settings/settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
@@ -69,6 +71,8 @@ struct SettingsWindowHostOptions
     PageLayoutPageActions pageLayoutPage;
     CalendarPageActions calendarPage;
     LargeIconSettingsAction largeIconSettings;
+    IconLibraryAction iconLibrary;
+    IconAppearanceAction iconAppearance;
 
     // The settings child supplies IPC adapters; the application supplies the
     // concrete backends. UI callbacks in the configured options stay local.

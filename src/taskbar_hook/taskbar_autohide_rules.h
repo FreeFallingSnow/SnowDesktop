@@ -2,69 +2,93 @@
 
 #include <windows.h>
 #include <cstdint>
-#include <utility>
+#include <unordered_map>
 
 namespace snowdesktop::taskbar_hook
 {
-struct ActivationRevealContext
+inline bool IsRecentTaskbarInput(DWORD recorded, DWORD lastInput, DWORD now) noexcept
 {
-    bool protectedTaskbar = false;
-    bool geometryValid = false;
-    bool explicitFocus = false;
-    bool secondary = false;
-    LONG activation = WA_INACTIVE;
-    bool callerIsActivationHandler = false;
-    RECT taskbar{}, monitor{};
-    POINT cursor{};
+    // A pointer merely resting over the taskbar is not an input-origin signal.
+    // A later click/key/movement elsewhere invalidates the recorded operation.
+    return recorded != 0 && recorded == lastInput && now - recorded <= 500;
+}
+
+class TaskbarMinimizeExemptions
+{
+public:
+    bool Exempts(std::uintptr_t source, bool observed, bool taskbarInput, ULONGLONG now)
+    {
+        std::erase_if(sources_, [now](const auto& entry) { return now - entry.second > 1500; });
+        if (!source) return false;
+        if (taskbarInput)
+        {
+            sources_[source] = now;
+            return true;
+        }
+        // An asynchronous WinEvent belongs to the operation already excluded
+        // by the synchronous pre-minimize hook, even if the pointer moved.
+        if (observed && sources_.contains(source)) return true;
+        // A new application/Dock command with another input must be protected.
+        sources_.erase(source);
+        return false;
+    }
+private:
+    std::unordered_map<std::uintptr_t, ULONGLONG> sources_;
 };
 
-inline bool IsHiddenBottomTaskbar(const ActivationRevealContext& context) noexcept
+inline bool IsAutoHiddenTaskbar(const RECT& bar, const RECT& screen) noexcept
 {
-    const auto& bar = context.taskbar;
-    const auto& screen = context.monitor;
-    if (!context.geometryValid || screen.right <= screen.left || screen.bottom <= screen.top ||
-        bar.right <= bar.left || bar.bottom <= bar.top ||
-        bar.top < screen.bottom - 2 || bar.top > screen.bottom || bar.bottom <= screen.bottom)
-        return false; // Includes visible, transitioning, and non-bottom taskbars.
-    return true;
+    if (bar.right <= bar.left || bar.bottom <= bar.top ||
+        screen.right <= screen.left || screen.bottom <= screen.top) return false;
+    if (bar.right - bar.left >= bar.bottom - bar.top)
+        return bar.top >= screen.bottom - 2 || bar.bottom <= screen.top + 2;
+    return bar.left >= screen.right - 2 || bar.right <= screen.left + 2;
 }
 
-inline bool ShouldSuppressActivationReveal(const ActivationRevealContext& context,
-    int flags, int request) noexcept
+inline bool IsTaskbarRevealEdge(const RECT& bar, const RECT& screen, POINT cursor) noexcept
 {
-    // The caller must belong to the symbol-resolved native window procedure.
-    // Keyboard focus can use the same activation request and call site.
-    if (!context.protectedTaskbar || context.explicitFocus ||
-        context.activation != WA_ACTIVE || flags != 0 || request != 8 ||
-        !context.callerIsActivationHandler ||
-        !IsHiddenBottomTaskbar(context))
-        return false;
-    const auto& screen = context.monitor;
-    const bool intentionalEdge = context.cursor.x >= screen.left && context.cursor.x < screen.right &&
-        context.cursor.y >= screen.bottom - 2 && context.cursor.y < screen.bottom;
-    return !intentionalEdge;
+    if (cursor.x < screen.left || cursor.x >= screen.right ||
+        cursor.y < screen.top || cursor.y >= screen.bottom) return false;
+    if (bar.right - bar.left >= bar.bottom - bar.top)
+        return bar.top + (bar.bottom - bar.top) / 2 >= screen.top + (screen.bottom - screen.top) / 2
+            ? cursor.y >= screen.bottom - 2 : cursor.y < screen.top + 2;
+    return bar.left + (bar.right - bar.left) / 2 >= screen.left + (screen.right - screen.left) / 2
+        ? cursor.x >= screen.right - 2 : cursor.x < screen.left + 2;
 }
 
-// Shared production dispatch boundary: forwarding preserves arguments exactly.
-template<typename Original>
-bool DispatchActivationReveal(const ActivationRevealContext& context,
-    int flags, int request, Original&& original)
+struct MinimizeProtectionInput
 {
-    if (ShouldSuppressActivationReveal(context, flags, request)) return true;
-    std::forward<Original>(original)(flags, request);
-    return false;
-}
+    LONG sequence = 0;
+    ULONGLONG started = 0, now = 0;
+    bool enabled = false, cancelled = false, explicitReveal = false;
+    bool sourceMinimized = false, nativeHidden = false;
+};
 
-// A taskbar left active but hidden may receive no further WM_ACTIVATE. Only
-// the verified explicit TrayUI focus entries own the live TrayUI pointer and
-// may supply the missing reveal for the primary foreground taskbar.
-template<typename Original>
-bool DispatchExplicitForegroundReveal(const ActivationRevealContext& context,
-    bool primaryForeground, Original&& original)
+// One request covers every taskbar. Each window releases its own reversible
+// cloak only after Shell has hidden it, or the user explicitly asks to see it.
+// Merely expiring a timer while Shell is expanded would cause a delayed flash.
+struct MinimizeProtection
 {
-    if (!primaryForeground || context.secondary || !context.protectedTaskbar ||
-        !context.explicitFocus || !IsHiddenBottomTaskbar(context)) return false;
-    std::forward<Original>(original)(0, 8);
-    return true;
-}
+    static constexpr ULONGLONG kMinimumHoldMs = 400, kMinimizeTimeoutMs = 1500;
+    LONG sequence = 0;
+    bool active = false, observedMinimized = false;
+
+    bool Update(const MinimizeProtectionInput& input) noexcept
+    {
+        const ULONGLONG elapsed = input.now >= input.started ? input.now - input.started : 0;
+        if (sequence != input.sequence)
+        {
+            sequence = input.sequence;
+            active = input.sequence != 0 && input.started <= input.now && elapsed < kMinimizeTimeoutMs;
+            observedMinimized = false;
+        }
+        if (!input.enabled || input.cancelled || input.explicitReveal)
+            active = false;
+        if (!active) return false;
+        if (input.sourceMinimized) observedMinimized = true;
+        else if (observedMinimized || elapsed >= kMinimizeTimeoutMs) active = false;
+        if (observedMinimized && input.nativeHidden && elapsed >= kMinimumHoldMs) active = false;
+        return active;
+    }
+};
 }

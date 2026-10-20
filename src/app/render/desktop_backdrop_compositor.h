@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <d2d1_1.h>
 #include "icons/icon_beautify.h"
+#include "ui/render/icon_backdrop_clip.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -45,8 +46,9 @@ public:
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
      * @param topmost 操作完成后窗口对是否位于 TOPMOST 带。
      * @param preserveAboveWindow 已在内容窗口上方且不可被本次刷新越过的窗口。
+     * @return 请求的配对定位是否成功；失败后的置顶带回退不计为定位成功。
      */
-    void SetPopupWindowPairZOrder(
+    bool SetPopupWindowPairZOrder(
         HWND contentWindow, HWND contentInsertAfter,
         bool topmost, HWND preserveAboveWindow = nullptr);
     /** @brief 临时切换顶层 popup backdrop 所在的 Z 序带。 */
@@ -88,6 +90,10 @@ public:
     [[nodiscard]] bool SetGenieTransform(
         const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity);
+    /** @brief 使用与快捷导航内容相同的吸引网格变形玻璃面板。 */
+    [[nodiscard]] bool SetAttractionTransform(
+        const RECT& panelFrame, const RECT& dockFrame,
+        float collapsed, float opacity);
     /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
@@ -105,10 +111,11 @@ public:
      */
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
-        std::uintptr_t ownerKey = 0);
+        std::uintptr_t ownerKey = 0, bool smoothCorners = true);
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
-        float blurRadius, std::uintptr_t ownerKey);
+        float blurRadius, std::uintptr_t ownerKey,
+        const snowdesktop::IconBackdropClip* contentClip = nullptr);
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
         float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);
@@ -158,6 +165,8 @@ public:
     const std::wstring& LastError() const;
 
 private:
+    bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
+        int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(
         HWND contentWindow, bool popupMode,
         bool popupTopmost = false,

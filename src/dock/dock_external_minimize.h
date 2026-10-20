@@ -15,6 +15,10 @@ public:
     void Stop() noexcept;
     bool OwnsTarget(HWND window) const noexcept;
     bool IsMinimizeButtonPress(HWND window, POINT screenPoint) const noexcept;
+    std::size_t HookCount() const noexcept { return hooks_.HookCount(); }
+    snowdesktop::hook_registration::Statistics RegistrationStatistics() const noexcept { return hooks_.RegistrationStatistics(); }
+    snowdesktop::hook_registration::Statistics CloakStatistics() const { return hooks_.CloakStatistics(); }
+    std::size_t CloakHookCount() const { return hooks_.CloakHookCount(); }
 
 private:
     void StartHelper();

@@ -2,6 +2,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "navigation/quick_navigation_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "settings/animation_settings.h"
 #include "app/popup/categorized_popup_scope.h"
 
@@ -9,6 +10,7 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    typeToSelectSession_.Reset();
     // Outside presses dismiss the shared menu before dispatch, but its drop
     // context stays alive until the menu loop returns. Do not replace it.
     if (rightButtonItemDrag_ ||
@@ -25,7 +27,32 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
+    pendingWidgetButtonClosedPopup_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (DockTrayPopupPointerDown(pt))
+    {
+        mouseDown_ = true;
+        mouseDownPoint_ = pt;
+        mouseDownHit_ = nullptr;
+        HWND capture = handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_;
+        SetCapture(capture);
+        return;
+    }
+    // The normal collection popup's outside-click branch uses a saved widget
+    // index. Transient tray content has no saved index, but closes identically.
+    if (dockTrayPopup_ && IsCollectionPopupInteractive())
+    {
+        size_t sourceItem = static_cast<size_t>(-1);
+        if (auto* dock = GetDockContainerAtPoint(pt))
+        {
+            if (auto* frequent = dock->FrequentItemAtPoint(pt)) sourceItem = frequent->GetItemIndex();
+            else if (auto* entry = dock->EntryAtPoint(pt); entry && entry->GetEntryIndex() < dockEntries_.size() &&
+                dockEntries_[entry->GetEntryIndex()].type == DockEntryType::DesktopItem)
+                sourceItem = FindItemIndexByKey(dockEntries_[entry->GetEntryIndex()].reference);
+        }
+        if (sourceItem >= items_.size() || dockTrayPopup_->itemKey != DockItemWindowKey(items_[sourceItem]))
+            CloseCollectionPopup(false);
+    }
     if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
@@ -43,7 +70,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else
         {
-            RestoreInteractionInputFocus();
+            RestoreInteractionInputFocus(true);
             const RECT closeRect =
                 GetLuaWidgetPanelCloseRect();
             if (PtInRect(&closeRect, pt))
@@ -174,7 +201,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // deciding whether this click should minimize or restore it. The decision
     // itself is captured from the indicator state during hit testing below.
     if (!pointInDock)
-        RestoreInteractionInputFocus();
+        RestoreInteractionInputFocus(true);
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
     {
         bool keepFocusedInput = false;
@@ -275,7 +302,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockFolderPopupWidget_);
         if (!PtInRect(&popup, pt) &&
             !pressedOpenPopupFolderToggle)
+        {
             CloseCollectionPopup();
+            collectionPopupClosedByPointerDown = true;
+        }
     }
 
     const bool quickNavigationWasOpen =
@@ -327,7 +357,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     return;
                 }
             }
-            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
+                popup, GetCollectionPopupContentRect(popup));
+            const float scrollbarScale = GetOpenCollectionPopupLayoutMetrics().scale;
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -336,9 +368,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollOffset_);
+                    popupScrollOffset_, scrollbarScale);
             if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
-                    geometry, pt.y, pt.x, viewport.right))
+                    geometry, pt.y, pt.x, viewport.right, scrollbarScale))
             {
                 popupScrollbarDragging_ = true;
                 popupScrollbarDragStartY_ = pt.y;
@@ -911,6 +943,43 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
+
+        if (widgets_[wi].singleCellIconMode && wc->IsSingleCellDesktopPoint(pt) &&
+            wh != WidgetHit::ResizeHandle)
+        {
+            auto& widget = widgets_[wi];
+            const std::wstring scope = L"desktop:" + widget.gridCell.pageId;
+            const std::wstring key = GetItemSelectionKey(wc);
+            if (shift)
+            {
+                if (ctrl) ClearSelectionOutsideDesktop();
+                ExtendPointerSelection(scope,
+                    GetDesktopSelectionTargets(widget.gridCell.pageId), key, ctrl);
+            }
+            else if (ctrl)
+            {
+                ClearSelectionOutsideDesktop();
+                if (widget.selected) pendingCtrlToggleWidgetItem_ = wc;
+                else widget.selected = true;
+            }
+            else if (!widget.selected)
+            {
+                ClearSelection();
+                widget.selected = true;
+            }
+            else ClearSelectionOutsideDesktop();
+            if (!shift) selectionController_.RememberAnchor(scope, key);
+            pendingWidgetButtonAction_ = wh == WidgetHit::CollectionOpenBtn &&
+                !ctrl && !shift
+                ? WidgetHit::CollectionOpenBtn : WidgetHit::None;
+            pendingWidgetButtonClosedPopup_ = collectionPopupClosedByPointerDown;
+            mouseDownHit_ = wc;
+            mouseDownWidgetIndex_ = wi;
+            SyncKeyboardNavFromSelection();
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
 
         if (!wc->IsCollapsed() && wh != WidgetHit::CollapseToggleBtn &&
             wh != WidgetHit::ResizeHandle &&

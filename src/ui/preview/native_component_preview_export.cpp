@@ -151,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -331,7 +331,7 @@ DesktopApp::ExportNativeComponentPreviews(
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
-    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup")
+    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group")
         return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /
@@ -406,6 +406,7 @@ DesktopApp::ExportNativeComponentPreviews(
         std::optional<bool> showFileCategories;
         std::optional<bool> showSearchBox;
         std::optional<bool> largeFolderTitleless;
+        bool hovered = false;
     };
     struct ComponentDefinition
     {
@@ -415,14 +416,14 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     const std::array definitions{
         ComponentDefinition{ "collection", kContextAddCollectionWidget,
-            2 },
+            3 },
         ComponentDefinition{ "collection-group",
-            kContextAddCollectionGroupWidget, 1 },
-        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 1 },
+            kContextAddCollectionGroupWidget, 3 },
+        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 3 },
         ComponentDefinition{ "file-categories",
-            kContextAddFileCategoryWidget, 1 },
+            kContextAddFileCategoryWidget, 3 },
         ComponentDefinition{ "folder-mapping",
-            kContextAddFolderMappingWidget, 1 },
+            kContextAddFolderMappingWidget, 3 },
     };
     const auto filename = [](std::string_view prefix,
                               std::string_view id) {
@@ -433,19 +434,23 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     const auto buildVariants = [&](std::string_view component) {
         std::vector<Variant> variants;
+        variants.push_back({ "icon", filename(component, "icon"), 2 });
+        Variant hoveredIcon{ "icon-hover", filename(component, "icon-hover"), 2 };
+        hoveredIcon.hovered = true;
+        variants.push_back(std::move(hoveredIcon));
+        variants.push_back({ "compact", filename(component, "compact"), 1 });
         if (component == "collection")
         {
-            variants.push_back({ "compact", L"collection-compact.png", 0 });
             variants.push_back({ "large-folder",
-                L"collection-large-folder.png", 1, false, false });
+                L"collection-large-folder.png", 0, false, false });
             variants.push_back({ "large-folder-titleless",
-                L"collection-large-folder-titleless.png", 1,
+                L"collection-large-folder-titleless.png", 0,
                 false, false, std::nullopt, std::nullopt,
                 std::nullopt, true });
             variants.push_back({ "scroll-grid",
-                L"collection-scroll-grid.png", 1, true, false });
+                L"collection-scroll-grid.png", 0, true, false });
             variants.push_back({ "scroll-list",
-                L"collection-scroll-list.png", 1, true, true });
+                L"collection-scroll-list.png", 0, true, true });
             return variants;
         }
         if (component == "collection-group")
@@ -561,7 +566,7 @@ DesktopApp::ExportNativeComponentPreviews(
                 sourceWallpaper ? &*sourceWallpaper : nullptr,
                 request.transparent || request.contentOnly };
             component_preview::Bitmap rendered = card.render(
-                width, height, request.dpi, placement, settings, false);
+                width, height, request.dpi, placement, settings, variant.hovered);
             if (rendered.width != width || rendered.height != height ||
                 rendered.pixels.size() !=
                     static_cast<std::size_t>(width) * height)

@@ -17,9 +17,7 @@
     "zh-CN": {
       "lua_widget.media_control.name": "媒体控制",
       "lua_widget.media_control.description": "显示并控制当前 Windows 媒体会话。",
-      "lua_widget.media_control.launcher": "无播放时启动项",
       "lua_widget.media_control.not_playing": "未在播放",
-      "lua_widget.media_control.double_click_player": "双击打开播放器",
       "lua_widget.media_control.select_launcher": "搜索并选择启动项",
       "lua_widget.media_control.not_set": "（不设置）",
       "lua_widget.media_control.configure_launcher": "设置启动项",
@@ -34,9 +32,7 @@
     "en-US": {
       "lua_widget.media_control.name": "Media Controls",
       "lua_widget.media_control.description": "Displays and controls the current Windows media session.",
-      "lua_widget.media_control.launcher": "Launcher When Idle",
       "lua_widget.media_control.not_playing": "Nothing Playing",
-      "lua_widget.media_control.double_click_player": "Double-click to Open Player",
       "lua_widget.media_control.select_launcher": "Search and Select a Launcher",
       "lua_widget.media_control.not_set": "(Not Set)",
       "lua_widget.media_control.configure_launcher": "Configure Launcher",
@@ -51,9 +47,7 @@
     "zh-TW": {
       "lua_widget.media_control.name": "媒體控制",
       "lua_widget.media_control.description": "顯示並控制目前 Windows 媒體會話。",
-      "lua_widget.media_control.launcher": "沒有播放內容時的啟動程式",
       "lua_widget.media_control.not_playing": "未在播放",
-      "lua_widget.media_control.double_click_player": "雙擊開啟播放器",
       "lua_widget.media_control.select_launcher": "搜尋並選擇啟動程式",
       "lua_widget.media_control.not_set": "（不設定）",
       "lua_widget.media_control.configure_launcher": "設定啟動程式",
@@ -68,9 +62,7 @@
     "ja-JP": {
       "lua_widget.media_control.name": "メディア コントロール",
       "lua_widget.media_control.description": "現在の Windows メディア セッションを表示・操作します。",
-      "lua_widget.media_control.launcher": "ランチャー",
       "lua_widget.media_control.not_playing": "何も再生されていません",
-      "lua_widget.media_control.double_click_player": "ダブルクリックしてプレーヤーを開きます",
       "lua_widget.media_control.select_launcher": "ランチャーを検索して選択します",
       "lua_widget.media_control.not_set": "(未設定)",
       "lua_widget.media_control.configure_launcher": "ランチャーの構成",
@@ -85,9 +77,7 @@
     "ko-KR": {
       "lua_widget.media_control.name": "미디어 컨트롤",
       "lua_widget.media_control.description": "현재 Windows 미디어 세션을 표시하고 제어합니다.",
-      "lua_widget.media_control.launcher": "유휴 상태일 때 실행기",
       "lua_widget.media_control.not_playing": "재생 중인 것이 없습니다.",
-      "lua_widget.media_control.double_click_player": "플레이어를 열려면 두 번 클릭하세요.",
       "lua_widget.media_control.select_launcher": "실행기 검색 및 선택",
       "lua_widget.media_control.not_set": "(설정되지 않음)",
       "lua_widget.media_control.configure_launcher": "실행기 설정",
@@ -102,9 +92,7 @@
     "de-DE": {
       "lua_widget.media_control.name": "Mediensteuerelemente",
       "lua_widget.media_control.description": "Zeigt und steuert die aktuelle Windows Media-Sitzung.",
-      "lua_widget.media_control.launcher": "Startprogramm im Leerlauf",
       "lua_widget.media_control.not_playing": "Nichts wird abgespielt",
-      "lua_widget.media_control.double_click_player": "Doppelklicken, um den Player zu öffnen",
       "lua_widget.media_control.select_launcher": "Startprogramm suchen und auswählen",
       "lua_widget.media_control.not_set": "(nicht eingestellt)",
       "lua_widget.media_control.configure_launcher": "Startprogramm konfigurieren",
@@ -119,9 +107,7 @@
     "fr-FR": {
       "lua_widget.media_control.name": "Contrôles multimédias",
       "lua_widget.media_control.description": "Affiche et contrôle la session multimédia Windows actuelle.",
-      "lua_widget.media_control.launcher": "Lanceur au repos",
       "lua_widget.media_control.not_playing": "Aucune lecture en cours",
-      "lua_widget.media_control.double_click_player": "Double-cliquez pour ouvrir le lecteur",
       "lua_widget.media_control.select_launcher": "Rechercher et sélectionner un lanceur",
       "lua_widget.media_control.not_set": "(Non défini)",
       "lua_widget.media_control.configure_launcher": "Configurer le lanceur",
@@ -136,9 +122,7 @@
     "es-ES": {
       "lua_widget.media_control.name": "Controles multimedia",
       "lua_widget.media_control.description": "Muestra y controla la sesión multimedia actual de Windows.",
-      "lua_widget.media_control.launcher": "Iniciador cuando está inactivo",
       "lua_widget.media_control.not_playing": "No se está reproduciendo nada",
-      "lua_widget.media_control.double_click_player": "Haga doble clic para abrir el reproductor",
       "lua_widget.media_control.select_launcher": "Busca y selecciona un iniciador",
       "lua_widget.media_control.not_set": "(No establecido)",
       "lua_widget.media_control.configure_launcher": "Configurar el iniciador",
@@ -153,9 +137,7 @@
     "es-419": {
       "lua_widget.media_control.name": "Controles multimedia",
       "lua_widget.media_control.description": "Muestra y controla la sesión multimedia actual de Windows.",
-      "lua_widget.media_control.launcher": "Lanzador cuando está inactivo",
       "lua_widget.media_control.not_playing": "Nada jugando",
-      "lua_widget.media_control.double_click_player": "Haga doble clic para abrir el reproductor",
       "lua_widget.media_control.select_launcher": "Busque y seleccione un iniciador",
       "lua_widget.media_control.not_set": "(No establecido)",
       "lua_widget.media_control.configure_launcher": "Configurar el lanzador",
@@ -170,9 +152,7 @@
     "pt-BR": {
       "lua_widget.media_control.name": "Controles de mídia",
       "lua_widget.media_control.description": "Exibe e controla a sessão atual de mídia do Windows.",
-    "lua_widget.media_control.launcher": "Iniciador quando inativo",
     "lua_widget.media_control.not_playing": "Nada sendo reproduzido",
-      "lua_widget.media_control.double_click_player": "Clique duas vezes para abrir o player",
     "lua_widget.media_control.select_launcher": "Pesquisar e selecionar um iniciador",
       "lua_widget.media_control.not_set": "(Não definido)",
       "lua_widget.media_control.configure_launcher": "Configurar o iniciador",

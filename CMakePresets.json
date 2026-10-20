@@ -114,7 +114,7 @@
         "outputOnFailure": true
       },
       "execution": {
-        "jobs": 4
+        "jobs": 24
       }
     },
     {

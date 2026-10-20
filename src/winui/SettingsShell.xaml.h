@@ -16,8 +16,11 @@
 #include "home_about_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
+#include "icon_library_page_presenter.h"
+#include "icon_appearance_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
+#include "settings_focus_feedback.h"
 #include "widget_settings_presenter.h"
 #include "widgets_page_presenter.h"
 
@@ -128,6 +131,14 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetPageLayoutPageActions(
         snowdesktop::winui::PageLayoutPageActions actions);
     void SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action);
+    void SetIconLibraryAction(snowdesktop::IconLibraryAction action);
+    void SetIconAppearanceAction(snowdesktop::IconAppearanceAction action);
+    void OpenRequestedIconAppearance();
+    void RefreshIconAppearanceList()
+    {
+        if (sessionActive_ && iconAppearancePage_ && navigation_.Route().page == snowdesktop::SettingsPage::AppearanceIconBeautification)
+            iconAppearancePage_->Activate();
+    }
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
@@ -172,6 +183,12 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         bool notifyHost = false) noexcept;
 
     [[nodiscard]] snowdesktop::SettingsRoute CurrentRoute() const;
+    // Explicit requests may repeat a route after its modal picker has closed.
+    void OpenRequestedIconPicker()
+    {
+        if (sessionActive_ && iconLibraryPage_ && navigation_.Route().page == snowdesktop::SettingsPage::IconLibrary)
+            iconLibraryPage_->Activate(navigation_.Route().itemKey);
+    }
     [[nodiscard]] std::uint64_t CurrentGeneration() const noexcept;
     [[nodiscard]] std::uint64_t CurrentRevision() const noexcept;
 
@@ -233,7 +250,7 @@ private:
     void RenderRoute(
         bool forcePageCards = false,
         bool scheduleFocus = true);
-    void RenderNavigationSelection();
+    void RenderNavigationSelection(bool revealCurrent);
     void ApplyNavigationIcons();
     void RenderPageHeaderIcon();
     void RenderPageHeading();
@@ -248,7 +265,13 @@ private:
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
-    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target);
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement ResolveConditionalFocusTarget(
+        bool reveal, snowdesktop::winui::SettingsFocusPrerequisite& prerequisite);
+    [[nodiscard]] std::wstring FocusPrerequisiteMessage(
+        const snowdesktop::winui::SettingsFocusPrerequisite& prerequisite) const;
+    void RefreshFocusPrerequisite();
+    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target,
+        const std::wstring& prerequisiteMessage);
     void StopFocusHighlight() noexcept;
     void UpdateFocusHighlight();
     void FocusPendingTarget();
@@ -304,6 +327,10 @@ private:
     snowdesktop::winui::PageLayoutPageActions pageLayoutPageActions_;
     snowdesktop::LargeIconSettingsAction largeIconSettingsAction_;
     std::unique_ptr<snowdesktop::winui::LargeIconPagePresenter> largeIconPage_;
+    snowdesktop::IconAppearanceAction iconAppearanceAction_;
+    std::unique_ptr<snowdesktop::winui::IconAppearancePresenter> iconAppearancePage_;
+    snowdesktop::IconLibraryAction iconLibraryAction_;
+    std::unique_ptr<snowdesktop::winui::IconLibraryPagePresenter> iconLibraryPage_;
     snowdesktop::winui::WidgetsPageActions widgetsPageActions_;
     snowdesktop::winui::BackupDataPageActions backupDataPageActions_;
 
@@ -346,7 +373,7 @@ private:
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
-    double dockPageOffset_ = 0, statusPageOffset_ = 0;
+    std::unordered_map<snowdesktop::SettingsPage, double> pageOffsets_;
     double largeIconParentOffset_ = 0;
     bool restoreLargeIconParent_ = false;
     winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;

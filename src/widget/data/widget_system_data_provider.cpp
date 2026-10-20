@@ -1,10 +1,11 @@
 #include "widget_system_data_provider.h"
 #include "system/controls/system_control_windows.h"
 #include "widget_gpu_usage.h"
+#include "widget_network_status_refresh.h"
 #include "system/controls/system_power_status.h"
 #include "widget/storage/widget_storage_usage.h"
 #include "diagnostics/performance_trace.h"
-#include "widget/runtime/widget_media_contract.h"
+#include "widget/runtime/widget_media_session_registry.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -698,6 +699,37 @@ void WidgetNetworkStatusDebouncer::Reset() noexcept
     pendingConfirmations_ = 0;
 }
 
+struct WidgetSystemDataProvider::NetworkStatusCache
+{
+    std::shared_ptr<std::atomic<std::uint64_t>> generation =
+        std::make_shared<std::atomic<std::uint64_t>>(0);
+    winrt::event_token token{};
+    bool notificationsAvailable = false;
+    WidgetNetworkStatusRefresh refresh;
+    std::optional<WidgetNetworkStatusDataSnapshot> snapshot;
+
+    NetworkStatusCache()
+    {
+        try
+        {
+            std::weak_ptr<std::atomic<std::uint64_t>> weak = generation;
+            token = winrt::Windows::Networking::Connectivity::NetworkInformation::NetworkStatusChanged(
+                [weak](const winrt::Windows::Foundation::IInspectable&) {
+                    if (const auto state = weak.lock())
+                        state->fetch_add(1, std::memory_order_release);
+                });
+            notificationsAvailable = true;
+        }
+        catch (...) { /* Keep the original requested-period query fallback. */ }
+    }
+    ~NetworkStatusCache()
+    {
+        if (notificationsAvailable)
+            try { winrt::Windows::Networking::Connectivity::NetworkInformation::NetworkStatusChanged(token); }
+            catch (...) { /* A late callback owns only the weak generation. */ }
+    }
+};
+
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
 {
     StopAll();
@@ -831,7 +863,10 @@ bool WidgetSystemDataProvider::StopTopic(
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
         if (topic == NetworkStatusTopic)
+        {
             networkStatusDebouncer_.Reset();
+            closeNetworkStatusRequested_.store(true);
+        }
         if (topic == GpuTopic)
         {
             gpuDetails_.reset();
@@ -1097,6 +1132,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             CloseGpuResources();
         if (closeStorageIoRequested_.exchange(false))
             CloseStorageIoQuery();
+        if (closeNetworkStatusRequested_.exchange(false))
+            networkStatusCache_.reset();
         std::vector<std::string> dueTopics;
         {
             std::unique_lock lock(mutex_);
@@ -1187,6 +1224,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     }
     CloseGpuResources();
     CloseStorageIoQuery();
+    networkStatusCache_.reset();
     if (apartmentInitialized)
         winrt::uninit_apartment();
 }
@@ -1428,6 +1466,29 @@ WidgetNetworkStatusDataSnapshot
 WidgetSystemDataProvider::SampleNetworkStatus()
 {
     performance::Scope performanceScope("shared.system", "SampleNetworkStatus");
+    if (!networkStatusCache_)
+        networkStatusCache_ = std::make_shared<NetworkStatusCache>();
+    auto& cache = *networkStatusCache_;
+    const auto generation = cache.generation->load(std::memory_order_acquire);
+    if (!cache.snapshot || cache.refresh.Due(Clock::now(), generation, cache.notificationsAvailable))
+    {
+        cache.snapshot = QueryNetworkStatus();
+        cache.refresh.Complete(Clock::now(), generation,
+            cache.snapshot->available && cache.snapshot->error.empty());
+        performance::Value("shared.system", "network.status.query", {}, 1);
+    }
+    else
+        performance::Value("shared.system", "network.status.cached", {}, 1);
+    // Sampling/delivery cadence, timestamps and the two-sample state debounce
+    // remain unchanged. Only the expensive OS query uses the event cache.
+    auto snapshot = *cache.snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    return snapshot;
+}
+
+WidgetNetworkStatusDataSnapshot WidgetSystemDataProvider::QueryNetworkStatus()
+{
+    performance::Scope performanceScope("shared.system", "network.status.query");
     using namespace winrt::Windows::Networking::Connectivity;
     WidgetNetworkStatusDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
@@ -1914,13 +1975,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
     try
     {
         if (cancel.Stop()) throw winrt::hresult_canceled();
-        thread_local GlobalSystemMediaTransportControlsSessionManager manager{
-            nullptr };
-        if (!manager)
-        {
-            manager = system_control::windows::Await(
-                GlobalSystemMediaTransportControlsSessionManager::RequestAsync(), cancel);
-        }
+        const auto manager = AcquireMediaSessionManager(cancel);
         if (!manager)
         {
             snapshot.error = "mediaSessionManagerUnavailable";
@@ -1928,9 +1983,9 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
         }
 
         const auto currentSession = manager.GetCurrentSession();
-        const auto sessions = manager.GetSessions();
-        std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
-        const auto appendSession = [&](const auto& session, bool current) {
+        const auto sessions = SnapshotMediaSessionInventory(manager);
+        const auto appendSession = [&](const auto& entry, bool current) {
+            const auto& session = entry.session;
             if (cancel.Stop()) throw winrt::hresult_canceled();
             if (!session || snapshot.sessions.size() >=
                     MaximumExposedMediaSessions)
@@ -1938,8 +1993,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
             WidgetMediaSessionDataSnapshot value;
             const std::wstring sourceId =
                 session.SourceAppUserModelId().c_str();
-            const std::size_t occurrence = sourceOccurrences[sourceId]++;
-            value.id = OpaqueMediaSessionId(sourceId, occurrence);
+            value.id = entry.id;
             value.sourceName = BoundedMediaString(sourceId);
             value.current = current;
 
@@ -2028,13 +2082,11 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
             snapshot.sessions.push_back(std::move(value));
         };
 
-        if (currentSession) appendSession(currentSession, true);
-        for (const auto& session : sessions)
+        for (const auto& entry : sessions)
         {
             if (snapshot.sessions.size() >=
                 MaximumExposedMediaSessions) break;
-            if (currentSession && session == currentSession) continue;
-            appendSession(session, false);
+            appendSession(entry, SameMediaSession(entry.session, currentSession));
         }
         if (cancel.Stop()) throw winrt::hresult_canceled();
         snapshot.available = true;

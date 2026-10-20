@@ -2,6 +2,7 @@
 
 #include "core/drop_model.h"
 #include "widgets/widget_pair_drop.h"
+#include "widgets/single_cell_widget_rules.h"
 
 namespace snowdesktop::widget_pair_drag
 {
@@ -10,6 +11,22 @@ struct Source
     size_t widgetIndex = static_cast<size_t>(-1);
     std::wstring groupId;
 };
+
+// A dragged entrance vacates its own cell even though its runtime container
+// stays alive. Other components (including selected ones outside the payload)
+// must retain their drop-target and occlusion semantics.
+inline bool IsCapturedDesktopIcon(const DragSourceList& list,
+    const DesktopWidget& widget)
+{
+    return single_cell_widget::IsIconMode(widget) && !widget.id.empty() &&
+        list.hasWidgets && !list.hasOriginWidget &&
+        list.SourceSurfaceKind() == slot_contract::SlotSurfaceKind::Desktop &&
+        std::any_of(list.entries.begin(), list.entries.end(), [&](const auto& entry) {
+            return entry.desktopWidgetIcon && !entry.fromDock &&
+                entry.kind == DropSourceKind::Widget && entry.widgetId == widget.id &&
+                entry.widgetType == widget.type;
+        });
+}
 
 // Resolve captured IDs instead of the active tab or runtime Item pointers:
 // dwell switching and container rebuilds must not change the dragged child.
@@ -23,6 +40,17 @@ inline Source ResolveSource(const DragSourceList& list,
             [&](const auto& widget) { return widget.id == id; });
         return static_cast<size_t>(std::distance(widgets.begin(), found));
     };
+    if (entry.desktopWidgetIcon)
+    {
+        const size_t index = findWidget(entry.widgetId);
+        if (entry.fromDock || entry.kind != DropSourceKind::Widget || !list.hasWidgets ||
+            list.hasOriginWidget || list.SourceSurfaceKind() != slot_contract::SlotSurfaceKind::Desktop ||
+            index >= widgets.size() || entry.widgetType != widgets[index].type ||
+            !single_cell_widget::IsIconMode(widgets[index]) ||
+            !widget_pair_drop::CanUseSource(widgets, index))
+            return {};
+        return {index, {}};
+    }
     if (entry.fromDock && entry.kind == DropSourceKind::Widget)
     {
         const size_t index = findWidget(entry.dockReference);

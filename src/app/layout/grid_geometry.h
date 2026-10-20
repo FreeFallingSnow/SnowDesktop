@@ -4,9 +4,11 @@
 #include "common/utils.h"
 #include "ui/render/font_cu_rules.h"
 #include "layout/grid_spacing_rules.h"
+#include "layout/grid_occupancy.h"
 
 #include <algorithm>
 #include <cmath>
+#include <climits>
 #include <string>
 #include <vector>
 
@@ -21,11 +23,7 @@
  */
 inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpan span)
 {
-    if (span.columns < 1 || span.rows < 1) return false;
-    if (cell.pageId != page.id) return false;
-    if (cell.column < 0 || cell.row < 0) return false;
-    return cell.column + span.columns <= page.columns &&
-        cell.row + span.rows <= page.rows;
+    return snowdesktop::grid_occupancy::Fits(page, cell, span);
 }
 
 /**
@@ -146,6 +144,31 @@ inline const GridPage* FindDragGridPage(const std::vector<GridPage>& pages,
         if (PtInRect(&page.bounds, pointer) || PtInRect(&page.workArea, pointer))
             return &page;
     return fallback;
+}
+
+inline int GridPointAxisIndex(const GridPage& page, int coordinate, bool horizontal)
+{
+    const int count = horizontal ? page.columns : page.rows;
+    if (count <= 1) return 0;
+    int bestIndex = 0;
+    int bestDistance = INT_MAX;
+    for (int index = 0; index < count; ++index)
+    {
+        const int left = (horizontal ? page.workArea.left : page.workArea.top) +
+            (horizontal ? page.marginX : page.marginY) + GetGridAxisOffset(page, index, horizontal);
+        const int center = left + (horizontal ? page.cellWidth : page.cellHeight) / 2;
+        const int distance = std::abs(coordinate - center);
+        if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
+    }
+    return bestIndex;
+}
+
+inline GridCell GridCellFromPoint(const std::vector<GridPage>& pages, POINT point,
+    const GridPage* fallback = nullptr)
+{
+    const auto* page = FindDragGridPage(pages, point, fallback);
+    if (!page) return {};
+    return {page->id, GridPointAxisIndex(*page, point.x, true), GridPointAxisIndex(*page, point.y, false)};
 }
 
 // A drag origin can still be on the source display while the pointer has

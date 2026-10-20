@@ -10,6 +10,33 @@
 
 namespace snowdesktop::widget_runtime
 {
+int DurationSettingUnitSeconds(std::string_view unit) noexcept
+{
+    if (unit == "seconds") return 1;
+    if (unit == "minutes") return 60;
+    if (unit == "hours") return 3600;
+    return 0;
+}
+
+bool IsValidDurationSettingSchema(std::string_view unit, double minimum,
+    double maximum, double step) noexcept
+{
+    const int scale = DurationSettingUnitSeconds(unit);
+    return scale != 0 && std::isfinite(minimum) && std::isfinite(maximum) &&
+        std::isfinite(step) && minimum >= 0 && minimum <= maximum &&
+        maximum <= kMaximumSettingDurationSeconds / scale &&
+        std::floor(minimum) == minimum && std::floor(maximum) == maximum &&
+        step >= 1 && std::floor(step) == step;
+}
+
+bool IsValidDurationSettingValue(double value, std::string_view unit,
+    double minimum, double maximum, double step) noexcept
+{
+    return IsValidDurationSettingSchema(unit, minimum, maximum, step) &&
+        std::isfinite(value) && std::floor(value) == value &&
+        value >= minimum && value <= maximum && std::fmod(value - minimum, step) == 0;
+}
+
 namespace
 {
 bool IsAsciiDigit(char value) noexcept

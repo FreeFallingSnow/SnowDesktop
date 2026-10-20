@@ -272,7 +272,9 @@ bool WidgetInteractionRegions::Submit(
             !IsFiniteCoordinate(region.clip->y) ||
             !IsFiniteCoordinate(region.clip->width) ||
             !IsFiniteCoordinate(region.clip->height) ||
-            region.clip->width <= 0.0f || region.clip->height <= 0.0f))
+            region.clip->width < 0.0f || region.clip->height < 0.0f ||
+            ((region.clip->width == 0.0f || region.clip->height == 0.0f) &&
+                region.keyboardScrollAncestors.empty())))
     {
         error = "interaction clip geometry must be finite and positive";
         return false;
@@ -813,12 +815,13 @@ const InteractionAction* WidgetInteractionRegions::ContextMenuActionAt(
 }
 
 std::vector<std::string>
-WidgetInteractionRegions::KeyboardFocusableKeys() const
+WidgetInteractionRegions::KeyboardFocusableKeys(std::string_view focused) const
 {
     std::vector<const InteractionRegion*> ordered;
     ordered.reserve(active_.size());
     for (const auto& region : active_)
-        if (IsKeyboardFocusableRegion(region) && region.tabIndex >= 0)
+        if (IsKeyboardFocusableRegion(region) &&
+            (region.tabIndex >= 0 || region.key == focused))
             ordered.push_back(&region);
     std::stable_sort(ordered.begin(), ordered.end(),
         [](const InteractionRegion* left,
@@ -833,6 +836,64 @@ WidgetInteractionRegions::KeyboardFocusableKeys() const
     result.reserve(ordered.size());
     for (const auto* region : ordered) result.push_back(region->key);
     return result;
+}
+
+const InteractionRegion* WidgetInteractionRegions::ExpandedSelectForFocus(
+    std::string_view current) const noexcept
+{
+    const auto* focused = Find(current);
+    if (!focused) return nullptr;
+    const auto* parent = focused->keyboardNavigationGroup.empty()
+        ? focused : Find(focused->keyboardNavigationGroup);
+    return parent && parent->enabled && parent->hasExpandedProposal &&
+        parent->expanded ? parent : nullptr;
+}
+
+std::optional<std::string> WidgetInteractionRegions::SelectKeyboardTarget(
+    std::string_view current, int direction, bool endpoint) const
+{
+    const auto* parent = ExpandedSelectForFocus(current);
+    if (!parent) return std::nullopt;
+    std::vector<const InteractionRegion*> options;
+    for (const auto& region : active_)
+        if (region.keyboardNavigationGroup == parent->key &&
+            IsKeyboardFocusableRegion(region)) options.push_back(&region);
+    if (options.empty()) return parent->key;
+    if (endpoint) return direction < 0 ? options.front()->key : options.back()->key;
+    const auto found = std::find_if(options.begin(), options.end(),
+        [current](const auto* option) { return option->key == current; });
+    if (found == options.end())
+    {
+        const auto selected = std::find_if(options.begin(), options.end(),
+            [](const auto* option) { return option->checked; });
+        return selected != options.end() ? (*selected)->key :
+            (direction < 0 ? options.back()->key : options.front()->key);
+    }
+    const auto index = static_cast<std::size_t>(found - options.begin());
+    return options[direction < 0 ? (index == 0 ? 0 : index - 1) :
+        std::min(index + 1, options.size() - 1)]->key;
+}
+
+std::string WidgetInteractionRegions::ReconcileKeyboardFocus(
+    std::string_view current) const
+{
+    if (IsKeyboardFocusable(current))
+    {
+        const auto* parent = ExpandedSelectForFocus(current);
+        if (parent && parent->key == current)
+            return SelectKeyboardTarget(current, 1).value_or(parent->key);
+        return std::string(current);
+    }
+    // An option vanishes when a controlled select closes. Return to its owner
+    // before falling back to the new page's first sequential target.
+    const InteractionRegion* owner = nullptr;
+    for (const auto& region : active_)
+        if (region.hasExpandedProposal && IsKeyboardFocusableRegion(region) &&
+            current.starts_with(region.key + "/") &&
+            (!owner || region.key.size() > owner->key.size())) owner = &region;
+    if (owner) return owner->key;
+    const auto keys = KeyboardFocusableKeys();
+    return keys.empty() ? std::string{} : keys.front();
 }
 
 const InteractionRegion* WidgetInteractionRegions::FindAccessKey(

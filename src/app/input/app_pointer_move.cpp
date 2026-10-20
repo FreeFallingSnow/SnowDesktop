@@ -5,14 +5,17 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "native_item_drag_source.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    typeToSelectSession_.Reset();
     if (rightButtonItemDrag_ ||
         (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
@@ -241,6 +244,7 @@ void DesktopApp::OnMouseMoveAt(
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     const POINT tracePoint = current;
+    if (DockTrayPopupPointerMove(current)) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -269,6 +273,7 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdateListTitleHover();
     UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
         PresentPassiveHoverVisualChange();
@@ -396,7 +401,8 @@ void DesktopApp::OnMouseMoveAt(
         if (popupWidget)
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
+                popup, GetCollectionPopupContentRect(popup));
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -405,7 +411,7 @@ void DesktopApp::OnMouseMoveAt(
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollbarDragStartOffset_);
+                    popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
             popupScrollOffset_ = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,
@@ -568,8 +574,7 @@ void DesktopApp::OnMouseMoveAt(
         (mouseDownHit_->IsSelected() ||
             pressedDockEntryWithoutSelection))
     {
-        if (dynamic_cast<DockFrequentItem*>(mouseDownHit_) ||
-            dynamic_cast<DockRunningItem*>(mouseDownHit_))
+        if (!snowdesktop::native_item_drag_source::CanStart(mouseDownHit_))
             return;
         const bool dockItem = dynamic_cast<DockContainer*>(
             mouseDownHit_->GetContainer()) != nullptr;
@@ -580,19 +585,15 @@ void DesktopApp::OnMouseMoveAt(
         if (std::abs(current.x - mouseDownPoint_.x) > thresholdX ||
             std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
-            Container* source = mouseDownHit_->GetContainer();
-            std::vector<Item*> sourceItems =
-                source ==
-                    dockFolderPopupContainer_.get()
-                ? GetDockFolderPopupSelectedItems()
-                : (source
-                    ? source->GetSelectedItems()
-                    : std::vector<Item*>{});
-            if (sourceItems.empty() &&
-                pressedDockEntryWithoutSelection)
-            {
-                sourceItems.push_back(mouseDownHit_);
-            }
+            if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
+                pendingWidgetButtonAction_ = WidgetHit::None;
+            auto capturedSource = snowdesktop::native_item_drag_source::Capture(mouseDownHit_,
+                pressedDockEntryWithoutSelection, [this](Container* source) {
+                    return source == dockFolderPopupContainer_.get() ? GetDockFolderPopupSelectedItems()
+                        : source ? source->GetSelectedItems() : std::vector<Item*>{};
+                });
+            Container* source = capturedSource.source;
+            auto sourceItems = std::move(capturedSource.items);
             DragSourceList sourceList = BuildDragSourceList(sourceItems, source);
             if (sourceItems.empty())
             {
@@ -609,7 +610,9 @@ void DesktopApp::OnMouseMoveAt(
                 std::all_of(sourceItems.begin(), sourceItems.end(), [](Item* item) {
                     const auto* icon = dynamic_cast<const DesktopIcon*>(item);
                     const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-                    return data && !data->largeIcon;
+                    const auto* widget = dynamic_cast<const WidgetContainer*>(item);
+                    return (data && !data->largeIcon) ||
+                        (widget && widget->IsSingleCellIconMode());
                 }));
             for (Item* item : sourceItems)
             {
@@ -722,7 +725,12 @@ void DesktopApp::OnMouseMoveAt(
             std::abs(current.y - mouseDownPoint_.y) > 3))
     {
         if (widgetAction_ == WidgetAction::PendingMove)
+        {
             widgetAction_ = WidgetAction::Move;
+            if (rightButtonItemDrag_) suppressRightButtonUp_ = true;
+            if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
+                pendingWidgetButtonAction_ = WidgetHit::None;
+        }
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
         if (widgetAction_ == WidgetAction::Move)
@@ -870,7 +878,7 @@ void DesktopApp::OnMouseMoveAt(
         {
             const auto options = pair::GetOptions(movingType,
                 widgets_[widgetPairTargetIndex_].type);
-            widgetPairAction_ = pair::ResolveAction(options,
+            widgetPairAction_ = rightButtonItemDrag_ ? pair::Action::None : pair::ResolveAction(options,
                 (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
                 (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
                 (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
@@ -1182,6 +1190,11 @@ void DesktopApp::OnMouseMoveAt(
                     CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
+                // A self-drop can remove a Dock mapping while OLE still owns
+                // the source wrappers. Discovery is safe after full unwind.
+                if (generalSettings_.dockEnabled && !reloading_ &&
+                    dockRunningWindowsRefreshTick_ == 0)
+                    RefreshDockRunningWindows(false);
                 return;
             }
         }
@@ -1456,11 +1469,13 @@ void DesktopApp::OnMouseMoveAt(
                 auto* widget = dynamic_cast<WidgetContainer*>(it->get());
                 if (!widget)
                     continue;
-                RECT frame = widget->GetFrameRect();
+                DesktopWidget* widgetData = widget->GetWidgetData();
+                RECT frame = widgetData && widget->IsSingleCellIconMode()
+                    ? GetStandaloneWidgetFrameRect(*widgetData)
+                    : widget->GetFrameRect();
                 if (IsRectEmptyRect(frame) || !PtInRect(&frame, point))
                     continue;
 
-                DesktopWidget* widgetData = widget->GetWidgetData();
                 const WidgetHit hit = widget->HitTestWidget(point);
                 if (hit == WidgetHit::Content)
                 {

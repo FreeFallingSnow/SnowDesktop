@@ -4,6 +4,11 @@
 #include "system/status_bar/status_bar_notification.h"
 #include "system/status_bar/status_bar_input_method.h"
 #include "system/status_bar/status_bar_input_method_identity.h"
+#include "dock/dock_tray_targets.h"
+#include "dock/dock_tray_storage.h"
+#include "dock/dock_tray_popup_layout.h"
+#include "system/tray/tray_native_tooltip.h"
+#include "system/tray/tray_reregistration.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -15,6 +20,155 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        // Only this fixture HWND receives requests. Its real process identity
+        // represents each recipient role; unrelated applications see no test.
+        const HWND window = CreateWindowExW(0, L"STATIC", L"", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        const UINT message = RegisterWindowMessageW(L"SnowDesktop.Tray.Reregistration.Tests");
+        const DWORD process = GetCurrentProcessId();
+        const DWORD otherHost = process ^ 0x80000000u, otherExplorer = process ^ 0x40000000u;
+        check(window && message, "recipient exclusion fixture is available");
+        if (window && message)
+        {
+            MSG pending{};
+            check(PostReregistration(window, otherHost, process, message) == ReregistrationPost::Skipped &&
+                !PeekMessageW(&pending, window, message, message, PM_REMOVE),
+                "Explorer receives no synthetic restart request even when it is not the host");
+            check(PostReregistration(window, process, otherExplorer, message) == ReregistrationPost::Skipped &&
+                !PeekMessageW(&pending, window, message, message, PM_REMOVE),
+                "collector host receives no synthetic restart request");
+            check(PostReregistration(window, otherHost, otherExplorer, message) == ReregistrationPost::Posted &&
+                PeekMessageW(&pending, window, message, message, PM_REMOVE) && pending.message == message,
+                "a recipient outside host and Explorer receives the real asynchronous message");
+            check(PostReregistration(nullptr, otherHost, otherExplorer, message) == ReregistrationPost::Skipped,
+                "missing recipient cannot be posted a re-registration request");
+        }
+        if (window) DestroyWindow(window);
+    }
+    {
+        namespace popup = snowdesktop::dock_tray::popup;
+        const std::wstring raw = L"QQ & literal\n声音: 关闭\n会话消息: 原始文本";
+        check(popup::Label({}, L"My shortcut") == L"My shortcut" && popup::Label(raw, L"My shortcut") == raw,
+            "missing tooltip uses the shortcut name while available multiline text remains verbatim");
+        const RECT content{10, 20, 310, 260};
+        const auto viewport = popup::Viewport(content, 52);
+        const auto launch = popup::LaunchButton(content, 52, 14);
+        const int heights[]{108, 108, 108};
+        const auto maximum = popup::MaximumScroll(viewport, heights);
+        check(maximum > 0 && popup::HitTest({20, 230}, viewport, launch, heights, 0, 8) == 3 &&
+            popup::HitTest({20, 230}, viewport, launch, heights, maximum, 8) == 3,
+            "launch stays independently clickable above a scrolling list of accounts");
+        check(popup::HitTest({20, 125}, viewport, launch, heights, 0, 8) == -1 &&
+            popup::HitTest({20, 213}, viewport, launch, heights, maximum, 8) == -1,
+            "row gaps and the reserved footer gap cannot highlight or activate clipped accounts");
+        check(popup::HitTest({20, 30}, viewport, launch, heights, 0, 8) == 0 &&
+            popup::HitTest({20, 30}, viewport, launch, heights, maximum, 8) == 1,
+            "stationary pointer hover follows the visible account after scrolling");
+    }
+    {
+        Icon cached;
+        cached.identity = {{}, 10, 1, 100}; cached.key = Key(cached.identity);
+        cached.callback = WM_APP + 1; cached.version = 4; cached.tipKnown = true;
+        cached.width = cached.height = 1; cached.pixels = {0xff112233}; cached.application = L"Example.exe";
+        std::vector<Icon> icons{cached};
+        Event fresh;
+        fresh.operation = kBootstrapIcon; fresh.flags = NIF_TIP; fresh.identity = cached.identity;
+        fresh.callback = cached.callback; fresh.version = cached.version;
+        wcscpy_s(fresh.tip, L"Example & unchanged\n原始提示");
+        check(RefreshNativeTooltip(icons, fresh) && icons[0].tip == fresh.tip &&
+            icons[0].pixels == cached.pixels && icons[0].application == cached.application,
+            "an explicit fresh native read reconciles stale empty text without replacing icon or program identity");
+        check(!RefreshNativeTooltip(icons, fresh), "unchanged native tooltip does not publish another update");
+        ++fresh.identity.process;
+        check(!RefreshNativeTooltip(icons, fresh), "a replaced process cannot refresh a stale account label");
+        fresh.identity = cached.identity; ++fresh.callback;
+        check(!RefreshNativeTooltip(icons, fresh), "a different native callback cannot refresh an old registration");
+        fresh.callback = cached.callback; fresh.tip[0] = 0;
+        check(RefreshNativeTooltip(icons, fresh) && icons[0].tip.empty(), "a current explicitly empty native tip returns to the shortcut fallback");
+        Event live = fresh; live.operation = NIM_MODIFY;
+        wcscpy_s(live.tip, L"Newest notification");
+        check(Apply(icons, live) && icons[0].tip == live.tip, "live notifications drained after a native read take precedence");
+        icons.clear();
+        check(!RefreshNativeTooltip(icons, fresh) && icons.empty(), "tooltip refresh cannot resurrect a removed icon");
+    }
+    {
+        // Production selection consumes registered icons, not process counts
+        check(CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_ADD, false) == NIF_ICON &&
+            CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_ADD, true) == (NIF_TIP | NIF_ICON) &&
+            CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_MODIFY, true) == (NIF_TIP | NIF_ICON),
+            "a rejected duplicate ADD cannot advertise an authoritative empty tooltip over native bootstrap text");
+        // or tooltip-derived account IDs. Two identical tips remain distinct.
+        namespace rules = snowdesktop::dock_tray;
+        check(rules::ResolveClick(true, 2, false, false) == rules::ClickAction::NormalDock,
+            "a callable task window retains Dock activation and minimization despite tray accounts");
+        check(rules::ResolveClick(false, 1, false, false) == rules::ClickAction::WaitForDoubleClick &&
+            rules::ResolveClick(false, 1, false, true) == rules::ClickAction::ActivateTray,
+            "one tray instance honors Dock double-click launch preference");
+        check(rules::ResolveClick(false, 1, true, false) == rules::ClickAction::ActivateTray &&
+            rules::ResolveClick(false, 1, true, true) == rules::ClickAction::Consume,
+            "Dock single-click restore consumes the second half of its click pair");
+        check(rules::ResolveClick(false, 2, false, false) == rules::ClickAction::OpenPicker &&
+            rules::ResolveClick(false, 2, true, false) == rules::ClickAction::OpenPicker &&
+            rules::ResolveClick(false, 2, false, true) == rules::ClickAction::Consume,
+            "multiple accounts open the picker on the first click without double-click auto-selection");
+        auto preferences = rules::Defaults();
+        {
+            const std::vector<std::wstring> payloads{L"D:\\Chat\\app\\Client.exe", L"D:\\Chat\\8.1\\Client.exe"};
+            std::vector<DockTrayRule> launcherRules{{L"D:\\Chat\\Client.exe", true, true, false}};
+            const auto* resolved = rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", payloads[0], payloads);
+            check(resolved && !resolved->doubleClick && !rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", L"E:\\Other\\Client.exe", payloads),
+                "a launcher path rule forwards its own gesture only to validated installed payloads");
+            launcherRules.push_back({payloads[0], true, false, true});
+            resolved = rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", payloads[0], payloads);
+            check(resolved && !resolved->enabled, "an explicitly disabled payload path overrides its enabled launcher");
+        }
+        check(rules::FindRule(preferences, L"D:\\Apps\\qq.EXE") != nullptr &&
+            rules::FindRule(preferences, L"E:\\Weixin\\Weixin.exe") != nullptr &&
+            rules::FindRule(preferences, L"C:\\Old\\WeChat.exe") != nullptr &&
+            rules::FindRule(preferences, L"C:\\Feishu\\Feishu.exe") != nullptr,
+            "default tray applications follow exact case-insensitive executable names across install paths");
+        check(!rules::FindRule(preferences, L"D:\\Apps\\QQMusic.exe") &&
+            rules::NormalizeTarget(L"*.exe", false).empty(), "name matching cannot select similarly named or wildcard programs");
+        Snapshot snapshot;
+        snapshot.connected = true;
+        Icon first;
+        first.identity = {{}, 10, 1, 100};
+        first.key = Key(first.identity);
+        first.callback = WM_USER + 1;
+        first.application = L"D:\\Apps\\QQ.exe";
+        first.tip = L"QQ & name\nunchanged\t123";
+        Icon second = first;
+        second.identity.window = 20;
+        second.identity.id = 2;
+        second.key = Key(second.identity);
+        snapshot.icons = {first, second};
+        auto targets = rules::CollectTargets(snapshot, preferences, L"C:\\QQ\\QQ.exe");
+        check(targets.size() == 2 && targets[0].tip == first.tip && targets[1].tip == first.tip &&
+            targets[0].key != targets[1].key, "same-tooltip accounts remain independent and raw tooltip text is preserved");
+        preferences.push_back({first.application, true, false, false});
+        check(!rules::FindRule(preferences, first.application)->enabled &&
+            rules::CollectTargets(snapshot, preferences, first.application).empty(),
+            "a disabled exact-path override takes precedence over an enabled default name");
+        preferences = rules::Defaults();
+        snapshot.icons[1].state = NIS_HIDDEN;
+        check(rules::CollectTargets(snapshot, preferences, first.application).size() == 1, "hidden registered icons do not become selectable accounts");
+        check(rules::IsCurrentTarget(snapshot, first), "a current registered icon can be selected");
+        snapshot.icons[0].identity.process = 200;
+        check(!rules::IsCurrentTarget(snapshot, first), "an icon owner replaced while a selector is open cannot receive the stale account command");
+        snapshot.connected = false;
+        check(rules::CollectTargets(snapshot, preferences, first.application).empty(), "a disconnected tray snapshot cannot intercept launching");
+        JsonValue document;
+        check(ParseJson("{}", document) && rules::DecodeRules(document, preferences) && preferences == rules::Defaults(),
+            "old settings receive tray defaults once when the preference key is absent");
+        check(ParseJson("{\"trayApplications\":[]}", document) && rules::DecodeRules(document, preferences) && preferences.empty(),
+            "an explicitly empty saved list never restores defaults");
+        check(ParseJson("{\"trayApplications\":[{\"executable\":\"QQ.exe\",\"matchPath\":false,\"enabled\":false,\"doubleClick\":false}]}", document) &&
+            rules::DecodeRules(document, preferences) && preferences.size() == 1 && !preferences[0].enabled && !preferences[0].doubleClick,
+            "saved disabled rules and single-click selection remain disabled after loading");
+        check(ParseJson("{\"trayApplications\":[{\"executable\":\"QQ\",\"matchPath\":false,\"enabled\":true,\"doubleClick\":true}]}", document) &&
+            !rules::DecodeRules(document, preferences), "malformed tray preferences are rejected rather than guessed");
+    }
     {
         // Real Weixin trace: MODIFY/NIF_ICON alternates null and a normal
         // handle every ~500 ms. Do not confuse its blank frame with a failed
@@ -425,6 +579,14 @@ int RunTrayModelTests()
         supplement.version = 4;
         check(!Apply(registrations, supplement) && registrations.size() == 1 && registrations.front().version == 3,
             "classic supplementation cannot duplicate or downgrade an authoritative GUID icon");
+        registrations.front().tip.clear(); registrations.front().tipKnown = false;
+        wcscpy_s(supplement.tip, L"QQ & original\nunchanged");
+        check(Apply(registrations, supplement) && registrations.front().tip == L"QQ & original\nunchanged" &&
+            registrations.front().version == 3 && HasGuid(registrations.front().identity.guid),
+            "late native bootstrap fills missing tooltip before hover without replacing owner or version");
+        Event emptyTip = registration; emptyTip.operation = NIM_MODIFY; emptyTip.flags = NIF_TIP; emptyTip.tip[0] = 0;
+        check(Apply(registrations, emptyTip) && !Apply(registrations, supplement) && registrations.front().tip.empty(),
+            "an explicitly empty live tooltip cannot be resurrected by a late supplement");
         registrations.clear();
         for (const DWORD protocol : {0u, 3u, 4u})
         {
@@ -469,6 +631,39 @@ int RunTrayModelTests()
         partial.operation = 0x53440002;
         check(!Apply(registrations, partial) && registrations.size() == 1,
             "unknown optional collector operation is ignored without changing the model");
+    }
+    {
+        MenuPlacementSession placement;
+        MenuPopupObservation popup{};
+        popup.window = 1; popup.process = 99; popup.thread = 9;
+        popup.event = EVENT_OBJECT_SHOW; popup.eventTime = 101;
+        // Issue #30's IDM SHOW: style=0x94800000, ex=0x80189.
+        // Real TrackPopupMenu coverage separately checks the subsequent loss
+        // of WS_EX_LAYERED while the menu loop and HWND remain alive.
+        popup.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_BORDER;
+        popup.extendedStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME | WS_EX_LAYERED;
+        popup.bounds = {100, 100, 260, 180}; popup.visible = true;
+        popup.standardMenu = popup.targetRelated = true;
+        placement.Arm(99, {120, 120}, {0, 0, 1920, 1080}, 100);
+        placement.Observe(popup, 102);
+        check(placement.Bindings()[0].window == popup.window, "native SHOW supplies a placement binding");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
+        placement.Observe(popup, 103);
+        check(placement.Bindings()[0].window == popup.window,
+            "native menu animation ending cannot erase the placement hook's binding");
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_TOPMOST);
+        placement.Observe(popup, 104);
+        check(!placement.Bindings()[0].window, "other native menu identity style changes still invalidate placement");
+        popup.standardMenu = false; popup.event = EVENT_OBJECT_SHOW;
+        popup.extendedStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED;
+        placement.Arm(99, {120, 120}, {0, 0, 1920, 1080}, 100);
+        placement.Observe(popup, 102);
+        check(placement.Bindings()[0].window == popup.window, "custom SHOW supplies a strictly checked binding");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
+        placement.Observe(popup, 103);
+        check(!placement.Bindings()[0].window, "custom popup styles do not inherit native animation tolerance");
     }
     {
         // Bounds correction must never become a general application-window

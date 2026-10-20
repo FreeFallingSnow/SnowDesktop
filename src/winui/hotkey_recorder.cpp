@@ -325,6 +325,7 @@ struct HotkeyRecorderState
     muxc::ContentControl captureSurface;
     muxc::TextBlock dialogStatus;
     muxc::StackPanel dialogActions;
+    muxc::HyperlinkButton edit;
     muxc::HyperlinkButton restoreDefault;
     muxc::HyperlinkButton clear;
     mud::DispatcherQueue dispatcher{ nullptr };
@@ -349,6 +350,7 @@ struct HotkeyRecorderState
     winrt::event_token keyDownToken{};
     winrt::event_token keyUpToken{};
     winrt::event_token dialogOpenedToken{};
+    winrt::event_token editToken{};
     winrt::event_token restoreDefaultToken{};
     winrt::event_token clearToken{};
     winrt::event_token themeChangedToken{};
@@ -437,7 +439,8 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
     state->restoreDefault.Visibility(state->hasDefaultValue
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
-    state->clear.Visibility(state->rules.Active() && !candidate.Empty()
+    state->clear.Visibility(state->rules.Active() &&
+        (!candidate.Empty() || !committed.Empty())
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
 
@@ -716,10 +719,13 @@ HotkeyRecorder::HotkeyRecorder()
     state_->dialogActions.Spacing(12.0);
     state_->dialogActions.HorizontalAlignment(
         mux::HorizontalAlignment::Center);
+    state_->edit.Content(CreateDialogActionContent(
+        L"\xE70F", state_->text.edit));
     state_->restoreDefault.Content(CreateDialogActionContent(
         L"\xE777", state_->text.restoreDefault));
     state_->clear.Content(CreateDialogActionContent(
         L"\xE894", state_->text.clear));
+    state_->dialogActions.Children().Append(state_->edit);
     state_->dialogActions.Children().Append(state_->restoreDefault);
     state_->dialogActions.Children().Append(state_->clear);
     state_->dialogContent.Children().Append(state_->dialogInstruction);
@@ -789,6 +795,20 @@ HotkeyRecorder::HotkeyRecorder()
             (void)state->captureSurface.Focus(
                 mux::FocusState::Programmatic);
         });
+    state_->editToken = state_->edit.Click(
+        [weak](const auto&, const auto&) {
+            const auto state = weak.lock();
+            if (!state || !state->alive || !state->enabled ||
+                !state->dialogOpen || !state->rules.Active())
+            {
+                return;
+            }
+            state->rules.RestartCapture();
+            state->conflictMessage.clear();
+            UpdateVisuals(state);
+            (void)state->captureSurface.Focus(
+                mux::FocusState::Programmatic);
+        });
     state_->restoreDefaultToken = state_->restoreDefault.Click(
         [weak](const auto&, const auto&) {
             const auto state = weak.lock();
@@ -838,10 +858,14 @@ void HotkeyRecorder::SetText(HotkeyRecorderText text)
     state_->dialog.PrimaryButtonText(state_->text.apply);
     state_->dialog.CloseButtonText(state_->text.cancel);
     state_->dialogInstruction.Text(state_->text.captureActive);
+    state_->edit.Content(CreateDialogActionContent(
+        L"\xE70F", state_->text.edit));
     state_->restoreDefault.Content(CreateDialogActionContent(
         L"\xE777", state_->text.restoreDefault));
     state_->clear.Content(CreateDialogActionContent(
         L"\xE894", state_->text.clear));
+    muxa::AutomationProperties::SetName(
+        state_->edit, state_->text.edit);
     muxa::AutomationProperties::SetName(
         state_->restoreDefault, state_->text.restoreDefault);
     muxa::AutomationProperties::SetName(
@@ -953,6 +977,7 @@ void HotkeyRecorder::Close() noexcept
         state_->captureSurface.KeyDown(state_->keyDownToken);
         state_->captureSurface.KeyUp(state_->keyUpToken);
         state_->dialog.Opened(state_->dialogOpenedToken);
+        state_->edit.Click(state_->editToken);
         state_->restoreDefault.Click(state_->restoreDefaultToken);
         state_->clear.Click(state_->clearToken);
         state_->root.ActualThemeChanged(state_->themeChangedToken);

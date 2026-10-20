@@ -7,6 +7,15 @@
 namespace snowdesktop::item_layout_rules
 {
 
+// A collection's desktop preview and its expanded popup are separate surfaces.
+// Popup labels follow scrolling-container settings even for a large folder.
+constexpr int ResolveTitleLines(bool hasWidget, bool largeFolder,
+    bool popupHosted, int desktopLines, int largeFolderLines, int scrollingLines)
+{
+    return !hasWidget ? desktopLines
+        : largeFolder && !popupHosted ? largeFolderLines : scrollingLines;
+}
+
 /**
  * @brief 判断组件是否应参与桌面网格尺寸变化后的重新安置。
  *

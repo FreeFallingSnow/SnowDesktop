@@ -1,5 +1,6 @@
 #pragma once
 #include "settings_search_index.h"
+#include "settings_page_catalog.h"
 #include <functional>
 
 namespace snowdesktop
@@ -13,69 +14,72 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
+    {SettingsPage::QuickNavigation,"quickNav.appSuggestions","quickNav.appSuggestions",""},
     {SettingsPage::QuickNavigation,"quickNav.defaultEngine","quickNav.defaultEngine","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.expandedWidth","quickNav.layout.expandedWidth","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.collapsedWidth","quickNav.layout.collapsedWidth","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.maximumHeight","quickNav.layout.maximumHeight","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.visibleRows","quickNav.layout.visibleRows","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.padding","quickNav.layout.padding","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.searchHeight","quickNav.layout.searchHeight","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.iconSize","quickNav.layout.iconSize","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.gridGap","quickNav.layout.gridGap","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.rowGap","quickNav.layout.rowGap","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.fontSize","quickNav.layout.fontSize","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.secondaryFontSize","quickNav.layout.secondaryFontSize","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.searchFontSize","quickNav.layout.searchFontSize","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.resultRowHeight","quickNav.layout.resultRowHeight","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.labelLines","quickNav.layout.labelLines","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.cornerRadius","quickNav.layout.cornerRadius","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.tabRadius","quickNav.layout.tabRadius","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.layout.itemRadius","quickNav.layout.itemRadius","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.colors.search","quickNav.colors.search","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.colors.navigation","quickNav.colors.navigation","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.colors.results","quickNav.colors.results","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.searchBg","quickNav.color.searchBg","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.searchBorder","quickNav.color.searchBorder","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.searchText","quickNav.color.searchText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.searchPlaceholder","quickNav.color.searchPlaceholder","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.searchFocus","quickNav.color.searchFocus","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.typeFill","quickNav.color.typeFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.typeText","quickNav.color.typeText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabDefaultFill","quickNav.color.tabDefaultFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabDefaultStroke","quickNav.color.tabDefaultStroke","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabText","quickNav.color.tabText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabHoverFill","quickNav.color.tabHoverFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabHoverStroke","quickNav.color.tabHoverStroke","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabActiveFill","quickNav.color.tabActiveFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabActiveStroke","quickNav.color.tabActiveStroke","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabActiveText","quickNav.color.tabActiveText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.tabHoverText","quickNav.color.tabHoverText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.iconPlateFill","quickNav.color.iconPlateFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.iconPlateBorder","quickNav.color.iconPlateBorder","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.headerText","quickNav.color.headerText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.headerSeparator","quickNav.color.headerSeparator","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.resultFill","quickNav.color.resultFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.resultBorder","quickNav.color.resultBorder","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.appNameText","quickNav.color.appNameText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.appTypeText","quickNav.color.appTypeText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.appRowHoverFill","quickNav.color.appRowHoverFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.appRowHoverStroke","quickNav.color.appRowHoverStroke","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.selectedFill","quickNav.color.selectedFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.selectedBorder","quickNav.color.selectedBorder","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.selectedText","quickNav.color.selectedText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.itemText","quickNav.color.itemText","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.itemHoverFill","quickNav.color.itemHoverFill","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.itemHoverStroke","quickNav.color.itemHoverStroke","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.scrollTrack","quickNav.color.scrollTrack","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.scrollThumbDefault","quickNav.color.scrollThumbDefault","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.scrollThumbHover","quickNav.color.scrollThumbHover","quickNav.description"},
-    {SettingsPage::AppearanceTheme,"quickNav.color.emptyText","quickNav.color.emptyText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.expandedWidth","quickNav.layout.expandedWidth","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.collapsedWidth","quickNav.layout.collapsedWidth","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.maximumHeight","quickNav.layout.maximumHeight","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.visibleRows","quickNav.layout.visibleRows","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.padding","quickNav.layout.padding","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.searchHeight","quickNav.layout.searchHeight","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.iconSize","quickNav.layout.iconSize","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.gridGap","quickNav.layout.gridGap","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.rowGap","quickNav.layout.rowGap","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.fontSize","quickNav.layout.fontSize","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.secondaryFontSize","quickNav.layout.secondaryFontSize","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.searchFontSize","quickNav.layout.searchFontSize","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.resultRowHeight","quickNav.layout.resultRowHeight","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.labelLines","quickNav.layout.labelLines","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.cornerRadius","quickNav.layout.cornerRadius","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.tabRadius","quickNav.layout.tabRadius","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.searchRadius","quickNav.layout.searchRadius","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.layout.itemRadius","quickNav.layout.itemRadius","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.colors.search","quickNav.colors.search","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.colors.navigation","quickNav.colors.navigation","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.colors.results","quickNav.colors.results","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.searchBg","quickNav.color.searchBg","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.searchBorder","quickNav.color.searchBorder","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.searchText","quickNav.color.searchText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.searchPlaceholder","quickNav.color.searchPlaceholder","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.searchFocus","quickNav.color.searchFocus","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.typeFill","quickNav.color.typeFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.typeText","quickNav.color.typeText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabDefaultFill","quickNav.color.tabDefaultFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabDefaultStroke","quickNav.color.tabDefaultStroke","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabText","quickNav.color.tabText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabHoverFill","quickNav.color.tabHoverFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabHoverStroke","quickNav.color.tabHoverStroke","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabActiveFill","quickNav.color.tabActiveFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabActiveStroke","quickNav.color.tabActiveStroke","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabActiveText","quickNav.color.tabActiveText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.tabHoverText","quickNav.color.tabHoverText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.iconPlateFill","quickNav.color.iconPlateFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.iconPlateBorder","quickNav.color.iconPlateBorder","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.headerText","quickNav.color.headerText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.headerSeparator","quickNav.color.headerSeparator","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.resultFill","quickNav.color.resultFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.resultBorder","quickNav.color.resultBorder","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.appNameText","quickNav.color.appNameText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.appTypeText","quickNav.color.appTypeText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.appRowHoverFill","quickNav.color.appRowHoverFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.appRowHoverStroke","quickNav.color.appRowHoverStroke","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.selectedFill","quickNav.color.selectedFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.selectedBorder","quickNav.color.selectedBorder","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.selectedText","quickNav.color.selectedText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.itemText","quickNav.color.itemText","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.itemHoverFill","quickNav.color.itemHoverFill","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.itemHoverStroke","quickNav.color.itemHoverStroke","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.scrollTrack","quickNav.color.scrollTrack","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.scrollThumbDefault","quickNav.color.scrollThumbDefault","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.scrollThumbHover","quickNav.color.scrollThumbHover","quickNav.description"},
+    {SettingsPage::QuickNavigation,"quickNav.color.emptyText","quickNav.color.emptyText","quickNav.description"},
 
-    {SettingsPage::AppearanceTheme, "quickNav.layout", "quickNav.layout", "quickNav.description"},
+    {SettingsPage::QuickNavigation, "quickNav.layout", "quickNav.layout", "quickNav.description"},
     {SettingsPage::QuickNavigation, "quickNav.prefixes", "quickNav.prefixes", "quickNav.prefixes.hint"},
     {SettingsPage::QuickNavigation, "quickNav.engines", "quickNav.engines", "quickNav.engines.hint"},
 
     {SettingsPage::StatusBar, "statusBar.taskView", "statusBar.taskView", "statusBar.leftItems"},
+    {SettingsPage::StatusBar, "statusBar.showDesktop", "statusBar.showDesktop", "statusBar.clickBehavior"},
     {SettingsPage::StatusBar, "statusBar.clockPanel", "statusBar.clockPanel", "statusBar.timeAndNotificationArea"},
     {SettingsPage::StatusBar, "statusBar.controlCenterPanel", "statusBar.controlCenterPanel", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.audioControls", "statusBar.audioControls", "statusBar.controlCenter"},
@@ -84,6 +88,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.bluetoothControls", "statusBar.bluetoothControls", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.mediaControls", "statusBar.mediaControls", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.powerControls", "statusBar.powerControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.batteryPercentage", "statusBar.batteryPercentage", "statusBar.controlCenter"},
     {SettingsPage::DesktopStyle, "desktopStyle", "settings.desktopStyle.title", "settings.desktopStyle.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.native", "settings.desktopStyle.native.title", "settings.desktopStyle.native.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.taskbar-dock", "settings.desktopStyle.taskbar-dock.title", "settings.desktopStyle.taskbar-dock.description"},
@@ -151,7 +156,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "start.dockFiles", "start.dockFiles.title", "start.dockFiles.description"},
     {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
     {SettingsPage::General, "general.autoStart",
-        "settings.general.startup",
+        "app.settings.auto_start",
         "settings.general.startup.description"},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
@@ -161,7 +166,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
     {SettingsPage::ContextMenu, "contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions.description"},
-    {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement.description"},
+    {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.showPageManagement", "settings.contextMenu.hidePageManagement.description"},
+    {SettingsPage::ContextMenu, "contextMenu.hideMoreManagement", "settings.contextMenu.showMoreManagement", ""},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
@@ -222,20 +228,35 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.floatingDock.description"},
     {SettingsPage::Dock, "personalization.dockAppearance",
         "guide.setting.dockAppearance.title", "guide.setting.dockAppearance"},
-    {SettingsPage::AppearanceWidgets, "personalization.luaWidgetRowHeight",
-        "app.settings.lua_widget_row_height", "settings.personalization.widgets.description"},
+    {SettingsPage::Dock, "dock.followComponentCornerRadius",
+        "largeIcon.followComponentRadius", ""},
+    {SettingsPage::Dock, "dock.cornerRadius", "app.settings.corner_radius", ""},
+    {SettingsPage::AppearanceDesktopIcons, "personalization.luaWidgetRowHeight",
+        "app.settings.lua_widget_row_height", ""},
     {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description"},
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
+    {SettingsPage::AppearanceDesktopIcons, "personalization.windowPinBorder.show",
+        "settings.personalization.windowPinBorder.show", "settings.personalization.windowPinBorder.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "personalization.windowPinBorder.color",
+        "settings.personalization.windowPinBorder.color", "settings.personalization.windowPinBorder"},
+    {SettingsPage::AppearanceDesktopIcons, "personalization.windowPinBorder.width",
+        "settings.personalization.windowPinBorder.width", "settings.personalization.windowPinBorder"},
+    {SettingsPage::AppearanceDesktopIcons, "personalization.windowPinBorder.opacity",
+        "settings.personalization.windowPinBorder.opacity", "settings.personalization.windowPinBorder"},
     {SettingsPage::AppearanceWidgets, "personalization.tooltipFontSize",
         "font.tooltipSize", "font.tooltipSizeHint"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.overrides", "iconAppearance.list", ""},
+    {SettingsPage::IconLibrary, "iconLibrary", "iconLibrary.title", ""},
+    {SettingsPage::IconLibrary, "iconLibrary.import", "iconLibrary.import", ""},
+    {SettingsPage::IconLibrary, "iconLibrary.exportIco", "iconLibrary.exportIco", ""},
     {SettingsPage::ThemeManager, "personalization.savedThemes",
         "themeLibrary.manager", "themeLibrary.transferHint"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
-        "settings.personalization.colors",
+        "app.settings.component_bg",
         "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme,
+    {SettingsPage::QuickNavigation,
         "personalization.quickNavigationTheme",
         "app.settings.quick_nav_theme",
         "settings.personalization.theme.description"},
@@ -288,24 +309,29 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.personalization.contextMenu",
         "settings.personalization.contextMenu.description"},
     {SettingsPage::AppearanceWidgets, "personalization.cornerRadius",
-        "settings.personalization.widgets",
-        "settings.personalization.widgets.description"},
+        "app.settings.corner_radius", ""},
     {SettingsPage::AppearanceWidgets, "personalization.barHeight",
         "app.settings.bar_height",
-        "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.widgetTransformCursors",
+        ""},
+    {SettingsPage::WidgetBehavior, "personalization.widgetTransformCursors",
         "app.settings.widget_transform_cursors",
         "app.settings.widget_transform_cursors_hint"},
     {SettingsPage::WidgetBehavior, "personalization.scrollableTitleBarOnTop",
         "app.settings.scrollable_title_bar_position",
         "app.settings.scrollable_title_bar_position_hint"},
-    {SettingsPage::AppearanceWidgets, "desktop.categoryLayout",
+    {SettingsPage::AppearanceDesktopIcons, "desktop.categoryLayout",
         "app.settings.tab_height",
-        "settings.personalization.widgets.description"},
+        ""},
     {SettingsPage::WidgetBehavior, "personalization.showGroupTabCounts",
         "app.settings.group_show_count", "app.settings.group_show_count_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupHoverOpen",
         "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
+    {SettingsPage::WidgetBehavior, "personalization.groupTabHoverSwitch",
+        "settings.widgetBehavior.groupTabHover", "settings.widgetBehavior.tabSwitching"},
+    {SettingsPage::WidgetBehavior, "personalization.categoryTabHoverSwitch",
+        "settings.widgetBehavior.categoryTabHover", "settings.widgetBehavior.tabSwitching"},
+    {SettingsPage::WidgetBehavior, "personalization.tabHoverDelayMs",
+        "settings.widgetBehavior.tabHoverDelay", "settings.widgetBehavior.tabSwitching"},
     {SettingsPage::WidgetBehavior, "personalization.popupHoverDelayMs",
         "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupCloseOnMouseLeave",
@@ -314,12 +340,16 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "desktop.categoryCounts",
         "app.settings.category_show_count",
         "settings.desktop.categoryLayout.description"},
-    {SettingsPage::AppearanceWidgets, "desktop.spacing",
+    {SettingsPage::AppearanceDesktopIcons, "desktop.spacing",
         "settings.desktop.spacing", "settings.desktop.spacing.description"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingIconSpacingY",
+        "app.settings.scrolling_icon_spacing_y", ""},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.listRowSpacing",
+        "app.settings.list_row_spacing", ""},
     {SettingsPage::AppearanceDesktopIcons, "desktop.iconSize",
         "settings.desktop.iconSize", "settings.desktop.iconSize.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.itemFontSize",
-        "settings.desktop.typography",
+        "app.settings.title_font_size",
         "settings.desktop.typography.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.listFontSize",
         "app.settings.list_font_size",
@@ -338,17 +368,29 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.shortcutArrow",
         "settings.desktop.shortcutArrow",
         "settings.desktop.shortcutArrow.description"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.groupComponentBadges",
+        "app.settings.group_component_badges", ""},
+    {SettingsPage::AppearanceDesktopIcons, "dock.attentionDotSize",
+        "settings.dock.attentionDot.size", "settings.dock.attentionDot.title"},
+    {SettingsPage::AppearanceDesktopIcons, "dock.attentionDotOffset",
+        "settings.dock.attentionDot.position", "settings.dock.attentionDot.positionHint"},
     {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify",
         "settings.desktop.iconBeautify",
         "settings.desktop.iconBeautify.description"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.fileThumbnails",
+        "app.settings.beautify_file_thumbnails", ""},
     {SettingsPage::AppearanceIconBeautification,
         "desktop.iconBeautify.mode",
-        "app.settings.beautify_mode",
+        "iconStyle.strategy",
         "settings.desktop.iconBeautify.description"},
     {SettingsPage::AppearanceIconBeautification,
         "desktop.iconBeautify.backgroundColor",
         "app.settings.default_bg",
         "settings.desktop.iconBeautify.description"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.backgroundSource",
+        "iconStyle.backgroundSource", "settings.desktop.iconBeautify.description"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.filterMode",
+        "iconStyle.coloring", "settings.desktop.iconBeautify.description"},
     {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.glass",
         "app.settings.glass_enabled", "settings.desktop.iconBeautify.description"},
     {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.blurRadius",
@@ -456,12 +498,17 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.monitor.description"},
     {SettingsPage::Dock, "dock.thickness",
         "settings.dock.thickness", "settings.dock.thickness.description"},
+    {SettingsPage::Dock, "dock.edgeDistanceScale",
+        "settings.dock.edgeDistance", "settings.dock.edgeDistance.description"},
     {SettingsPage::Dock, "dock.allowDesktopContentOverlap",
         "settings.dock.allowDesktopContentOverlap",
         "settings.dock.allowDesktopContentOverlap.description"},
     {SettingsPage::Dock, "dock.showOnlyWhenSummoned",
         "settings.dock.showOnlyWhenSummoned",
         "settings.dock.showOnlyWhenSummoned.description"},
+    {SettingsPage::Dock, "dock.summonOnAppMinimize",
+        "settings.dock.summonOnAppMinimize",
+        "settings.dock.summonOnAppMinimize.description"},
     {SettingsPage::Dock, "dock.showFrequentItems",
         "settings.dock.frequentItems",
         "settings.dock.frequentItems.description"},
@@ -470,6 +517,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.items.description"},
     {SettingsPage::Dock, "dock.edgeRevealGesture",
         "settings.dock.edgeRevealGesture", "settings.dock.edgeRevealGesture.description"},
+    {SettingsPage::Dock, "dock.edgeHoverDelayMs",
+        "settings.dock.edgeHoverDelay", "settings.dock.edgeRevealGesture"},
     {SettingsPage::Dock, "dock.showWindowPreviews",
         "settings.dock.windowPreviews", "settings.dock.windowPreviews.description"},
     {SettingsPage::Dock, "dock.singleClickLaunchItems",
@@ -479,10 +528,17 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.fullscreenDefaultPolicy", "settings.dock.fullscreenPolicy.description"},
     {SettingsPage::Dock, "dock.fullscreenExceptions",
         "settings.dock.fullscreenExceptions", "settings.dock.fullscreenExceptions.description"},
+    {SettingsPage::Dock, "dock.trayApplications",
+        "settings.dock.trayApplications", "settings.dock.trayApplications.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",
         "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description"},
+    {SettingsPage::Dock, "dock.startIcon", "iconLibrary.startIcon", "iconLibrary.title"},
+    {SettingsPage::Dock, "dock.searchIcon", "iconLibrary.searchIcon", "iconLibrary.title"},
     {SettingsPage::Dock, "dock.showWindowsButton",
         "app.dock.show_windows_button",
+        "settings.dock.items.description"},
+    {SettingsPage::Dock, "dock.showQuickSearchButton",
+        "app.dock.show_quick_search_button",
         "settings.dock.items.description"},
     {SettingsPage::Dock, "dock.frequentItemCount",
         "app.settings.show_count",
@@ -595,6 +651,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DeveloperTools, "developer.runtime",
         "app.settings.widgets_runtime_diagnostics",
         "settings.developer.tools.description"},
+    {SettingsPage::Debug, "debug.forceRestartHotkey", "settings.debug.forceRestartHotkey",
+        "settings.debug.forceRestartHotkey.description"},
+    {SettingsPage::Debug, "debug.forceRestartHotkey.hotkey", "app.settings.hotkey",
+        "settings.debug.forceRestartHotkey"},
     {SettingsPage::Debug, "debug.profile", "settings.debug.profile.enabled", "settings.debug.profile.description"},
     {SettingsPage::Debug, "debug.desktop", "settings.debug.profile.desktop", "settings.debug.profile.chooseHint"},
     {SettingsPage::Debug, "debug.clearProfile", "settings.debug.profile.clear", "settings.debug.profile.clearHint"},
@@ -616,55 +676,51 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     int contextMenuStyle = 0, bool mergedBarVisible = false)
 {
             const auto pageContext = [&L](SettingsPage page) {
-                switch (page)
-                {
-                case SettingsPage::QuickNavigation:
-                    return L("quickNav.title");
-                case SettingsPage::General:
-                    return L("app.settings.general");
-                case SettingsPage::AnimationPerformance:
-                    return L("settings.nav.animation");
-                case SettingsPage::Personalization:
-                    return L("app.settings.appearance");
-                case SettingsPage::ThemeManager: return L("themeLibrary.manager");
-                case SettingsPage::AppearanceTheme:
-                    return L("settings.personalization.theme");
-                case SettingsPage::AppearanceWidgets:
-                    return L("settings.personalization.widgets");
-                case SettingsPage::WidgetBehavior:
-                    return L("settings.widgetBehavior.title");
-                case SettingsPage::AppearanceDesktopIcons:
-                    return L("app.settings.desktop_icons");
-                case SettingsPage::AppearanceIconBeautification:
-                    return L("app.settings.icon_beautify");
-                case SettingsPage::Desktop:
-                    return L("settings.nav.desktop");
-                case SettingsPage::DesktopPages:
-                    return L("settings.nav.pages");
-                case SettingsPage::DesktopCategories:
-                    return L("settings.nav.categories");
-                case SettingsPage::Dock:
-                case SettingsPage::DockAndTaskbar:
-                    return L("settings.nav.dock");
-                case SettingsPage::Taskbar:
-                    return L("settings.nav.taskbar");
-                case SettingsPage::StatusBar:
-                    return L("settings.nav.statusBar");
-                case SettingsPage::DesktopStyle:
-                    return L("settings.desktopStyle.title");
-                case SettingsPage::Widgets:
-                    return L("app.settings.widgets");
-                case SettingsPage::BackupAndData:
-                    return L("app.settings.backup");
-                case SettingsPage::About:
-                    return L("app.settings.about");
-                case SettingsPage::DeveloperTools:
-                    return L("app.settings.widgets_developer_tools");
-                case SettingsPage::Debug:
-                    return L("app.settings.debug");
-                default:
-                    return std::wstring{};
-                }
+                const auto title = L(SettingsPageTitleKey(page));
+                const auto category = SettingsCategoryTitleKey(SettingsPageCategory(page));
+                return category.empty() ? title : L(category) + L" \u203a " + title;
+            };
+            // Localized task wording lives beside the stable catalog targets.
+            // It is indexed offline and never changes a setting to expose a hit.
+            const std::pair<std::string_view, std::string_view> aliases[] = {
+                {"dock.showOnlyWhenSummoned", "settings.search.alias.dockVisibility"},
+                {"dock.floatingEdgeSwipe", "settings.search.alias.dockReveal"},
+                {"dock.showWindowPreviews", "settings.search.alias.windowPreviews"},
+                {"dock.monitor", "settings.search.alias.monitors"},
+                {"statusBar.monitor", "settings.search.alias.monitors"},
+                {"pages.order", "settings.search.alias.monitors"},
+                {"pages.grid", "settings.search.alias.grid"},
+                {"desktop.spacing", "settings.search.alias.grid"},
+                {"general.quickNavigation", "settings.search.alias.quickNavigation"},
+                {"personalization.quickNavigationTheme", "settings.search.alias.quickAppearance"},
+                {"personalization.font", "settings.search.alias.font"},
+                {"personalization.font", "settings.search.alias.globalAppearance"},
+                {"personalization.cornerRadius", "settings.search.alias.globalAppearance"},
+                {"personalization.barHeight", "settings.search.alias.globalAppearance"},
+                {"desktop.spacing", "settings.search.alias.globalAppearance"},
+                {"desktop.categoryLayout", "settings.search.alias.globalAppearance"},
+                {"personalization.luaWidgetRowHeight", "settings.search.alias.globalAppearance"},
+                {"desktop.categoryRules", "settings.search.alias.classification"},
+                {"personalization.widgetTransformCursors", "settings.search.alias.transformCursor"},
+                {"personalization.cornerRadius", "settings.search.alias.cornerRadius"},
+                {"taskbar.displayMode", "settings.search.alias.taskbar"},
+                {"backup.layout", "settings.search.alias.backup"},
+                {"widgets.installed", "settings.search.alias.components"},
+                {"general.autoStart", "settings.search.alias.startup"},
+                {"dock.floatingShortcutMode", "settings.search.legacy.dock.floatingShortcutMode"},
+                {"personalization.luaWidgetRowHeight", "settings.search.legacy.personalization.luaWidgetRowHeight"},
+                {"personalization.backgroundColor", "settings.search.legacy.personalization.backgroundColor"},
+                {"personalization.enableGradient", "settings.search.legacy.personalization.enableGradient"},
+                {"personalization.contentTheme", "settings.search.legacy.personalization.contentTheme"},
+                {"desktop.iconBeautify.gradient", "settings.search.legacy.desktop.iconBeautify.gradient"},
+                {"desktop.collectPrograms", "settings.search.legacy.desktop.collectPrograms"},
+                {"dock.edgeRevealGesture", "settings.search.legacy.dock.edgeRevealGesture"},
+                {"dock.showWindowPreviews", "settings.search.legacy.dock.showWindowPreviews"},
+                {"dock.singleClickLaunchItems", "settings.search.legacy.dock.singleClickLaunchItems"},
+                {"dock.fullscreenPolicy", "settings.search.legacy.dock.fullscreenPolicy"},
+                {"dock.frequentItemCount", "settings.search.legacy.dock.frequentItemCount"},
+                {"contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement"},
+                {"contextMenu.hideMoreManagement", "settings.contextMenu.hideMoreManagement"},
             };
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
@@ -677,11 +733,20 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                 if (std::string_view(definition.focusId) == "contextMenu.expandQuickActions" &&
                     (contextMenuStyle == 5 || contextMenuStyle == 6)) continue;
                 StaticSettingSearchDescriptor descriptor;
-                descriptor.page = CanonicalizeSettingsRoute(SettingsRoute::ForPage(definition.page, definition.focusId)).page;
-                descriptor.focusId = definition.focusId;
+                const auto target = CanonicalizeSettingsRoute(SettingsRoute::ForPage(definition.page, definition.focusId));
+                descriptor.page = target.page;
+                descriptor.focusId = target.focusId;
                 descriptor.label = L(definition.labelKey);
-                descriptor.description = L(definition.descriptionKey);
+                if (definition.descriptionKey[0] != '\0')
+                    descriptor.description = L(definition.descriptionKey);
                 descriptor.context = pageContext(descriptor.page);
+                for (const auto& [focusId, key] : aliases)
+                    if (descriptor.focusId == focusId)
+                    {
+                        const auto words = L(key);
+                        if (!words.empty() && words != std::wstring(key.begin(), key.end()))
+                            descriptor.keywords.push_back(words);
+                    }
                 descriptor.visible =
                     definition.page != SettingsPage::DeveloperTools &&
                         definition.page != SettingsPage::Debug

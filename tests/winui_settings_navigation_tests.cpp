@@ -24,21 +24,21 @@ void TestHistoryAndFocusRoutes()
     for (const auto focus : {"general.quickNavigation","general.quickNavigation.hotkey","general.hotkeys"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
     for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
-        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"quick-navigation theme links retain their original appearance page");
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"shared quick-navigation theme remains on the requested overview page");
     for (const auto focus : {"quickNav.layout", "quickNav.layout.iconSize", "quickNav.colors.search", "quickNav.color.searchBg"})
     {
         const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus));
-        Check(route.page == SettingsPage::AppearanceTheme && route.focusId == focus,
-            "legacy navigation appearance links retain their focus within the existing custom theme");
+        Check(route.page == SettingsPage::QuickNavigation && route.focusId == focus,
+            "navigation appearance links preserve their focus on the functional page");
     }
     for (const auto focus : {"quickNav.view", "quickNav.defaultCollapsed", "quickNav.prefixes", "quickNav.defaultEngine"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus)).page == SettingsPage::QuickNavigation,
             "navigation behavior and legacy opening links remain on the functional page");
     for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
-        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
-            "old Dock animation links reach the Dock tab after settings reorganization");
-    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::Dock,
-        "old Dock theme links reach the Dock tab");
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::AnimationPerformance,
+            "Dock effects can be edited and located directly on the animation page");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::AppearanceTheme,
+        "shared Dock theme remains on the requested overview page");
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Dock, "dock.suppressSystemTaskbar")).page == SettingsPage::Taskbar,
         "old taskbar hiding links reach the taskbar visibility control");
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.savedThemes")).page == SettingsPage::ThemeManager,
@@ -67,9 +67,15 @@ void TestHistoryAndFocusRoutes()
     Check(state.Navigate(SettingsRoute::ForPage(
               SettingsPage::AppearanceWidgets,
               "personalization.cornerRadius")) &&
-            state.Route().page == SettingsPage::AppearanceWidgets &&
+            state.Route().page == SettingsPage::AppearanceDesktopIcons &&
             state.Route().focusId == "personalization.cornerRadius",
-        "Appearance leaves are available as first-class navigation targets");
+        "legacy component geometry links reach global appearance without losing their focus");
+    for (const auto source : {SettingsPage::Personalization, SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons})
+    {
+        const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(source, "personalization.barHeight"));
+        Check(route.page == SettingsPage::AppearanceDesktopIcons && route.focusId == "personalization.barHeight",
+            "geometry links from existing pages retain their target after relocation");
+    }
 }
 
 void TestRelocatedWidgetBehaviorNavigation()
@@ -82,10 +88,69 @@ void TestRelocatedWidgetBehaviorNavigation()
             state.Route().page == SettingsPage::WidgetBehavior &&
             state.Route().focusId == "personalization.popupHoverDelayMs",
         "the shell accepts a relocated setting from an old appearance search result");
-    Check(state.GoBack() == appearance && state.GoForward()->page == SettingsPage::WidgetBehavior,
+    Check(state.GoBack() == CanonicalizeSettingsRoute(appearance) && state.GoForward()->page == SettingsPage::WidgetBehavior,
         "Back and Forward retain the independent behavior page and its focus target");
     Check(SettingsPageKey(SettingsPage::WidgetBehavior) == "widget-behavior",
         "the new behavior destination has its own stable settings key");
+}
+
+void TestRelocatedLayoutShortcuts()
+{
+    struct Destination
+    {
+        const char* legacyFocus;
+        SettingsPage page;
+        const char* focus;
+    };
+    const Destination destinations[]{
+        {"desktopStyle.dock.showOnlyWhenSummoned", SettingsPage::Dock, "dock.showOnlyWhenSummoned"},
+        {"desktopStyle.dock.edgeSwipe", SettingsPage::Dock, "dock.floatingEdgeSwipeEnabled"},
+        {"desktopStyle.dock.edgeRevealGesture", SettingsPage::Dock, "dock.edgeRevealGesture"},
+        {"desktopStyle.dock.showWindowPreviews", SettingsPage::Dock, "dock.showWindowPreviews"},
+        {"desktopStyle.dock.lastMonitorUseHomeSize", SettingsPage::Dock, "dock.lastMonitorUseHomeSize"},
+        {"desktopStyle.animation.hover", SettingsPage::Dock, "animation.hover"},
+        {"desktopStyle.animation.launch", SettingsPage::Dock, "animation.launch"},
+        {"desktopStyle.taskbar.appearance", SettingsPage::Taskbar, "taskbar.theme"},
+    };
+    for (const auto& destination : destinations)
+    {
+        auto legacy = SettingsRoute::ForPage(SettingsPage::DesktopStyle, destination.legacyFocus);
+        legacy.guideTopic = "desktopStyle";
+        const auto canonical = CanonicalizeSettingsRoute(legacy);
+        Check(canonical.page == destination.page && canonical.focusId == destination.focus &&
+                canonical.guideTopic == legacy.guideTopic &&
+                CanonicalizeSettingsRoute(canonical) == canonical,
+            "each old layout shortcut reaches a stable setting and preserves its guide return");
+        SettingsShellNavigationState state;
+        Check(state.Navigate(legacy) && state.Route() == canonical &&
+                !state.Navigate(canonical) && state.HistorySize() == 2,
+            "legacy and current links identify one history destination");
+        const auto back = state.GoBack();
+        const auto forward = state.GoForward();
+        Check(back && back->page == SettingsPage::General && forward == canonical,
+            "Back and Forward retain a relocated layout setting");
+    }
+}
+
+void TestPackagePermissionNavigation()
+{
+    SettingsShellNavigationState state;
+    auto first = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+    first.itemKey = L"天气包.weather";
+    auto second = first;
+    second.itemKey = L"clock.package";
+    Check(state.Navigate(first) && state.Route() == first &&
+            state.Navigate(second) && state.Route() == second && state.GoBack() == first,
+        "permission navigation preserves each package identity across history");
+    const auto before = state.Route();
+    auto invalid = first;
+    invalid.focusId = "widgets.installed";
+    Check(!state.Navigate(invalid) && state.Route() == before,
+        "an object key cannot silently select a package on an unrelated widgets section");
+    invalid = first;
+    invalid.widgetInstanceId = L"instance-with-same-name";
+    Check(!state.Navigate(invalid) && state.Route() == before,
+        "package permissions never confuse a package key with a widget instance");
 }
 
 void TestConditionalPages()
@@ -252,6 +317,8 @@ int main()
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
     TestRelocatedWidgetBehaviorNavigation();
+    TestRelocatedLayoutShortcuts();
+    TestPackagePermissionNavigation();
     TestControllerGenerationGate();
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();

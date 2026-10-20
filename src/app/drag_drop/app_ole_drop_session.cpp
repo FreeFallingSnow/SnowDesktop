@@ -4,6 +4,9 @@
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/virtual_file_drop.h"
 #include "drag_drop/external_drop_content.h"
+#include "drag_drop/delayed_desktop_file_drop.h"
+#include "drag_drop/default_file_drop_action.h"
+#include "layout/item_location.h"
 #include "widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -11,6 +14,55 @@
 namespace
 {
 using DirectoryPathSet = std::unordered_set<std::wstring>;
+
+bool OffersNativeFilePaths(IDataObject* source)
+{
+    FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    return source && source->QueryGetData(&format) == S_OK;
+}
+
+bool OffersOwnedDropContent(IDataObject* source)
+{
+    if (!source) return false;
+    const auto offers = [source](CLIPFORMAT id) {
+        FORMATETC format{id, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return id && source->QueryGetData(&format) == S_OK;
+    };
+    // Real Shell objects can provide text/image fallbacks. Do not render their
+    // paths merely to decide hover/menu capability or replace the file batch.
+    if (offers(CF_HDROP)) return false;
+    if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"))) ||
+        offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor")))) return true;
+    if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Shell IDList Array")))) return false;
+    return snowdesktop::drop_image_data::OffersImageData(source) || offers(CF_UNICODETEXT) ||
+        offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocatorW"))) ||
+        offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocator")));
+}
+
+std::optional<std::wstring> ResolveHandoffPath(const std::wstring& path)
+{
+    const auto isShortcut = [](const std::wstring& candidate) {
+        const auto* extension = PathFindExtensionW(candidate.c_str());
+        return extension && _wcsicmp(extension, L".lnk") == 0;
+    };
+    if (!isShortcut(path)) return path;
+    std::wstring current = path;
+    std::unordered_set<std::wstring> visited;
+    for (int depth = 0; depth < 64 && isShortcut(current); ++depth)
+    {
+        if (!visited.insert(ToUpperInvariant(current)).second) return std::nullopt;
+        const auto next = snowdesktop::item_location::ResolveRevealPath(current);
+        if (next.empty() || PathsEqualInsensitive(next, current)) return std::nullopt;
+        current = next;
+    }
+    if (isShortcut(current)) return std::nullopt;
+    const auto attributes = GetFileAttributesW(current.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return std::nullopt;
+    // Ordinary application shortcuts keep their Shell target behavior. A
+    // directory shortcut uses the same tracked file operation as that real
+    // directory, including the user's selected Copy/Move/Link operation.
+    return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? current : path;
+}
 
 std::wstring UserDesktopDirectory()
 {
@@ -158,6 +210,7 @@ private:
 void DesktopApp::CancelPendingExternalOleDragLeave()
 {
     externalOleDragLeavePending_ = false;
+    externalOleDragLeaveDeadline_ = 0;
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kExternalOleDragLeaveGraceTimerId);
 }
@@ -167,9 +220,17 @@ void DesktopApp::FinalizePendingExternalOleDragLeave()
     if (!externalOleDragLeavePending_)
         return;
 
-    CancelPendingExternalOleDragLeave();
     if (!dragDropController_.IsExternalDragActive())
+    {
+        CancelPendingExternalOleDragLeave();
         return;
+    }
+    // KillTimer leaves already-queued WM_TIMER messages intact. A completion
+    // from an older leave must respect the currently armed grace interval.
+    if (externalOleDragLeaveDeadline_ != 0 && GetTickCount64() < externalOleDragLeaveDeadline_)
+        return;
+
+    CancelPendingExternalOleDragLeave();
 
     dragDropController_.EndExternalDrag();
     EndDragSession();
@@ -181,8 +242,12 @@ HRESULT DesktopApp::HandleOleDragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     CancelPendingExternalOleDragLeave();
     externalLuaFileDropAvailable_ = false;
+    externalOwnedContent_ = false;
+    externalFileDropPaths_.clear();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -212,6 +277,20 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
 
+    const auto rejectUnsupportedSource = [&] {
+        externalLuaFileDropAvailable_ = false;
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    };
+    externalOwnedContent_ = OffersOwnedDropContent(dataObject);
+    // A Shell namespace ID is not a filesystem destination payload. Reject it
+    // before probing/rendering data, including an attached preview bitmap.
+    if (!OffersNativeFilePaths(dataObject) && !externalOwnedContent_)
+        return rejectUnsupportedSource();
+
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
@@ -219,6 +298,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         const bool delayedFileDrop = fileSource.asynchronous;
         const auto& paths = fileSource.paths;
         externalLuaFileDropAvailable_ = fileSource.available;
+        if (fileSource.available) externalFileDropPaths_ = paths;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
                 VirtualFileDescriptor>{}
@@ -265,6 +345,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     {
         externalSummary.fileCount = 1;
     }
+    if (!externalLuaFileDropAvailable_ && !externalOwnedContent_)
+        return rejectUnsupportedSource();
     dragDropController_.BeginExternalDrag(
         externalSummary);
     POINT client = ScreenPointToClient(point);
@@ -318,13 +400,26 @@ HRESULT DesktopApp::HandleOleDragEnter(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    const bool externalDockMapping =
+    const bool externalDockMapping = !externalOwnedContent_ &&
         dynamic_cast<DockContainer*>(targetContainer) &&
         targetRegion != HitRegion::Handoff &&
         targetRegion != HitRegion::Blocked;
     const bool externalLogicalReference =
         dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
         targetRegion != HitRegion::Blocked;
+    const DWORD targetEffect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : ((externalLogicalReference || externalOwnedContent_) ? (*effect & DROPEFFECT_COPY)
+            : externalDockMapping
+                ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
+                : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
+                    snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                        ? ExternalFileDropPreferredEffect(client)
+                        : targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                            ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+    if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
+        mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -335,19 +430,11 @@ HRESULT DesktopApp::HandleOleDragEnter(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
+    *effect = targetEffect;
     std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
+    if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = ((desktopIconsHidden_ && !targetContainer) ||
-        targetRegion == HitRegion::Blocked)
-        ? DROPEFFECT_NONE
-        : (externalLogicalReference
-            ? DROPEFFECT_COPY
-            : externalDockMapping
-            ? snowdesktop::dock_drop_rules::
-                ChooseExternalMappingEffect(*effect)
-            : ChooseDropEffect(keyState, *effect));
     PresentOleDragInteractionFrame();
     return S_OK;
 }
@@ -389,6 +476,14 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
 
+    if (!externalLuaFileDropAvailable_ && !externalOwnedContent_)
+    {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
     dragDropController_.ContinueExternalDrag();
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
@@ -441,13 +536,26 @@ HRESULT DesktopApp::HandleOleDragOver(
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
     if (keyState & MK_ALT)     mods |= MK_ALT;
     if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
-    const bool externalDockMapping =
+    const bool externalDockMapping = !externalOwnedContent_ &&
         dynamic_cast<DockContainer*>(targetContainer) &&
         targetRegion != HitRegion::Handoff &&
         targetRegion != HitRegion::Blocked;
     const bool externalLogicalReference =
         dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
         targetRegion != HitRegion::Blocked;
+    const DWORD targetEffect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : ((externalLogicalReference || externalOwnedContent_) ? (*effect & DROPEFFECT_COPY)
+            : externalDockMapping
+                ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
+                : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
+                    snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                        ? ExternalFileDropPreferredEffect(client)
+                        : targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                            ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+    if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
+        mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -458,19 +566,11 @@ HRESULT DesktopApp::HandleOleDragOver(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
+    *effect = targetEffect;
     std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
+    if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
-    *effect = ((desktopIconsHidden_ && !targetContainer) ||
-        targetRegion == HitRegion::Blocked)
-        ? DROPEFFECT_NONE
-        : (externalLogicalReference
-            ? DROPEFFECT_COPY
-            : externalDockMapping
-            ? snowdesktop::dock_drop_rules::
-                ChooseExternalMappingEffect(*effect)
-            : ChooseDropEffect(keyState, *effect));
     PresentOleDragInteractionFrame();
     return S_OK;
 }
@@ -509,8 +609,15 @@ HRESULT DesktopApp::HandleOleDragLeave()
     }
 
     POINT hoverPoint{};
+    return HandleExternalOleDragLeave(
+        dragDropController_.IsExternalDragActive() &&
+        TryGetDesktopHoverPointFromCursor(hoverPoint));
+}
+
+HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
+{
     if (dragDropController_.IsExternalDragActive() &&
-        TryGetDesktopHoverPointFromCursor(hoverPoint) &&
+        pointerOnDesktopSurface &&
         hwnd_ && IsWindow(hwnd_))
     {
         externalOleDragLeavePending_ =
@@ -518,10 +625,14 @@ HRESULT DesktopApp::HandleOleDragLeave()
                 hwnd_, kExternalOleDragLeaveGraceTimerId,
                 kExternalOleDragLeaveGraceMs, nullptr) != 0;
         if (externalOleDragLeavePending_)
+        {
+            externalOleDragLeaveDeadline_ = GetTickCount64() + kExternalOleDragLeaveGraceMs;
             return S_OK;
+        }
     }
 
     externalOleDragLeavePending_ = true;
+    externalOleDragLeaveDeadline_ = 0;
     FinalizePendingExternalOleDragLeave();
     return S_OK;
 }
@@ -537,6 +648,13 @@ HRESULT DesktopApp::HandleOleDragLeave()
 HRESULT DesktopApp::HandleOleDrop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
+    return HandleOleDropWithMenu(dataObject, keyState, point, effect, {});
+}
+
+HRESULT DesktopApp::HandleOleDropWithMenu(
+    IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect,
+    const RightDragMenuPresenter& presentMenu)
+{
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
     HideDragHintWindow();
@@ -544,12 +662,40 @@ HRESULT DesktopApp::HandleOleDrop(
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
+    if (!dragDropController_.IsSelfDragActive() &&
+        (*effect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK)) == 0)
+    {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
+
     POINT clientPoint = ScreenPointToClient(point);
+    const bool externalContent = !dragDropController_.IsSelfDragActive() && OffersOwnedDropContent(dataObject);
+    // Drop can arrive directly or with a different IDataObject than Enter.
+    // Recheck the actual source before offering a menu or reading a fallback.
+    if (!dragDropController_.IsSelfDragActive() && !externalContent && !OffersNativeFilePaths(dataObject))
+    {
+        externalLuaFileDropAvailable_ = false;
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
+    externalOwnedContent_ = externalContent;
+    if (externalContent && (*effect & DROPEFFECT_COPY) == 0)
+    {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
     if (keyState & MK_RBUTTON)
     {
         ResolveCurrentDragTargetAt(clientPoint);
         if (!ChooseRightDragDropAction(clientPoint, keyState, *effect,
-                !dragDropController_.IsSelfDragActive()))
+                !dragDropController_.IsSelfDragActive(), presentMenu, externalContent))
         {
             if (dragDropController_.IsSelfDragActive())
                 dragDropController_.MarkSelfDragReturned();
@@ -688,6 +834,8 @@ HRESULT DesktopApp::HandleOleDrop(
         {
             // ── Shell handoff via IShellFolder::IDropTarget ────
             Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+            if (!targetItem && dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer()))
+                targetItem = HitTestIcon(clientPoint);
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
                 if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
@@ -732,8 +880,14 @@ HRESULT DesktopApp::HandleOleDrop(
                 !sourcePaths.empty() &&
                 sourcePaths.size() ==
                     dragSession_.SourceList().entries.size();
-            const std::wstring targetPath =
-                targetItem ? targetItem->GetPath() : L"";
+            const auto resolvedTarget = ResolveHandoffPath(targetItem ? targetItem->GetPath() : L"");
+            if (!resolvedTarget)
+            {
+                *effect = DROPEFFECT_NONE;
+                ClearSelection(); EndDragSession();
+                return S_OK;
+            }
+            const std::wstring& targetPath = *resolvedTarget;
             const DWORD targetAttributes = targetPath.empty()
                 ? INVALID_FILE_ATTRIBUTES
                 : GetFileAttributesW(targetPath.c_str());
@@ -915,6 +1069,13 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     // ── External drop ──────────────────────────────────────────
+    if (externalContent)
+    {
+        keyState = (keyState & ~(MK_CONTROL | MK_SHIFT | MK_ALT)) | MK_CONTROL;
+        *effect = DROPEFFECT_COPY;
+    }
+    if ((keyState & (MK_CONTROL | MK_SHIFT)) == (MK_CONTROL | MK_SHIFT))
+        keyState = (keyState & ~(MK_CONTROL | MK_SHIFT)) | MK_ALT;
     DockContainer* externalDropDock =
         dynamic_cast<DockContainer*>(
             dragSession_.TargetContainer());
@@ -922,11 +1083,11 @@ HRESULT DesktopApp::HandleOleDrop(
         externalDropDock &&
         dragSession_.TargetRegion() != HitRegion::Handoff &&
         dragSession_.TargetRegion() != HitRegion::Blocked;
-    // Resolve the insertion boundary while the external summary still owns
-    // the folder-only classification used by the Dock's split ranges.
+    // Keep the actual hit boundary before an asynchronous source supplies its
+    // file/folder types. Materialization assigns each member to its partition.
     const size_t externalDockInsertIndex =
         externalDockMappingTarget
-            ? externalDropDock->GetDropInsertIndex(
+            ? externalDropDock->GetExternalDropInsertIndex(
                 dragSession_.TargetSlot(),
                 dragSession_.TargetRegion())
             : 0;
@@ -995,7 +1156,10 @@ HRESULT DesktopApp::HandleOleDrop(
     if (auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
     {
         if (forceCopyDrop && !destination->preview.pinMaterializedItemsToDock)
+        {
             destination->preview.action = DropAction::Copy;
+            destination->volumeDefault = false;
+        }
         *effect = DropExternalSlotContent(dataObject, *destination, *effect,
             sourceUsesAsyncMode, dropPaths);
         EndDragSession();
@@ -1007,6 +1171,8 @@ HRESULT DesktopApp::HandleOleDrop(
     {
         // ── Handoff on item (desktop OR widget member) ──
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+        if (!targetItem && dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer()))
+            targetItem = HitTestIcon(clientPoint);
         auto* targetDesktopIcon =
             dynamic_cast<DesktopIcon*>(targetItem);
         DesktopItem* targetDesktopItem = targetDesktopIcon
@@ -1025,13 +1191,25 @@ HRESULT DesktopApp::HandleOleDrop(
                     dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
             };
-        const std::wstring targetPath =
-            targetItem ? targetItem->GetPath() : L"";
+        const auto resolvedTarget = ResolveHandoffPath(targetItem ? targetItem->GetPath() : L"");
+        if (!resolvedTarget)
+        {
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
+        const std::wstring& targetPath = *resolvedTarget;
         const DWORD targetAttributes = targetPath.empty()
             ? INVALID_FILE_ATTRIBUTES
             : GetFileAttributesW(targetPath.c_str());
         if (recycleBinTarget && !dropPaths.empty())
         {
+            if ((*effect & DROPEFFECT_MOVE) == 0)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             const bool queued = QueueShellFileOperation(
                 snowdesktop::CreateRecycleBinDeleteRequest(
                     std::move(dropPaths)),
@@ -1417,6 +1595,39 @@ HRESULT DesktopApp::HandleOleDrop(
         !delayedFileTargetCell.pageId.empty() &&
         dragSession_.TargetRegion() != HitRegion::Handoff &&
         dragSession_.TargetRegion() != HitRegion::Blocked;
+
+    // Explorer advertises CF_HDROP before rendering its paths. Read that batch
+    // on the existing STA reader and execute the selected verb through the
+    // tracked file pipeline, rather than the copy-only browser/Shell fallback.
+    const auto delayedDesktopDrop = snowdesktop::delayed_desktop_file_drop::Dispatch(
+        dataObject, bareDesktopTarget, sourceUsesAsyncMode, keyState, *effect,
+        [&](DWORD selectedEffect) {
+            ExternalSlotDestination destination;
+            destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
+            destination.volumeDefault = snowdesktop::default_file_drop_action::Requested(keyState, *effect);
+            destination.preview.action = DropActionFromMods(static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
+            return DropExternalSlotContent(dataObject, destination,
+                destination.volumeDefault ? *effect : selectedEffect, true, {});
+        });
+    if (delayedDesktopDrop)
+    {
+        *effect = *delayedDesktopDrop;
+        EndDragSession();
+        return S_OK;
+    }
+    if (dataObject && bareDesktopTarget && sourceUsesAsyncMode && externalContent)
+    {
+        // The common STA reader validates an entire declared virtual batch
+        // before any physical destination commit. Delegating that batch to
+        // Shell can otherwise publish the first file before a later read fails.
+        ExternalSlotDestination destination;
+        destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
+        destination.preview.action = DropAction::Copy;
+        *effect = DropExternalSlotContent(dataObject, destination, DROPEFFECT_COPY, true, {});
+        EndDragSession();
+        return S_OK;
+    }
     const bool canCopyDrop = ((*effect & DROPEFFECT_COPY) != 0);
     const std::vector<std::wstring> bareDesktopUrls =
         dropPaths.empty() && dataObject && bareDesktopTarget
@@ -1454,6 +1665,9 @@ HRESULT DesktopApp::HandleOleDrop(
                 (void)DeleteFileW(stagedPath.c_str());
             stagedVirtualPaths.clear();
             MessageBeep(MB_ICONWARNING);
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
         }
         else
         {
@@ -2132,6 +2346,23 @@ HRESULT DesktopApp::HandleOleDrop(
         if (keyState & MK_ALT)     mods |= MK_ALT;
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
 
+        if (!forceCopyDrop && bareDesktopTarget)
+        {
+            const DWORD selectedEffect = snowdesktop::ole_drag_rules::ChooseDropEffect(
+                keyState, *effect,
+                snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                    ? snowdesktop::default_file_drop_action::Preferred(dropPaths, UserDesktopDirectory()).value_or(DROPEFFECT_COPY)
+                    : DROPEFFECT_COPY);
+            if (selectedEffect == DROPEFFECT_NONE)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
+            mods = static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect));
+        }
+
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
@@ -2139,6 +2370,12 @@ HRESULT DesktopApp::HandleOleDrop(
         if (auto* logicalSlot =
                 dynamic_cast<LuaLogicalSlotContainer*>(target))
         {
+            if ((*effect & DROPEFFECT_COPY) == 0)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             bool committed = false;
             if (stagedDropPathLease)
             {
@@ -2244,6 +2481,12 @@ HRESULT DesktopApp::HandleOleDrop(
                 ? DROPEFFECT_MOVE
                 : preview.action == DropAction::Link
                     ? DROPEFFECT_LINK : DROPEFFECT_COPY;
+        if ((performedEffect & *effect) == 0)
+        {
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
         FileOperationCompletion asyncCompletion;
         const bool sourceSupportsAsync =
             PrepareOleAsyncFileOperation(

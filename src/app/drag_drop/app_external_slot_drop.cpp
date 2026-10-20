@@ -1,6 +1,10 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_resources.h"
+#include "drag_drop/external_slot_transfer.h"
+#include "drag_drop/external_file_destination.h"
 #include "drag_drop/drop_staging.h"
+#include "drag_drop/default_file_drop_action.h"
+#include "drag_drop/ole_drag_rules.h"
 #include "widgets/lua_logical_slot.h"
 
 #include <stdexcept>
@@ -8,34 +12,6 @@
 namespace
 {
 namespace content = snowdesktop::external_drop_content;
-
-std::shared_ptr<content::Content> NewSlotContent(
-    const std::shared_ptr<snowdesktop::ShellFileOperationResult>& result)
-{
-    return {new content::Content, [result](content::Content* value) {
-        content::Cleanup(*value, *result);
-        delete value;
-    }};
-}
-
-struct MarshaledSlotSource
-{
-    ComPtr<IStream> stream;
-    ~MarshaledSlotSource()
-    {
-        // Releasing an unread stream alone does not release its marshal data.
-        ComPtr<IDataObject> discarded;
-        if (stream)
-            CoGetInterfaceAndReleaseStream(stream.Detach(), IID_PPV_ARGS(&discarded));
-    }
-    ComPtr<IDataObject> Take()
-    {
-        ComPtr<IDataObject> source;
-        if (stream)
-            CoGetInterfaceAndReleaseStream(stream.Detach(), IID_PPV_ARGS(&source));
-        return source;
-    }
-};
 
 content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop)
 {
@@ -54,6 +30,37 @@ content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop
     if (stop.stop_requested()) throw std::runtime_error("drop cancelled");
     return {};
 }
+}
+
+DWORD DesktopApp::ExternalFileDropPreferredEffect(POINT point) const
+{
+    const auto* target = dragSession_.TargetContainer();
+    const auto* desktop = containers_.empty() ? nullptr : containers_.front().get();
+    if (dragSession_.TargetRegion() == HitRegion::Handoff) return DROPEFFECT_MOVE;
+    if (!externalLuaFileDropAvailable_)
+        return target == desktop ? DROPEFFECT_COPY : DROPEFFECT_MOVE;
+    std::wstring directory;
+    if (target && target != desktop)
+    {
+        DragSourceList placeholder;
+        placeholder.hasExternalFiles = true;
+        DragSourceEntry entry; entry.kind = DropSourceKind::ExternalFile; entry.displayName = L"drop";
+        placeholder.entries.push_back(std::move(entry));
+        const auto preview = BuildDropPreviewList(placeholder, dragSession_.TargetContainer(),
+            dragSession_.TargetSlot(), dragSession_.TargetRegion(), MK_CONTROL, point);
+        if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
+            directory = preview.targetWidget->sourceFolderPath;
+        else if (preview.targetKind != DropTargetKind::KeyedWidget) return DROPEFFECT_MOVE;
+    }
+    if (directory.empty())
+    {
+        wchar_t path[MAX_PATH]{};
+        if (snowdesktop::desktop_source::CopyDirectory(path)) directory = path;
+    }
+    // Delayed paths are unavailable during hover. Preserve non-destructive
+    // provisional feedback; the real commit resolves them after source read.
+    return snowdesktop::default_file_drop_action::Preferred(externalFileDropPaths_, directory)
+        .value_or(DROPEFFECT_COPY);
 }
 
 std::optional<DesktopApp::ExternalSlotDestination>
@@ -88,7 +95,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.preview.action = DropAction::Link;
         result.preview.fileBacked = true;
         result.preview.pinMaterializedItemsToDock = true;
-        result.preview.dockInsertIndex = dock->GetDropInsertIndex(slot, region);
+        result.preview.dockInsertIndex = dock->GetExternalDropInsertIndex(slot, region);
     }
     else
     {
@@ -101,6 +108,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.widgetType = widget.type;
         result.folderPath = widget.sourceFolderPath;
         result.dockFolderPopup = target == dockFolderPopupContainer_.get();
+        result.volumeDefault = (keyState & (MK_CONTROL | MK_SHIFT | MK_ALT)) == 0;
     }
     // The read/download may outlive a popup, page, container tree or vector
     // reallocation. No pointers from the drag session cross that boundary.
@@ -181,78 +189,33 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         return false;
     }
 
-    DropPreviewList preview = destination.preview;
-    DesktopWidget* widget = nullptr;
-    if (!destination.widgetId.empty() || destination.dockFolderPopup)
-    {
-        if (destination.dockFolderPopup)
-        {
-            if (!dockFolderPopupOpen_ ||
-                dockFolderPopupWidget_.id != destination.widgetId) return false;
-            widget = &dockFolderPopupWidget_;
-        }
-        else
-        {
-            const size_t index = FindWidgetIndexById(destination.widgetId);
-            if (index >= widgets_.size()) return false;
-            widget = &widgets_[index];
-        }
-        if (widget->type != destination.widgetType ||
-            widget->sourceFolderPath != destination.folderPath) return false;
-        preview.targetWidget = widget;
-        preview.landings.clear();
-        for (size_t index = 0; index < paths.size(); ++index)
-        {
-            DropLanding landing;
-            landing.kind = preview.targetKind == DropTargetKind::FolderMapping
-                ? DropLandingKind::Folder : DropLandingKind::WidgetIndex;
-            landing.sourceIndex = index;
-            landing.widget = widget;
-            landing.widgetId = widget->id;
-            landing.insertIndex = preview.insertIndex + index;
-            landing.cell = widget->gridCell;
-            preview.landings.push_back(std::move(landing));
-        }
-    }
-    else if (preview.pinMaterializedItemsToDock)
-    {
-        // Native desktop files already have a Shell identity. Pin that identity
-        // without generating another .lnk or taking ownership of the original.
-        // This common commit boundary also handles asynchronous Explorer drops.
-        if (!owned && CanPinExistingDesktopPaths(paths))
-        {
-            if (!AddMaterializedItemsToDock(paths, preview.dockInsertIndex, true)) return false;
-            SaveLayoutSlots();
-            RequestShellRefresh();
-            if (completion) completion(true);
-            return true;
-        }
-        auto* dock = GetDockContainer();
-        if (!dock || !dock->HasCapacity(paths.size())) return false;
-        const auto action = preview.action;
-        const auto insertIndex = preview.dockInsertIndex;
-        preview = BuildExternalDesktopPreviewList(preview.anchorCell, paths.size());
-        preview.pinMaterializedItemsToDock = true;
-        preview.dockInsertIndex = insertIndex;
-        preview.action = action;
-    }
-    else return false;
-
-    DragSourceList sources;
-    sources.hasExternalFiles = true;
-    for (const auto& path : paths)
-    {
-        DragSourceEntry entry;
-        entry.kind = DropSourceKind::ExternalFile;
-        entry.sourceIndex = sources.entries.size();
-        entry.filePath = path;
-        entry.displayName = FileNameFromPath(path);
-        sources.entries.push_back(std::move(entry));
-    }
-    if (owned || (copyOnly && !preview.pinMaterializedItemsToDock))
-        preview.action = DropAction::Copy;
-    preview.fileBacked = true;
-    return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously, std::move(result));
+    snowdesktop::external_file_destination::Services services;
+    services.resolveTarget = [this](const std::wstring& id, bool popup) -> DesktopWidget* {
+        if (popup)
+            return dockFolderPopupOpen_ && dockFolderPopupWidget_.id == id
+                ? &dockFolderPopupWidget_ : nullptr;
+        const size_t index = FindWidgetIndexById(id);
+        return index < widgets_.size() ? &widgets_[index] : nullptr;
+    };
+    services.desktopPreview = [this](const GridCell& anchor, size_t count) {
+        return BuildExternalDesktopPreviewList(anchor, count);
+    };
+    services.canPinExisting = [this](const auto& files) { return CanPinExistingDesktopPaths(files); };
+    services.pinExisting = [this](const auto& files, size_t index) {
+        return AddMaterializedItemsToDock(files, index, true);
+    };
+    services.dockHasCapacity = [this](size_t count) {
+        const auto* dock = GetDockContainer();
+        return dock && dock->HasCapacity(count);
+    };
+    services.afterPin = [this] { SaveLayoutSlots(); RequestShellRefresh(); };
+    services.fileName = FileNameFromPath;
+    services.execute = [this](const DragSourceList& sources, const DropPreviewList& preview,
+        FileOperationCompletion done, bool sync, auto outputs) {
+        return ExecuteDropPipeline(sources, preview, std::move(done), sync, std::move(outputs));
+    };
+    return snowdesktop::external_file_destination::Commit(destination, paths, owned, copyOnly,
+        std::move(completion), synchronously, std::move(result), services);
 }
 
 DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
@@ -260,15 +223,68 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     bool asynchronousSource, const std::vector<std::wstring>& knownPaths)
 {
     if (!dataObject) return DROPEFFECT_NONE;
+    const bool volumeDefault = destination.volumeDefault &&
+        (allowedEffects & (DROPEFFECT_MOVE | DROPEFFECT_COPY)) == (DROPEFFECT_MOVE | DROPEFFECT_COPY) &&
+        (!knownPaths.empty() || content::ProbeFileSource(dataObject).available);
+    std::wstring physicalDirectory = destination.preview.targetKind == DropTargetKind::FolderMapping
+        ? destination.folderPath : std::wstring{};
+    if (volumeDefault && physicalDirectory.empty())
+    {
+        wchar_t path[MAX_PATH]{};
+        if (snowdesktop::desktop_source::CopyDirectory(path)) physicalDirectory = path;
+    }
     const bool allowContent = (allowedEffects & DROPEFFECT_COPY) != 0;
     DWORD effect = destination.preview.action == DropAction::Move ? DROPEFFECT_MOVE :
         destination.preview.action == DropAction::Link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
     if (destination.preview.pinMaterializedItemsToDock)
         effect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(allowedEffects);
+    else if (volumeDefault)
+        effect = snowdesktop::default_file_drop_action::Preferred(knownPaths, physicalDirectory).value_or(DROPEFFECT_COPY);
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
+    // An explicit drop on an inactive tab activates that captured child only
+    // after a successful commit. Ordinary content drops must not undo a later
+    // user tab switch while their external source is still being read.
+    std::wstring activationGroupId;
+    DesktopWidgetType activationGroupType = DesktopWidgetType::CollectionGroup;
+    if (auto* group = dynamic_cast<CollectionGroup*>(dragSession_.TargetContainer()))
+    {
+        const auto* data = group->GetWidgetData();
+        const auto hit = group->CategoryIdAtPoint(dragSession_.CurrentPoint());
+        if (data && !hit.empty() && hit == destination.widgetId && hit != group->GetActiveCollectionId())
+        { activationGroupId = data->id; activationGroupType = data->type; }
+    }
+    else if (auto* fileGroup = dynamic_cast<FileGroup*>(dragSession_.TargetContainer()))
+    {
+        const auto* data = fileGroup->GetWidgetData();
+        const auto hit = fileGroup->SourceIdAtPoint(dragSession_.CurrentPoint());
+        if (data && !hit.empty() && hit == destination.widgetId && hit != fileGroup->GetActiveSourceId())
+        { activationGroupId = data->id; activationGroupType = data->type; }
+    }
+    const auto resolveActivationGroup = [this, activationGroupId, activationGroupType, destination]() -> DesktopWidget* {
+        const auto parent = FindWidgetIndexById(activationGroupId);
+        const auto child = FindWidgetIndexById(destination.widgetId);
+        if (parent >= widgets_.size() || child >= widgets_.size()) return nullptr;
+        auto& group = widgets_[parent];
+        const auto& target = widgets_[child];
+        if (group.type != activationGroupType || target.type != destination.widgetType ||
+            target.sourceFolderPath != destination.folderPath ||
+            std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), destination.widgetId) == group.childWidgetIds.end())
+            return nullptr;
+        return &group;
+    };
+
+    // A slot pointer and its numeric index cannot survive the delayed read.
+    // Keep only the indicated member identity and side; the original target
+    // is independently revalidated below before its current order is used.
+    std::wstring insertionAnchor;
+    const bool insertAfterAnchor = dragSession_.TargetRegion() == HitRegion::SortAfter;
+    if (!destination.widgetId.empty())
+        if (auto* slot = dragSession_.TargetSlot())
+            if (auto* item = slot->GetItem()) insertionAnchor = item->GetPath();
+
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
-    auto value = NewSlotContent(result);
+    auto value = content::MakeContent(result);
     const auto stop = externalSlotReadStopSource_.get_token();
     const auto downloadUrls = [stop](const content::Paths& urls) {
         return DownloadSlotUrls(urls, stop);
@@ -316,75 +332,80 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         return content::Read(false, allowContent, readers);
     };
 
-    FileOperationCompletion oleCompletion;
-    auto marshaled = std::make_shared<MarshaledSlotSource>();
-    if (asynchronousSource)
-    {
-        if (FAILED(CoMarshalInterThreadInterfaceInStream(IID_IDataObject,
-                dataObject, &marshaled->stream)) ||
-            !PrepareOleAsyncFileOperation(dataObject,
-                effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect, {}, oleCompletion))
-            return DROPEFFECT_NONE;
-    }
-    else
-    {
-        try { *value = read(dataObject, false, knownPaths); }
-        catch (...) { return DROPEFFECT_NONE; }
-    }
-    auto finished = [value,
-        oleCompletion](bool succeeded) {
-        if (!succeeded)
-            WriteDiagnosticLogEntry(L"External component drop failed during content reading or destination commit");
-        if (oleCompletion) oleCompletion(succeeded);
+    snowdesktop::external_slot_transfer::Callbacks callbacks;
+    callbacks.read = std::move(read);
+    callbacks.resolveUrls = [downloadUrls](const content::Paths& urls) {
+        content::Readers readers;
+        readers.urls = [urls] { return urls; };
+        readers.download = downloadUrls;
+        readers.shortcut = [urls]() -> content::Paths {
+            const auto path = urls.empty() ? std::wstring{} : CreateUrlShortcut(urls.front());
+            return path.empty() ? content::Paths{} : content::Paths{path};
+        };
+        return content::Read(false, true, readers);
     };
-    if (!asynchronousSource && value->pendingUrls.empty())
-    {
-        const bool committed = CommitExternalSlotPaths(destination, value->paths,
-            value->owned, value->copyOnly, finished, true, result);
-        if (!committed) finished(false);
-        return committed ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect) : DROPEFFECT_NONE;
-    }
-
-    HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
-    if (!window || !IsWindow(window)) return DROPEFFECT_NONE;
-    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
-        false, [this, destination, value, finished, result](bool succeeded) {
-            if (!succeeded || !CommitExternalSlotPaths(destination, value->paths,
-                    value->owned, value->copyOnly, finished, false, result))
-                finished(false);
-        }, false};
-    if (!completion) return DROPEFFECT_NONE;
-    const bool queued = externalSlotReadWorker_.Enqueue(
-        snowdesktop::ShellReadRequest{[asynchronousSource, marshaled, value, read, downloadUrls, stop] {
-            try
+    const auto committedEffect = std::make_shared<DWORD>(effect);
+    if (volumeDefault) callbacks.committedEffect = [committedEffect] { return *committedEffect; };
+    callbacks.commit = [this, destination, activationGroupId, resolveActivationGroup, insertionAnchor, insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
+        FileOperationCompletion finished, bool synchronously) {
+        // The tab's original owner is part of this explicit destination. A
+        // replacement group or detached child cannot receive a pending drop.
+        if (!activationGroupId.empty() && !resolveActivationGroup()) return false;
+        auto resolved = destination;
+        if (!insertionAnchor.empty())
+        {
+            const auto index = FindWidgetIndexById(destination.widgetId);
+            const auto* target = destination.dockFolderPopup
+                ? dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr
+                : index < widgets_.size() ? &widgets_[index] : nullptr;
+            if (target && target->id == destination.widgetId && target->type == destination.widgetType &&
+                target->sourceFolderPath == destination.folderPath)
             {
-                if (stop.stop_requested()) return false;
-                if (asynchronousSource)
+                const bool mapped = target->type == DesktopWidgetType::FolderMapping;
+                const auto count = mapped ? target->folderEntries.size() : target->itemKeys.size();
+                std::size_t anchor = 0;
+                for (; anchor < count; ++anchor)
                 {
-                    auto source = marshaled->Take();
-                    if (!source) return false;
-                    *value = read(source.Get(), true, {});
+                    const auto& key = mapped ? target->folderEntries[anchor].fullPath : target->itemKeys[anchor];
+                    if (ToUpperInvariant(key) == ToUpperInvariant(insertionAnchor)) break;
                 }
-                else
-                {
-                    const auto urls = value->pendingUrls;
-                    content::Readers readers;
-                    readers.urls = [urls] { return urls; };
-                    readers.download = downloadUrls;
-                    readers.shortcut = [urls]() -> content::Paths {
-                        const auto path = urls.empty() ? std::wstring{} : CreateUrlShortcut(urls.front());
-                        return path.empty() ? content::Paths{} : content::Paths{path};
-                    };
-                    *value = content::Read(false, true, readers);
-                }
-                return !value->paths.empty();
+                resolved.preview.insertIndex = anchor == count ? count : anchor + (insertAfterAnchor ? 1u : 0u);
             }
-            catch (...) { return false; }
-        }}, [window, completion](bool succeeded) {
-            completion->succeeded = succeeded;
-            if (!PostMessageW(window, kShellFileOperationCompletedMessage, 0,
-                    reinterpret_cast<LPARAM>(completion))) delete completion;
-        });
-    if (!queued) delete completion;
-    return queued ? effect : DROPEFFECT_NONE;
+        }
+        if (volumeDefault && !input.owned && !input.copyOnly)
+        {
+            *committedEffect = snowdesktop::default_file_drop_action::Preferred(input.paths, physicalDirectory)
+                .value_or(DROPEFFECT_COPY);
+            resolved.preview.action = DropActionFromMods(static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(*committedEffect)));
+        }
+        auto completed = [this, destination, activationGroupId, resolveActivationGroup,
+            finished = std::move(finished)](bool succeeded) mutable {
+            if (succeeded && !activationGroupId.empty())
+                if (auto* group = resolveActivationGroup())
+                {
+                    group->activeCategoryId = destination.widgetId;
+                    for (const auto& container : containers_)
+                        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+                            view && view->GetWidgetData() == group)
+                        {
+                            if (auto* collections = dynamic_cast<CollectionGroup*>(view)) collections->InvalidateFilterCache();
+                            else if (auto* files = dynamic_cast<FileGroup*>(view)) files->InvalidateHostedView();
+                        }
+                    SaveLayoutSlots();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            if (finished) finished(succeeded);
+        };
+        return CommitExternalSlotPaths(resolved, input.paths, input.owned,
+            input.copyOnly, std::move(completed), synchronously, result);
+    };
+    callbacks.completed = [](bool succeeded) {
+        if (!succeeded)
+            WriteDiagnosticLogEntry(L"External file drop failed during content reading or destination commit");
+    };
+    const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+    return snowdesktop::external_slot_transfer::Transfer(dataObject, effect,
+        asynchronousSource, knownPaths, std::move(value), externalSlotReadWorker_,
+        stop, window, kShellFileOperationCompletedMessage, std::move(callbacks));
 }

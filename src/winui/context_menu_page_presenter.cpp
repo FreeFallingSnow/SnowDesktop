@@ -22,9 +22,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         ext::ManagementRow model;
         muxc::Expander expander;
+        muxc::Border surface;
         muxc::Border icon;
         muxc::TextBlock title, scope, mixed;
         muxc::ToggleSwitch toggle;
+        muxc::StackPanel mixedActions;
+        muxc::Button showAll, hideAll;
         muxc::StackPanel positionsPanel;
         struct Position { ext::Context context; muxc::Grid layout; muxc::ComboBox choice; std::function<void()> revoke; };
         std::vector<Position> positions;
@@ -34,11 +37,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     mux::Style cardStyle;
-    muxc::StackPanel root, content, groups;
+    muxc::StackPanel root, content, groups, managementSection;
     muxc::Border managementCard;
     muxc::Border menuOptionsCard;
-    presenter_controls::SettingRow expandQuickActionsRow, hidePageManagementRow;
-    muxc::ToggleSwitch expandQuickActions, hidePageManagement;
+    presenter_controls::SettingRow expandQuickActionsRow, hidePageManagementRow, hideMoreManagementRow;
+    muxc::ToggleSwitch expandQuickActions, hidePageManagement, hideMoreManagement;
     muxc::SelectorBar tabs;
     muxc::SelectorBarItem objectsTab, backgroundTab;
     muxc::Grid toolbar;
@@ -50,7 +53,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     ext::ManagementView mode = ext::ManagementView::Objects;
     std::string routeFocus;
     std::vector<ext::ManagementRow> filteredRows;
-    muxc::TextBlock heading, status, refreshStatus, groupHint;
+    muxc::TextBlock heading, status, refreshStatus;
     muxc::StackPanel refreshIndicator;
     muxc::ProgressRing refreshRing;
     mux::DispatcherTimer timer, rowTimer;
@@ -60,6 +63,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         muxc::StackPanel panel;
         muxc::TextBlock title, mixed;
         muxc::ToggleSwitch toggle;
+        muxc::StackPanel mixedActions;
+        muxc::Button showAll, hideAll;
         std::function<void()> revoke;
     };
     std::map<std::string, Card> sections;
@@ -85,20 +90,25 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     explicit Impl(LocalizeCallback l, const mux::Style &style) : localize(std::move(l)), cardStyle(style)
     {
-        root.Spacing(12); content.Spacing(12); groups.Spacing(12);
-        muxc::StackPanel menuOptions; menuOptions.Spacing(16);
+        root.Spacing(24); content.Spacing(12); groups.Spacing(8);
+        muxc::StackPanel menuOptions; menuOptions.Spacing(2);
         if (cardStyle) menuOptionsCard.Style(cardStyle);
+        menuOptionsCard.Padding({0, 0, 0, 0});
         expandQuickActionsRow.Initialize(expandQuickActions, 0);
         hidePageManagementRow.Initialize(hidePageManagement, 0);
+        hideMoreManagementRow.Initialize(hideMoreManagement, 0);
         expandQuickActionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         hidePageManagementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        for (const auto& toggle : {expandQuickActions, hidePageManagement})
+        hideMoreManagementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        for (const auto& toggle : {expandQuickActions, hidePageManagement, hideMoreManagement})
         {
             toggle.OnContent(winrt::box_value(L""));
             toggle.OffContent(winrt::box_value(L""));
         }
         menuOptions.Children().Append(expandQuickActionsRow.root);
         menuOptions.Children().Append(hidePageManagementRow.root);
+        menuOptions.Children().Append(hideMoreManagementRow.root);
+        presenter_controls::UpdateSettingsSubrows(menuOptions, 0);
         menuOptionsCard.Child(menuOptions); root.Children().Append(menuOptionsCard);
         const auto expandChanged = expandQuickActions.Toggled([this](auto &&, auto &&) {
             if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
@@ -112,11 +122,18 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
             const bool enabled = hidePageManagement.IsOn();
             actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [enabled](auto& settings) {
-                settings.contextMenuHidePageManagement = enabled;
+                settings.contextMenuHidePageManagement = !enabled;
             });
         });
         revoke.push_back([c = hidePageManagement, hideChanged] { c.Toggled(hideChanged); });
-        if (cardStyle) managementCard.Style(cardStyle);
+        const auto hideMoreChanged = hideMoreManagement.Toggled([this](auto &&, auto &&) {
+            if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
+            const bool enabled = hideMoreManagement.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [enabled](auto& settings) {
+                settings.contextMenuHideMoreManagement = !enabled;
+            });
+        });
+        revoke.push_back([c = hideMoreManagement, hideMoreChanged] { c.Toggled(hideMoreChanged); });
         heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         heading.VerticalAlignment(mux::VerticalAlignment::Center);
         muxc::StackPanel titleRow; titleRow.Orientation(muxc::Orientation::Horizontal); titleRow.Spacing(12);
@@ -127,9 +144,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         refreshRing.IsIndeterminate(true);
         refreshStatus.FontSize(12); refreshStatus.Opacity(0.7); refreshStatus.VerticalAlignment(mux::VerticalAlignment::Center);
         refreshIndicator.Children().Append(refreshRing); refreshIndicator.Children().Append(refreshStatus);
-        titleRow.Children().Append(refreshIndicator); content.Children().Append(titleRow);
+        titleRow.Children().Append(refreshIndicator);
+        managementSection.Spacing(8);
+        managementSection.Children().Append(titleRow);
         SetRefreshing(false);
         tabs.Items().Append(objectsTab); tabs.Items().Append(backgroundTab); tabs.SelectedItem(objectsTab);
+        presenter_controls::HideSettingsTabScrollBar(tabs);
+        presenter_controls::HideSettingsTabScrollBar(views);
         views.Items().Append(byObject); views.Items().Append(byApplication); views.Items().Append(byExtension);
         views.SelectedItem(byObject);
         muxc::Grid selectors; selectors.ColumnSpacing(16);
@@ -141,13 +162,15 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Column(toolbar, 1, mux::GridUnitType::Star); Column(toolbar, 1, mux::GridUnitType::Auto);
         search.Margin({0, 0, 8, 0}); toolbar.Children().Append(search);
         muxc::Grid::SetColumn(more, 1); toolbar.Children().Append(more); content.Children().Append(toolbar);
-        groupHint.TextWrapping(mux::TextWrapping::Wrap); groupHint.Opacity(0.72);
-        groupHint.Visibility(mux::Visibility::Collapsed); content.Children().Append(groupHint);
         muxc::MenuFlyout advanced;
         advanced.Items().Append(chooseObject); advanced.Items().Append(chooseFolder); advanced.Items().Append(chooseDesktop);
         advanced.Items().Append(muxc::MenuFlyoutSeparator()); advanced.Items().Append(refresh); more.Flyout(advanced);
         status.TextWrapping(mux::TextWrapping::Wrap); status.Visibility(mux::Visibility::Collapsed); content.Children().Append(status);
-        managementCard.Child(content); root.Children().Append(managementCard); root.Children().Append(groups);
+        if (cardStyle) managementCard.Style(cardStyle);
+        managementCard.Child(content);
+        managementSection.Children().Append(managementCard);
+        managementSection.Children().Append(groups);
+        root.Children().Append(managementSection);
         timer.Interval(std::chrono::milliseconds(300));
         rowTimer.Interval(std::chrono::milliseconds(16));
         auto append = rowTimer.Tick([this](auto &&, auto &&) { AppendRows(); });
@@ -180,17 +203,21 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Text()
     {
         expandQuickActionsRow.SetText(L("settings.contextMenu.expandQuickActions"));
-        hidePageManagementRow.SetText(L("settings.contextMenu.hidePageManagement"));
+        hidePageManagementRow.SetText(L("settings.contextMenu.showPageManagement"));
+        hideMoreManagementRow.SetText(L("settings.contextMenu.showMoreManagement"));
         mux::Automation::AutomationProperties::SetName(expandQuickActions,
             L("settings.contextMenu.expandQuickActions"));
         mux::Automation::AutomationProperties::SetHelpText(expandQuickActions,
             expandQuickActionsRow.help.Text());
         mux::Automation::AutomationProperties::SetName(hidePageManagement,
-            L("settings.contextMenu.hidePageManagement"));
+            L("settings.contextMenu.showPageManagement"));
         mux::Automation::AutomationProperties::SetHelpText(hidePageManagement,
             hidePageManagementRow.help.Text());
         heading.Text(L("settings.contextMenu.extensions"));
-        groupHint.Text(L("settings.contextMenu.groupHint"));
+        mux::Automation::AutomationProperties::SetName(hideMoreManagement,
+            L("settings.contextMenu.showMoreManagement"));
+        mux::Automation::AutomationProperties::SetHelpText(hideMoreManagement,
+            hideMoreManagementRow.help.Text());
         refreshStatus.Text(L("settings.contextMenu.refreshing"));
         mux::Automation::AutomationProperties::SetName(refreshRing, L("settings.contextMenu.refreshing"));
         objectsTab.Text(L("settings.contextMenu.objects")); backgroundTab.Text(L("settings.contextMenu.background"));
@@ -319,18 +346,43 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             ext::SetManagementResults(settings.shellExtensions, targets, scope, shown);
         });
     }
+    void ConfigureMixedActions(muxc::StackPanel panel, muxc::Button showAll, muxc::Button hideAll)
+    {
+        panel.Orientation(muxc::Orientation::Horizontal); panel.Spacing(8);
+        panel.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        panel.VerticalAlignment(mux::VerticalAlignment::Center);
+        panel.Visibility(mux::Visibility::Collapsed);
+        showAll.Content(winrt::box_value(L("settings.contextMenu.showAll")));
+        hideAll.Content(winrt::box_value(L("settings.contextMenu.hideAll")));
+        panel.Children().Append(showAll); panel.Children().Append(hideAll);
+    }
+    void SetRowResults(const std::string &id, bool shown)
+    {
+        if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
+        const auto *current = FindRow(id); if (!current) return;
+        const auto model = current->model; const auto catalogue = view.catalogue;
+        actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [model, scope = category, shown, catalogue](auto &settings) {
+            ext::MigrateAssociations(settings.shellExtensions, catalogue);
+            ext::SetManagementCommon(settings.shellExtensions, model, scope, shown);
+        });
+    }
     void UpdateCardStates()
     {
         const bool before = std::exchange(updating, true);
-        groupHint.Visibility(cardModels.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         for (auto &[id, card] : sections) if (cardModels.contains(id))
         {
             const auto &model = cardModels.at(id); const auto state = ext::ManagementCardState(prefs, model, category);
-            card.title.Text(CardTitle(model)); card.toggle.IsOn(state.value_or(true));
+            card.title.Text(CardTitle(model));
+            if (state) card.toggle.IsOn(*state);
+            card.toggle.Visibility(state ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            card.mixedActions.Visibility(state ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             card.toggle.IsEnabled(active && initialized && !model.rows.empty());
+            card.showAll.IsEnabled(active && initialized && !model.rows.empty());
+            card.hideAll.IsEnabled(active && initialized && !model.rows.empty());
             card.mixed.Visibility(state ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             mux::Automation::AutomationProperties::SetName(card.toggle, CardTitle(model) + L" " + L("settings.contextMenu.groupToggle"));
-            mux::Automation::AutomationProperties::SetHelpText(card.toggle, groupHint.Text());
+            mux::Automation::AutomationProperties::SetName(card.showAll, CardTitle(model) + L" " + L("settings.contextMenu.showAll"));
+            mux::Automation::AutomationProperties::SetName(card.hideAll, CardTitle(model) + L" " + L("settings.contextMenu.hideAll"));
         }
         updating = before;
     }
@@ -348,12 +400,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         for (auto &r : row.revoke) r();
         for (auto &p : row.positions) p.revoke();
-        if (sections.contains(row.group)) RemoveChild(sections.at(row.group).panel, row.expander);
+        if (sections.contains(row.group)) RemoveChild(sections.at(row.group).panel, row.surface);
     }
     void ClearRows()
     {
         rowTimer.Stop();
-        groupHint.Visibility(mux::Visibility::Collapsed);
         for (auto &row : rows) RemoveRow(row);
         for (auto &[id, card] : sections) if (card.revoke) card.revoke();
         rows.clear(); groups.Children().Clear(); sections.clear(); cardModels.clear(); rowGroups.clear(); pendingRows.clear(); nextRow = 0;
@@ -386,7 +437,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         if (!sections.contains(group))
         {
-            Card card; card.panel.Spacing(4);
+            Card card; card.panel.Spacing(0);
             muxc::Grid header; Column(header, 1, mux::GridUnitType::Star); Column(header, 1, mux::GridUnitType::Auto);
             muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center); names.Margin({0, 0, 16, 0});
             card.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); card.title.TextWrapping(mux::TextWrapping::Wrap);
@@ -396,11 +447,22 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             card.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
             card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, 1);
             // The native switch already includes a 12-DIP trailing content gap.
-            header.Children().Append(card.toggle); header.Margin({12, 8, 0, 12}); card.panel.Children().Append(header);
+            header.Children().Append(card.toggle);
+            ConfigureMixedActions(card.mixedActions, card.showAll, card.hideAll);
+            muxc::Grid::SetColumn(card.mixedActions, 1); header.Children().Append(card.mixedActions);
+            header.Margin({16, 12, 16, 12}); card.panel.Children().Append(header);
             const auto changed = card.toggle.Toggled([this, group](auto &&, auto &&) {
-                if (!updating && sections.contains(group)) SetCardResults(group, sections.at(group).toggle.IsOn());
-            }); card.revoke = [toggle = card.toggle, changed] { toggle.Toggled(changed); };
+                if (!updating && sections.contains(group) && cardModels.contains(group) &&
+                    ext::ManagementCardState(prefs, cardModels.at(group), category).has_value())
+                    SetCardResults(group, sections.at(group).toggle.IsOn());
+            });
+            const auto show = card.showAll.Click([this, group](auto &&, auto &&) { SetCardResults(group, true); });
+            const auto hide = card.hideAll.Click([this, group](auto &&, auto &&) { SetCardResults(group, false); });
+            card.revoke = [toggle = card.toggle, changed, showAll = card.showAll, show, hideAll = card.hideAll, hide] {
+                toggle.Toggled(changed); showAll.Click(show); hideAll.Click(hide);
+            };
             muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(card.panel);
+            groupCard.Padding({0, 0, 0, 0});
             // Discovery can identify an application after the unknown card is
             // already visible. Insert the new card in view order without
             // recreating the existing cards or their expanded rows.
@@ -445,22 +507,31 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
                 row.title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.title);
                 row.scope.FontSize(12); row.scope.Opacity(0.7); row.scope.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.scope);
-                row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.TextWrapping(mux::TextWrapping::Wrap); row.mixed.Text(L("settings.contextMenu.mixed")); names.Children().Append(row.mixed);
+                row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.TextWrapping(mux::TextWrapping::Wrap); row.mixed.Text(L("settings.contextMenu.groupMixed")); names.Children().Append(row.mixed);
                 names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
                 row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(0);
                 row.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
                 row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
                 muxc::Grid::SetColumn(row.toggle, 2); layout.Children().Append(row.toggle);
+                ConfigureMixedActions(row.mixedActions, row.showAll, row.hideAll);
+                muxc::Grid::SetColumn(row.mixedActions, 2); layout.Children().Append(row.mixedActions);
                 auto token = row.toggle.Toggled([this, id = entry.id](auto &&, auto &&) {
                     if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
                     const auto *current = FindRow(id); if (!current) return;
-                    const auto model = current->model; const bool shown = current->toggle.IsOn(); const auto catalogue = view.catalogue;
-                    actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [model, scope = category, shown, catalogue](auto &settings) {
-                        ext::MigrateAssociations(settings.shellExtensions, catalogue);
-                        ext::SetManagementCommon(settings.shellExtensions, model, scope, shown);
-                    });
+                    if (ext::ManagementCommon(prefs, current->model, category).has_value())
+                        SetRowResults(id, current->toggle.IsOn());
                 }); row.revoke.push_back([toggle = row.toggle, token] { toggle.Toggled(token); });
+                const auto show = row.showAll.Click([this, id = entry.id](auto &&, auto &&) { SetRowResults(id, true); });
+                const auto hide = row.hideAll.Click([this, id = entry.id](auto &&, auto &&) { SetRowResults(id, false); });
+                row.revoke.push_back([showAll = row.showAll, show, hideAll = row.hideAll, hide] {
+                    showAll.Click(show); hideAll.Click(hide);
+                });
                 row.expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); row.expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                presenter_controls::StyleInlineSettingsExpander(row.expander);
+                presenter_controls::StyleSettingsSubrow(row.surface, false, 0);
+                row.surface.Padding({0, 0, 0, 0});
+                row.surface.MinHeight(0);
+                row.surface.Child(row.expander);
                 // Keep the native chevron hit area; only tighten its leading gap.
                 row.expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"), winrt::box_value(mux::Thickness{4, 0, 8, 0}));
                 row.expander.Header(layout); muxc::ToolTipService::SetToolTip(row.expander, winrt::box_value(L("settings.contextMenu.locations")));
@@ -481,8 +552,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto &group = rowGroups.at(entry.id);
         if (row.group != group)
         {
-            if (sections.contains(row.group)) RemoveChild(sections.at(row.group).panel, row.expander);
-            Section(group).Children().Append(row.expander); row.group = group;
+            if (sections.contains(row.group)) RemoveChild(sections.at(row.group).panel, row.surface);
+            Section(group).Children().Append(row.surface); row.group = group;
         }
         // Replace only the changed row's display; the Expander and toggle retain
         // identity, focus and expansion state throughout incremental discovery.
@@ -503,6 +574,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         row.scope.Text(types); row.scope.Visibility(types.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         mux::Automation::AutomationProperties::SetName(row.toggle, entry.display.label);
+        mux::Automation::AutomationProperties::SetName(row.showAll, entry.display.label + L" " + L("settings.contextMenu.showAll"));
+        mux::Automation::AutomationProperties::SetName(row.hideAll, entry.display.label + L" " + L("settings.contextMenu.hideAll"));
         mux::Automation::AutomationProperties::SetName(row.expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
         if (row.expander.Content()) PopulatePositions(row);
         UpdateChoices(row);
@@ -546,7 +619,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         const bool wasUpdating = std::exchange(updating, true);
         const auto common = ext::ManagementCommon(prefs, row.model, category);
-        row.toggle.IsOn(common.value_or(false));
+        if (common) row.toggle.IsOn(*common);
+        row.toggle.Visibility(common ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        row.mixedActions.Visibility(common ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        row.toggle.IsEnabled(active && initialized);
+        row.showAll.IsEnabled(active && initialized);
+        row.hideAll.IsEnabled(active && initialized);
         row.mixed.Visibility(common ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         for (auto &position : row.positions)
         {
@@ -562,12 +640,15 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         generation = snapshot.generation; initialized = snapshot.initialized; prefs = snapshot.values.general.shellExtensions;
         const bool wasUpdatingOptions = std::exchange(updating, true);
         expandQuickActions.IsOn(snapshot.values.general.contextMenuExpandQuickActions);
-        hidePageManagement.IsOn(snapshot.values.general.contextMenuHidePageManagement);
+        hidePageManagement.IsOn(!snapshot.values.general.contextMenuHidePageManagement);
+        hideMoreManagement.IsOn(!snapshot.values.general.contextMenuHideMoreManagement);
         expandQuickActionsRow.root.Visibility(modern_menu::appearance_rules::IsWin10Style(
             static_cast<modern_menu::Appearance>(snapshot.values.personalization.contextMenuStyle))
                 ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         expandQuickActionsRow.SetEnabled(initialized && snapshot.sessionActive);
         hidePageManagementRow.SetEnabled(initialized && snapshot.sessionActive);
+        hideMoreManagementRow.SetEnabled(initialized && snapshot.sessionActive);
+        presenter_controls::UpdateSettingsSubrows(menuOptionsCard.Child().as<muxc::StackPanel>(), 0);
         updating = wasUpdatingOptions;
         extensionFocus = snapshot.route.focusId == "contextMenu.extension";
         ext::MigrateAssociations(prefs, view.catalogue);
@@ -643,6 +724,7 @@ void ContextMenuPagePresenter::RegisterFocusTargets(const FocusRegistrar &regist
 {
     registerFocus("contextMenu.expandQuickActions", impl_->expandQuickActions);
     registerFocus("contextMenu.hidePageManagement", impl_->hidePageManagement);
+    registerFocus("contextMenu.hideMoreManagement", impl_->hideMoreManagement);
     registerFocus("contextMenu.extensions", impl_->tabs);
     registerFocus("contextMenu.items", impl_->search);
     registerFocus("contextMenu.application", impl_->views);

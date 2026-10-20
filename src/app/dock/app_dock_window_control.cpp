@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
+#include "dock/dock_window_order.h"
 
 // Dock window closing and hover-preview control.
 
@@ -223,8 +224,10 @@ DesktopApp::CollectDockWindowPreviewItems(
             ShouldPreferTaskbarDocumentProxyCohort(
                 qualifyingCohortCount))
     {
+        snowdesktop::dock_window_order::Current().Sort(selectedCohort->items);
         return std::move(selectedCohort->items);
     }
+    snowdesktop::dock_window_order::Current().Sort(regularItems);
     return regularItems;
 }
 
@@ -588,10 +591,13 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         if (ownerProcess == GetCurrentProcessId()) return;
         if (IsWindow(window) &&
             (GetAncestor(window, GA_ROOT) != window ||
-             !snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+             ((event != EVENT_OBJECT_CREATE && event != EVENT_OBJECT_DESTROY) &&
+              !snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
                  GetWindowLongPtrW(window, GWL_EXSTYLE),
-                 GetWindow(window, GW_OWNER) != nullptr)))
+                 GetWindow(window, GW_OWNER) != nullptr))))
             return;
+        // Capture top-level lifetimes before task presentation filters. Hidden
+        // document proxies may acquire a title/registration after creation.
         // Destruction can arrive after the HWND became invalid. The UI checks
         // its tracked windows before deciding whether discovery is necessary.
         if (const HWND target = dockForegroundNotificationWindow_.load())

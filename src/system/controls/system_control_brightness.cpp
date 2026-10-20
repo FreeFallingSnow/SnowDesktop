@@ -172,7 +172,7 @@ class Brightness final : public Backend
             for (DWORD index = 0; index < count; ++index)
             {
                 Monitor monitor;
-                monitor.id = "ddc:" + Utf8(display.device) + ":" + std::to_string(index);
+                monitor.id = NewBrightnessEndpointId();
                 monitor.identity = identity;
                 monitor.name = Utf8(BrightnessMonitorName(L"", physical.values[index].szPhysicalMonitorDescription, identity, display.device));
                 monitor.physical = physical.values[index].hPhysicalMonitor;

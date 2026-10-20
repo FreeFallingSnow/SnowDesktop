@@ -22,7 +22,7 @@ const std::unordered_map<std::string, std::string>
     kEmptyPreviewStorage;
 }
 
-ID2D1RoundedRectangleGeometry* LuaScript::GetCachedClipGeometry(
+ID2D1Geometry* LuaScript::GetCachedClipGeometry(
     ID2D1Factory1* factory, const RECT& frame, float radius)
 {
     return snowdesktop::ResolveWidgetClipGeometry(factory, frame, radius,
@@ -113,13 +113,14 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   2. 根据选中/悬停状态选取填充色与边框色，支持从 Personalization 配置读取；
  *   3. 检测 Lua 脚本是否定义了自定义样式（CustomStyle），若有则覆盖默认颜色；
  *   4. 构造 LuaWidgetTheme 结构体并传递给脚本引擎，供 Lua 渲染时参考；
- *   5. 绘制圆角矩形背景与选中边框；
+ *   5. 绘制圆角矩形背景；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
  *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
  *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
+ *  11. 在内容与渐变之上绘制普通或选中边框及边缘高光；
+ *  12. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
  * @param rect     控件的原始矩形区域（未使用，实际采用 GetStandaloneWidgetFrameRect）
@@ -381,14 +382,13 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
     const float panelStroke = selected
         ? std::max(1.6f, configuredStroke) : configuredStroke;
+    const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
         engine->HasBackgroundLayer(data_->id);
     if (hasBackgroundLayer)
     {
         PersonalizationSettings materialEffects = backgroundEffects;
         materialEffects.acrylicEnabled = false;
-        D2D1_COLOR_F transparentBorder = borderColor;
-        transparentBorder.a = 0.0f;
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
             fillColor, transparentBorder, false, panelStroke,
             &materialEffects, !preview && registerBackdrop);
@@ -401,17 +401,17 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         D2D1_COLOR_F transparentFill = fillColor;
         transparentFill.a = 0.0f;
-        // This pass only adds border/noise above the authored background.
+        // This pass only adds noise above the authored background.
         // The material gradient was already drawn underneath it.
         backgroundEffects.panelGradient.enabled = false;
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            transparentFill, borderColor, selected, panelStroke,
+            transparentFill, transparentBorder, false, panelStroke,
             &backgroundEffects, false);
     }
     else
     {
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            fillColor, borderColor, selected, panelStroke,
+            fillColor, transparentBorder, false, panelStroke,
             &backgroundEffects, !preview && registerBackdrop);
     }
 
@@ -655,8 +655,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     stops.Get(), &brush)) && brush)
                 {
                     auto* factory = app_->GetD2DFactory();
-                    const float radius = static_cast<float>(Cu(12.0f));
-                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, panelRadius);
                     bool pushed = false;
                     if (clipGeo)
                     {
@@ -690,8 +689,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    // Draw the independent material reflection after Lua content and the host
-    // bottom gradient so neither can erase the right/bottom transmitted light.
+    // Keep the outline and reflection above Lua content and the host gradient.
+    app_->DrawWidgetPanelBorder(context, frame, panelRadius,
+        borderColor, selected, panelStroke);
     if (!selected)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, static_cast<float>(Cu(cornerRadiusCu)),

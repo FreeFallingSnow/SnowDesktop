@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widget/preview/widget_preview_scene.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -8,7 +9,7 @@
 bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey)
 {
-    if (!ctx || IsRectEmptyRect(rect)) return false;
+    if (!ctx || IsRectEmptyRect(rect) || drawingIconAppearanceSource_) return false;
     const PersonalizationSettings appearance = CurrentDockAppearance();
 
     const float luminance = appearance.widgetBgR * 0.2126f +
@@ -130,8 +131,31 @@ void DesktopApp::DrawDockSelectionIndicator(
         ctx->FillGeometry(geometry.Get(), brush.Get());
 }
 
+void DesktopApp::DrawDockAttentionDot(
+    ID2D1DeviceContext* ctx, RECT iconRect, float opacity)
+{
+    if (!ctx || IsRectEmptyRect(iconRect) || opacity <= 0.0f) return;
+    const float size = static_cast<float>(std::min(
+        iconRect.right - iconRect.left, iconRect.bottom - iconRect.top));
+    const auto geometry = snowdesktop::dock_attention_dot::Resolve(size,
+        dockSettings_.attentionDotSizeScale, dockSettings_.attentionDotOffset);
+    const float radius = geometry.radius;
+    const float cornerInset = geometry.cornerInset;
+    const auto ellipse = D2D1::Ellipse(D2D1::Point2F(
+        static_cast<float>(iconRect.right) - cornerInset,
+        static_cast<float>(iconRect.top) + cornerInset), radius, radius);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(ctx->CreateSolidColorBrush(
+            D2D1::ColorF(0.94f, 0.20f, 0.23f, opacity), &brush)) || !brush)
+        return;
+    ctx->FillEllipse(ellipse, brush.Get());
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity * 0.9f));
+    ctx->DrawEllipse(ellipse, brush.Get(), std::max(1.0f, size * 0.018f));
+}
+
 void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
-    const DockEntry& entry, RECT rect, int state, int requestedIconSize)
+    const DockEntry& entry, RECT rect, int state, int requestedIconSize,
+    const DesktopWidget* widgetSource, snowdesktop::WidgetPreviewScene* previewScene)
 {
     if (!ctx) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
@@ -153,7 +177,9 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
-        if (recycleBin)
+        auto* custom = GetSmallCustomIcon(ctx, item.layoutKey, target.right - target.left);
+        const bool separateRecyclePlate = recycleBin && !custom && !drawingIconAppearanceSource_ && !ResolveIconAppearance(item.layoutKey).enabled;
+        if (separateRecyclePlate)
         {
             DrawDockControlBackground(ctx, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
             const int shortSide = std::max(1, static_cast<int>(std::min(
@@ -178,16 +204,15 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 DrawDemoIdentityIcon(
                     ctx, demoIdentity, bitmapTarget, alpha);
         }
+        else if (custom)
+            DrawIconBitmap(ctx, custom, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
         else if (!item.iconBitmap)
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
-        else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
-                item.iconBitmap,
-                !recycleBin &&
-                    ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
+        else if (ID2D1Bitmap* bitmap = GetTargetIconBitmap(ctx, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail))
             DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha,
                 reinterpret_cast<std::uintptr_t>(&item));
         else
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
         if (!useDemoIdentity &&
             ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             (item.iconBitmap || item.iconState != IconState::Loading))
@@ -244,6 +269,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 previousTransform);
         }
         drawDesktopItem(items_[index], iconRect);
+        const auto running = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
+        if (running != dockRunningWindows_.end() && dockWindowAttention_.HasAny(
+                running->second.window, running->second.trackedWindows))
+            DrawDockAttentionDot(ctx, iconRect);
         if (state == 2)
             DrawDockSelectionIndicator(ctx, iconRect, lt);
         if (launchTransformApplied)
@@ -320,11 +349,28 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         return;
     }
 
-    size_t widgetIndex = FindWidgetIndexById(entry.reference);
-    if (widgetIndex >= widgets_.size()) return;
-    const DesktopWidget& widget = widgets_[widgetIndex];
+    if (!widgetSource)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(entry.reference);
+        if (widgetIndex >= widgets_.size()) return;
+        widgetSource = &widgets_[widgetIndex];
+    }
+    const DesktopWidget& widget = *widgetSource;
+    if (!previewScene && widget.dockIconAssetId.empty() && DrawIndependentDockIcon(ctx, entry, iconRect, state)) return;
     if (entry.type == DockEntryType::FolderMapping)
     {
+        if (auto custom = GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id))
+        {
+            DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
+            if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
+            return;
+        }
+        if (previewScene)
+        {
+            DrawPrivacyFaIcon(ctx, iconRect, true);
+            if (ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
+            return;
+        }
         const std::wstring iconCacheKey =
             ToUpperInvariant(entry.reference + L"\n" + widget.sourceFolderPath);
         const int requestedSize = GetMaximumShellIconBitmapSize();
@@ -351,23 +397,27 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     return result;
                 }, [this, iconCacheKey, ticket = local.ticket](auto result, bool refined) {
                     auto bitmap = result && result->bitmap
-                        ? CreateD2DBitmapFromHBitmap(result->bitmap, iconBeautifySettings_.enabled)
+                        ? CreateD2DBitmapFromHBitmap(result->bitmap, false)
                         : ComPtr<ID2D1Bitmap1>{};
                     if (bitmap)
                     {
                         if (!dockFolderBitmapCache_.Publish(iconCacheKey, ticket, std::move(bitmap), refined)) return;
                     }
                     else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
+                    ClearDockAppearanceImages();
+                    InvalidateDragStaticScene();
                     InvalidateDockRects();
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
                 }, hwnd_, kBackgroundShellReadyMessage);
         }
         if (local.value && local.value->Get())
-            DrawIconBitmap(ctx, local.value->Get(), iconRect, 1.0f, reinterpret_cast<std::uintptr_t>(&entry));
+            DrawIconBitmap(ctx, local.value->Get(), iconRect,
+                1.0f, reinterpret_cast<std::uintptr_t>(&widget));
         else if (local.fresh)
             DrawPrivacyFaIcon(ctx, iconRect, true);
         else
             DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
-        if (ShouldDrawShortcutArrow(true, false))
+        if (!drawingIconAppearanceSource_ && ShouldDrawShortcutArrow(true, false))
             DrawShortcutArrowOverlay(
                 ctx, iconRect, 1.0f);
         if (state == 2)
@@ -375,101 +425,78 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 ctx, iconRect, lt);
         return;
     }
-    const auto collectionLayout =
-        snowdesktop::dock_collection_icon_rules::
-            CalculateLayout(iconRect);
-    DrawDockControlBackground(
-        ctx, collectionLayout.background,
-        0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
-    struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
-    std::vector<PreviewItem> previewItems;
-    auto appendPreview = [&](const DesktopWidget& source) {
-        if (source.type == DesktopWidgetType::FolderMapping)
-        {
-            for (const auto& folder : source.folderEntries)
-            {
-                if (previewItems.size() == 4) break;
-                previewItems.push_back({ &source, nullptr, &folder });
-            }
-        }
-        else
-            for (const auto& key : source.itemKeys)
-            {
-                if (previewItems.size() == 4) break;
-                if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
-                    previewItems.push_back({ &source, &key, nullptr });
-            }
-    };
-    if (IsGroupWidgetType(widget.type))
-        for (const auto& id : widget.childWidgetIds)
-        {
-            const size_t child = FindWidgetIndexById(id);
-            if (child < widgets_.size()) appendPreview(widgets_[child]);
-            if (previewItems.size() == 4) break;
-        }
-    else appendPreview(widget);
-    for (size_t i = 0; i < previewItems.size(); ++i)
+    auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id);
+    if (custom)
+        DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
+    else
     {
-        const auto& preview = previewItems[i];
-        size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
-        int col = static_cast<int>(i % 2);
-        int row = static_cast<int>(i / 2);
-        const RECT cell =
+        const auto collectionLayout =
             snowdesktop::dock_collection_icon_rules::
-                CellRect(
-                    collectionLayout,
-                    col, row);
-        if (itemIndex < items_.size())
-            drawDesktopItem(items_[itemIndex], cell, preview.owner);
-        else if (preview.folder && preview.folder->iconBitmap)
+                CalculateLayout(iconRect);
+        DrawDockControlBackground(
+            ctx, collectionLayout.background,
+            0, !lt, reinterpret_cast<std::uintptr_t>(&widget));
+        struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
+        std::vector<PreviewItem> previewItems;
+        const auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
+            if (previewScene) return previewScene->FindDesktopItem(key);
+            const auto index = FindItemIndexByKey(key);
+            return index < items_.size() ? &items_[index] : nullptr;
+        };
+        auto appendPreview = [&](const DesktopWidget& source) {
+            if (source.type == DesktopWidgetType::FolderMapping)
+            {
+                for (const auto& folder : source.folderEntries)
+                {
+                    if (previewItems.size() == 4) break;
+                    previewItems.push_back({ &source, nullptr, &folder });
+                }
+            }
+            else
+                for (const auto& key : source.itemKeys)
+                {
+                    if (previewItems.size() == 4) break;
+                    if (resolveItem(key) || (!previewScene && initialShellReadPending_))
+                        previewItems.push_back({ &source, &key, nullptr });
+                }
+        };
+        if (IsGroupWidgetType(widget.type))
+            for (const auto& id : widget.childWidgetIds)
+            {
+                const auto childIndex = FindWidgetIndexById(id);
+                const auto* child = previewScene ? previewScene->FindWidget(id)
+                    : (childIndex < widgets_.size() ? &widgets_[childIndex] : nullptr);
+                if (child) appendPreview(*child);
+                if (previewItems.size() == 4) break;
+            }
+        else appendPreview(widget);
+        for (size_t i = 0; i < previewItems.size(); ++i)
         {
-            if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
-                    ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
-                DrawIconBitmap(ctx, bitmap, cell);
+            const auto& preview = previewItems[i];
+            const auto* item = preview.key ? resolveItem(*preview.key) : nullptr;
+            int col = static_cast<int>(i % 2);
+            int row = static_cast<int>(i / 2);
+            const RECT cell =
+                snowdesktop::dock_collection_icon_rules::
+                    CellRect(
+                        collectionLayout,
+                        col, row);
+            if (item)
+                drawDesktopItem(*item, cell, preview.owner);
+            else if (auto previewIcon = preview.folder ? GetSmallCustomIcon(ctx, preview.folder->fullPath, cell.right - cell.left) : nullptr)
+                DrawIconBitmap(ctx, previewIcon, cell);
+            else if (preview.folder && preview.folder->iconBitmap)
+            {
+                if (auto* bitmap = GetTargetIconBitmap(ctx, preview.folder->iconBitmap, preview.folder->fullPath, preview.folder->iconIsMediaThumbnail))
+                    DrawIconBitmap(ctx, bitmap, cell);
+            }
+            else if (preview.folder)
+                DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
+            else if (initialShellReadPending_)
+                DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
         }
-        else if (preview.folder)
-            DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
-        else if (initialShellReadPending_)
-            DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
     }
-    if (IsGroupDockEntryType(entry.type))
-    {
-        // Match the beautified shortcut badge's geometry and palette.
-        const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
-        const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));
-        const float scale = static_cast<float>(iconHeight) / 64.0f;
-        const int pad = std::max(1, static_cast<int>(std::round(2.0f * scale)));
-        const int badgeSize = std::clamp(static_cast<int>(std::round(17.0f * scale)),
-            9, std::max(9, iconWidth));
-        const RECT badge{iconRect.left + pad, iconRect.bottom - badgeSize - pad,
-            iconRect.left + pad + badgeSize, iconRect.bottom - pad};
-        const D2D1_ELLIPSE badgeEllipse = D2D1::Ellipse(
-            D2D1::Point2F((badge.left + badge.right) * 0.5f, (badge.top + badge.bottom) * 0.5f),
-            badgeSize * 0.5f, badgeSize * 0.5f);
-        ComPtr<ID2D1SolidColorBrush> fillBrush;
-        ComPtr<ID2D1SolidColorBrush> strokeBrush;
-        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.89f, 0.94f, 0.96f), &fillBrush)) &&
-            fillBrush && SUCCEEDED(ctx->CreateSolidColorBrush(
-                D2D1::ColorF(0.54f, 0.61f, 0.72f, 0.58f), &strokeBrush)) && strokeBrush)
-        {
-            ctx->FillEllipse(badgeEllipse, fillBrush.Get());
-            ctx->DrawEllipse(badgeEllipse, strokeBrush.Get(), std::max(1.0f, 1.1f * scale));
-        }
-        const std::wstring glyph = L"\uE192"; // bookmark_multiple_16_regular
-        ComPtr<IDWriteTextLayout> layout;
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (fluentIconTextFormat_ && dwriteFactory_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                glyph.c_str(), static_cast<UINT32>(glyph.size()), fluentIconTextFormat_.Get(),
-                static_cast<float>(badgeSize), static_cast<float>(badgeSize), &layout)) &&
-            SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.30f, 0.48f, 0.92f), &brush)) && brush)
-        {
-            layout->SetFontSize(badgeSize * 0.66f, {0, static_cast<UINT32>(glyph.size())});
-            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(badge.left), static_cast<float>(badge.top)),
-                layout.Get(), brush.Get());
-        }
-    }
+    if (IsGroupDockEntryType(entry.type) && !custom && !drawingIconAppearanceSource_) DrawDockGroupBadge(ctx, iconRect);
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);
 }
@@ -502,9 +529,12 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDemoIdentityIcon(ctx, identity, iconRect);
     }
     else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        DrawIconBitmap(ctx, bitmap, iconRect, presence, reinterpret_cast<std::uintptr_t>(&app));
+        DrawIconBitmap(ctx, bitmap, iconRect,
+            presence, reinterpret_cast<std::uintptr_t>(&app));
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, presence, true);
+    if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
+        DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
     {
         DrawDockSelectionIndicator(ctx, iconRect, lt);
@@ -568,4 +598,44 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             center.x + longHalf, center.y + shortHalf);
     ctx->FillRoundedRectangle(
         D2D1::RoundedRect(bar, shortHalf, shortHalf), brush.Get());
+}
+
+void DesktopApp::DrawDockGroupBadge(ID2D1DeviceContext* ctx, RECT iconRect)
+{
+    if (!groupComponentBadges_) return;
+    // Match the beautified shortcut badge's geometry and palette.
+    const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
+    const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));
+    const float scale = static_cast<float>(iconHeight) / 64.0f;
+    const int pad = std::max(1, static_cast<int>(std::round(2.0f * scale)));
+    const int badgeSize = std::clamp(static_cast<int>(std::round(17.0f * scale)),
+        9, std::max(9, iconWidth));
+    const RECT badge{iconRect.left + pad, iconRect.bottom - badgeSize - pad,
+        iconRect.left + pad + badgeSize, iconRect.bottom - pad};
+    const D2D1_ELLIPSE badgeEllipse = D2D1::Ellipse(
+        D2D1::Point2F((badge.left + badge.right) * 0.5f, (badge.top + badge.bottom) * 0.5f),
+        badgeSize * 0.5f, badgeSize * 0.5f);
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    ComPtr<ID2D1SolidColorBrush> strokeBrush;
+    if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.89f, 0.94f, 0.96f), &fillBrush)) &&
+        fillBrush && SUCCEEDED(ctx->CreateSolidColorBrush(
+            D2D1::ColorF(0.54f, 0.61f, 0.72f, 0.58f), &strokeBrush)) && strokeBrush)
+    {
+        ctx->FillEllipse(badgeEllipse, fillBrush.Get());
+        ctx->DrawEllipse(badgeEllipse, strokeBrush.Get(), std::max(1.0f, 1.1f * scale));
+    }
+    const std::wstring glyph = L"\uE192"; // bookmark_multiple_16_regular
+    ComPtr<IDWriteTextLayout> layout;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (fluentIconTextFormat_ && dwriteFactory_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+            glyph.c_str(), static_cast<UINT32>(glyph.size()), fluentIconTextFormat_.Get(),
+            static_cast<float>(badgeSize), static_cast<float>(badgeSize), &layout)) &&
+        SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.30f, 0.48f, 0.92f), &brush)) && brush)
+    {
+        layout->SetFontSize(badgeSize * 0.66f, {0, static_cast<UINT32>(glyph.size())});
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(badge.left), static_cast<float>(badge.top)),
+            layout.Get(), brush.Get());
+    }
 }

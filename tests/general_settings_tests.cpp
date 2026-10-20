@@ -1,4 +1,5 @@
 #include "settings/general_settings.h"
+#include "settings/personalization_initialization.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "theme/personalization.h"
 #include "dock/dock_gradient_storage.h"
@@ -14,15 +15,17 @@
 #include <d2d1.h>
 #include <wincodec.h>
 
-#include <cstring>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
-#include <utility>
+#include <limits>
 #include <thread>
-#include <functional>
+#include <utility>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -311,8 +314,169 @@ void TestTooltipPresentation()
     snowdesktop::SetNativeTooltipPreferences(snowdesktop::kDefaultTooltipFontSize, PersonalizationSettings::DarkPreset());
 }
 
+void TestInitialPersonalization()
+{
+    // Exercise the same initialization and codec as NativeSettingsStore in an
+    // isolated data directory, including profiles that never saved a theme.
+    const auto root = std::filesystem::temp_directory_path() /
+        (L"SnowDesktopInitialTheme-" + std::to_wstring(GetCurrentProcessId()) +
+            L"-" + std::to_wstring(GetTickCount64()));
+    std::filesystem::create_directories(root);
+    struct Cleanup
+    {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } cleanup{root};
+    const auto path = root / L"SnowDesktop.personalization.json";
+    const auto read = [&] {
+        std::ifstream stream(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    };
+    const auto load = [&](PersonalizationSettings& settings) {
+        return snowdesktop::LoadInitialPersonalization(path, settings);
+    };
+    const auto darkGlass = PersonalizationSettings::GlassDarkPreset();
+    PersonalizationSettings initial;
+    bool heightLoaded = true;
+    Check(!snowdesktop::LoadInitialPersonalization(path, initial, &heightLoaded) &&
+            initial == darkGlass && !heightLoaded && !std::filesystem::exists(path),
+        "new profiles start with dark frosted glass without writing during initialization");
+    Check(SavePersonalization(path.c_str(), initial), "persist the initial theme through the native codec");
+    PersonalizationSettings reloaded;
+    Check(load(reloaded) && reloaded == initial,
+        "dark frosted glass survives the next launch after the settings store persists it");
+
+    for (const auto* marker : {L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
+             L"SnowDesktop.navigation.json", L"SnowDesktop.categories.json",
+             L"SnowDesktop.layout.json", L"SnowDesktop.storage.json"})
+    {
+        std::filesystem::remove(path);
+        const auto existing = root / marker;
+        { std::ofstream file(existing); file << "{}"; }
+        PersonalizationSettings legacy;
+        const auto expected = legacy;
+        Check(!load(legacy) && legacy == expected && !std::filesystem::exists(path),
+            "existing settings or layouts without a theme retain legacy appearance defaults");
+        std::filesystem::remove(existing);
+    }
+
+    for (const int preset : {kAppearancePresetDark, kAppearancePresetLight,
+             kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+             kAppearancePresetGlassTransparent, kAppearancePresetAcrylicDark,
+             kAppearancePresetAcrylicLight, kAppearancePresetCustom})
+    {
+        auto saved = MakeAppearancePreset(preset);
+        if (preset == kAppearancePresetCustom)
+        {
+            saved.widgetAlpha = .63f;
+            saved.widgetBgR = .27f;
+            saved.glassEnabled = true;
+            saved.glassBlurRadius = 17.f;
+        }
+        saved.cornerRadius = 19.f;
+        saved.contextMenuStyle = 4;
+        Check(SavePersonalization(path.c_str(), saved), "seed an existing selected or custom appearance");
+        const auto before = read();
+        PersonalizationSettings loaded;
+        Check(load(loaded) && loaded == saved && read() == before,
+            "existing selected themes and custom appearance remain unchanged on upgrade");
+    }
+
+    for (const auto* contents : {"{}", "{\"widgetAlpha\":0.63}", ""})
+    {
+        { std::ofstream file(path, std::ios::binary | std::ios::trunc); file << contents; }
+        PersonalizationSettings expected, loaded;
+        const bool expectedResult = LoadPersonalization(path.c_str(), expected);
+        Check(load(loaded) == expectedResult && loaded == expected && read() == contents,
+            "partial legacy and empty appearance files retain their previous load and fallback behavior");
+    }
+
+    // An existing profile that cannot currently be read is still an upgrade.
+    HANDLE locked = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr,
+        OPEN_EXISTING, 0, nullptr);
+    Check(locked != INVALID_HANDLE_VALUE, "lock an existing appearance file against reads");
+    PersonalizationSettings blocked;
+    const auto expected = blocked;
+    Check(!load(blocked) && blocked == expected,
+        "unreadable appearance files retain legacy defaults instead of choosing a new theme");
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
+}
+
 int main(int argc, char** argv)
 {
+    TestInitialPersonalization();
+    {
+        // A reader may permit writes while forbidding delete/replace. The
+        // native savers must preserve the committed document on failed commit.
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopAtomicSettings-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings original, replacement;
+        original.tooltipFontSize = 12; replacement.tooltipFontSize = 23;
+        Check(SaveGeneralSettings(path.c_str(), original), "seed actual general settings before a failed replacement");
+        const auto read = [&] {
+            std::ifstream stream(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+        };
+        const auto previous = read();
+        HANDLE lock = CreateFileW(path.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Check(lock != INVALID_HANDLE_VALUE, "hold an actual settings file against replacement only");
+        Check(!SaveGeneralSettings(path.c_str(), replacement) && read() == previous,
+            "failed native general settings commit reports failure and preserves the complete prior file");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        GeneralSettings restored;
+        Check(SaveGeneralSettings(path.c_str(), replacement) &&
+            LoadGeneralSettings(path.c_str(), restored) && restored.tooltipFontSize == 23,
+            "the same general settings input can be retried and reloaded after the lock is released");
+        auto appearance = PersonalizationSettings::DarkPreset();
+        appearance.backgroundPreset = kAppearancePresetCustom;
+        Check(SavePersonalization(path.c_str(), appearance), "seed actual appearance settings");
+        const auto previousAppearance = read();
+        appearance.widgetAlpha = .35f;
+        lock = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, 0, nullptr);
+        Check(lock != INVALID_HANDLE_VALUE, "hold actual personalization against replacement only");
+        Check(!SavePersonalization(path.c_str(), appearance) && read() == previousAppearance,
+            "failed appearance commit preserves the prior document and reports failure");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        PersonalizationSettings restoredAppearance;
+        Check(SavePersonalization(path.c_str(), appearance) &&
+            LoadPersonalization(path.c_str(), restoredAppearance) && restoredAppearance.widgetAlpha == .35f,
+            "appearance input remains available for a successful retry");
+        std::filesystem::remove(path);
+    }
+    {
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopForceRestart-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        GeneralSettings restored;
+        Check(LoadGeneralSettings(path.c_str(), restored) && restored.forceRestartHotkeyEnabled &&
+            restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.forceRestartHotkeyVirtualKey == 'S',
+            "new and existing profiles enable the requested emergency restart chord");
+        for (const bool enabled : {false, true})
+        for (const UINT key : {UINT{'R'}, UINT{0}})
+        {
+            GeneralSettings settings;
+            settings.forceRestartHotkeyEnabled = enabled;
+            settings.forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+            settings.forceRestartHotkeyVirtualKey = key;
+            restored = {};
+            Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), restored) &&
+                restored.forceRestartHotkeyEnabled == enabled &&
+                restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT) &&
+                restored.forceRestartHotkeyVirtualKey == key,
+                "force restart enablement, custom chord and clearing survive settings reload");
+        }
+        { std::ofstream invalid(path); invalid <<
+            "{\"forceRestartHotkeyModifiers\":65535,\"forceRestartHotkeyVirtualKey\":256}"; }
+        restored = {};
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.forceRestartHotkeyVirtualKey == 'S',
+            "invalid emergency keys retain the default and unsupported modifier flags are masked");
+        std::filesystem::remove(path);
+    }
     {
         // Never reserve a shortcut for existing profiles. Preserve a chosen
         // chord, including clearing it, across application restarts.
@@ -544,9 +708,69 @@ int main(int argc, char** argv)
         Check(app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/../secret.ttf", data).empty() &&
             app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/id/../../secret.ttf", data).empty(),
             "custom XAML resource lookup rejects traversal and unrelated resources");
+        {
+            namespace fs = std::filesystem;
+            const auto source = data / L"import-source";
+            fs::create_directories(source);
+            const auto sourceFont = source / L"valid.ttf";
+            fs::copy_file(assets / L"fonts/HarmonyOS-Sans/HarmonyOS_Sans_SC_Regular.ttf", sourceFont);
+            const auto notice = source / L"LICENSE.txt";
+            { std::ofstream output(notice); output << "source license remains intact"; }
+            const auto existing = data / L"fonts/existing-package/keep.txt";
+            fs::create_directories(existing.parent_path());
+            { std::ofstream output(existing); output << "keep existing package"; }
+            const auto packageNames = [&] {
+                std::vector<fs::path> result;
+                for (const auto& entry : fs::directory_iterator(data / L"fonts"))
+                    result.push_back(entry.path().filename());
+                std::sort(result.begin(), result.end());
+                return result;
+            };
+            const auto beforeNames = packageNames();
+            const auto beforeFontSize = fs::file_size(sourceFont);
+            const auto existingChoices = app_fonts::List(assets, data);
+            const HANDLE held = CreateFileW(notice.c_str(), GENERIC_READ, 0,
+                nullptr, OPEN_EXISTING, 0, nullptr);
+            Check(held != INVALID_HANDLE_VALUE, "lock a real notice after font-copy input enumeration remains possible");
+            std::vector<app_fonts::Choice> failedChoices;
+            std::string failedError;
+            const bool succeeded = app_fonts::Import(source, data, failedChoices, failedError);
+            if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+            Check(!succeeded && failedChoices.empty() && failedError == "font.importFailed" &&
+                packageNames() == beforeNames,
+                "a second-copy I/O failure rolls back only its new font package and leaves no visible or staging residue");
+            const auto afterChoices = app_fonts::List(assets, data);
+            const auto readText = [](const fs::path& path) {
+                std::ifstream input(path, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            };
+            const auto managedIds = [](const auto& values) {
+                std::vector<std::string> ids;
+                for (const auto& value : values)
+                    if (value.selection.package != "system" && value.selection.package != "installed" &&
+                        value.selection.package != "MiSans" && value.selection.package != "HarmonyOS-Sans")
+                        ids.push_back(value.selection.package);
+                std::sort(ids.begin(), ids.end()); return ids;
+            };
+            Check(managedIds(existingChoices) == managedIds(afterChoices) &&
+                readText(existing) == "keep existing package" &&
+                fs::file_size(sourceFont) == beforeFontSize && readText(notice) == "source license remains intact",
+                "failed import cannot advertise a partial family or delete earlier packages/source inputs");
+            Check(app_fonts::Import(source, data, failedChoices, failedError) && !failedChoices.empty() &&
+                packageNames().size() == beforeNames.size() + 1 &&
+                fs::is_directory(data / L"fonts" / failedChoices.front().selection.package),
+                "the same source imports into one final GUID package after the copy lock is released");
+        }
         Check(!app_fonts::Import(assets / "fonts" / "README.md", data, imported, error), "non-font packages are rejected");
         app_fonts::Select({}, assets, data);
-        std::error_code ec; std::filesystem::remove_all(data, ec);
+        std::error_code ec;
+        const auto cleanup = std::filesystem::weakly_canonical(data, ec);
+        std::error_code temporaryError;
+        const auto temporaryRoot = std::filesystem::weakly_canonical(std::filesystem::temp_directory_path(), temporaryError);
+        const bool owned = !ec && !temporaryError && cleanup.is_absolute() && cleanup.parent_path() == temporaryRoot &&
+            cleanup.filename() == L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId());
+        Check(owned, "font test cleanup resolves to exactly its own temporary package directory");
+        if (owned) std::filesystem::remove_all(cleanup, ec);
         Check(!ec, "only the test-owned imported package directory is removed");
     }
     {
@@ -566,6 +790,16 @@ int main(int argc, char** argv)
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        Check(value.statusBar.showDesktop && firstEnable.showDesktop,
+            "new and existing profiles enable the invisible show-desktop edge by default");
+        for (const bool showDesktop : {false, true})
+        {
+            firstEnable.showDesktop = showDesktop;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.showDesktop == showDesktop,
+                "disabling the show-desktop edge survives reload without reverting to its default");
+        }
         Check(!value.statusBar.inputMethodSystemPanel && !firstEnable.inputMethodSystemPanel,
             "new and existing bars default to the SnowDesktop keyboard layout panel");
         for (const bool systemInput : {true, false})
@@ -847,26 +1081,31 @@ int main(int argc, char** argv)
     std::filesystem::remove(path, error);
 
     GeneralSettings saved;
-    Check(!saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement,
+    Check(!saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement &&
+        !saved.contextMenuHideMoreManagement,
         "context-menu layout and page hiding are opt-in");
-    for (int flags = 0; flags < 4; ++flags)
+    for (int flags = 0; flags < 8; ++flags)
     {
         GeneralSettings menuOptions, restored;
         menuOptions.contextMenuExpandQuickActions = (flags & 1) != 0;
         menuOptions.contextMenuHidePageManagement = (flags & 2) != 0;
+        menuOptions.contextMenuHideMoreManagement = (flags & 4) != 0;
         restored.contextMenuExpandQuickActions = !menuOptions.contextMenuExpandQuickActions;
         restored.contextMenuHidePageManagement = !menuOptions.contextMenuHidePageManagement;
+        restored.contextMenuHideMoreManagement = !menuOptions.contextMenuHideMoreManagement;
         Check(SaveGeneralSettings(path.c_str(), menuOptions) &&
             LoadGeneralSettings(path.c_str(), restored) &&
             restored.contextMenuExpandQuickActions == menuOptions.contextMenuExpandQuickActions &&
-            restored.contextMenuHidePageManagement == menuOptions.contextMenuHidePageManagement,
+            restored.contextMenuHidePageManagement == menuOptions.contextMenuHidePageManagement &&
+            restored.contextMenuHideMoreManagement == menuOptions.contextMenuHideMoreManagement,
             "each context-menu option can be enabled and disabled independently across restart");
     }
     saved.contextMenuExpandQuickActions = true;
     saved.contextMenuHidePageManagement = true;
+    saved.contextMenuHideMoreManagement = true;
     saved.animationMode = 1;
     saved.popupAnimationEffect = 1;
-    saved.animationSpeed = 2;
+    saved.animationSpeed = 5;
     saved.animationFrameLimit = 30;
     saved.animationEnergySaver = false;
     saved.animationOnBattery = true;
@@ -892,7 +1131,8 @@ int main(int argc, char** argv)
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
-    Check(loaded.contextMenuExpandQuickActions && loaded.contextMenuHidePageManagement,
+    Check(loaded.contextMenuExpandQuickActions && loaded.contextMenuHidePageManagement &&
+        loaded.contextMenuHideMoreManagement,
         "context-menu options survive restart");
     Check(loaded.quickNavigationAppearance == saved.quickNavigationAppearance &&
         loaded.collectionPopupAppearance.mode == 2,
@@ -1048,6 +1288,22 @@ int main(int argc, char** argv)
             ResolveSurfaceTheme(following, transparentGlass, 0, false).backgroundPreset == kAppearancePresetAcrylicDark,
             "popup and quick navigation follow transparent global glass with dark acrylic");
         DockSettings dock;
+        Check(dock.edgeHoverDelayMs == 250,
+            "profiles without an edge hover delay keep the existing 250 ms dwell");
+        for (const auto& [requested, expected] : {
+                std::pair{-1, 100}, std::pair{100, 100}, std::pair{850, 850},
+                std::pair{3000, 3000}, std::pair{50000, 3000}})
+        {
+            dock.edgeHoverDelayMs = requested;
+            NormalizeDockSettings(dock);
+            Check(dock.edgeHoverDelayMs == expected,
+                "invalid edge hover settings are bounded before reaching the timer");
+        }
+        for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                std::numeric_limits<double>::infinity()})
+            Check(snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(invalid) == 250,
+                "non-finite edge hover input preserves the default instead of overflowing");
+        Check(dock.followComponentCornerRadius, "existing Dock settings continue following component radius by default");
         dock.followComponentAppearance = false;
         for (int preset : {0, 1, 6, 7, 10, 11, kAppearancePresetGlassTransparent})
         {
@@ -1061,6 +1317,28 @@ int main(int argc, char** argv)
         Check(ResolveDockAppearance(dock, global) == global, "Dock follow mode uses the complete component appearance");
         dock.appearancePreset = 123; NormalizeDockSettings(dock);
         Check(dock.appearancePreset == kAppearancePresetCustom, "unsupported Dock preset falls back to retained custom settings");
+        dock.cornerRadius = 23.f;
+        dock.followComponentCornerRadius = false;
+        auto radiusGlobal = global;
+        radiusGlobal.cornerRadius = 7.f;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 23.f,
+            "independent Dock radius overrides radius even while the theme follows components");
+        SelectDockAppearance(dock, false, kAppearancePresetLight, radiusGlobal);
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 23.f,
+            "changing a Dock theme leaves the independent radius unchanged");
+        dock.followComponentCornerRadius = true;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 7.f && dock.cornerRadius == 23.f,
+            "reenabling radius inheritance preserves the saved independent radius");
+        radiusGlobal.cornerRadius = 18.f;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 18.f,
+            "inherited radius tracks subsequent component changes");
+        for (const float invalid : {-10.f, 50.f, std::numeric_limits<float>::quiet_NaN()})
+        {
+            dock.cornerRadius = invalid;
+            NormalizeDockSettings(dock);
+            Check(std::isfinite(dock.cornerRadius) && dock.cornerRadius >= 0.f && dock.cornerRadius <= 28.f,
+                "malformed independent radii never reach panel geometry");
+        }
         auto staleWidget = global;
         staleWidget.widgetAlpha = .17f;
         staleWidget.edgeLight.direction = 137.f;
@@ -1101,10 +1379,14 @@ int main(int argc, char** argv)
         Check(!DecodeSurfaceTheme(encoded, theme) && theme == before,
             "invalid custom opacity rejects the complete replacement without changing stored appearance");
     }
-    Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 &&
-        loaded.animationSpeed == 2 && loaded.animationFrameLimit == 30 &&
-        !loaded.animationEnergySaver && loaded.animationOnBattery,
-        "animation preferences survive a settings save and reload");
+    Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 && loaded.animationSpeed == 5 &&
+              loaded.animationFrameLimit == 30 && !loaded.animationEnergySaver && loaded.animationOnBattery,
+          "animation preferences survive a settings save and reload");
+    const std::array<double, 6> animationDurations{0.7, 1.0, 1.4, 2.0, 3.0, 4.0};
+    for (std::size_t choice = 0; choice < animationDurations.size(); ++choice)
+        Check(snowdesktop::animation::NormalizeSpeed(static_cast<int>(choice)) == static_cast<int>(choice) &&
+                  snowdesktop::animation::DurationScale(static_cast<int>(choice)) == animationDurations[choice],
+              "slower playback extends durations while keeping the existing speed choices stable");
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&
@@ -1144,7 +1426,7 @@ int main(int argc, char** argv)
             clamped.pageNavigationPreviousVirtualKey == VK_PRIOR &&
             clamped.pageNavigationNextVirtualKey == VK_NEXT,
         "general settings reject invalid persisted themes and page keys");
-    Check(clamped.animationMode == 0 && clamped.popupAnimationEffect == 2 &&
+    Check(clamped.animationMode == snowdesktop::animation::AlwaysOn && clamped.popupAnimationEffect == 2 &&
         clamped.animationSpeed == 1 && clamped.animationFrameLimit == 0,
         "invalid animation choices fall back without disabling the interface");
 
@@ -1158,12 +1440,25 @@ int main(int argc, char** argv)
     GeneralSettings migrated;
     Check(LoadGeneralSettings(path.c_str(), migrated),
         "legacy general settings still load");
-    Check(!migrated.contextMenuExpandQuickActions && !migrated.contextMenuHidePageManagement,
+    Check(!migrated.contextMenuExpandQuickActions && !migrated.contextMenuHidePageManagement &&
+        !migrated.contextMenuHideMoreManagement,
         "legacy settings preserve the quick strip and page menus");
-    Check(migrated.animationMode == 0 && migrated.popupAnimationEffect == 2 &&
+    Check(migrated.animationMode == snowdesktop::animation::AlwaysOn && migrated.popupAnimationEffect == 2 &&
         migrated.animationSpeed == 1 && migrated.animationFrameLimit == 0 &&
         migrated.animationEnergySaver && !migrated.animationOnBattery,
-        "legacy animation defaults preserve current effects and automatic cadence");
+        "missing animation mode enables animations and preserves effects and automatic cadence");
+    for (const int storedMode : {snowdesktop::animation::FollowSystem,
+             snowdesktop::animation::Disabled})
+    {
+        GeneralSettings explicitChoice;
+        explicitChoice.animationMode = storedMode;
+        Check(SaveGeneralSettings(path.c_str(), explicitChoice),
+            "explicit animation choice can be saved");
+        GeneralSettings restoredChoice;
+        Check(LoadGeneralSettings(path.c_str(), restoredChoice) &&
+                restoredChoice.animationMode == storedMode,
+            "new animation default preserves saved follow-system and disabled choices");
+    }
     Check(!migrated.demoModeEnabled &&
         !migrated.widgetDeveloperToolsEnabled &&
         migrated.collectionPopupTheme == kFourThemeDark &&
@@ -1273,16 +1568,28 @@ int main(int argc, char** argv)
     Check(savedAppearance.widgetTransformCursors,
         "new profiles retain move and resize pointer feedback by default");
     savedAppearance.widgetTransformCursors = false;
+    Check(!savedAppearance.groupTabHoverSwitch && !savedAppearance.categoryTabHoverSwitch &&
+            savedAppearance.tabHoverDelayMs == 250.0f,
+        "group and category hover switching are opt-in with a 250 ms delay");
+    savedAppearance.groupTabHoverSwitch = true;
+    savedAppearance.categoryTabHoverSwitch = false;
+    savedAppearance.tabHoverDelayMs = 750.0f;
     Check(!savedAppearance.popupHoverOpen,
         "popup hover opening defaults off for new profiles");
     Check(!savedAppearance.popupCloseOnMouseLeave,
         "new profiles keep popups open when the pointer leaves by default");
-    Check(savedAppearance.popupHoverDelayMs == 600.0f,
-        "new profiles retain the original 600 ms hover delay");
+    Check(savedAppearance.popupHoverDelayMs == 250.0f,
+        "new profiles use a 250 ms popup hover delay");
     savedAppearance.popupHoverOpen = true;
     savedAppearance.popupCloseOnMouseLeave = true;
     savedAppearance.popupHoverDelayMs = 1200.0f;
     savedAppearance.showCategoryTabCounts = false;
+    savedAppearance.windowPinBorderEnabled = false;
+    savedAppearance.windowPinBorderR = 0.21f;
+    savedAppearance.windowPinBorderG = 0.31f;
+    savedAppearance.windowPinBorderB = 0.61f;
+    savedAppearance.windowPinBorderWidth = 14.0f;
+    savedAppearance.windowPinBorderOpacity = 0.73f;
     savedAppearance.edgeLight.direction = 127.f;
     savedAppearance.edgeLight.outerGlow = .4f;
     savedAppearance.edgeLight.glowThreshold = .99f;
@@ -1295,9 +1602,21 @@ int main(int argc, char** argv)
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
     PersonalizationSettings loadedAppearance;
+    for (const int preset : {0, 1, 6, 7, 9, 10, 11, 13})
+    {
+        auto changedTheme = savedAppearance;
+        ApplyAppearancePreset(changedTheme, preset);
+        Check(!changedTheme.windowPinBorderEnabled && changedTheme.windowPinBorderR == 0.21f &&
+                changedTheme.windowPinBorderG == 0.31f && changedTheme.windowPinBorderB == 0.61f &&
+                changedTheme.windowPinBorderWidth == 14.0f && changedTheme.windowPinBorderOpacity == 0.73f,
+            "switching a component preset preserves the independent global pin indicator");
+    }
     Check(LoadPersonalization(
             personalizationPath.c_str(), loadedAppearance) &&
             loadedAppearance.edgeLight == savedAppearance.edgeLight &&
+            !loadedAppearance.windowPinBorderEnabled && loadedAppearance.windowPinBorderR == 0.21f &&
+            loadedAppearance.windowPinBorderG == 0.31f && loadedAppearance.windowPinBorderB == 0.61f &&
+            loadedAppearance.windowPinBorderWidth == 14.0f && loadedAppearance.windowPinBorderOpacity == 0.73f &&
             loadedAppearance.widgetBorderWidth == 3.5f &&
             loadedAppearance.widgetEdgeHighlightEnabled &&
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
@@ -1307,6 +1626,9 @@ int main(int argc, char** argv)
             loadedAppearance.showGroupTabCounts &&
             loadedAppearance.scrollableTitleBarOnTop &&
             !loadedAppearance.widgetTransformCursors &&
+            loadedAppearance.groupTabHoverSwitch &&
+            !loadedAppearance.categoryTabHoverSwitch &&
+            loadedAppearance.tabHoverDelayMs == 750.0f &&
             loadedAppearance.popupHoverOpen &&
             loadedAppearance.popupCloseOnMouseLeave &&
             loadedAppearance.popupHoverDelayMs == 1200.0f &&
@@ -1325,6 +1647,9 @@ int main(int argc, char** argv)
             appearance.showGroupTabCounts = enabled;
             appearance.scrollableTitleBarOnTop = enabled;
             appearance.widgetTransformCursors = enabled;
+            appearance.groupTabHoverSwitch = enabled;
+            appearance.categoryTabHoverSwitch = !enabled;
+            appearance.tabHoverDelayMs = 250.0f;
             appearance.popupHoverOpen = enabled;
             appearance.popupCloseOnMouseLeave = enabled;
             appearance.popupHoverDelayMs = 1400.0f;
@@ -1335,6 +1660,9 @@ int main(int argc, char** argv)
                     loadedAppearance.showGroupTabCounts == enabled &&
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
                     loadedAppearance.widgetTransformCursors == enabled &&
+                    loadedAppearance.groupTabHoverSwitch == enabled &&
+                    loadedAppearance.categoryTabHoverSwitch == !enabled &&
+                    loadedAppearance.tabHoverDelayMs == 250.0f &&
                     loadedAppearance.popupHoverOpen == enabled &&
                     loadedAppearance.popupCloseOnMouseLeave == enabled &&
                     loadedAppearance.popupHoverDelayMs == 1400.0f &&
@@ -1434,6 +1762,9 @@ int main(int argc, char** argv)
     migratedGlass.showGroupTabCounts = true;
     migratedGlass.scrollableTitleBarOnTop = true;
     migratedGlass.widgetTransformCursors = false;
+    migratedGlass.groupTabHoverSwitch = true;
+    migratedGlass.categoryTabHoverSwitch = true;
+    migratedGlass.tabHoverDelayMs = 2200.0f;
     migratedGlass.popupHoverOpen = true;
     migratedGlass.popupCloseOnMouseLeave = true;
     migratedGlass.popupHoverDelayMs = 2200.0f;
@@ -1442,9 +1773,12 @@ int main(int argc, char** argv)
             !migratedGlass.showGroupTabCounts &&
             !migratedGlass.scrollableTitleBarOnTop &&
             migratedGlass.widgetTransformCursors &&
+            !migratedGlass.groupTabHoverSwitch &&
+            !migratedGlass.categoryTabHoverSwitch &&
+            migratedGlass.tabHoverDelayMs == 250.0f &&
             !migratedGlass.popupHoverOpen &&
             !migratedGlass.popupCloseOnMouseLeave &&
-            migratedGlass.popupHoverDelayMs == 600.0f &&
+            migratedGlass.popupHoverDelayMs == 250.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&
@@ -1457,27 +1791,36 @@ int main(int argc, char** argv)
     // delay into an immediate popup or a practically infinite wait.
     for (const auto& [serialized, expected] : {
             std::pair{"-100", 100.0f}, std::pair{"99999", 3000.0f},
-            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 600.0f},
-            std::pair{"450.4", 450.0f}})
+            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 250.0f},
+            std::pair{"450.4", 450.0f}, std::pair{"600", 600.0f},
+            std::pair{"250", 250.0f}})
     {
         {
             std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
-            fixture << "{\"popupHoverDelayMs\":" << serialized << "}";
+            fixture << "{\"popupHoverDelayMs\":" << serialized
+                    << ",\"tabHoverDelayMs\":" << serialized << "}";
         }
         Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.popupHoverDelayMs == expected,
-            "persisted hover delay is bounded and invalid values use the default");
+                loadedAppearance.popupHoverDelayMs == expected &&
+                loadedAppearance.tabHoverDelayMs == expected,
+            "persisted hover delays preserve saved values and bound invalid input");
     }
     for (const auto& [requested, expected] : {
             std::pair{-1.0f, 100.0f}, std::pair{9999.0f, 3000.0f}})
     {
         auto appearance = savedAppearance;
         appearance.popupHoverDelayMs = requested;
+        appearance.tabHoverDelayMs = requested;
         Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
                 LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.popupHoverDelayMs == expected,
-            "saved hover delay respects the supported range");
+                loadedAppearance.popupHoverDelayMs == expected &&
+                loadedAppearance.tabHoverDelayMs == expected,
+            "saved hover delays respect the supported range");
     }
+    Check(NormalizeTabHoverDelayMs(std::numeric_limits<double>::quiet_NaN()) == 250.0f &&
+            NormalizeTabHoverDelayMs(std::numeric_limits<double>::infinity()) == 250.0f &&
+            NormalizePopupHoverDelayMs(std::numeric_limits<double>::quiet_NaN()) == 250.0f,
+        "non-finite hover delays fall back to the configured default");
     {
         std::ofstream legacyOpaque(
             personalizationPath, std::ios::binary | std::ios::trunc);
@@ -1513,6 +1856,35 @@ int main(int argc, char** argv)
             explicitAppearance.widgetEdgeHighlightEnabled == MakeAppearancePreset(kAppearancePresetAcrylicDark).widgetEdgeHighlightEnabled &&
             explicitAppearance.luaWidgetContentRowHeight == 48.0f,
         "legacy Lua title-area height migrates to the clamped content row height");
+    {
+        std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+        fixture << "{}";
+    }
+    auto legacyPinAppearance = savedAppearance;
+    Check(LoadPersonalization(personalizationPath.c_str(), legacyPinAppearance) &&
+            legacyPinAppearance.windowPinBorderEnabled && legacyPinAppearance.windowPinBorderR == 0.0f &&
+            legacyPinAppearance.windowPinBorderG == 120.0f / 255.0f &&
+            legacyPinAppearance.windowPinBorderB == 215.0f / 255.0f &&
+            legacyPinAppearance.windowPinBorderWidth == 6.0f && legacyPinAppearance.windowPinBorderOpacity == 0.5f,
+        "profiles without pin-border fields restore the existing blue six-pixel half-opacity indicator");
+    {
+        std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+        fixture << "{\"windowPinBorderEnabled\":false,\"windowPinBorderR\":-1,"
+                   "\"windowPinBorderG\":2,\"windowPinBorderB\":0.3,"
+                   "\"windowPinBorderWidth\":999,\"windowPinBorderOpacity\":-1}";
+    }
+    Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            !loadedAppearance.windowPinBorderEnabled && loadedAppearance.windowPinBorderR == 0.0f &&
+            loadedAppearance.windowPinBorderG == 1.0f && loadedAppearance.windowPinBorderB == 0.3f &&
+            loadedAppearance.windowPinBorderWidth == 20.0f && loadedAppearance.windowPinBorderOpacity == 0.0f,
+        "persisted pin border values are bounded without changing its explicit off state");
+    auto nonfinitePinAppearance = savedAppearance;
+    nonfinitePinAppearance.windowPinBorderWidth = std::numeric_limits<float>::infinity();
+    nonfinitePinAppearance.windowPinBorderOpacity = std::numeric_limits<float>::quiet_NaN();
+    Check(SavePersonalization(personalizationPath.c_str(), nonfinitePinAppearance) &&
+            LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.windowPinBorderWidth == 6.0f && loadedAppearance.windowPinBorderOpacity == 0.5f,
+        "nonfinite pin-border values save as usable defaults rather than invalid JSON");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

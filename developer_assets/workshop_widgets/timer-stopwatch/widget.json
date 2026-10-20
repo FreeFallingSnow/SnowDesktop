@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Timer & Stopwatch",
   "nameKey": "timer.name",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Countdown presets, custom durations and a stopwatch.",
   "descriptionKey": "timer.description",
   "locales": {
@@ -34,7 +34,8 @@
       "timer.twentyfive": "25분",
       "timer.thirty": "30분",
       "timer.unit": "분",
-      "timer.settings": "설정"
+      "timer.settings": "설정",
+      "timer.schedule_failed": "타이머를 예약하지 못했습니다. 입력과 진행 상태가 유지되었습니다. 다시 시도하세요."
     },
     "en-US": {
       "timer.resume": "Resume",
@@ -56,7 +57,8 @@
       "timer.twentyfive": "25 min",
       "timer.thirty": "30 min",
       "timer.unit": "MIN",
-      "timer.settings": "Settings"
+      "timer.settings": "Settings",
+      "timer.schedule_failed": "The timer could not be scheduled. Your input and progress are kept. Please try again."
     },
     "fr-FR": {
       "timer.resume": "Reprendre",
@@ -78,7 +80,8 @@
       "timer.twentyfive": "25 min",
       "timer.thirty": "30 min",
       "timer.unit": "MIN",
-      "timer.settings": "Paramètres"
+      "timer.settings": "Paramètres",
+      "timer.schedule_failed": "Le minuteur n’a pas pu être programmé. Votre saisie et votre progression sont conservées. Réessayez."
     },
     "pt-BR": {
       "timer.resume": "Retomar",
@@ -100,7 +103,8 @@
       "timer.twentyfive": "25 min",
       "timer.thirty": "30 min",
       "timer.unit": "MIN",
-      "timer.settings": "Configurações"
+      "timer.settings": "Configurações",
+      "timer.schedule_failed": "Não foi possível agendar o temporizador. A entrada e o progresso foram mantidos. Tente novamente."
     },
     "de-DE": {
       "timer.resume": "Weiter",
@@ -122,7 +126,8 @@
       "timer.twentyfive": "25 Min.",
       "timer.thirty": "30 Min.",
       "timer.unit": "MIN",
-      "timer.settings": "Einstellungen"
+      "timer.settings": "Einstellungen",
+      "timer.schedule_failed": "Der Timer konnte nicht geplant werden. Eingabe und Fortschritt bleiben erhalten. Bitte erneut versuchen."
     },
     "zh-CN": {
       "timer.resume": "继续",
@@ -144,7 +149,8 @@
       "timer.twentyfive": "25 分",
       "timer.thirty": "30 分",
       "timer.unit": "分钟",
-      "timer.settings": "设置"
+      "timer.settings": "设置",
+      "timer.schedule_failed": "无法安排计时，输入和进度已保留。请重试。"
     },
     "zh-TW": {
       "timer.resume": "繼續",
@@ -166,7 +172,8 @@
       "timer.twentyfive": "25 分",
       "timer.thirty": "30 分",
       "timer.unit": "分鐘",
-      "timer.settings": "設定"
+      "timer.settings": "設定",
+      "timer.schedule_failed": "無法排定計時，輸入與進度已保留。請重試。"
     },
     "es-419": {
       "timer.resume": "Continuar",
@@ -188,7 +195,8 @@
       "timer.twentyfive": "25 min",
       "timer.thirty": "30 min",
       "timer.unit": "MIN",
-      "timer.settings": "Configuración"
+      "timer.settings": "Configuración",
+      "timer.schedule_failed": "No se pudo programar el temporizador. Se conservaron la entrada y el progreso. Vuelve a intentarlo."
     },
     "es-ES": {
       "timer.resume": "Continuar",
@@ -210,7 +218,8 @@
       "timer.twentyfive": "25 min",
       "timer.thirty": "30 min",
       "timer.unit": "MIN",
-      "timer.settings": "Ajustes"
+      "timer.settings": "Ajustes",
+      "timer.schedule_failed": "No se pudo programar el temporizador. Se conservaron la entrada y el progreso. Vuelve a intentarlo."
     },
     "ja-JP": {
       "timer.resume": "再開",
@@ -232,7 +241,8 @@
       "timer.twentyfive": "25分",
       "timer.thirty": "30分",
       "timer.unit": "分",
-      "timer.settings": "設定"
+      "timer.settings": "設定",
+      "timer.schedule_failed": "タイマーを設定できませんでした。入力と進行状況は保持されています。再試行してください。"
     }
   },
   "defaultSize": {

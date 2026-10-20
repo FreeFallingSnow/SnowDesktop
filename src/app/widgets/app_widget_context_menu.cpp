@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "app/menus/sort_menu.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
@@ -6,6 +7,7 @@
 #include "ui/menu/right_click_contract.h"
 #include "widget/packages/widget_removal.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/file_category_auto_collect_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 
 #include <commctrl.h>
@@ -15,6 +17,9 @@
 
 namespace
 {
+constexpr UINT kDockChooseIcon = 43770;
+constexpr UINT kDockRestoreIcon = 43771;
+constexpr UINT kDockBeautifyIcon = 43786, kDockInheritIcon = 43787;
 bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
     const std::wstring& widgetTitle)
 {
@@ -324,6 +329,11 @@ void DesktopApp::ShowWidgetContextMenu(
     const auto menuWidgetId = widget.id;
     const auto menuPackageId = widget.packageId;
     const auto menuWidgetType = widget.type;
+    const bool dockIconMenu = ((dockRenameAnchor.has_value() && widget.gridCell.pageId == kDockPageId) ||
+        (snowdesktop::single_cell_widget::IsSingleCell(widget) && widget.singleCellIconMode)) &&
+        (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories ||
+         widget.type == DesktopWidgetType::CollectionGroup || widget.type == DesktopWidgetType::FileGroup ||
+         widget.type == DesktopWidgetType::FolderMapping);
     if (widget.type == DesktopWidgetType::FileGroup)
     {
         effectiveSourceIndex =
@@ -368,7 +378,62 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
     HMENU detailsMenu = nullptr;
+    HMENU autoCollectMenu = nullptr;
+    std::vector<std::wstring> autoCollectCategories;
+    const auto appendAutoCollectMenu = [&]() {
+        autoCollectMenu = CreatePopupMenu();
+        if (!autoCollectMenu) return;
+        AppendMenuW(autoCollectMenu,
+            MF_STRING | (effectiveSource.autoCollect &&
+                effectiveSource.autoCollectCategoryIds.empty() ? MF_CHECKED : 0),
+            kContextWidgetAutoCollectAll, _LW("app.interact.auto_collect_all"));
+        setFluentIcon(autoCollectMenu, kContextWidgetAutoCollectAll,
+            snowdesktop::menu_fluent_glyphs::kCollectItems);
+        AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
+        for (const auto& category : GetCategoryOrder(categorySettings_))
+        {
+            if (category == L"all") continue;
+            const UINT commandId = kContextWidgetAutoCollectCategoryFirst +
+                static_cast<UINT>(autoCollectCategories.size());
+            if (commandId > kContextWidgetAutoCollectCategoryLast) break;
+            autoCollectCategories.push_back(category);
+            const bool checked = effectiveSource.autoCollect &&
+                snowdesktop::file_category_auto_collect_rules::Matches(
+                    effectiveSource, category);
+            AppendMenuW(autoCollectMenu, MF_STRING | (checked ? MF_CHECKED : 0),
+                commandId, GetCategoryLabel(categorySettings_, category).c_str());
+            setFluentIcon(autoCollectMenu, commandId,
+                snowdesktop::menu_fluent_glyphs::kCategoryBar);
+        }
+        AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(autoCollectMenu,
+            MF_STRING | (!effectiveSource.autoCollect ? MF_CHECKED : 0),
+            kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect_off"));
+        setFluentIcon(autoCollectMenu, kContextWidgetToggleAutoCollect,
+            snowdesktop::menu_fluent_glyphs::kAutoCollect);
+        const auto label = statusLabel(_LW("app.interact.auto_collect"),
+            effectiveSource.autoCollect ? _LW("app.interact.on") : _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(autoCollectMenu), label.c_str());
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(autoCollectMenu),
+            snowdesktop::menu_fluent_glyphs::kAutoCollect);
+    };
     const auto appendDetailsMenu = [&]() {
+        HMENU columnsMenu = CreatePopupMenu();
+        if (columnsMenu)
+        {
+            const int selected = snowdesktop::list_detail_rules::ListColumns(widget);
+            for (int columns = 1; columns <= 4; ++columns)
+            {
+                const UINT id = kContextWidgetListColumnsFirst + columns - 1;
+                AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
+                    id, std::to_wstring(columns).c_str());
+            }
+            AppendMenuW(menu, MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));
+            setFluentIcon(menu, reinterpret_cast<UINT_PTR>(columnsMenu),
+                snowdesktop::menu_fluent_glyphs::kContentLayout);
+        }
         detailsMenu = CreatePopupMenu();
         if (!detailsMenu) return;
         AppendMenuW(detailsMenu,
@@ -410,7 +475,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     const auto appendFanToggle = [&]() {
-        if (widget.gridCell.pageId != kDockPageId) return;
+        if (widget.gridCell.pageId != kDockPageId && popupWidgetIndex_ != widgetIndex) return;
         const auto label = statusLabel(_LW("app.interact.popup_fan"),
             widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
         AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
@@ -422,6 +487,16 @@ void DesktopApp::ShowWidgetContextMenu(
     bool luaElementMenu = false;
     std::optional<POINT> resolvedLuaLocalPoint;
     HMENU demoCategoryMenu = nullptr;
+
+    if (snowdesktop::single_cell_widget::IsSingleCell(widget) && widget.gridCell.pageId != kDockPageId)
+    {
+        const auto label = statusLabel(_LW("app.interact.single_cell_display"),
+            widget.singleCellIconMode ? _LW("app.interact.single_cell_icon")
+                : _LW("app.interact.single_cell_component"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleSingleCellMode, label.c_str());
+        setFluentIcon(menu, kContextWidgetToggleSingleCellMode,
+            snowdesktop::menu_fluent_glyphs::kCollection);
+    }
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -499,14 +574,7 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetManualCollect,
                 _LW("app.interact.collect_now"));
-            const std::wstring autoCollectLabel = statusLabel(
-                _LW("app.interact.auto_collect"),
-                effectiveSource.autoCollect
-                    ? _LW("app.interact.on")
-                    : _LW("app.interact.off"));
-            AppendMenuW(menu, MF_STRING,
-                kContextWidgetToggleAutoCollect,
-                autoCollectLabel.c_str());
+            appendAutoCollectMenu();
         }
         else if (effectiveSource.type ==
                  DesktopWidgetType::FolderMapping)
@@ -552,13 +620,7 @@ void DesktopApp::ShowWidgetContextMenu(
             kContextNewMenu, _LW("app.menu.new"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
-        const std::wstring autoCollectLabel = statusLabel(
-            _LW("app.interact.auto_collect"),
-            widget.autoCollect
-                ? _LW("app.interact.on")
-                : _LW("app.interact.off"));
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleAutoCollect,
-            autoCollectLabel.c_str());
+        appendAutoCollectMenu();
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
         appendDetailsMenu();
@@ -787,8 +849,6 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
         snowdesktop::menu_fluent_glyphs::kCollectItems);
-    setFluentIcon(menu, kContextWidgetToggleAutoCollect,
-        snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
         snowdesktop::menu_fluent_glyphs::kContentLayout);
     if (detailsMenu)
@@ -851,6 +911,28 @@ void DesktopApp::ShowWidgetContextMenu(
         setFluentIcon(menu,
             reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
+    if (dockIconMenu)
+    {
+        const auto iconMenu = CreatePopupMenu();
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("iconLibrary.personalization"));
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF592");
+        AppendMenuW(iconMenu, MF_STRING, kDockChooseIcon, _LW("iconLibrary.change"));
+        setFluentIcon(iconMenu, kDockChooseIcon, L"\uF489"); // image_24_regular
+        if (!widget.dockIconAssetId.empty())
+        {
+            AppendMenuW(iconMenu, MF_STRING, kDockRestoreIcon, _LW("iconLibrary.restore"));
+            setFluentIcon(iconMenu, kDockRestoreIcon, L"\uF19A"); // arrow_undo_24_regular
+        }
+        AppendMenuW(iconMenu, MF_STRING, kDockBeautifyIcon, _LW("iconAppearance.edit"));
+        setFluentIcon(iconMenu, kDockBeautifyIcon, L"\uF592");
+        if (iconAppearanceOverrides_.contains(L"widget:" + widget.id))
+        {
+            AppendMenuW(iconMenu, MF_STRING, kDockInheritIcon, _LW("iconAppearance.inherit"));
+            setFluentIcon(iconMenu, kDockInheritIcon, L"\uF19A");
+        }
+    }
+
     RestoreInteractionInputFocus();
     snowdesktop::shell_extensions::Request shellRequest;
     if (effectiveSourceIndex < widgets_.size() &&
@@ -865,6 +947,23 @@ void DesktopApp::ShowWidgetContextMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (dockIconMenu && (command == kDockBeautifyIcon || command == kDockInheritIcon))
+    {
+        RestoreDesktopWindowLayer();
+        const auto target = L"widget:" + menuWidgetId;
+        if (command == kDockBeautifyIcon) OpenIconAppearance(target);
+        else { snowdesktop::IconAppearanceRequest request; request.action = "inherit"; request.target = target; (void)EditIconAppearance(request); }
+        return;
+    }
+    if (dockIconMenu && (command == kDockChooseIcon || command == kDockRestoreIcon))
+    {
+        RestoreDesktopWindowLayer();
+        if (command == kDockChooseIcon) OpenDockIconLibrary(menuWidgetId);
+        else if (!SetDockIconAsset(menuWidgetId, {}))
+            MessageBoxW(hwnd_, _LW("iconLibrary.saveFailed"), L"SnowDesktop", MB_OK | MB_ICONWARNING);
+        return;
+    }
 
     if (command == kContextWidgetOpenComponentPanel && luaElementMenu)
     {
@@ -929,8 +1028,10 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.listColumns = source.listColumns;
             dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
             dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = source.dateHeaders;
             dockFolderPopupWidget_.categoryTabOrder = source.categoryTabOrder;
             dockFolderPopupWidget_.activeCategoryId = source.activeCategoryId;
             dockFolderPopupWidget_.fanPopup = source.fanPopup;
@@ -974,11 +1075,59 @@ void DesktopApp::ShowWidgetContextMenu(
     };
 
     bool needsDesktopFocus = true;
+    if (command == kContextWidgetAutoCollectAll ||
+        (command >= kContextWidgetAutoCollectCategoryFirst &&
+            command <= kContextWidgetAutoCollectCategoryLast))
+    {
+        if (effectiveSourceIndex < widgets_.size() &&
+            widgets_[effectiveSourceIndex].type == DesktopWidgetType::FileCategories)
+        {
+            auto& source = widgets_[effectiveSourceIndex];
+            if (command == kContextWidgetAutoCollectAll)
+            {
+                source.autoCollect = true;
+                source.autoCollectCategoryIds.clear();
+            }
+            else
+            {
+                const size_t categoryIndex = command - kContextWidgetAutoCollectCategoryFirst;
+                if (categoryIndex < autoCollectCategories.size())
+                    snowdesktop::file_category_auto_collect_rules::ToggleCategory(
+                        source, autoCollectCategories[categoryIndex]);
+            }
+            EnforceAutoCollectFileCategorySelection(effectiveSourceIndex);
+            ApplyAutoCollectFileCategoryWidgets();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+            refreshOpenPopupDisplay();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+    }
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
 
     switch (command)
     {
+    case kContextWidgetToggleSingleCellMode:
+        if (const size_t targetIndex = FindWidgetIndexById(menuWidgetId);
+            targetIndex < widgets_.size() && snowdesktop::single_cell_widget::IsSingleCell(widgets_[targetIndex]))
+        {
+            SelectWidgetOnly(targetIndex);
+            const bool previous = widgets_[targetIndex].singleCellIconMode;
+            widgets_[targetIndex].singleCellIconMode = !widgets_[targetIndex].singleCellIconMode;
+            if (!SaveLayoutSlots())
+            {
+                widgets_[targetIndex].singleCellIconMode = previous;
+                break;
+            }
+            InvalidateDragStaticScene();
+            for (const auto& container : containers_)
+                if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+                    view && view->GetWidgetData() == &widgets_[targetIndex]) view->InvalidateSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        break;
     case kContextWidgetOpen:
     {
         POINT clientPoint = screenPoint;
@@ -1018,8 +1167,23 @@ void DesktopApp::ShowWidgetContextMenu(
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         break;
+    case kContextWidgetListColumnsFirst:
+    case kContextWidgetListColumnsFirst + 1:
+    case kContextWidgetListColumnsFirst + 2:
+    case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
-        widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+        if (command == kContextWidgetToggleListMode)
+            widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+        else
+        {
+            auto& view = widgets_[widgetIndex];
+            if (!view.listMode) break;
+            snowdesktop::list_detail_rules::SetListColumns(view,
+                static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
+            view.showDetails = snowdesktop::list_detail_rules::HasMetadataColumns(
+                view.detailShowModified, view.detailShowType, view.detailShowSize);
+            view.scrollOffset = 0;
+        }
         for (auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -1064,6 +1228,7 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         if (enabling)
         {
+            detailWidget.listColumns = 1;
             const snowdesktop::list_detail_rules::DividerPositions positions{
                 detailWidget.detailModifiedPosition,
                 detailWidget.detailTypePosition,
@@ -1119,15 +1284,7 @@ void DesktopApp::ShowWidgetContextMenu(
             widgets_[effectiveSourceIndex].type !=
                 DesktopWidgetType::FileCategories)
             break;
-        widgets_[effectiveSourceIndex].autoCollect =
-            !widgets_[effectiveSourceIndex].autoCollect;
-        if (widgets_[effectiveSourceIndex].autoCollect)
-        {
-            EnforceSingleAutoCollectFileCategory(
-                effectiveSourceIndex);
-            CollectFileCategoryWidget(
-                effectiveSourceIndex, false);
-        }
+        widgets_[effectiveSourceIndex].autoCollect = false;
         RebuildContainersAndItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1291,6 +1448,8 @@ void DesktopApp::ShowWidgetContextMenu(
             FinalizeCloseCollectionPopup();
         }
         const std::wstring deletedWidgetId = widgets_[widgetIndex].id;
+        const bool deletedLuaInstance =
+            widgets_[widgetIndex].type == DesktopWidgetType::LuaScript;
         if (widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup)
         {
             if (popupWidgetIndex_ < widgets_.size() &&
@@ -1308,8 +1467,6 @@ void DesktopApp::ShowWidgetContextMenu(
             ReleaseFileGroupChildren(widgetIndex);
         }
         ReleaseDesktopItemsFromWidget(widgetIndex);
-        if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
-            widgetEngine_->DeleteWidgetInstance(widgets_[widgetIndex].id);
         for (auto& group : widgets_)
         {
             if (group.id == deletedWidgetId ||
@@ -1338,6 +1495,12 @@ void DesktopApp::ShowWidgetContextMenu(
         ApplyPageMapping();
         LayoutItems();
         RebuildContainersAndItems();
+        // Remove the model and rebuild its wrappers before retiring pixels.
+        // Runtime disposal can invalidate surfaces or pump paints; it must
+        // observe no owner and no retained content/backdrop to redraw.
+        RemoveDesktopWidgetComposition(deletedWidgetId);
+        if (deletedLuaInstance && widgetEngine_)
+            widgetEngine_->DeleteWidgetInstance(deletedWidgetId);
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

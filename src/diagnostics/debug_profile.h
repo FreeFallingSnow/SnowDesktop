@@ -38,7 +38,8 @@ bool ValidateDesktop(const Paths& paths, const std::filesystem::path& desktop,
     const std::vector<std::filesystem::path>& systemDesktops, std::string& error);
 bool Prepare(const Paths& paths, const Configuration& config,
     const std::vector<std::filesystem::path>& systemDesktops, std::string& error);
-// Never removes the profile root or Desktop. Refuses reparse points before deletion.
+// Preserves the profile root, Desktop and data/ShellHook runtime cache (DLLs may
+// remain mapped after a host exits). Refuses reparse points before deletion.
 bool Clear(const Paths& paths, std::string& error);
 bool Initialize(const std::filesystem::path& normalData,
     const std::vector<std::filesystem::path>& systemDesktops, std::string& error);

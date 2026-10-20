@@ -74,6 +74,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::DesktopStyle:
     case SettingsPage::WidgetBehavior:
     case SettingsPage::ThemeManager:
+    case SettingsPage::IconLibrary:
     case SettingsPage::QuickNavigation:
     case SettingsPage::DesktopCategories:
     case SettingsPage::AppearanceTheme:

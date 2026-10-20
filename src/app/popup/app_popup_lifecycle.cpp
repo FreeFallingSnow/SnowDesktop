@@ -125,15 +125,25 @@ TryActivateDockPopupFromMenuPointerPress(
 }
 
 void DesktopApp::OpenDockFolderPopupAt(
-    size_t entryIndex, POINT anchorPoint)
+    size_t entryIndex, POINT anchorPoint, size_t mappingWidgetIndex)
 {
-    if (entryIndex >= dockEntries_.size() ||
+    const bool standaloneMapping = mappingWidgetIndex < widgets_.size();
+    if (standaloneMapping && widgets_[mappingWidgetIndex].type != DesktopWidgetType::FolderMapping) return;
+    if (!standaloneMapping && (entryIndex >= dockEntries_.size() ||
         IsLogicalDockEntryType(dockEntries_[entryIndex].type) ||
-        !IsFolderDockEntry(dockEntries_[entryIndex]))
+        !IsFolderDockEntry(dockEntries_[entryIndex])))
         return;
+    DockEntry entry;
+    if (standaloneMapping)
+    {
+        entry.type = DockEntryType::FolderMapping;
+        entry.reference = widgets_[mappingWidgetIndex].id;
+    }
+    else entry = dockEntries_[entryIndex];
 
     pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
+    ResetDockTrayPopup();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
@@ -158,7 +168,6 @@ void DesktopApp::OpenDockFolderPopupAt(
 
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
-    const DockEntry entry = dockEntries_[entryIndex];
     bool targetPending = false;
     const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const std::wstring sourceId =
@@ -223,9 +232,11 @@ void DesktopApp::OpenDockFolderPopupAt(
         entry.folderItemKeys;
     dockFolderPopupWidget_.listMode =
         entry.listMode;
+    dockFolderPopupWidget_.listColumns = entry.listColumns;
     dockFolderPopupWidget_.fanPopup = entry.fanPopup;
     dockFolderPopupWidget_.showSearchBox = entry.showSearchBox;
     dockFolderPopupWidget_.showFileCategories = entry.showFileCategories;
+    dockFolderPopupWidget_.dateHeaders = entry.dateHeaders;
     dockFolderPopupWidget_.categoryTabOrder = entry.categoryTabOrder;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
@@ -275,8 +286,10 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.listColumns = widgets_[widgetIndex].listColumns;
             dockFolderPopupWidget_.showSearchBox = widgets_[widgetIndex].showSearchBox;
             dockFolderPopupWidget_.showFileCategories = widgets_[widgetIndex].showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = widgets_[widgetIndex].dateHeaders;
             dockFolderPopupWidget_.categoryTabOrder = widgets_[widgetIndex].categoryTabOrder;
             dockFolderPopupWidget_.activeCategoryId = widgets_[widgetIndex].activeCategoryId;
             dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
@@ -369,6 +382,9 @@ void DesktopApp::OpenDockFolderPopupAt(
             }
         }
     }
+    if (standaloneMapping)
+        for (const auto& page : gridPages_)
+            if (page.id == widgets_[mappingWidgetIndex].gridCell.pageId) { dockPage = &page; break; }
     if (!dockPage)
         dockPage = GetFirstPageGridPage();
     if (dockPage) popupPageId_ = dockPage->id;
@@ -513,13 +529,22 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    if (listTitleHoverPopup_) ClearListTitleHover();
     if (auto* view = GetCategorizedPopupView())
     {
         view->EndCategoryTabDrag(false);
         view->EndSearchPointerSelection();
         view->SetSearchFocused(false);
-        if (IsGroupWidgetType(view->GetWidgetData()->type)) view->SetPopupFrame(nullptr);
+        view->SetPopupFrame(nullptr);
     }
+    // A date-grouped folder can have projected its live view even when a
+    // later menu action hides every categorized control before closing.
+    const auto* closingWidget = GetOpenPopupWidget();
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            view && view->GetWidgetData() == closingWidget && view->IsPopupHosted())
+            view->SetPopupFrame(nullptr);
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupFrame(nullptr);
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();
@@ -536,8 +561,9 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_)
         return;
+    ResetDockTrayPopup();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     ClearPopupDragTarget();
@@ -611,7 +637,7 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
     CancelRenameClick();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_)
         return;
     if (popupAnimation_.IsClosing())
         return;

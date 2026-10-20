@@ -1,8 +1,11 @@
 #include "settings/settings_controller.h"
 #include "settings/settings_ipc_services.h"
 #include "settings/settings_ipc_values.h"
+#include "settings/settings_search_catalog.h"
 #include "desktop/desktop_style_presets.h"
+#include "winui/category_creation_acknowledgement.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -132,7 +135,9 @@ public:
     SettingsDomain commitDomains = SettingsDomain::None;
     GeneralSettings committedGeneral;
     DockSettings committedDock;
+    DesktopDisplaySettings committedDesktop;
     float previewedAlpha = 0.0f;
+    float previewedDockEdgeDistanceScale = 1.0f;
     SettingsRoute route;
     SettingsActionStatus nextPreviewStatus =
         SettingsActionStatus::Succeeded;
@@ -149,6 +154,7 @@ public:
         ++previewCount;
         previewDomains |= domains;
         previewedAlpha = snapshot.values.personalization.widgetAlpha;
+        previewedDockEdgeDistanceScale = snapshot.values.dock.edgeDistanceScale;
         if (nextPreviewStatus == SettingsActionStatus::Busy)
             return SettingsActionResult::Busy(L"preview busy");
         if (nextPreviewStatus == SettingsActionStatus::Failed)
@@ -165,6 +171,7 @@ public:
         commitDomains |= domains;
         committedGeneral = snapshot.values.general;
         committedDock = snapshot.values.dock;
+        committedDesktop = snapshot.values.desktop;
         if (duringCommit) duringCommit();
         if (nextCommitStatus == SettingsActionStatus::Busy)
             return SettingsActionResult::Busy(L"commit busy");
@@ -280,7 +287,7 @@ void TestRoutes()
             legacyTheme.page == SettingsPage::ContextMenu &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             edgeHighlight.page == SettingsPage::AppearanceTheme &&
-            legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
+            legacyTabHeight.page == SettingsPage::AppearanceDesktopIcons &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&
             legacyCounts.focusId == "desktop.categoryCounts",
@@ -294,9 +301,9 @@ void TestRoutes()
     const auto transformCursors = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.widgetTransformCursors"));
-    Check(transformCursors.page == SettingsPage::AppearanceWidgets &&
+    Check(transformCursors.page == SettingsPage::WidgetBehavior &&
             transformCursors.focusId == "personalization.widgetTransformCursors",
-        "component transform cursor links reach Components and layout");
+        "component transform cursor links reach the widget preferences page");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));
@@ -339,6 +346,12 @@ void TestRoutes()
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::Desktop, "desktop.iconSize"));
+    for (const auto focus : {"desktop.fanTitleFontSize", "desktop.titleOverflow"})
+    {
+        const auto iconText = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Desktop, focus));
+        Check(iconText.page == SettingsPage::AppearanceDesktopIcons && iconText.focusId == focus,
+            "legacy desktop title settings remain reachable after moving typography to Fonts and icons");
+    }
     const SettingsRoute iconBeautification = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::Desktop, "desktop.iconBeautify.outlineColor"));
@@ -351,13 +364,13 @@ void TestRoutes()
     const SettingsRoute legacyCategoryLayout = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
-    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
-             SettingsPage::AppearanceWidgets})
+    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::DesktopPages,
+             SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceWidgets})
         for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
         {
             const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
-            Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
-                "layout spacing links reach Interface & layout while retaining their focus target");
+            Check(spacing.page == SettingsPage::AppearanceDesktopIcons && spacing.focusId == focus,
+                "layout spacing links reach Global appearance while retaining their focus target");
         }
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
@@ -367,13 +380,131 @@ void TestRoutes()
     Check(desktopIcons.page == SettingsPage::AppearanceDesktopIcons &&
             iconBeautification.page ==
                 SettingsPage::AppearanceIconBeautification &&
-            desktopTabHeight.page == SettingsPage::AppearanceWidgets &&
+            desktopTabHeight.page == SettingsPage::AppearanceDesktopIcons &&
             desktopTabHeight.focusId == "desktop.categoryLayout" &&
             categoryRules.page == SettingsPage::DesktopCategories &&
-            legacyCategoryLayout.page == SettingsPage::AppearanceWidgets &&
+            legacyCategoryLayout.page == SettingsPage::AppearanceDesktopIcons &&
             pageNavigation.page == SettingsPage::DesktopPages &&
             desktopBehavior.page == SettingsPage::Desktop,
         "legacy focus aliases route appearance, page, category, and behavior tasks to distinct owners");
+
+    struct RelocatedSetting { const char* focus; SettingsPage owner; };
+    const RelocatedSetting relocated[]{
+        {"personalization.font", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.tooltipFontSize", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.cornerRadius", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.barHeight", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.luaWidgetRowHeight", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
+        {"desktop.spacing", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.iconSpacing", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.scrollingIconSpacingY", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.listRowSpacing", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
+        {"quickNav.layout.iconSize", SettingsPage::QuickNavigation},
+        {"quickNav.color.searchBg", SettingsPage::QuickNavigation},
+    };
+    for (const auto& setting : relocated)
+        for (const auto sourcePage : {SettingsPage::Personalization,
+                 SettingsPage::AppearanceWidgets, SettingsPage::AppearanceTheme,
+                 SettingsPage::Widgets, setting.owner})
+        {
+            auto source = SettingsRoute::ForPage(sourcePage, setting.focus);
+            source.guideTopic = "appearance";
+            const auto target = CanonicalizeSettingsRoute(source);
+            const auto expected = sourcePage == SettingsPage::AppearanceTheme && setting.owner == SettingsPage::QuickNavigation
+                ? SettingsPage::AppearanceTheme : setting.owner;
+            Check(target.page == expected && target.focusId == setting.focus &&
+                    target.guideTopic == source.guideTopic &&
+                    CanonicalizeSettingsRoute(target) == target,
+                "relocated global fields preserve their IDs and are canonical after one pass");
+        }
+    for (const auto sourcePage : {SettingsPage::Personalization, SettingsPage::Desktop,
+             SettingsPage::DesktopCategories, SettingsPage::WidgetBehavior,
+             SettingsPage::AppearanceWidgets, SettingsPage::AppearanceDesktopIcons})
+        for (const auto focus : {"desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight"})
+        {
+            auto source = SettingsRoute::ForPage(sourcePage, focus);
+            source.guideTopic = "appearance";
+            const auto target = CanonicalizeSettingsRoute(source);
+            Check(target.page == SettingsPage::AppearanceDesktopIcons &&
+                    target.focusId == "desktop.categoryLayout" &&
+                    target.guideTopic == source.guideTopic &&
+                    CanonicalizeSettingsRoute(target) == target,
+                "shared height aliases preserve their canonical locator under Global appearance");
+        }
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceWidgets)).page ==
+            SettingsPage::AppearanceTheme,
+        "a removed appearance leaf without a field opens the shared theme");
+    auto object = SettingsRoute::ForWidget(L"clock", "personalization.font");
+    Check(CanonicalizeSettingsRoute(object) == object,
+        "a widget field with a global-looking ID remains scoped to its instance");
+    object = SettingsRoute::ForPage(SettingsPage::LargeIcon, "desktop.spacing");
+    object.itemKey = L"object-item";
+    Check(CanonicalizeSettingsRoute(object) == object,
+        "global aliases cannot redirect an object editor out of its object scope");
+}
+
+void TestReadOnlySearchNavigationAndPackageScope()
+{
+    auto store = std::make_shared<FakeStore>();
+    store->loaded.personalization.backgroundPreset = 1;
+    store->loaded.desktop.iconBeautify.enabled = false;
+    store->loaded.dock.showOnlyWhenSummoned = false;
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    Check(controller.Initialize().Succeeded(), "read-only navigation test initializes existing values");
+    const auto before = controller.Snapshot();
+    const auto values = settings_ipc::Pack(before->values);
+    const auto domainRevisions = settings_ipc::Pack(before->domainRevisions);
+    SettingsSearchIndexInput catalog;
+    PopulateSettingsSearchCatalog(catalog, [](std::string_view key) {
+        return std::wstring(key.begin(), key.end());
+    }, false, false);
+    for (const auto focus : {"dock.showOnlyWhenSummoned", "desktop.spacing",
+             "desktop.iconBeautify.outlineColor", "personalization.backgroundColor"})
+    {
+        const auto entry = std::find_if(catalog.staticSettings.begin(), catalog.staticSettings.end(),
+            [&](const auto& descriptor) { return descriptor.focusId == focus; });
+        Check(entry != catalog.staticSettings.end(), "a user task has a catalog destination");
+        if (entry == catalog.staticSettings.end()) continue;
+        const auto route = SettingsRoute::ForPage(entry->page, entry->focusId);
+        Check(controller.Open(route).Succeeded() && host.route == route,
+            "opening a search destination dispatches navigation only");
+        const auto current = controller.Snapshot();
+        Check(settings_ipc::Pack(current->values) == values &&
+                settings_ipc::Pack(current->domainRevisions) == domainRevisions &&
+                current->dirtyDomains == SettingsDomain::None &&
+                current->pendingPreviewDomains == SettingsDomain::None &&
+                current->pendingCommitDomains == SettingsDomain::None,
+            "locating a conditional setting does not turn on its parent, select custom, or change stored values");
+    }
+    auto permissions = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+    permissions.itemKey = L"org.snowdesktop.天气包";
+    Check(permissions.IsValid() && controller.Open(permissions).Succeeded() && host.route == permissions &&
+            CanonicalizeSettingsRoute(permissions) == permissions,
+        "the controller forwards the exact permission package key without changing its scope");
+    const auto routeRevision = controller.Snapshot()->revision;
+    const auto routeCount = host.routeCount;
+    for (const auto page : {SettingsPage::General, SettingsPage::WidgetSettings, SettingsPage::Widgets})
+    {
+        auto invalid = permissions;
+        invalid.page = page;
+        if (page == SettingsPage::Widgets) invalid.focusId = "widgets.installed";
+        if (page == SettingsPage::WidgetSettings) invalid.widgetInstanceId = L"weather-instance";
+        Check(!invalid.IsValid() && !controller.Open(invalid).Succeeded(),
+            "package keys are rejected outside the exact permissions destination");
+    }
+    auto invalid = permissions;
+    invalid.widgetInstanceId = L"weather-instance";
+    Check(!invalid.IsValid() && !controller.Open(invalid).Succeeded() &&
+            controller.Snapshot()->route == permissions && controller.Snapshot()->revision == routeRevision &&
+            host.routeCount == routeCount,
+        "invalid package routes do not publish a replacement or reach the host");
+    Check(controller.CloseSession().Succeeded() && host.previewCount == 0 && host.commitCount == 0 &&
+            store->personalizationSaveCount == 0 && store->dockSaveCount == 0 &&
+            store->navigationSaveCount == 0 && store->generalSaveCount == 0 && store->categorySaveCount == 0,
+        "search navigation and closing an unchanged session never preview, commit, or save configuration");
 }
 
 void TestLoadRouteAndImmutableSnapshots()
@@ -559,7 +690,7 @@ void TestDesktopStylePresetScope()
             Check(NeedsDesktopStyleAnimations(key, changedHover) && NeedsDesktopStyleAnimations(key, changedLaunch),
                 "changing either recommended effect makes the animation choice meaningful again");
             dock.hoverScale = 1.25f;
-            dock.windowEffect = 3;
+            dock.windowEffect = 4;
             Check(!NeedsDesktopStyleAnimations(key, dock),
                 "unrelated magnification scale and window effects do not cause an animation prompt");
         }
@@ -808,6 +939,113 @@ void TestFailureRetryAndExplicitApply()
             store->categorySaveCount == 1 &&
             g_categoryNormalizationCount == normalizationsBeforeDraft + 1,
         "explicit apply normalizes once and persists a category draft");
+}
+
+void TestCategoryCreationAcknowledgesPersistedSnapshot()
+{
+    auto store = std::make_shared<FakeStore>();
+    SettingsController controller(store);
+    (void)controller.Initialize();
+    (void)controller.Open(SettingsRoute::ForPage(SettingsPage::DesktopCategories));
+    const auto generation = controller.Generation();
+    const std::wstring createdId = L"custom-pending-persistence";
+    Check(!winui::CanAcknowledgeCategoryCreation(*controller.Snapshot(), createdId, generation),
+        "a clean snapshot without the newly created category cannot acknowledge it");
+
+    // Observe the real controller's publications, including its optimistic
+    // draft and save result. Only the persistence boundary injects failure.
+    struct Observation
+    {
+        SettingsController::SnapshotPtr snapshot;
+        bool canAcknowledge = false;
+    };
+    std::vector<Observation> observations;
+    controller.SetSnapshotChangedCallback([&](auto snapshot) {
+        const bool canAcknowledge = winui::CanAcknowledgeCategoryCreation(*snapshot, createdId, generation);
+        observations.push_back({std::move(snapshot), canAcknowledge});
+    });
+    CategorySettings category = controller.Snapshot()->values.category;
+    category.rules.push_back({createdId, L"待保存的分类 日本語", L"PDF DOCX"});
+    store->failingDomains = SettingsDomain::Category;
+    controller.UpdateCategory(std::move(category), SettingsUpdateMode::PreviewAndCommit);
+    const auto draft = controller.Snapshot();
+    Check(!observations.empty() && !observations.back().canAcknowledge &&
+            store->categorySaveCount == 0,
+        "publishing a new category before persistence cannot acknowledge the input form");
+    const auto failed = controller.FlushPending();
+    Check(!failed.Succeeded() && store->categorySaveCount == 1 &&
+            controller.Snapshot()->retryRequired &&
+            std::none_of(observations.begin(), observations.end(),
+                [](const auto& observation) { return observation.canAcknowledge; }),
+        "a failed category save never acknowledges creation in any intermediate snapshot");
+
+    const auto failedSnapshot = controller.Snapshot();
+    store->failingDomains = SettingsDomain::None;
+    Check(controller.RetryPending(), "a failed category save can be retried without recreating the rule");
+    Check(!observations.back().canAcknowledge,
+        "requesting a retry still cannot acknowledge an unsaved category");
+    const auto retried = controller.FlushPending();
+    const auto saved = controller.Snapshot();
+    Check(retried.Succeeded() && store->categorySaveCount == 2 &&
+            !observations.empty() && observations.back().canAcknowledge,
+        "the successful save publication acknowledges the same pending category");
+    Check(saved->revision > failedSnapshot->revision &&
+            saved->domainRevisions.category == failedSnapshot->domainRevisions.category &&
+            saved->domainRevisions.category == draft->domainRevisions.category &&
+            !HasSettingsDomain(saved->dirtyDomains, SettingsDomain::Category) &&
+            !HasSettingsDomain(saved->pendingCommitDomains, SettingsDomain::Category),
+        "acknowledgement observes save-result flags even when the category domain revision stays unchanged");
+    Check(!winui::CanAcknowledgeCategoryCreation(*saved, L"custom-not-created", generation) &&
+            !winui::CanAcknowledgeCategoryCreation(*saved, createdId, generation + 1),
+        "saving cannot acknowledge a missing identity or a creation from a different session");
+
+    GeneralSettings unrelated = saved->values.general;
+    unrelated.demoModeEnabled = !unrelated.demoModeEnabled;
+    controller.UpdateGeneral(std::move(unrelated), SettingsUpdateMode::Commit);
+    Check(HasSettingsDomain(controller.Snapshot()->dirtyDomains, SettingsDomain::General) &&
+            observations.back().canAcknowledge,
+        "an unrelated dirty settings domain does not hide the saved category acknowledgement");
+    controller.SetSnapshotChangedCallback({});
+}
+
+void TestDockEdgeDistancePreviewAndCommit()
+{
+    auto store = std::make_shared<FakeStore>();
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    (void)controller.Initialize();
+    for (const float scale : {0.1f, 1.0f, 5.0f})
+    {
+        auto settings = controller.Snapshot()->values.dock;
+        settings.edgeAttached = false;
+        settings.edgeDistanceScale = scale;
+        controller.UpdateDock(settings, SettingsUpdateMode::PreviewAndCommit);
+        Check(controller.FlushPending().Succeeded() &&
+                host.previewedDockEdgeDistanceScale == scale &&
+                store->lastSavedDock.edgeDistanceScale == scale,
+            "island distance previews and persists the entire 10%-500% range");
+        settings.edgeAttached = true;
+        controller.UpdateDock(settings, SettingsUpdateMode::Commit);
+        Check(controller.FlushPending().Succeeded() &&
+                store->lastSavedDock.edgeDistanceScale == scale,
+            "switching to an edge-attached Dock retains the island distance");
+    }
+    auto invalid = controller.Snapshot()->values.dock;
+    invalid.edgeDistanceScale = 0.0f;
+    controller.UpdateDock(invalid, SettingsUpdateMode::Commit);
+    Check(controller.FlushPending().Succeeded() &&
+            store->lastSavedDock.edgeDistanceScale == 0.1f,
+        "external distances below the minimum are normalized before persistence");
+    invalid.edgeDistanceScale = 9.0f;
+    controller.UpdateDock(invalid, SettingsUpdateMode::Commit);
+    Check(controller.FlushPending().Succeeded() &&
+            store->lastSavedDock.edgeDistanceScale == 5.0f,
+        "external distances above the maximum are normalized before persistence");
+    Check(ScaleDockEdgeDistance(20, 0.1f) == 2 &&
+            ScaleDockEdgeDistance(20, 1.0f) == 20 &&
+            ScaleDockEdgeDistance(20, 5.0f) == 100 &&
+            ScaleDockEdgeDistance(0, 5.0f) == 0,
+        "edge gaps scale relative to the original margin without inventing a zero-margin gap");
 }
 
 void TestReloadAndExternalSynchronization()
@@ -1074,6 +1312,8 @@ void TestDesktopHostPersistenceBoundary()
     DesktopDisplaySettings desktop =
         withoutHost.Snapshot()->values.desktop;
     desktop.dockEnabled = true;
+    desktop.scrollingIconSpacingYScale = 5.0f;
+    desktop.listRowSpacingScale = 4.5f;
     withoutHost.UpdateDesktop(desktop, SettingsUpdateMode::Commit);
     Check(!withoutHost.FlushPending().Succeeded() &&
             HasSettingsDomain(
@@ -1093,6 +1333,10 @@ void TestDesktopHostPersistenceBoundary()
                 withHost.Snapshot()->dirtyDomains,
                 SettingsDomain::Desktop),
         "layout-backed desktop values clear only after host persistence");
+    Check(host.committedDesktop.scrollingIconSpacingYScale == 5.0f &&
+            host.committedDesktop.listRowSpacingScale == 4.5f &&
+            host.committedDesktop.iconSpacingScale == desktop.iconSpacingScale,
+        "committing vertical content spacing above 200 percent preserves both values and the separate global spacing");
 }
 
 void TestReentrantCommitKeepsNewerValuePending()
@@ -1406,6 +1650,7 @@ int main()
     if (childResult >= 0) return childResult;
     failures += RunSettingsIpcTests();
     TestRoutes();
+    TestReadOnlySearchNavigationAndPackageScope();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
     TestDesktopStylePresetScope();
@@ -1413,7 +1658,9 @@ int main()
     TestTypedHotkeyRequestTransport();
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
+    TestCategoryCreationAcknowledgesPersistedSnapshot();
     TestReloadAndExternalSynchronization();
+    TestDockEdgeDistancePreviewAndCommit();
     TestSummonOnlyLinkedPreferencesRemainBaseValues();
     TestSystemTaskbarFieldSynchronization();
     TestLoadFailureAndOpenRetry();

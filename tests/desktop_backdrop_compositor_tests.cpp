@@ -1,5 +1,7 @@
 #include "../src/app/render/desktop_backdrop_compositor.h"
 #include "../src/app/render/desktop_backdrop_update_rules.h"
+#include "app/render/widget_icon_backdrops.h"
+#include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
@@ -8,6 +10,10 @@
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_preferences.h"
 #include "ui/render/native_tooltip_content.h"
+#include "system/panel/system_panel_backdrop_placement.h"
+#include "dock/dock_desktop_layer_cases.h"
+#include "navigation/quick_navigation_attraction_render_cases.h"
+#include <commctrl.h>
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
@@ -123,10 +129,17 @@ int CheckDockTransitionShellExclusion()
     const std::array<RECT, 2> aligned{{{0, 0, 1280, 720}, {1280, 0, 2560, 1080}}};
     const auto alignedHost = ResolveDockWindowNonFullscreenHostRect({0, 0, 2560, 1080}, aligned);
     check(alignedHost && !covers(*alignedHost, aligned[0]) && !covers(*alignedHost, aligned[1]),
-        "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
+          "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
     const std::array<RECT, 2> staggered{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}}};
-    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 1280, 720}, staggered),
-        "unsafe staggered monitor unions use native fallback rather than clipping substantial content");
+    const RECT staggeredBounds{-1280, -200, 1280, 720};
+    const auto staggeredHost = ResolveDockWindowNonFullscreenHostRect(staggeredBounds, staggered);
+    check(staggeredHost && !covers(*staggeredHost, staggered[0]) && !covers(*staggeredHost, staggered[1]) &&
+              staggeredHost->left - staggeredBounds.left <= 1 && staggeredHost->top - staggeredBounds.top <= 1 &&
+              staggeredBounds.right - staggeredHost->right <= 1 && staggeredBounds.bottom - staggeredHost->bottom <= 1,
+          "offset displays use combined one-pixel guards without clipping substantial content");
+    const std::array<RECT, 3> interior{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}, {1280, 200, 2560, 920}}};
+    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 2560, 920}, interior),
+          "a fully interior display retains native fallback when one-pixel outer guards cannot uncover it");
     // Called only on the private fixture desktop. Use the production HWND and
     // host-bounds rule without capturing or minimizing an external application.
     for (int generation = 0; generation < 2; ++generation)
@@ -437,6 +450,59 @@ int CheckHiddenPopupKeyboardFocus()
                 !IsWindowVisible(helper),
             "a real popup backdrop receives its Shell exclusion before first show");
 
+        // Negative control: a later content-only promotion leaves another
+        // topmost window between the visible content and its retained glass.
+        // Substitute only the host WndProc dispatch, retaining real User32
+        // ordering and the production backdrop-placement handler.
+        struct PlacementContext { DesktopBackdropCompositor* glass; bool enabled; unsigned notifications=0; } placement{&glass,false};
+        const auto followPlacement=[](HWND window,UINT message,WPARAM wparam,LPARAM lparam,
+            UINT_PTR,DWORD_PTR data)->LRESULT {
+            auto& state=*reinterpret_cast<PlacementContext*>(data);
+            if(message==WM_WINDOWPOSCHANGED&&lparam)
+            {
+                ++state.notifications;
+                snowdesktop::MaintainSystemPanelBackdropPlacement(*state.glass,window,
+                    state.enabled);
+            }
+            return DefSubclassProc(window,message,wparam,lparam);
+        };
+        if(!check(SetWindowSubclass(content.handle,followPlacement,1,
+                reinterpret_cast<DWORD_PTR>(&placement))!=FALSE,
+                "attach only the panel placement dispatch to a private test window"))return;
+        glass.SetPopupWindowPairZOrder(content.handle,HWND_TOPMOST,true);
+        glass.ShowPopupWindowPair(content.handle);
+        // Record why the original fixture was inconclusive: requesting the
+        // current top position need not deliver a native change notification.
+        SetWindowPos(outside.handle,content.handle,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+        const auto probeBefore=placement.notifications;
+        placement.enabled=true;
+        SetWindowPos(content.handle,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        std::cout<<"native unchanged-position probe: notifications="<<placement.notifications-probeBefore
+            <<"; paired="<<(GetWindow(helper,GW_HWNDPREV)==content.handle)<<'\n';
+        for(const bool enabled:{false,true})
+        {
+            placement.enabled=false;
+            glass.Reattach(content.handle);
+            SetWindowPos(outside.handle,HWND_TOPMOST,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+            check(GetWindow(content.handle,GW_HWNDPREV)==outside.handle&&
+                    GetWindow(helper,GW_HWNDPREV)==content.handle,
+                "the fixture begins with an intact pair below another topmost window");
+            const auto before=placement.notifications;
+            placement.enabled=enabled;
+            SetWindowPos(content.handle,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+            check(placement.notifications>before,
+                "real content promotion must deliver a position notification to the production handler");
+            check((GetWindow(helper,GW_HWNDPREV)==content.handle)==enabled,
+                enabled?"content placement restores its retained glass immediately":
+                    "the old content-only promotion leaves the glass behind another window");
+            check(IsWindowVisible(content.handle)&&IsWindowVisible(helper),
+                "placement repair keeps both popup surfaces visible");
+        }
+        RemoveWindowSubclass(content.handle,followPlacement,1);
+        glass.HidePopupWindowPair(content.handle);
+        glass.SetPopupTopmost(false);
+        ShowWindow(outside.handle,SW_HIDE);
+
         enum class Case { Content, Child, DestroyedChild, Outside };
         for (const auto scenario : {Case::Content, Case::Child,
                  Case::DestroyedChild, Case::Outside})
@@ -612,6 +678,7 @@ int RunDesktopBackdropCompositorTests()
         }
         return condition;
     };
+    snowdesktop::test::CheckDockDesktopLayerRestoration(check);
 
     // Like the host, retain the apartment until process exit: the production
     // compositor/DispatcherQueue context is thread-local and outlives fixtures.
@@ -626,6 +693,7 @@ int RunDesktopBackdropCompositorTests()
         return failures;
 
     failures += CheckPopupRoundedEdgeCoverage();
+    failures += snowdesktop::test::CheckQuickNavigationAttractionPixels();
     failures += CheckHiddenPopupKeyboardFocus();
 
     {
@@ -815,6 +883,43 @@ int RunDesktopBackdropCompositorTests()
     check(otherGlass.AddPanel({0, 0, 320, 240}, 18, 24, 2),
         "the second popup has its own backdrop panel");
     otherGlass.EndFrame();
+    {
+        // Exercise the production glass path on owned hidden windows; this
+        // verifies lifecycle and commit behavior, not desktop visual quality.
+        constexpr RECT panel{50, 60, 250, 180};
+        const RECT docks[] = {{140, 200, 170, 225}, {140, 10, 170, 35},
+            {5, 90, 35, 120}, {275, 90, 305, 120}};
+        glass.BeginFrame(true);
+        check(glass.AddPanel(panel, 18, 24, 301), "Attraction registers its rounded glass source");
+        glass.EndFrame();
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        WPARAM completion = 200;
+        for (const RECT dock : docks)
+        {
+            for (const float collapsed : {0.0f, 0.33f, 0.81f, 1.0f, 0.81f, 0.33f, 0.0f})
+            {
+                check(glass.SetAttractionTransform(panel, dock, collapsed, collapsed == 1 ? 0.0f : 1.0f),
+                    "Attraction glass accepts all Dock sides, endpoints and reversals");
+                check(glass.CommitVisualChangesAndNotify(content.handle, kCommitCompleted, ++completion) &&
+                        WaitForCommit(content.handle, completion),
+                    "Attraction geometry and opacity commit on the real shared compositor");
+            }
+            glass.ClearGenieTransform();
+            glass.CommitVisualChanges();
+            check(glass.PanelCount() == 1 && helper && region && GetWindowRgn(helper, region) != ERROR &&
+                    PtInRegion(region, 100, 100) && !PtInRegion(region, 10, 10),
+                "clearing Attraction restores the ordinary glass panel and native region");
+        }
+        check(glass.SetGenieTransform(panel, docks[0], 0, 0.4f, 1.0f) &&
+                glass.SetAttractionTransform(panel, docks[0], 0.4f, 1.0f),
+            "changing the Dock deformation effect rebuilds the glass outline");
+        check(!glass.SetAttractionTransform(panel, RECT{}, 0.4f, 1.0f) && glass.IsAvailable(),
+            "an invalid Attraction anchor restores ordinary glass without losing the compositor");
+        if (region) DeleteObject(region);
+        glass.BeginFrame(true);
+        glass.EndFrame();
+    }
     check(otherGlass.CommitVisualChangesAndNotify(
             otherContent.handle, kCommitCompleted, 1) &&
             WaitForCommit(otherContent.handle, 1),
@@ -842,7 +947,7 @@ int RunDesktopBackdropCompositorTests()
             if (observed) DeleteObject(observed);
             return failures;
         }
-        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101, true),
             "Dock candidate collects new geometry under the stable owner");
         glass.SetOcclusionRect(exclusion);
         check(glass.PanelCount() == 2 && glass.HasPanelContaining(candidate) && !glass.HasPanelContaining(oldPanel),
@@ -1019,6 +1124,116 @@ int RunDesktopBackdropCompositorTests()
     glass.BeginFrame(true); glass.EndFrame();
     check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
         "hiding icons and panels retires their native blur resources");
+
+    {
+        // Native glass lives outside the D2D surface, so inspect its actual
+        // HWND fence as well as the production geometry used by Composition.
+        PopupWindow scrollingContent;
+        DesktopBackdropCompositor scrollingGlass;
+        if (!check(scrollingGlass.InitializePopup(scrollingContent.handle, false, false),
+                "create isolated scrolling-icon native backdrop"))
+            return failures;
+        const HWND helper = FindOwnedBackdrop(scrollingGlass);
+        const auto fenced = [&](int x, int y) {
+            HRGN region = CreateRectRgn(0, 0, 0, 0);
+            const bool inside = region && GetWindowRgn(helper, region) != ERROR &&
+                PtInRegion(region, x, y);
+            if (region) DeleteObject(region);
+            return inside;
+        };
+        constexpr RECT viewport{20, 20, 100, 100};
+        constexpr RECT topIcon{24, 0, 88, 64};
+        constexpr auto circle = snowdesktop::IconBeautifyShape::Circle;
+        scrollingGlass.BeginFrame(true);
+        check(scrollingGlass.AddIconPanel(topIcon, circle, 16, 301),
+            "negative control creates an icon without the missing viewport clip");
+        scrollingGlass.EndFrame();
+        check(fenced(48, 10),
+            "negative control reproduces native blur escaping above the scrolling viewport");
+        scrollingGlass.BeginFrame(true); scrollingGlass.EndFrame();
+
+        snowdesktop::WidgetIconBackdrops widget, sibling;
+        snowdesktop::IconBackdropClip clip{viewport, {}};
+        widget.BeginDraw();
+        widget.Collect({topIcon, circle, 16, 1, false, clip});
+        sibling.BeginDraw();
+        sibling.Collect({{150, 30, 214, 94}, circle, 16, 1, false, {}});
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        sibling.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 10) && fenced(48, 30) && fenced(180, 50),
+            "clipped native glass retains its visible part and unrelated sibling glass");
+
+        // A failed content draw must not publish or retire a candidate glass.
+        widget.BeginDraw();
+        widget.Collect({{24, 80, 88, 144}, circle, 16, 1, false, clip});
+        widget.DiscardDraw();
+        scrollingGlass.BeginFrame(true);
+        widget.Restore(scrollingGlass); sibling.Restore(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(fenced(48, 30) && !fenced(48, 90) && fenced(180, 50),
+            "retained or failed child content keeps the previously completed native icon glass");
+
+        widget.BeginDraw();
+        widget.Collect({{24, 80, 88, 144}, circle, 16, 1, false, clip});
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 30) && fenced(48, 90) && !fenced(48, 110) &&
+                fenced(180, 50) && scrollingGlass.PanelCount() == 2,
+            "partial widget scrolling replaces old blur and clips the bottom without accumulating panels");
+
+        widget.BeginDraw(); // Every icon scrolled out; no DrawIcon call remains.
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 90) && fenced(180, 50) && scrollingGlass.PanelCount() == 1,
+            "an empty partial widget redraw retires its old glass without touching a sibling");
+        sibling.Hide(scrollingGlass); // Deletion need not wait for another paint.
+        check(!fenced(180, 50) && scrollingGlass.PanelCount() == 0 &&
+                scrollingGlass.BlurFactoryCount() == 0,
+            "hiding or removing a widget immediately retires its native icon resources outside a paint");
+        scrollingGlass.BeginFrame(true); sibling.Restore(scrollingGlass); scrollingGlass.EndFrame();
+        check(fenced(180, 50) && scrollingGlass.PanelCount() == 1,
+            "a retained visible widget restores glass without rerasterizing its surface");
+
+        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+        if (!check(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                factory.GetAddressOf())), "create production icon-geometry factory"))
+            return failures;
+        Microsoft::WRL::ComPtr<ID2D1Geometry> geometry;
+        const auto geometryContains = [&](float x, float y) {
+            BOOL inside = FALSE;
+            return geometry && SUCCEEDED(geometry->FillContainsPoint(
+                D2D1::Point2F(x, y), nullptr, &inside)) && inside;
+        };
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                topIcon, nullptr, geometry)) && geometryContains(32, 10),
+            "negative control proves an unclipped icon silhouette covers the escaped pixels");
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                topIcon, &clip, geometry)) && !geometryContains(32, 10) &&
+                geometryContains(32, 30) && !geometryContains(1, 21),
+            "native icon geometry intersects the viewport while preserving the original circular contour");
+
+        Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> rounded;
+        check(SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(20, 20, 100, 100), 28, 28), &rounded)),
+            "create the same outer rounded frame mask as widget content");
+        auto mask = std::make_shared<snowdesktop::IconBackdropGeometryClip>();
+        mask->geometry = rounded;
+        clip.geometry = mask;
+        const RECT cornerIcon{0, 0, 64, 64};
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                cornerIcon, &clip, geometry)) && !geometryContains(21, 21) &&
+                geometryContains(40, 40),
+            "native icon glass also honors the component's rounded outer clipping geometry");
+
+        scrollingGlass.BeginStagedFrame();
+        check(scrollingGlass.AddIconPanel(topIcon, circle, 16, 302, &clip) &&
+                scrollingGlass.ApplyStagedFrame() && !fenced(48, 10) && fenced(48, 30),
+            "staged native icon publication retains its viewport clip");
+    }
 
     // Reproduce the merged-Dock ownership gap with two real native targets.
     // The strip is external, so the Dock's own panel list cannot find it.

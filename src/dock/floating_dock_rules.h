@@ -12,6 +12,27 @@
 namespace snowdesktop::floating_dock_rules
 {
 
+// A window animation borrows promotion only when the user has not already
+// summoned this monitor's Dock. An explicit summon takes over that lifetime.
+class WindowActionPromotion
+{
+public:
+    void Begin(bool alreadyPromoted, bool retain) noexcept
+    {
+        if (retain) temporary_ = false;
+        else if (!alreadyPromoted) temporary_ = true;
+    }
+    void Retain() noexcept { temporary_ = false; }
+    bool Release(bool retain) noexcept
+    {
+        const bool dismiss = temporary_ && !retain;
+        temporary_ = false;
+        return dismiss;
+    }
+private:
+    bool temporary_ = false;
+};
+
 // Use the client area, so maximized windows with title bars are not fullscreen.
 inline bool ShouldBlockFullscreenEdgeSwipe(
     bool enabled, const RECT& client, const RECT& monitor) noexcept
@@ -27,9 +48,110 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
-inline constexpr DWORD kEdgeHoverDelayMs = 250;
 inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
 inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
+inline constexpr ULONGLONG kDesktopLayerRestoreRetryMs = 250;
+
+inline bool IsWindowAbove(HWND upper, HWND lower)
+{
+    if (!upper || !lower || upper == lower)
+        return false;
+    HWND current = GetWindow(upper, GW_HWNDNEXT);
+    for (unsigned visited = 0; current && visited < 4096; ++visited)
+    {
+        if (current == lower)
+            return true;
+        current = GetWindow(current, GW_HWNDNEXT);
+    }
+    return false;
+}
+
+template <typename IsApplicationWindow, typename IsDockWindow>
+HWND LowestDesktopLayerApplication(
+    HWND referenceWindow, IsApplicationWindow&& isApplicationWindow,
+    IsDockWindow&& isDockWindow, bool* scanComplete = nullptr)
+{
+    if (scanComplete) *scanComplete = true;
+    HWND current = GetWindow(referenceWindow, GW_HWNDLAST);
+    for (unsigned visited = 0; current && visited < 4096; ++visited)
+    {
+        if (current != referenceWindow && !isDockWindow(current) &&
+            (GetWindowLongPtrW(current, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+            isApplicationWindow(current))
+        {
+            return current;
+        }
+        current = GetWindow(current, GW_HWNDPREV);
+    }
+    if (scanComplete) *scanComplete = current == nullptr;
+    return nullptr;
+}
+
+// A dismissed Dock must be below applications, not merely non-topmost.
+// Explorer's immediate predecessor can be a Shell/WinUI tool window whose
+// placement is not a usable application-layer anchor. Prefer the lowest real
+// application; use the desktop predecessor only when no application is present.
+template <typename IsApplicationWindow, typename IsDockWindow>
+HWND DesktopLayerInsertAfter(
+    HWND contentWindow, HWND desktopWindow,
+    IsApplicationWindow&& isApplicationWindow, IsDockWindow&& isDockWindow)
+{
+    // GW_HWNDLAST on a topmost Dock searches the topmost group. Explorer's
+    // normal top-level window is the reference for ordinary application order.
+    const HWND referenceWindow = desktopWindow && IsWindow(desktopWindow)
+        ? desktopWindow : contentWindow;
+    if (HWND application = LowestDesktopLayerApplication(
+            referenceWindow, isApplicationWindow, isDockWindow))
+        return application;
+
+    HWND anchor = desktopWindow && IsWindow(desktopWindow)
+        ? GetWindow(desktopWindow, GW_HWNDPREV) : nullptr;
+    for (unsigned visited = 0; anchor && isDockWindow(anchor) && visited < 4096; ++visited)
+        anchor = GetWindow(anchor, GW_HWNDPREV);
+    return anchor && IsWindow(anchor) && anchor != contentWindow &&
+        !isDockWindow(anchor) &&
+        (GetWindowLongPtrW(anchor, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0
+        ? anchor : HWND_NOTOPMOST;
+}
+
+template <typename IsApplicationWindow, typename IsDockWindow>
+bool IsDesktopLayerRestored(
+    HWND contentWindow, HWND desktopWindow,
+    IsApplicationWindow&& isApplicationWindow, IsDockWindow&& isDockWindow)
+{
+    if (!contentWindow || !IsWindow(contentWindow) ||
+        (GetWindowLongPtrW(contentWindow, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0 ||
+        !desktopWindow || !IsWindow(desktopWindow) ||
+        !IsWindowAbove(contentWindow, desktopWindow))
+        return false;
+    bool scanComplete = false;
+    const HWND application = LowestDesktopLayerApplication(
+        contentWindow, isApplicationWindow, isDockWindow, &scanComplete);
+    return scanComplete && (!application || IsWindowAbove(application, contentWindow));
+}
+
+template <typename IsApplicationWindow, typename IsDockWindow, typename PlacePair>
+bool RestoreDesktopLayer(
+    HWND contentWindow, HWND desktopWindow,
+    IsApplicationWindow&& isApplicationWindow, IsDockWindow&& isDockWindow,
+    PlacePair&& placePair)
+{
+    if (!contentWindow || !IsWindow(contentWindow))
+        return false;
+    desktopWindow = desktopWindow && IsWindow(desktopWindow)
+        ? GetAncestor(desktopWindow, GA_ROOT) : nullptr;
+    // A target can disappear/change bands while User32 positions the pair.
+    // Resolve again instead of accepting a band-only fallback as completion.
+    for (unsigned attempt = 0; attempt < 2; ++attempt)
+    {
+        const HWND anchor = DesktopLayerInsertAfter(
+            contentWindow, desktopWindow, isApplicationWindow, isDockWindow);
+        if (placePair(anchor) && IsDesktopLayerRestored(
+                contentWindow, desktopWindow, isApplicationWindow, isDockWindow))
+            return true;
+    }
+    return false;
+}
 
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
@@ -504,7 +626,8 @@ public:
         int edgeBand, int requiredTravel,
         DWORD maximumDurationMs =
             kEdgeSwipeMaximumDurationMs,
-        bool hover = false)
+        bool hover = false,
+        DWORD hoverDelayMs = dock_settings_rules::kDefaultEdgeHoverDelayMs)
     {
         if (!IsPointOnDockScreenEdge(
                 point, monitorRect, position, edgeBand))
@@ -538,7 +661,7 @@ public:
                 position == DockPosition::Bottom
             ? point.x - startPoint_.x
             : point.y - startPoint_.y;
-        if (hover ? elapsed < kEdgeHoverDelayMs : std::abs(alongEdge) < requiredTravel)
+        if (hover ? elapsed < hoverDelayMs : std::abs(alongEdge) < requiredTravel)
             return false;
 
         tracking_ = false;

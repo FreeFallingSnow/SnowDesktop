@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace snowdesktop::widget
@@ -25,6 +26,9 @@ struct SteamWorkshopLocalCache
     // manifest's authority. An entirely unreadable scan is not authoritative.
     bool partial = false;
     std::vector<std::string> subscribedPublishedFileIds;
+    // Only successfully parsed manifests appear here, including empty manifests.
+    std::unordered_map<std::string, std::vector<std::string>> librarySubscriptions;
+    std::vector<std::string> locallyUnsubscribedPublishedFileIds;
     std::vector<SteamWorkshopCachedItem> readyItems;
     std::vector<std::string> skippedLibraries;
     std::string error;

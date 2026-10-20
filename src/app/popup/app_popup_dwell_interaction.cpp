@@ -2,8 +2,49 @@
 #include "app/menus/sort_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
+#include "categorized_popup_scope.h"
 
 // Collection/file-group dwell activation and popup tab switching.
+namespace
+{
+// Captured metadata identifies internal sources without dereferencing stale
+// items. External source turnover must reset dwell at the OLE Enter boundary;
+// hover tracking never extracts IDataObject content to identify a source.
+std::wstring DwellSourceIdentity(const DragSourceList& sources, bool external)
+{
+    std::wstring result = external ? L"external" : L"internal";
+    const auto append = [&result](std::wstring_view value) {
+        result += L":" + std::to_wstring(value.size()) + L":";
+        result.append(value);
+    };
+    append(sources.originWidgetId);
+    append(std::to_wstring(static_cast<int>(sources.SourceSurfaceKind())));
+    for (const auto& entry : sources.entries)
+    {
+        append(std::to_wstring(static_cast<int>(entry.kind)));
+        append(entry.widgetId);
+        append(ToUpperInvariant(entry.desktopKey));
+        append(ToUpperInvariant(entry.filePath));
+        append(ToUpperInvariant(entry.dockReference));
+    }
+    return result;
+}
+
+std::wstring GroupTabDwellTargetIdentity(WidgetContainer* view, std::wstring_view tab)
+{
+    const auto* data = view ? view->GetWidgetData() : nullptr;
+    if (!data) return {};
+    std::wstring result = std::to_wstring(data->id.size()) + L":" + data->id;
+    // Inner category IDs are shared between sources. Their actual target is
+    // the current hosted child as well as the parent FileGroup and category.
+    if (auto* group = dynamic_cast<FileGroup*>(view); group && tab.starts_with(L"category:"))
+    {
+        const auto source = group->GetActiveSourceId();
+        result += L":" + std::to_wstring(source.size()) + L":" + source;
+    }
+    return result;
+}
+}
 
 void DesktopApp::CancelPopupHover(bool suppressUntilLeave)
 {
@@ -17,7 +58,9 @@ void DesktopApp::CancelPopupHover(bool suppressUntilLeave)
 void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
 {
     UpdatePopupCloseOnMouseLeave(point);
-    if (!personalizationSettings_.popupHoverOpen)
+    if (!personalizationSettings_.popupHoverOpen &&
+        !personalizationSettings_.groupTabHoverSwitch &&
+        !personalizationSettings_.categoryTabHoverSwitch)
     {
         CancelPopupHover();
         return;
@@ -37,10 +80,129 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         return;
     }
     if (quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
-        IsPointInUsageGuide(point) || IsPointOccludedByOpenPopup(point))
+        IsPointInUsageGuide(point))
     {
         CancelPopupHover();
         return;
+    }
+
+    // Timer delivery must use the current native hit surface, not a stored
+    // coordinate beneath another window. The dispatcher also samples this,
+    // but keep the activation boundary safe for other callers.
+    if (allowOpen && !TryGetDesktopHoverPointFromCursor(point))
+    {
+        CancelPopupHover();
+        return;
+    }
+    const auto armHoverTimer = [this] {
+        if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
+            popupHoverTimerArmed_ = SetTimer(hwnd_, kPopupHoverTimerId,
+                kPopupHoverPollIntervalMs, nullptr) != 0;
+    };
+    const auto trackTab = [this, point, allowOpen, &armHoverTimer](
+        ScrollingItemWidget* view, bool inPopup) {
+        if (!view) return false;
+        DesktopWidget* owner = view->GetWidgetData();
+        if (!owner) return false;
+        DesktopWidget* targetData = owner;
+        std::wstring targetId;
+        std::wstring activeId = owner->activeCategoryId;
+        bool groupTab = false;
+        auto* collectionGroup = dynamic_cast<CollectionGroup*>(view);
+        auto* fileGroup = dynamic_cast<FileGroup*>(view);
+        if (collectionGroup)
+        {
+            groupTab = true;
+            targetId = collectionGroup->CategoryIdAtPoint(point);
+            activeId = collectionGroup->GetActiveCollectionId();
+        }
+        else if (fileGroup)
+        {
+            targetId = fileGroup->SourceIdAtPoint(point);
+            groupTab = !targetId.empty();
+            if (groupTab) activeId = fileGroup->GetActiveSourceId();
+            else
+            {
+                auto* source = fileGroup->GetActiveSourceContainer();
+                targetData = source ? source->GetWidgetData() : nullptr;
+                if (!targetData) return false;
+                targetId = fileGroup->CategoryIdAtPoint(point);
+                activeId = targetData->activeCategoryId;
+            }
+        }
+        else if (owner->type == DesktopWidgetType::FileCategories ||
+            owner->type == DesktopWidgetType::FolderMapping)
+            targetId = view->CategoryIdAtPoint(point);
+        if (targetId.empty() || targetId == activeId ||
+            !(groupTab ? personalizationSettings_.groupTabHoverSwitch :
+                personalizationSettings_.categoryTabHoverSwitch))
+            return false;
+        if (groupTab && std::find(owner->childWidgetIds.begin(),
+                owner->childWidgetIds.end(), targetId) == owner->childWidgetIds.end())
+            return false;
+
+        // Only IDs, never labels or pointers, survive between samples. Include
+        // the parent/source and active member so rebuilding a group or changing
+        // its source cannot spend another tab's accumulated dwell time.
+        std::wstring token = groupTab ? L"group-tab" : L"category-tab";
+        const auto appendId = [&token](const std::wstring& id) {
+            token += L":" + std::to_wstring(id.size()) + L":" + id;
+        };
+        appendId(owner->id);
+        appendId(targetData->id);
+        appendId(owner->gridCell.pageId);
+        appendId(owner->activeCategoryId);
+        appendId(activeId);
+        appendId(targetId);
+        token += L":" + std::to_wstring(pageMutationRevision_) +
+            L":" + std::to_wstring(pageOffset_) + (inPopup ? L":popup:" : L":desktop:") +
+            std::to_wstring(inPopup ? floatingPopupMouseHookGeneration_ : 0);
+        const DWORD now = GetTickCount();
+        const DWORD delayMs = static_cast<DWORD>(NormalizeTabHoverDelayMs(
+            personalizationSettings_.tabHoverDelayMs));
+        popupHoverController_.Track(token, now);
+        if (!allowOpen || !popupHoverController_.Consume(now, delayMs))
+        {
+            armHoverTimer();
+            return true;
+        }
+        CancelPopupHover(true);
+        targetData->activeCategoryId = targetId;
+        targetData->scrollOffset = 0;
+        owner->scrollOffset = 0;
+        if (collectionGroup) collectionGroup->InvalidateFilterCache();
+        else if (fileGroup) fileGroup->InvalidateHostedView();
+        else if (auto* categories = dynamic_cast<FileCategories*>(view))
+            categories->InvalidateCategoryCache();
+        else if (auto* folder = dynamic_cast<FolderMapping*>(view))
+            folder->InvalidateFilterCache();
+        else view->InvalidateSlots();
+        if (inPopup)
+        {
+            popupScrollOffset_ = 0;
+            ResetCollectionPopupAnimationCache();
+        }
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        InvalidateFloatingDockWindow(true);
+        return true;
+    };
+    if (IsPointOccludedByOpenPopup(point))
+    {
+        if (IsCollectionPopupInteractive())
+        {
+            const auto* widget = GetOpenPopupWidget();
+            auto* view = GetCategorizedPopupView();
+            if (widget && view)
+            {
+                CategorizedPopupScope scope(view,
+                    GetCategorizedPopupFrame(GetCollectionPopupRect(*widget)));
+                if (trackTab(view, true)) return;
+            }
+        }
+        CancelPopupHover();
+        return; // Popup surfaces always occlude desktop tabs and openers.
     }
 
     // Keep stable source identities across model rebuilds; indices are resolved
@@ -54,7 +216,8 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
     {
         DockEntryItem* item = dock->ContainsInteractivePoint(point)
             ? dock->EntryAtPoint(point) : nullptr;
-        if (item && item->GetEntryIndex() < dockEntries_.size())
+        if (personalizationSettings_.popupHoverOpen &&
+            item && item->GetEntryIndex() < dockEntries_.size())
         {
             const size_t index = item->GetEntryIndex();
             const DockEntry& entry = dockEntries_[index];
@@ -89,8 +252,11 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             if (!container) continue;
             const WidgetHit hit = container->HitTestWidget(point);
             if (hit == WidgetHit::None) continue;
+            if ((hit == WidgetHit::CategoryTab || hit == WidgetHit::SourceTab) &&
+                trackTab(dynamic_cast<ScrollingItemWidget*>(container), false)) return;
             const DesktopWidget* widget = container->GetWidgetData();
-            if (widget && widget->type == DesktopWidgetType::Collection &&
+            if (personalizationSettings_.popupHoverOpen &&
+                widget && widget->type == DesktopWidgetType::Collection &&
                 hit == WidgetHit::CollectionOpenBtn)
             {
                 widgetIndex = FindWidgetIndexById(widget->id);
@@ -134,9 +300,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             });
         return;
     }
-    if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
-        popupHoverTimerArmed_ = SetTimer(hwnd_, kPopupHoverTimerId,
-            kPopupHoverPollIntervalMs, nullptr) != 0;
+    armHoverTimer();
 }
 
 void DesktopApp::TraceCollectionPopupDwell(
@@ -240,9 +404,12 @@ void DesktopApp::EnsureCollectionPopupDwellTimerArmed()
 void DesktopApp::CancelCollectionPopupDwell()
 {
     if (!collectionPopupDwellTimerArmed_ &&
-        popupDwellController_.IsIdle())
+        popupDwellController_.IsIdle() &&
+        collectionPopupDwellWidgetId_.empty() && collectionPopupDwellSourceIdentity_.empty())
         return;
     popupDwellController_.Reset();
+    collectionPopupDwellWidgetId_.clear();
+    collectionPopupDwellSourceIdentity_.clear();
     const bool wasArmed = collectionPopupDwellTimerArmed_;
     collectionPopupDwellTimerArmed_ = false;
 #if 0
@@ -269,11 +436,14 @@ void DesktopApp::CancelCollectionGroupTabDwell()
         collectionGroupTabDwellWidgetIndex_ ==
             static_cast<size_t>(-1) &&
         collectionGroupTabDwellId_.empty() &&
+        collectionGroupTabDwellWidgetId_.empty() && collectionGroupTabDwellSourceIdentity_.empty() &&
         collectionGroupTabDwellTick_ == 0)
         return;
     collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellWidgetId_.clear();
+    collectionGroupTabDwellSourceIdentity_.clear();
     collectionGroupTabDwellTick_ = 0;
     const bool wasArmed =
         collectionGroupTabDwellTimerArmed_;
@@ -387,6 +557,12 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     }
 
     DWORD now = GetTickCount();
+    const auto sourceIdentity = DwellSourceIdentity(dragSession_.SourceList(), dragDropController_.IsExternalDragActive());
+    if (collectionPopupDwellWidgetId_ != widgets_[hoveredCollection].id ||
+        collectionPopupDwellSourceIdentity_ != sourceIdentity)
+        popupDwellController_.Reset();
+    collectionPopupDwellWidgetId_ = widgets_[hoveredCollection].id;
+    collectionPopupDwellSourceIdentity_ = sourceIdentity;
     const bool candidateChanged =
         popupDwellController_.Track(
             hoveredCollection, now);
@@ -406,7 +582,8 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
  * @param now 当前时间（毫秒）
  * @return 是否成功打开了弹窗
  */
-bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
+bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now,
+    const CollectionPopupRequestPresenter& presenter)
 {
     if (!CanCurrentDragUseCollectionPopup() ||
         SuppressDesktopWidgetDragTargets())
@@ -432,7 +609,9 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
     }
     const size_t candidate =
         popupDwellController_.Candidate();
-    if (candidate >= widgets_.size())
+    if (candidate >= widgets_.size() || collectionPopupDwellWidgetId_.empty() ||
+        widgets_[candidate].id != collectionPopupDwellWidgetId_ ||
+        collectionPopupDwellSourceIdentity_ != DwellSourceIdentity(dragSession_.SourceList(), dragDropController_.IsExternalDragActive()))
     {
         TraceCollectionPopupDwell(
             L"timer-invalid-candidate", L"candidate",
@@ -480,13 +659,18 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
             pendingCollectionPopupOpen_.reset();
             BeginCollectionPopupClose(false);
         },
-        [this, candidate] {
+        [this, candidate, &presenter] {
             TraceCollectionPopupDwell(
                 L"open-ready", L"candidate",
                 lastMousePoint_, candidate);
             CancelCollectionPopupDwell();
-            OpenCollectionPopupAt(candidate, lastMousePoint_);
-            UpdateWindow(hwnd_);
+            if (presenter) presenter(candidate, lastMousePoint_);
+            else if (collectionPopupRequestPresenter_) collectionPopupRequestPresenter_(candidate, lastMousePoint_);
+            else
+            {
+                OpenCollectionPopupAt(candidate, lastMousePoint_);
+                UpdateWindow(hwnd_);
+            }
         });
 }
 
@@ -521,6 +705,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
 
     size_t hoveredGroup = static_cast<size_t>(-1);
     std::wstring hoveredId;
+    WidgetContainer* hoveredView = nullptr;
     for (auto it = containers_.rbegin();
         it != containers_.rend(); ++it)
     {
@@ -575,6 +760,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         {
             if (&widgets_[i] != data) continue;
             hoveredGroup = i;
+            hoveredView = dynamic_cast<WidgetContainer*>(it->get());
             hoveredId = std::move(id);
             break;
         }
@@ -589,14 +775,20 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         return;
     }
 
+    const auto sourceIdentity = DwellSourceIdentity(sourceList, externalDrag);
+    const auto targetIdentity = GroupTabDwellTargetIdentity(hoveredView, hoveredId);
     if (collectionGroupTabDwellWidgetIndex_ !=
             hoveredGroup ||
-        collectionGroupTabDwellId_ != hoveredId)
+        collectionGroupTabDwellId_ != hoveredId ||
+        collectionGroupTabDwellWidgetId_ != targetIdentity ||
+        collectionGroupTabDwellSourceIdentity_ != sourceIdentity)
     {
         collectionGroupTabDwellWidgetIndex_ =
             hoveredGroup;
         collectionGroupTabDwellId_ =
             std::move(hoveredId);
+        collectionGroupTabDwellWidgetId_ = targetIdentity;
+        collectionGroupTabDwellSourceIdentity_ = sourceIdentity;
         collectionGroupTabDwellTick_ =
             GetTickCount();
     }
@@ -609,21 +801,12 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     if (!dragSession_.IsActive() ||
         collectionGroupTabDwellWidgetIndex_ >=
             widgets_.size() ||
-        collectionGroupTabDwellId_.empty())
+        collectionGroupTabDwellId_.empty() || collectionGroupTabDwellWidgetId_.empty() ||
+        collectionGroupTabDwellSourceIdentity_ != DwellSourceIdentity(dragSession_.SourceList(), dragDropController_.IsExternalDragActive()))
     {
         CancelCollectionGroupTabDwell();
         return false;
     }
-    if (now - collectionGroupTabDwellTick_ <
-            kCollectionGroupTabDwellDelayMs)
-        return false;
-
-    if (IsPointInsideOpenPopup(lastMousePoint_) && !GetGroupPopupView())
-    {
-        CancelCollectionGroupTabDwell();
-        return false;
-    }
-
     DesktopWidget& data =
         widgets_[collectionGroupTabDwellWidgetIndex_];
     const bool collectionGroup =
@@ -649,7 +832,15 @@ bool DesktopApp::TryActivateCollectionGroupTab(
             break;
         }
     }
-    if (!groupedContainer)
+    if (!groupedContainer || GroupTabDwellTargetIdentity(groupedContainer, collectionGroupTabDwellId_) != collectionGroupTabDwellWidgetId_)
+    {
+        CancelCollectionGroupTabDwell();
+        return false;
+    }
+
+    if (now - collectionGroupTabDwellTick_ < kCollectionGroupTabDwellDelayMs)
+        return false;
+    if (IsPointInsideOpenPopup(lastMousePoint_) && !GetGroupPopupView())
     {
         CancelCollectionGroupTabDwell();
         return false;
@@ -840,6 +1031,7 @@ ShowDockFolderPopupContextMenu(
             kContextPropertiesCommand,
             _LW("app.menu.properties"));
         if (singleSelection) AppendWebsiteIconMenu(menu, selectedPaths.front());
+        if (singleSelection) AppendIconOverrideMenu(menu, selectedPaths.front());
         AppendMenuW(
             menu, MF_SEPARATOR,
             0, nullptr);
@@ -888,6 +1080,8 @@ ShowDockFolderPopupContextMenu(
     }
     else
     {
+        AppendDockFolderPopupDisplayMenu(menu);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         const bool canPaste = dockFolderPopupAvailable_ &&
             HasPasteableFileClipboardData();
         AppendMenuW(
@@ -979,6 +1173,13 @@ ShowDockFolderPopupContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (!itemMenu && ExecuteDockFolderPopupDisplayCommand(command))
+    {
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
+    if (selectedPaths.size() == 1 && ExecuteIconOverrideMenu(command, selectedPaths.front())) return;
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortDockFolderPopupContents(sort->mode, sort->ascending);
 

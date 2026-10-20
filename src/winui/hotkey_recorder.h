@@ -43,6 +43,7 @@ struct HotkeyRecorderText
     std::wstring windows = L"Win";
     std::wstring apply = L"Apply";
     std::wstring cancel = L"Cancel";
+    std::wstring edit = L"Edit";
     std::wstring clear = L"Clear";
     std::wstring restoreDefault = L"Restore default";
 };

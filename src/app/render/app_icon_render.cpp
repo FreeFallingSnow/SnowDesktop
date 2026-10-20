@@ -448,7 +448,7 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
     if (iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
-        RegisterIconBackdrop(rect, fill.a > 0.0f ? 1.0f : 0.0f, ownerKey);
+        RegisterIconBackdrop(ctx, rect, fill.a > 0.0f ? 1.0f : 0.0f, ownerKey);
     if (!iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
     const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
     const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |
@@ -542,6 +542,7 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
+        // The generated glyph already includes its complete target rectangle.
         DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
         return;
     }

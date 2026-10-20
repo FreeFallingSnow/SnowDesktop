@@ -1,5 +1,6 @@
 #pragma once
 #include "settings_presenter_controls.h"
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Windows.UI.Text.h>
 
 namespace snowdesktop::winui
@@ -14,6 +15,11 @@ struct AppearanceSections
     bool highlights = true;
     std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander> disclosures;
     void CollapseAll() const { for (auto const& disclosure : disclosures) disclosure.IsExpanded(false); }
+    void UpdateRows() const
+    {
+        for (const auto& panel : {colors, material, border, bottomBar, text})
+            if (panel) presenter_controls::UpdateSettingsSubrows(panel, 0.0);
+    }
     static void CollapseWithin(const winrt::Microsoft::UI::Xaml::UIElement& element)
     {
         namespace c = winrt::Microsoft::UI::Xaml::Controls;
@@ -68,16 +74,22 @@ struct AppearanceSections
     }
 
     static Panel Section(const Panel& parent, Heading& title,
-        std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander>* disclosures = nullptr)
+        std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander>* disclosures = nullptr,
+        bool paddedContent = false)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         title = Heading{};
         title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         title.TextWrapping(x::TextWrapping::Wrap);
+        x::Automation::AutomationProperties::SetHeadingLevel(title,
+            x::Automation::Peers::AutomationHeadingLevel::Level2);
         title.Margin({0, 0, 0, 0});
-        Panel body; body.Spacing(8); body.Margin({0, 4, 0, 4});
+        // Composite forms also use Section; their own layout keeps its gap.
+        // UpdateRows removes gaps only for setting rows on a shared surface.
+        Panel body; body.Spacing(8); body.Margin({0, 0, 0, 0});
         body.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         x::Controls::Expander disclosure;
+        if (!paddedContent) disclosure.Padding({0, 0, 0, 0});
         disclosure.Header(title); disclosure.Content(body);
         disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         disclosure.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);

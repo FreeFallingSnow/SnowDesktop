@@ -107,9 +107,11 @@ struct BridgeResponse
 class Service final
 {
 public:
+    using UnixTimeSource = std::int64_t (*)() noexcept;
     Service(std::filesystem::path bridgeExecutable,
         std::filesystem::path steamRuntime,
-        std::filesystem::path protectedCache);
+        std::filesystem::path protectedCache,
+        UnixTimeSource timeSource = nullptr);
     ~Service();
 
     Service(const Service&) = delete;

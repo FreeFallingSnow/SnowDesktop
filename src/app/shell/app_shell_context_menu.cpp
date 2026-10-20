@@ -91,6 +91,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
         kContextPropertiesCommand,
         _LW("app.menu.properties"));
     if (singleSelection) AppendWebsiteIconMenu(menu, fullPath);
+    if (singleSelection) AppendIconOverrideMenu(menu, fullPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -143,6 +144,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
     ClearMenuIcons();
     bool inlineEditorStarted = false;
 
+    if (ExecuteIconOverrideMenu(command, fullPath)) return;
     switch (command)
     {
     case kContextOpenCommand:

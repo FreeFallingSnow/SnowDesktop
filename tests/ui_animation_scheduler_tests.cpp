@@ -1,9 +1,11 @@
 #include "ui/render/ui_animation_scheduler.h"
 #include "ui/render/ui_animation_scheduler_rules.h"
+#include "ui/render/ui_presentation_scope.h"
 #include "settings/animation_settings.h"
 #include "layout/popup_animation_rules.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "system/status_bar/status_bar_task_view_input.h"
+#include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/status_bar/status_bar_activation.h"
 #include "system/status_bar/status_bar_input_method.h"
 #include "system/panel/system_panel_transition.h"
@@ -12,6 +14,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace
@@ -35,6 +38,33 @@ void WaitAndDispatch(
             WAIT_OBJECT_0,
         "scheduled deadline becomes signaled");
     scheduler.DispatchDue();
+}
+
+struct ScheduledNativeInput
+{
+    snowdesktop::UiAnimationScheduler* scheduler = nullptr;
+    int owner = 0;
+    int paints = 0;
+    bool synchronous = false;
+};
+
+LRESULT CALLBACK ScheduledNativeInputProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (message == WM_NCCREATE)
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+            reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    auto* input = reinterpret_cast<ScheduledNativeInput*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (input && message == WM_APP + 91)
+    {
+        const int before = input->paints;
+        input->scheduler->RequestScheduledPresentation(&input->owner,
+            [input] { ++input->paints; return true; });
+        input->synchronous = input->paints == before + 1;
+        return 0;
+    }
+    return DefWindowProcW(window, message, wp, lp);
 }
 
 template <typename Predicate>
@@ -389,13 +419,22 @@ void TestTaskViewTransition()
     transition.Observe(true, 11200);
     Check(!transition.Busy(11350) && !transition.CanBegin(11350, true),
         "duplicate shown events allow other native panels after settling but keep Task View open-only");
-    Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemControlCenter) &&
-        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Dismiss) &&
-        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Settings),
-        "other native panels cannot interrupt Task View's transition, while dismissal and settings remain available");
+    transition.Reset();
+    Check(transition.Begin(100, false), "search interleave begins one Task View opening");
+    for (const auto action : {StatusBarAction::QuickSearch, StatusBarAction::TaskView,
+        StatusBarAction::Calendar, StatusBarAction::Tray, StatusBarAction::MenuQuickSearch,
+        StatusBarAction::Dismiss, StatusBarAction::Settings, StatusBarAction::ShowDesktop,
+        StatusBarAction::Notifications, StatusBarAction::SystemCalendar, StatusBarAction::SystemControlCenter})
+    {
+        Check(!transition.AllowsAction(action, 376, false),
+            "adjacent search and all surface-changing actions are rejected before Shell settles");
+        Check(transition.AllowsAction(action, 1600, false),
+            "missing visibility notification releases each action at the bounded deadline");
+    }
+    transition.Observe(true, 400);
+    Check(transition.Remaining(400) == 350 && !transition.AllowsAction(StatusBarAction::QuickSearch, 749, true) &&
+        transition.AllowsAction(StatusBarAction::QuickSearch, 750, true),
+        "search waits for the actual shown notification plus settling, not a double-click interval");
 }
 
 void TestTaskViewMouseHandoff()
@@ -404,8 +443,7 @@ void TestTaskViewMouseHandoff()
     using Result = StatusBarShortcutResult;
     const auto chord = ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false);
     const auto legacyChord = ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true);
-    Check(chord.pointerQuietMilliseconds == 0 && chord.waitForPointerRelease &&
-        legacyChord.pointerQuietMilliseconds == 0 && legacyChord.waitForPointerRelease,
+    Check(chord.waitForPointerRelease && legacyChord.waitForPointerRelease,
         "both Windows versions open Task View without a fixed double-click delay");
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "Task View handoff scheduler initializes");
@@ -416,10 +454,8 @@ void TestTaskViewMouseHandoff()
     int sends = 0;
     bool current = true;
     std::vector<Result> outcomes;
-    const auto queue = [&](UINT quiet = 0) {
-        auto request = chord;
-        request.pointerQuietMilliseconds = quiet;
-        return ScheduleStatusBarShellShortcut(scheduler, request, {
+    const auto queue = [&] {
+        return ScheduleStatusBarShellShortcut(scheduler, chord, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT*, int) { ++sends; return count; },
             [&](auto) { return current; },
@@ -437,64 +473,59 @@ void TestTaskViewMouseHandoff()
     Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
         "pointer release completes the request without starting a new quiet interval");
 
-    // Negative control: the former production chord cannot meet the same
-    // first-dispatch expectation. Keep that wait only as installation fallback.
-    outcomes.clear(); now = 0; queue(500);
-    now = 499; WaitAndDispatch(scheduler);
-    Check(sends == 2 && outcomes.empty(), "fallback still finishes the double-click interval");
-    held = VK_LBUTTON; WaitAndDispatch(scheduler);
-    now = 1000; WaitAndDispatch(scheduler);
-    Check(sends == 2, "fallback held second press cannot open Task View under the pointer");
-    held = 0; now = 1499; WaitAndDispatch(scheduler);
-    Check(sends == 2, "fallback release still leaves its quiet interval");
-    now = 1500; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
-        "fallback completed double-click opens exactly once, with no deferred replay");
-
     outcomes.clear(); queue(); current = false; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
         "foreground change, hidden bar or externally opened Task View cancels the delayed request");
     current = true; outcomes.clear(); queue();
     held = VK_RBUTTON; now = 7000; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
         "held mouse cannot leave an unbounded deferred opening request");
-    held = 0; outcomes.clear();
-    queue(5000); now = 12000; WaitAndDispatch(scheduler);
-    Check(sends == 4 && outcomes == std::vector<Result>{Result::Sent},
-        "maximum Windows double-click interval has its own budget before the input timeout");
 }
 
 void TestTaskViewPointerGuard()
 {
     using snowdesktop::TaskViewPointerGuard;
-    // Model the physical second click landing in Shell after it covers the
-    // original button. Time and raw hook events are the only replaced inputs.
-    TaskViewPointerGuard guard({-100, 0, -68, 32}, 500);
+    // Task View is [-100,-68), adjacent search is [-68,-36). Include every
+    // bar, including a second monitor; no desktop input is synthesized.
+    TaskViewPointerGuard guard({{-100, 0, -4, 32}, {1000, 0, 1300, 32}});
     Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 100, false), "unarmed monitor leaves input alone");
-    guard.Arm(100);
-    Check(!guard.Filter(WM_RBUTTONDOWN, {-90, 16}, 110, false) &&
-        !guard.Filter(WM_MOUSEMOVE, {-90, 16}, 110, false) &&
+    Check(!guard.CanStop(100), "pre-injection physical input cannot retire the pending monitor");
+    guard.Arm(100, 1500);
+    Check(!guard.Filter(WM_MOUSEMOVE, {-90, 16}, 110, false) &&
         !guard.Filter(WM_LBUTTONDOWN, {200, 16}, 110, false) &&
         !guard.Filter(WM_LBUTTONUP, {-90, 16}, 110, false),
-        "other buttons, pointer motion, unrelated clicks and unmatched releases pass through");
+        "pointer motion, clicks outside the bars and unmatched releases pass through");
     Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 120, true), "injected clicks are not consumed");
-    Check(guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 130, false),
-        "rapid physical repeat at the covered Task View button is intercepted");
-    Check(!guard.Filter(WM_LBUTTONUP, {-90, 16}, 140, true),
+    Check(guard.Filter(WM_LBUTTONDOWN, {-50, 16}, 376, false),
+        "the original adjacent-search click is intercepted before it can dismiss Shell or open search");
+    Check(guard.Filter(WM_RBUTTONDOWN, {1100, 16}, 400, false) &&
+        guard.Filter(WM_MBUTTONDOWN, {-90, 16}, 401, false) &&
+        guard.Filter(WM_XBUTTONDOWN, {-90, 16}, 402, false, XBUTTON1 << 16) &&
+        guard.Filter(WM_XBUTTONDOWN, {-90, 16}, 403, false, XBUTTON2 << 16),
+        "other buttons and other monitor bars cannot insert a menu or activation during startup");
+    Check(!guard.Filter(WM_LBUTTONUP, {-90, 16}, 410, true),
         "injected release cannot complete a consumed physical press");
-    Check(!guard.CanStop(800), "expiry cannot unhook halfway through a consumed press");
-    Check(guard.Filter(WM_LBUTTONUP, {200, 200}, 810, false) && guard.CanStop(810),
-        "matching physical release is consumed outside the button after expiry before unhooking");
-    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 820, false), "expired shield allows later clicks");
+    Check(!guard.CanStop(1600), "expiry cannot unhook halfway through consumed presses");
+    Check(guard.Filter(WM_LBUTTONUP, {200, 200}, 1610, false) && !guard.CanStop(1610) &&
+        guard.Filter(WM_RBUTTONUP, {200, 200}, 1611, false) &&
+        guard.Filter(WM_MBUTTONUP, {200, 200}, 1612, false) &&
+        guard.Filter(WM_XBUTTONUP, {200, 200}, 1613, false, XBUTTON1 << 16) &&
+        !guard.CanStop(1613) && guard.Filter(WM_XBUTTONUP, {200, 200}, 1614, false, XBUTTON2 << 16) &&
+        guard.CanStop(1614), "every consumed button drains its own release after timeout, outside all bars");
+    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 1620, false), "expired shield allows later clicks");
 
-    TaskViewPointerGuard cancelled({0, 0, 32, 32}, 5000);
-    cancelled.Arm(0);
-    Check(cancelled.Filter(WM_LBUTTONDOWN, {16, 16}, 1, false), "maximum double-click interval protects repeats");
+    TaskViewPointerGuard cancelled({{0, 0, 64, 32}});
+    cancelled.Arm(0, 1500);
+    Check(cancelled.Filter(WM_LBUTTONDOWN, {48, 16}, 1, false), "search press is consumed before cancellation");
     cancelled.Cancel();
     Check(!cancelled.CanStop(2) && cancelled.Filter(WM_LBUTTONUP, {16, 16}, 3, false) && cancelled.CanStop(3),
         "cancellation also drains a consumed press before removing its hook");
-    TaskViewPointerGuard expired({0, 0, 32, 32}, 500);
-    expired.Arm(0xffffff00u);
+    TaskViewPointerGuard settled({{0, 0, 64, 32}});
+    settled.Arm(0, 1500); settled.UpdateDeadline(100, 350);
+    Check(!settled.CanStop(449) && settled.CanStop(450),
+        "shown notification shortens raw-input protection to its settling deadline");
+    TaskViewPointerGuard expired({{0, 0, 64, 32}});
+    expired.Arm(0xffffff00u, 500);
     Check(!expired.CanStop(0xf3u) && expired.CanStop(0xf4u) &&
         !expired.Filter(WM_LBUTTONDOWN, {16, 16}, 0xf4u, false),
         "deadline is bounded across Windows tick-counter wrap and wins before a new press");
@@ -536,20 +567,28 @@ void TestTaskViewInputMonitorLifetime()
     const LowLevelMouseHook::Api api{&InstallTaskViewHookFixture, &UninstallTaskViewHookFixture};
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "shield lifetime scheduler initializes");
-    auto request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    const std::vector<RECT> bounds{{0, 0, 96, 32}, {-1920, 0, -1800, 32}};
+    auto remaining = [] { return 1500.0; };
+    auto request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request && taskViewHookFixtureThread != GetCurrentThreadId(),
         "shield receives raw input on a dedicated thread instead of the UI thread");
+    MSLLHOOKSTRUCT down{}; down.pt = {48, 16};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 0, "unarmed production hook passes input without retiring");
+    WaitAndDispatch(scheduler);
+    Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
+        "pre-injection raw events cannot uninstall a pending handoff");
     request.reset(); // Model scheduler cancellation before SendInput.
     WaitAndDispatch(scheduler);
     Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
         "cancelled unarmed request releases its independent monitor without completion callback");
 
-    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request != nullptr, "shield can be installed again after cancellation");
-    request->Begin();
-    MSLLHOOKSTRUCT down{}; down.pt = {16, 16};
+    request->Begin(1500);
+    down.pt = {48, 16};
     Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
-        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback consumes the covered-button repeat");
+        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback consumes the adjacent search press");
     request->Cancel(); request.reset();
     WaitAndDispatch(scheduler);
     Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
@@ -560,15 +599,371 @@ void TestTaskViewInputMonitorLifetime()
     WaitAndDispatch(scheduler);
     Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
         "cancelled consumed press uninstalls immediately after its paired release");
-    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    // Preserve the real scheduler, chord construction, transition state and
+    // hook callback together. Only OS installation/input/clock are replaced.
+    TaskViewTransitionGuard transition;
+    double now = 100;
+    int sends = 0;
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, [&] { return transition.Remaining(now); }, api);
+    Check(request != nullptr, "opening interleave installs the production handoff");
+    ScheduleStatusBarShellShortcut(scheduler, ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false), {
+        [](int) { return false; },
+        [&](UINT count, INPUT*, int) {
+            Check(transition.Begin(now, false), "input boundary starts one transition");
+            request->Begin(transition.Remaining(now)); ++sends; return count;
+        },
+        [](auto) { return true; },
+        [&](auto, StatusBarShortcutResult result) {
+            Check(result == StatusBarShortcutResult::Sent, "opening chord completes without a delayed retry");
+            request->ReleaseIfUnused();
+        }, [&] { return now; }});
+    const DWORD openingDeadline = GetTickCount() + 1000;
+    while (!sends && GetTickCount() - openingDeadline >= 0x80000000u) WaitAndDispatch(scheduler);
+    down.pt = {48, 16}; now = 376;
+    Check(sends == 1 && SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 1 && !transition.AllowsAction(StatusBarAction::QuickSearch, now, false),
+        "real opening handoff blocks the reproduced 276ms adjacent click at both raw input and action boundaries");
+    transition.Observe(true, 400); now = 749;
+    WaitAndDispatch(scheduler);
+    Check(IsWindow(taskViewHookFixtureWindow) && !transition.AllowsAction(StatusBarAction::QuickSearch, now, true),
+        "early shown callback cannot release either boundary before settling");
+    now = 750; request.reset(); WaitAndDispatch(scheduler);
+    Check(IsWindow(taskViewHookFixtureWindow) && scheduler.HasScheduledWork() &&
+        transition.AllowsAction(StatusBarAction::QuickSearch, now, true),
+        "settled action routing resumes while the old physical release is still draining");
+    down.pt = {300, 300};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONUP,
+        reinterpret_cast<LPARAM>(&down)) == 1, "settled view cannot receive an orphaned release from the blocked click");
+    WaitAndDispatch(scheduler);
+    Check(sends == 1 && !scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
+        "settling removes the hook without replaying search or a second Win+Tab");
+
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request != nullptr, "shield can restart for a later independent request");
-    request->Begin(); request.reset(); scheduler.CancelAll();
+    request->Begin(1500); request.reset(); scheduler.CancelAll();
     Check(!IsWindow(taskViewHookFixtureWindow), "scheduler shutdown joins and releases the shield");
     taskViewHookFixtureFails = true;
-    Check(!StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 500, api) &&
-        !scheduler.HasScheduledWork(), "hook installation failure returns the signal for the safe delayed fallback");
+    Check(!StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api) &&
+        !scheduler.HasScheduledWork(), "hook installation failure rejects opening instead of applying an ineffective delay");
     taskViewHookFixtureFails = false;
     Check(UnregisterClassW(kTaskViewHookFixtureClass, windowClass.hInstance) != FALSE, "fixture unregisters after hook shutdown");
+}
+
+struct ShellShortcutRelayFixture
+{
+    std::atomic<HWND> foreground{reinterpret_cast<HWND>(1)};
+    std::atomic<bool> allowActivation{true}, allowFocus{true}, holdAfterActivation{false};
+    std::atomic<bool> updateForegroundOnActivation{true};
+    std::atomic<bool> throwDuringHandoff{false};
+    std::atomic<int> held{0};
+    std::atomic<unsigned> activations{0}, keyChecks{0}, sendCalls{0};
+    std::atomic<DWORD> sendThread{0};
+    std::atomic<ULONGLONG> now{0};
+    UINT firstAccepted = (std::numeric_limits<UINT>::max)();
+    // Written only by the worker; inspected after Running()==false publishes
+    // completion. No test invokes real foreground activation or SendInput.
+    std::vector<std::vector<INPUT>> inputs;
+};
+
+snowdesktop::StatusBarShellShortcutRelay::Api MakeShellShortcutRelayApi(
+    const std::shared_ptr<ShellShortcutRelayFixture>& fixture)
+{
+    snowdesktop::StatusBarShellShortcutRelay::Api api;
+    api.foreground = [fixture] {
+        if (fixture->throwDuringHandoff.load() && fixture->sendCalls.load() > 0)
+            throw std::runtime_error("injected handoff observation failure");
+        return fixture->foreground.load();
+    };
+    api.activate = [fixture](HWND window) {
+        ++fixture->activations;
+        if (!fixture->allowActivation.load()) return false;
+        if (fixture->updateForegroundOnActivation.load()) fixture->foreground.store(window);
+        if (fixture->holdAfterActivation.load()) fixture->held.store(VK_CONTROL);
+        return true;
+    };
+    api.focused = [fixture](HWND window, DWORD) {
+        return fixture->allowFocus.load() && fixture->foreground.load() == window;
+    };
+    api.keyDown = [fixture](int key) { ++fixture->keyChecks; return fixture->held.load() == key; };
+    api.send = [fixture](UINT count, INPUT* inputs, int size) {
+        Check(size == sizeof(INPUT), "relay uses the native INPUT ABI");
+        fixture->sendThread.store(GetCurrentThreadId());
+        fixture->inputs.emplace_back(inputs, inputs + count);
+        return ++fixture->sendCalls == 1 &&
+            fixture->firstAccepted != (std::numeric_limits<UINT>::max)() ? fixture->firstAccepted : count;
+    };
+    api.nowMilliseconds = [fixture] { return fixture->now.load(); };
+    return api;
+}
+
+// Keep these business assertions on the original relay API so they can also
+// run against the previous header in an isolated negative-control build.
+void TestStatusBarShellShortcutNullForeground()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        auto relay = Relay::Start(nullptr, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay != nullptr, "a system-panel click with no foreground window starts an isolated relay");
+        Check(PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "a null initial foreground can hand off to the relay and accept the system-panel chord");
+        Check(fixture->activations.load() == 1 && fixture->sendCalls.load() == 1,
+            "a null initial foreground does not add activation or injection retries");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "the null-origin request retires normally after foreground handoff");
+    }
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        fixture->held.store(VK_CONTROL);
+        auto relay = Relay::Start(nullptr, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "a null-origin request waits for physical modifier release");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "an external foreground cancels a null-origin request even while the modifier stays held");
+        Check(relay->Poll() == Result::Cancelled && fixture->activations.load() == 0 &&
+            fixture->sendCalls.load() == 0,
+            "null is an exact foreground baseline, never permission to activate over another window");
+    }
+}
+
+void TestStatusBarShellShortcutRelay()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    using snowdesktop::StatusBarShellChord;
+    const HWND initial = reinterpret_cast<HWND>(1);
+    const StatusBarShellChord taskView{VK_TAB, false, true};
+    const auto waitForExit = [](const auto& relay) {
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "relay worker exits without a UI-thread join");
+    };
+
+    for (const StatusBarShellChord chord : {
+        taskView, StatusBarShellChord{'N'}, StatusBarShellChord{'A'},
+        StatusBarShellChord{'D', false, true}, StatusBarShellChord{'D', true}})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, chord, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "isolated relay accepts each supported Shell chord");
+        const HWND window = relay->Window();
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        Check(window && process == GetCurrentProcessId() && thread != GetCurrentThreadId() &&
+            thread == relay->ThreadId() && thread == fixture->sendThread.load(),
+            "actual relay HWND and injection boundary run on a separate GUI thread");
+        Check(!GetParent(window) && !GetWindow(window, GW_OWNER) &&
+            !(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD),
+            "relay window has no desktop parent, owner, or child style");
+        Check(!Relay::Start(initial, chord, MakeShellShortcutRelayApi(fixture)),
+            "accepted input keeps the global in-flight slot until its queue retires");
+        relay->Cancel();
+        Check(relay->Running() && IsWindow(window) && relay->Poll() == Result::Sent,
+            "cancellation after acceptance cannot destroy the foreground input queue");
+        fixture->foreground.store(initial); // Model Shell taking foreground.
+        waitForExit(relay);
+        Check(!IsWindow(window) && fixture->activations.load() == 1 && fixture->sendCalls.load() == 1,
+            "foreground handoff retires the window without focus or chord retries");
+        const auto& input = fixture->inputs.front();
+        const unsigned presses = chord.alt ? 3u : 2u;
+        Check(input.size() == presses * 2 && relay->AcceptedCount() == input.size() &&
+            input[0].ki.wVk == VK_LWIN && input[presses - 1].ki.wVk == chord.key &&
+            (!chord.alt || input[1].ki.wVk == VK_MENU),
+            "relay preserves Windows, optional Alt, and destination-key order");
+        for (unsigned i = 0; i < presses; ++i)
+            Check(input[i].type == INPUT_KEYBOARD && !(input[i].ki.dwFlags & KEYEVENTF_KEYUP) &&
+                input[input.size() - 1 - i].ki.wVk == input[i].ki.wVk &&
+                input[input.size() - 1 - i].ki.dwFlags == (input[i].ki.dwFlags | KEYEVENTF_KEYUP),
+                "relay pairs each synthetic press with its reverse-order release");
+    }
+
+    for (bool refuseActivation : {true, false})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->allowActivation.store(!refuseActivation);
+        fixture->allowFocus.store(refuseActivation);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay != nullptr, "foreground refusal fixture starts asynchronously");
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Failed && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 1,
+            "either foreground or focus refusal prevents injection without a fallback");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->held.store(VK_LBUTTON);
+        auto relay = Relay::Start(initial, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "physical pointer hold is observed on the worker");
+        relay->Cancel();
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Cancelled && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 0,
+            "even a notification chord waits for pointer release and can cancel without activation");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->holdAfterActivation.store(true);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->held.load() == VK_CONTROL; }),
+            "modifier can become held during foreground activation");
+        Check(relay->Poll() == Result::Pending && fixture->sendCalls.load() == 0,
+            "relay resamples modifiers after activation instead of sending a stale chord");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        fixture->held.store(0);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Cancelled && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 1,
+            "external foreground change cancels the waiting request without reclaiming focus");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->held.store(VK_SHIFT);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "held-modifier timeout fixture reaches the physical-state check");
+        fixture->now.store(6000);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::TimedOut && fixture->sendCalls.load() == 0,
+            "preparation has a finite deadline without releasing the user's modifier");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->firstAccepted = 2; // Win and Alt accepted, D never pressed.
+        auto relay = Relay::Start(initial, {'D', true}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Failed; }),
+            "partial input acceptance is reported as failure");
+        Check(relay->Running(), "partial acceptance also retains the input queue during handoff");
+        fixture->foreground.store(initial);
+        waitForExit(relay);
+        Check(fixture->sendCalls.load() == 2 && fixture->inputs[1].size() == 2 &&
+            fixture->inputs[1][0].ki.wVk == VK_MENU && fixture->inputs[1][1].ki.wVk == VK_LWIN &&
+            (fixture->inputs[1][0].ki.dwFlags & KEYEVENTF_KEYUP) &&
+            (fixture->inputs[1][1].ki.dwFlags & KEYEVENTF_KEYUP),
+            "partial acceptance releases only unmatched synthetic presses and never retries the chord");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "request-release fixture reaches accepted input");
+        const HWND window = relay->Window();
+        const HANDLE worker = OpenThread(SYNCHRONIZE, FALSE, relay->ThreadId());
+        Check(worker != nullptr, "fixture observes only its own worker thread lifetime");
+        relay.reset();
+        const ULONGLONG until = GetTickCount64() + 40;
+        PumpMessagesUntil([&] { return GetTickCount64() >= until; });
+        Check(IsWindow(window) && WaitForSingleObject(worker, 0) == WAIT_TIMEOUT,
+            "releasing the final UI request preserves the worker's foreground queue");
+        fixture->foreground.store(initial);
+        Check(PumpMessagesUntil([&] { return WaitForSingleObject(worker, 0) == WAIT_OBJECT_0; }) &&
+            !IsWindow(window), "worker retains its own state and retires after Shell takes over");
+        CloseHandle(worker);
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "handoff deadline fixture sends once");
+        fixture->now.store(1600);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Sent && fixture->sendCalls.load() == 1,
+            "missing Shell handoff expires only the temporary queue and never replays the chord");
+    }
+}
+
+void TestStatusBarShellShortcutRelayDiagnostics()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    using Reason = Relay::Reason;
+    enum class Scenario { Accepted, ActivationRejected, ForegroundUnchanged, ExternalForeground, FocusRejected };
+    for (const auto scenario : {Scenario::Accepted, Scenario::ActivationRejected,
+        Scenario::ForegroundUnchanged, Scenario::ExternalForeground, Scenario::FocusRejected})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        fixture->allowActivation.store(scenario != Scenario::ActivationRejected);
+        fixture->updateForegroundOnActivation.store(scenario != Scenario::ForegroundUnchanged);
+        fixture->allowFocus.store(scenario != Scenario::FocusRejected);
+        auto api = MakeShellShortcutRelayApi(fixture);
+        if (scenario == Scenario::ExternalForeground)
+            api.activate = [fixture](HWND) {
+                ++fixture->activations;
+                fixture->foreground.store(reinterpret_cast<HWND>(2));
+                return true;
+            };
+        auto relay = Relay::Start(nullptr, {'N'}, std::move(api));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() != Result::Pending; }),
+            "each activation boundary publishes a terminal diagnostic");
+        const auto beforeCleanup = relay->Diagnostics();
+        if (scenario == Scenario::Accepted)
+        {
+            Check(beforeCleanup.result == Result::Sent && beforeCleanup.reason == Reason::InputAccepted &&
+                beforeCleanup.activationReturned && beforeCleanup.focusChecked && beforeCleanup.focused,
+                "accepted input records successful activation and focus validation without claiming Shell visibility");
+            fixture->foreground.store(reinterpret_cast<HWND>(2));
+        }
+        else if (scenario == Scenario::ActivationRejected)
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::ActivationRejected &&
+                !beforeCleanup.activationReturned && !beforeCleanup.focusChecked && !beforeCleanup.observedForeground,
+                "activation rejection is distinguishable from a focus check that never ran");
+        else if (scenario == Scenario::ForegroundUnchanged)
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::ForegroundNotAcquired &&
+                beforeCleanup.activationReturned && !beforeCleanup.focusChecked && !beforeCleanup.observedForeground,
+                "successful activation return without observed foreground ownership has its own reason");
+        else if (scenario == Scenario::ExternalForeground)
+            Check(beforeCleanup.result == Result::Cancelled && beforeCleanup.reason == Reason::ForegroundChanged &&
+                beforeCleanup.activationReturned && !beforeCleanup.focusChecked &&
+                beforeCleanup.observedForeground == reinterpret_cast<HWND>(2),
+                "an external foreground observed during activation cancels without focus probing or retrying");
+        else
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::FocusNotAcquired &&
+                beforeCleanup.activationReturned && beforeCleanup.focusChecked && !beforeCleanup.focused &&
+                beforeCleanup.observedForeground == beforeCleanup.relayWindow,
+                "focus validation failure preserves the acquired foreground and actual failed check");
+        Check(!beforeCleanup.initialForeground && beforeCleanup.relayWindow &&
+            beforeCleanup.activationAttempted && fixture->activations.load() == 1 &&
+            fixture->sendCalls.load() == (scenario == Scenario::Accepted ? 1u : 0u),
+            "diagnostics retain the exact null baseline and single activation attempt");
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "diagnostic fixture releases its temporary GUI queue");
+        const auto afterCleanup = relay->Diagnostics();
+        Check(!relay->Window() && afterCleanup.result == beforeCleanup.result &&
+            afterCleanup.reason == beforeCleanup.reason && afterCleanup.relayWindow == beforeCleanup.relayWindow &&
+            afterCleanup.observedForeground == beforeCleanup.observedForeground &&
+            afterCleanup.activationAttempted == beforeCleanup.activationAttempted &&
+            afterCleanup.activationReturned == beforeCleanup.activationReturned &&
+            afterCleanup.focusChecked == beforeCleanup.focusChecked && afterCleanup.focused == beforeCleanup.focused,
+            "cleanup cannot overwrite the published terminal diagnostic or erase its relay window snapshot");
+        Check(Relay::ReasonName(afterCleanup.reason)[0] != L'\0', "terminal reasons have stable diagnostic names");
+    }
+    for (bool partial : {false, true})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->throwDuringHandoff.store(true);
+        if (partial) fixture->firstAccepted = 1;
+        auto relay = Relay::Start(fixture->foreground.load(), {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return !relay->Running(); }),
+            "a post-publication handoff exception still retires the relay window");
+        const auto snapshot = relay->Diagnostics();
+        Check(snapshot.result == (partial ? Result::Failed : Result::Sent) &&
+            snapshot.reason == (partial ? Reason::InputPartial : Reason::InputAccepted) &&
+            snapshot.observedForeground == snapshot.relayWindow && snapshot.relayWindow &&
+            !relay->Window() && snapshot.activationReturned && snapshot.focused,
+            "a later handoff exception preserves the first published result and diagnostic");
+    }
 }
 
 void TestStatusBarShellShortcuts()
@@ -618,8 +1013,8 @@ void TestStatusBarShellShortcuts()
     std::vector<std::vector<INPUT>> batches;
     UINT sentCount = 4;
     std::vector<Result> outcomes;
-    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
-        return ScheduleStatusBarShellShortcut(scheduler, StatusBarShellChord{key, alt}, {
+    const auto queueChord = [&](StatusBarShellChord chord, UINT timeout = 5000) {
+        return ScheduleStatusBarShellShortcut(scheduler, chord, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT* input, int size) {
                 Check(size == sizeof(INPUT), "shortcut uses the native INPUT size");
@@ -628,6 +1023,9 @@ void TestStatusBarShellShortcuts()
             },
             [&](auto) { return current; },
             [&](auto, Result result) { outcomes.push_back(result); }}, timeout);
+    };
+    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
+        return queueChord(StatusBarShellChord{key, alt}, timeout);
     };
     const auto expectChord = [&](WORD key) {
         Check(batches.size() == 1 && batches.front().size() == 4,
@@ -657,6 +1055,19 @@ void TestStatusBarShellShortcuts()
     batches.clear(); outcomes.clear();
     queue(VK_TAB); WaitAndDispatch(scheduler); expectChord(VK_TAB);
     batches.clear(); outcomes.clear();
+    for (const bool windows11 : {false, true})
+    {
+        const auto desktop = ResolveStatusBarShellChord(Action::ShowDesktop, windows11, !windows11);
+        Check(desktop.key == 'D' && !desktop.alt && desktop.waitForPointerRelease,
+            "show desktop uses Win+D on both Windows versions rather than the Win+Alt+D calendar");
+        queueChord(desktop);
+        held = VK_LBUTTON; WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "show desktop waits until the initiating mouse gesture ends");
+        held = VK_CONTROL; WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "show desktop does not inject through a held modifier");
+        held = 0; WaitAndDispatch(scheduler); expectChord('D');
+        batches.clear(); outcomes.clear();
+    }
     sentCount = 6;
     queue('D', 5000, true); held = VK_MENU; WaitAndDispatch(scheduler);
     Check(batches.empty() && outcomes.empty(), "date-panel shortcut waits for a physically held Alt key");
@@ -737,6 +1148,9 @@ int main()
     TestTaskViewMouseHandoff();
     TestTaskViewPointerGuard();
     TestTaskViewInputMonitorLifetime();
+    TestStatusBarShellShortcutNullForeground();
+    TestStatusBarShellShortcutRelay();
+    TestStatusBarShellShortcutRelayDiagnostics();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
@@ -823,6 +1237,122 @@ int main()
     scheduler.DispatchDue();
     Check(mergedTimerCalls == 2,
         "same-cycle component deadlines share one dispatch pass");
+
+    {
+        UiAnimationScheduler batch;
+        Check(batch.Initialize(), "timed presentation scheduler initializes");
+        int owner = 0, otherOwner = 0;
+        int firstState = 0, secondState = 0, paints = 0, otherPaints = 0;
+        bool completeState = false;
+        const auto request = [&] {
+            return batch.RequestScheduledPresentation(&owner, [&] {
+                ++paints;
+                completeState = firstState == 1 && secondState == 1;
+                batch.DispatchDue();
+                return true;
+            });
+        };
+        batch.ScheduleOnce(0, [&](auto) {
+            firstState = 1;
+            Check(request() && paints == 0, "first timed update queues without presenting a partial batch");
+        });
+        batch.ScheduleOnce(0, [&](auto) {
+            secondState = 1;
+            Check(request() && paints == 0, "second timed update shares the current snapshot");
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++otherPaints; return true; });
+        });
+        batch.DispatchDue();
+        Check(paints == 1 && otherPaints == 1 && completeState && !batch.HasScheduledWork(),
+            "deadline-only updates present both complete states once without an extra wakeup");
+
+        Check(!batch.RequestScheduledPresentation(&owner, [&] { ++paints; return false; }) && paints == 2,
+            "direct input presentation remains synchronous and preserves failure results");
+        int immediatePointerPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestFramePresentation(&owner, [&] { ++immediatePointerPaints; });
+            Check(immediatePointerPaints == 1,
+                "existing immediate presentation is not deferred by a deadline callback");
+        });
+        batch.DispatchDue();
+
+        int lastState = 0, publishedState = 0, mixedPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            lastState = 1;
+            batch.RequestScheduledPresentation(&owner, [&] { ++mixedPaints; publishedState = lastState; return true; });
+        });
+        batch.StartAnimation(UiAnimationSurface::Desktop, [&](double) {
+            lastState = 2;
+            batch.RequestFramePresentation(&owner, [&] { ++mixedPaints; publishedState = lastState; });
+            return false;
+        });
+        batch.DispatchDue();
+        Check(mixedPaints == 1 && publishedState == 2 && !batch.HasScheduledWork(),
+            "timer and animation owners share their latest state in one presentation");
+
+        int cancelledPresentations = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { ++cancelledPresentations; return true; });
+            batch.CancelAll();
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 0 && !batch.HasScheduledWork(),
+            "cancelling timed work discards its pending presentation");
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { batch.CancelAll(); return true; });
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++cancelledPresentations; return true; });
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 0, "cancellation during timed presentation prevents later owners publishing");
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { ++cancelledPresentations; return true; });
+            throw std::runtime_error("retired component callback");
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 1 && !batch.HasScheduledWork(),
+            "failed deadline callbacks still publish their queued terminal state");
+
+        // Use a private real HWND and nested dispatch, never the desktop host.
+        // Restoring the old no-input-guard path delays this feedback and fails.
+        ScheduledNativeInput input{&batch};
+        WNDCLASSW nativeClass{};
+        nativeClass.hInstance = GetModuleHandleW(nullptr);
+        nativeClass.lpfnWndProc = ScheduledNativeInputProc;
+        nativeClass.lpszClassName = L"SnowDesktopScheduledNativeInputTest";
+        Check(RegisterClassW(&nativeClass) != 0,
+            "native input fixture registers its private window class");
+        const HWND inputWindow = CreateWindowExW(0, nativeClass.lpszClassName,
+            L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nativeClass.hInstance, &input);
+        Check(inputWindow != nullptr, "native input fixture creates a message-only window");
+        int backgroundPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&input.owner, [&] { ++input.paints; return true; });
+            Check(input.paints == 0, "background preparation initially remains batched");
+            SendMessageW(inputWindow, WM_APP + 91, 0, 0);
+            Check(input.synchronous && input.paints == 1,
+                "native input inside a scheduled modal pump presents synchronously");
+            Check(!snowdesktop::UiImmediatePresentationScope::IsActive(),
+                "returning from native dispatch restores the scheduled batch boundary");
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++backgroundPaints; return true; });
+            Check(backgroundPaints == 0, "background work continues batching after immediate input");
+        });
+        batch.DispatchDue();
+        Check(input.paints == 1 && backgroundPaints == 1,
+            "immediate input supersedes its queued owner without duplicate presentation");
+        batch.StartAnimation(UiAnimationSurface::Desktop, [&](double) {
+            Check(PostMessageW(inputWindow, WM_APP + 91, 0, 0) != FALSE,
+                "frame fixture posts only to its own native input window");
+            MSG message{};
+            Check(PeekMessageW(&message, inputWindow, WM_APP + 91, WM_APP + 91, PM_REMOVE) != FALSE,
+                "frame fixture receives its private input inside the active snapshot");
+            DispatchMessageW(&message);
+            Check(input.synchronous && input.paints == 2,
+                "posted native input also remains synchronous within an animation snapshot");
+            return false;
+        });
+        batch.DispatchDue();
+        DestroyWindow(inputWindow);
+        UnregisterClassW(nativeClass.lpszClassName, nativeClass.hInstance);
+    }
 
     int firstFrames = 0;
     int secondFrames = 0;

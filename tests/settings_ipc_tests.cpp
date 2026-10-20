@@ -1,7 +1,10 @@
 #include "settings/settings_ipc_channel.h"
 #include "settings/settings_ipc_values.h"
+#include "settings/icon_library_ipc_paging.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "../src/winui/home_about_ipc_values.h"
+#include "winui/general_advanced_feature_ipc_values.h"
+#include "settings/category_rule_creation.h"
 #include "icons/large_icon_edit_rules.h"
 #include "icons/large_icon_preset_rules.h"
 #include "settings/settings_process.h"
@@ -39,8 +42,108 @@ HANDLE CurrentProcessHandle()
     return result;
 }
 
+void TestPermissionAndRelocatedRoutesCodec()
+{
+    using snowdesktop::SettingsPage;
+    using snowdesktop::SettingsRoute;
+    using snowdesktop::CanonicalizeSettingsRoute;
+    auto permissions = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+    permissions.itemKey = L"org.snowdesktop.天气包";
+    permissions.guideTopic = "widgets";
+    const auto restored = Unpack<SettingsRoute>(Pack(permissions));
+    Check(restored == permissions && restored.IsValid() &&
+            CanonicalizeSettingsRoute(restored) == restored,
+        "permission IPC preserves the exact Unicode package key and its focused destination");
+    auto invalid = permissions;
+    invalid.widgetInstanceId = L"weather-instance";
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "IPC does not erase an invalid package and instance combination before route validation");
+    invalid = permissions;
+    invalid.focusId = "widgets.installed";
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "an unrelated widget section cannot gain permission scope through IPC");
+    invalid = permissions;
+    invalid.page = SettingsPage::General;
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "a package key on a global page remains invalid after transport");
+
+    for (const auto focus : {"desktop.spacing", "personalization.font", "personalization.cornerRadius",
+             "personalization.widgetTransformCursors", "personalization.quickNavigationTheme"})
+    {
+        auto legacy = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets, focus);
+        legacy.guideTopic = "appearance";
+        const auto decoded = Unpack<SettingsRoute>(Pack(legacy));
+        const auto canonical = CanonicalizeSettingsRoute(decoded);
+        Check(decoded == legacy && canonical == CanonicalizeSettingsRoute(legacy) &&
+                Unpack<SettingsRoute>(Pack(canonical)) == canonical &&
+                CanonicalizeSettingsRoute(canonical) == canonical,
+            "old settings routes retain their IDs across IPC and resolve consistently at either end");
+    }
+}
+
 void TestCodec()
 {
+    Check(!snowdesktop::DesktopDisplaySettings{}.beautifyFileThumbnails,
+        "file thumbnails remain exempt from global beautification by default");
+    for (const bool enabled : {true, false})
+    {
+        snowdesktop::DesktopDisplaySettings desktop;
+        desktop.beautifyFileThumbnails = enabled;
+        Check(Unpack<snowdesktop::DesktopDisplaySettings>(Pack(desktop)).beautifyFileThumbnails == enabled,
+            "enabling and disabling file thumbnail beautification crosses the settings process boundary");
+    }
+    snowdesktop::widget_runtime::WidgetSettingFieldSchema duration;
+    duration.key = "focus"; duration.rawType = "duration"; duration.durationUnit = "minutes";
+    duration.minimum = 1; duration.maximum = 120; duration.step = 1;
+    const auto durationRestored = Unpack<snowdesktop::widget_runtime::WidgetSettingFieldSchema>(Pack(duration));
+    Check(durationRestored == duration && durationRestored.durationUnit == "minutes",
+        "duration units and numeric bounds survive the isolated settings process boundary");
+    for (const auto focus : {"dock.attentionDotSize", "dock.attentionDotOffset"})
+    {
+        const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);
+        const auto routed = snowdesktop::CanonicalizeSettingsRoute(Unpack<snowdesktop::SettingsRoute>(Pack(requested)));
+        Check(routed.page == snowdesktop::SettingsPage::AppearanceDesktopIcons && routed.focusId == focus,
+            "Dock attention dot search and IPC focus resolve to global appearance");
+    }
+    for (const auto focus : {"personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
+             "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity"})
+    {
+        const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);
+        const auto routed = snowdesktop::CanonicalizeSettingsRoute(Unpack<snowdesktop::SettingsRoute>(Pack(requested)));
+        Check(routed.page == snowdesktop::SettingsPage::AppearanceDesktopIcons && routed.focusId == focus,
+            "pin-border search and IPC focus resolve to global appearance independently of the starting page");
+    }
+    {
+        snowdesktop::StatusBarSettings statusBar;
+        Check(!statusBar.batteryPercentage, "new profiles keep battery percentage hidden");
+        JsonValue legacy;
+        Check(ParseJson("{\"enabled\":true}", legacy), "legacy status bar JSON parses");
+        statusBar.batteryPercentage = true;
+        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage,
+            "existing profiles without the new flag retain compact control-center icons");
+        for (const bool enabled : {false, true})
+        {
+            statusBar.batteryPercentage = enabled;
+            JsonValue stored;
+            snowdesktop::StatusBarSettings decoded;
+            Check(ParseJson(snowdesktop::EncodeStatusBarSettings(statusBar), stored) &&
+                    stored.Find("batteryPercentage") && stored.Find("batteryPercentage")->IsBoolean() &&
+                    stored.Find("batteryPercentage")->boolean == enabled &&
+                    snowdesktop::DecodeStatusBarSettings(stored, decoded) &&
+                    decoded.batteryPercentage == enabled && decoded.enabled == statusBar.enabled &&
+                    decoded.controlCenter == statusBar.controlCenter,
+                "both battery percentage preferences persist without changing bar or control-center visibility");
+            // Theme JSON canonicalizes a derived preset ID. IPC must preserve
+            // the decoded value exactly, without treating that migration as loss.
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(decoded)) == decoded,
+                "IPC preserves the decoded percentage preference and every other status-bar field");
+        }
+        const auto before = statusBar;
+        JsonValue invalid;
+        Check(ParseJson("{\"batteryPercentage\":1}", invalid) &&
+                !snowdesktop::DecodeStatusBarSettings(invalid, statusBar) && statusBar == before,
+            "invalid percentage preference cannot partially overwrite the current settings");
+    }
     snowdesktop::PageLayoutSnapshot pages;
     pages.revision = 123;
     pages.monitorCount = 1;
@@ -68,16 +171,26 @@ void TestCodec()
         companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
+    dockSpace.edgeDistanceScale = 5.f;
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;
     dockSpace.mergedBarHeight = 64;
     dockSpace.thicknessScale = 2.f;
     dockSpace.mergedIconScale = 0.75f;
+    dockSpace.followComponentCornerRadius = false;
+    dockSpace.cornerRadius = 23.f;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
     for (const bool enabled : {true, false})
     {
         dockSpace.singleClickLaunchItems = enabled;
+        dockSpace.summonOnAppMinimize = enabled;
+        dockSpace.followComponentCornerRadius = enabled;
+        const auto restoredDock = Unpack<DockSettings>(Pack(dockSpace));
+        Check(restoredDock.summonOnAppMinimize == enabled,
+            "minimize summon can be enabled and disabled through the settings process");
+        Check(restoredDock.followComponentCornerRadius == enabled && restoredDock.cornerRadius == 23.f,
+            "Dock radius inheritance and its retained independent value reach the host through settings IPC");
         Check(Unpack<DockSettings>(Pack(dockSpace)).singleClickLaunchItems == enabled,
             "enabling and disabling single-click launch must reach the desktop host through settings IPC");
     }
@@ -86,6 +199,18 @@ void TestCodec()
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    for (const bool enabled : {false, true})
+    for (const UINT key : {UINT{'R'}, UINT{0}})
+    {
+        extensions.forceRestartHotkeyEnabled = enabled;
+        extensions.forceRestartHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+        extensions.forceRestartHotkeyVirtualKey = key;
+        const auto copy = Unpack<GeneralSettings>(Pack(extensions));
+        Check(copy.forceRestartHotkeyEnabled == enabled &&
+            copy.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+            copy.forceRestartHotkeyVirtualKey == key,
+            "force restart enablement, custom chord and clearing cross settings IPC");
+    }
     for (const bool enabled : {false, true})
     {
         extensions.softwareDesktopHotkeyEnabled = enabled;
@@ -98,13 +223,15 @@ void TestCodec()
             "switch shortcut enablement and chosen chord cross the settings-process boundary");
     }
     // Each option must independently reach the desktop host from settings.
-    for (int flags = 0; flags < 4; ++flags)
+    for (int flags = 0; flags < 8; ++flags)
     {
         extensions.contextMenuExpandQuickActions = (flags & 1) != 0;
         extensions.contextMenuHidePageManagement = (flags & 2) != 0;
+        extensions.contextMenuHideMoreManagement = (flags & 4) != 0;
         const auto restored = Unpack<GeneralSettings>(Pack(extensions));
         Check(restored.contextMenuExpandQuickActions == extensions.contextMenuExpandQuickActions &&
-            restored.contextMenuHidePageManagement == extensions.contextMenuHidePageManagement,
+            restored.contextMenuHidePageManagement == extensions.contextMenuHidePageManagement &&
+            restored.contextMenuHideMoreManagement == extensions.contextMenuHideMoreManagement,
             "independent context-menu options cross the settings-process boundary");
     }
     extensions.statusBar.enabled = true;
@@ -180,6 +307,10 @@ void TestCodec()
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
     NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
+    navigation.desktopViewMode = QuickNavigationDesktopViewMode::Frequency;
+    navigation.appSuggestionsEnabled = true;
+    navigation.mappingViewMode = QuickNavigationDesktopViewMode::Tile;
+    navigation.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}};
     navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});
     Check(Unpack<NavigationSettings>(Pack(navigation)) == navigation,"all navigation settings survive the private process boundary");
     Check(Unpack<snowdesktop::SettingsRoute>(Pack(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::QuickNavigation,"quickNav.layout.iconSize"))).page == snowdesktop::SettingsPage::QuickNavigation,"the appended navigation page crosses private IPC");
@@ -238,7 +369,7 @@ void TestCodec()
     settings.externalReplacementPending = true;
     settings.values.general.animationMode = 1;
     settings.values.general.popupAnimationEffect = 1;
-    settings.values.general.animationSpeed = 2;
+    settings.values.general.animationSpeed = 5;
     settings.values.general.animationFrameLimit = 120;
     settings.values.general.animationEnergySaver = false;
     settings.values.general.animationOnBattery = true;
@@ -254,13 +385,17 @@ void TestCodec()
     settings.values.dock.fullscreenExceptions = {{L"C:\\Apps\\播放器\\Player.exe", DockFullscreenPolicy::Allow},
         {L"D:\\Browser\\browser.exe", DockFullscreenPolicy::BlockGestures}};
     settings.values.dock.edgeRevealGesture = 1;
+    settings.values.dock.edgeHoverDelayMs = 850;
+    settings.values.dock.trayApplications = {{L"QQ.exe", false, true, false},
+        {L"D:\\应用\\Weixin.exe", true, false, true}};
     settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
-    settings.values.dock.windowEffect = 3;
+    settings.values.dock.windowEffect = 4;
     settings.values.dock.suppressSystemTaskbar = true;
     settings.values.dock.showWindowsButton = false;
+    settings.values.dock.showQuickSearchButton = false;
     settings.values.general.language[0] = 'z';
     settings.values.general.language[1] = 'h';
     settings.values.general.language[2] = '\0';
@@ -273,14 +408,28 @@ void TestCodec()
     settings.values.desktop.iconBeautify.edgeHighlightEnabled = true;
     settings.values.desktop.iconBeautify.edgeHighlightWidth = 1.7f;
     settings.values.desktop.iconBeautify.edgeHighlightStrength = .65f;
+    settings.values.desktop.iconBeautify.mode = 1;
+    settings.values.desktop.iconBeautify.backgroundSource = 2;
+    settings.values.desktop.iconBeautify.filterMode = 1;
+    settings.values.desktop.iconBeautify.backgroundGradient = {true, 125, .2, .9,
+        {{0, 0x113355, .4}, {.6, 0x7799aa, .8}, {1, 0xaaccff, 1}}};
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
     settings.values.personalization.scrollableTitleBarOnTop = true;
     settings.values.personalization.widgetTransformCursors = false;
+    settings.values.personalization.windowPinBorderEnabled = false;
+    settings.values.personalization.windowPinBorderR = 0.3f;
+    settings.values.personalization.windowPinBorderG = 0.6f;
+    settings.values.personalization.windowPinBorderB = 0.9f;
+    settings.values.personalization.windowPinBorderWidth = 18.0f;
+    settings.values.personalization.windowPinBorderOpacity = 0.7f;
     settings.values.personalization.popupHoverOpen = true;
     settings.values.personalization.popupCloseOnMouseLeave = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
+    settings.values.personalization.groupTabHoverSwitch = true;
+    settings.values.personalization.categoryTabHoverSwitch = true;
+    settings.values.personalization.tabHoverDelayMs = 250.0f;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
@@ -293,7 +442,29 @@ void TestCodec()
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
+    settings.values.desktop.groupComponentBadges = false;
+    settings.values.dock.attentionDotSizeScale = 1.75f;
+    settings.values.dock.attentionDotOffset = -0.18f;
+    settings.values.desktop.scrollingIconSpacingYScale = 5.0f;
+    settings.values.desktop.listRowSpacingScale = 4.5f;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.dock.attentionDotSizeScale == 1.75f &&
+            restored.values.dock.attentionDotOffset == -0.18f,
+        "Dock attention dot size and position cross the settings-process boundary");
+    Check(!restored.values.desktop.groupComponentBadges,
+        "disabled group-component badges survive the settings-process boundary");
+    Check(restored.values.desktop.scrollingIconSpacingYScale == 5.0f &&
+            restored.values.desktop.listRowSpacingScale == 4.5f,
+        "scrolling and list vertical spacing above 200 percent cross the settings-process boundary");
+    Check(restored.values.dock.windowEffect == 4,
+          "attraction selection survives the independent settings process boundary");
+    Check(!restored.values.personalization.windowPinBorderEnabled &&
+            restored.values.personalization.windowPinBorderR == 0.3f &&
+            restored.values.personalization.windowPinBorderG == 0.6f &&
+            restored.values.personalization.windowPinBorderB == 0.9f &&
+            restored.values.personalization.windowPinBorderWidth == 18.0f &&
+            restored.values.personalization.windowPinBorderOpacity == 0.7f,
+        "global pin border visibility and style cross the independent settings-process boundary");
     Check(restored.values.general.font == settings.values.general.font &&
         restored.values.general.tooltipFontSize == 22 &&
         restored.values.desktop.itemFontWeight == 600.f &&
@@ -307,6 +478,9 @@ void TestCodec()
         restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
         restored.values.desktop.iconBeautify.edgeHighlightStrength == .65f,
         "glass, blur and directional reflection survive the settings process boundary");
+    Check(restored.values.desktop.iconBeautify.mode == 1 && restored.values.desktop.iconBeautify.backgroundSource == 2 &&
+        restored.values.desktop.iconBeautify.filterMode == 1 && restored.values.desktop.iconBeautify.backgroundGradient == settings.values.desktop.iconBeautify.backgroundGradient,
+        "local processing strategy, automatic color source and every gradient stop cross settings IPC");
     for (const auto preset : {snowdesktop::IconBeautifyPreset::FrostedGlassDark, snowdesktop::IconBeautifyPreset::FrostedGlassLight})
     {
         auto variant = settings;
@@ -317,8 +491,15 @@ void TestCodec()
             received.values.desktop.iconBeautify.glassBlurRadius == 28.f,
             "new glass preset IDs and editable values survive settings IPC unchanged");
     }
-    Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
-        "hover reveal and disabled task thumbnails survive settings IPC");
+    Check(restored.values.dock.edgeRevealGesture == 1 && restored.values.dock.edgeHoverDelayMs == 850 &&
+            !restored.values.dock.showWindowPreviews,
+        "hover reveal, custom dwell delay and disabled task thumbnails survive settings IPC");
+    Check(restored.values.dock.trayApplications == settings.values.dock.trayApplications,
+        "tray matching mode, Unicode path, opt-out and click gesture survive IPC");
+    auto noTray = settings.values.dock;
+    noTray.trayApplications.clear();
+    Check(Unpack<DockSettings>(Pack(noTray)).trayApplications.empty(),
+        "an explicitly cleared tray list stays empty across IPC");
     Check(restored.values.dock.fullscreenPolicy == settings.values.dock.fullscreenPolicy &&
         restored.values.dock.fullscreenExceptions == settings.values.dock.fullscreenExceptions,
         "fullscreen policies and Unicode executable exceptions survive IPC");
@@ -328,7 +509,8 @@ void TestCodec()
     const auto runningCopy = Unpack<snowdesktop::SettingsActionResult>(Pack(runningApplications));
     Check(runningCopy.dockApplications == runningApplications.dockApplications,
         "existing Dock running-zone names and executable paths reach the exception selector through private IPC");
-    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
+    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton &&
+            !restored.values.dock.showQuickSearchButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
     for (const int theme : {-1, 0, 1})
     {
@@ -347,6 +529,10 @@ void TestCodec()
         "group tab counts cross the settings process boundary independently from category counts");
     Check(!restored.values.personalization.widgetTransformCursors,
         "disabling component transform cursors survives the settings process boundary despite the enabled default");
+    Check(restored.values.personalization.groupTabHoverSwitch &&
+            restored.values.personalization.categoryTabHoverSwitch &&
+            restored.values.personalization.tabHoverDelayMs == 250.0f,
+        "independent group/category hover switches and their shared delay cross the settings process boundary");
     for (const int style : {5, 6})
     {
         auto menuSettings = settings;
@@ -359,13 +545,10 @@ void TestCodec()
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
         restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
         "independent surface modes and custom gradients reach the settings process intact");
-    Check(restored.values.general.animationMode == 1 &&
-        restored.values.general.popupAnimationEffect == 1 &&
-        restored.values.general.animationSpeed == 2 &&
-        restored.values.general.animationFrameLimit == 120 &&
-        !restored.values.general.animationEnergySaver &&
-        restored.values.general.animationOnBattery,
-        "animation preferences reach the independent settings process intact");
+    Check(restored.values.general.animationMode == 1 && restored.values.general.popupAnimationEffect == 1 &&
+              restored.values.general.animationSpeed == 5 && restored.values.general.animationFrameLimit == 120 &&
+              !restored.values.general.animationEnergySaver && restored.values.general.animationOnBattery,
+          "animation preferences reach the independent settings process intact");
     Check(restored.externalReplacementPending && restored.revision == UINT64_MAX &&
         restored.values.dock == settings.values.dock &&
         restored.values.desktop.iconBeautify.filterTintR == 0.123f &&
@@ -381,6 +564,34 @@ void TestCodec()
     large.config = snowdesktop::EncodeLargeIconConfig({}); large.landscapePath = L"file:///C:/图片/preview.png";
     large.hasEdgeColor = true; large.edgeColor = 0x119955; large.loading = true;
     large.portraitSource = "steam-local"; large.accent = 0x445566; large.steam = true;
+    {
+        snowdesktop::IconAppearanceSnapshot appearance; appearance.succeeded = true; appearance.independent = true;
+        appearance.current.target = L"recycle-full:BIN"; appearance.current.settings.enabled = false;
+        appearance.current.settings.mode = 1; appearance.current.themeId = "saved-icon-theme";
+        appearance.entries = {appearance.current}; appearance.session = 9; appearance.revision = 11;
+        appearance.previewPng = std::string("png\0bytes", 9);
+        const auto copy = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(copy.entries.size() == 1 && !copy.entries[0].settings.enabled && copy.entries[0].settings.mode == 1 &&
+            copy.current.target == L"recycle-full:BIN" && copy.current.themeId == "saved-icon-theme" &&
+            copy.session == 9 && copy.revision == 11 && copy.previewPng == appearance.previewPng && !copy.nativeControlSource,
+            "per-icon settings IPC preserves explicit None, state identity, session guard and binary preview");
+        appearance.nativeControlSource = true; appearance.current.target = L"control:search";
+        const auto native = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(native.nativeControlSource && native.current.target == L"control:search",
+            "native source sizing metadata crosses the settings process without shrinking replacement images");
+        appearance.current.followGlobalTheme = true;
+        appearance.globalSettings.preset = snowdesktop::IconBeautifyPreset::FrostedGlassLight;
+        appearance.globalSettings.enabled = true;
+        appearance.globalSettings.backgroundStartR = 37;
+        const auto inherited = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(inherited.current.followGlobalTheme && inherited.globalSettings.preset == appearance.globalSettings.preset &&
+            inherited.globalSettings.enabled && inherited.globalSettings.backgroundStartR == 37,
+            "independent processing carries live global theme metadata across settings IPC");
+        snowdesktop::IconAppearanceRequest followRequest; followRequest.followGlobalTheme = true; followRequest.settings.mode = 2;
+        const auto followCopy = Unpack<snowdesktop::IconAppearanceRequest>(Pack(followRequest));
+        Check(followCopy.followGlobalTheme && followCopy.settings.mode == 2,
+            "applying theme inheritance preserves the separate processing strategy");
+    }
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;
     large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};
@@ -388,6 +599,28 @@ void TestCodec()
     large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
     large.itemCount = 3; large.anyFill = true; large.mixedFields = {"backgroundStyle", "effect"};
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
+    snowdesktop::IconLibrarySnapshot library;
+    library.session = UINT64_MAX; library.revision = 27; library.busy = true; library.target = L"集合-雪";
+    snowdesktop::IconLibraryEntry asset; asset.id = std::string(64,'a') + ".webp"; asset.name = L"自定义图标";
+    asset.previewPath = L"C:\\图片\\资源 # %.png"; asset.width = 96; asset.height = 96; asset.uses = {L"集合 · Dock"};
+    snowdesktop::IconLibraryGroup group; group.id = "group-" + std::string(32, '1'); group.name = L"订阅图标包"; group.source = "android-apk"; group.packageId = std::string(64,'b');
+    asset.groupIds = {group.id}; library.groups.push_back(group); library.importedGroupId = group.id;
+    library.workshopAvailable=true;library.coverPath=L"C:\\预览\\cover.png";library.preparationId="123-456";
+    library.publishedUrl="https://steamcommunity.com/sharedfiles/filedetails/?id=777";library.operationId=UINT64_MAX;
+    library.completedAction="prepareShare";library.groups[0].license=L"许可说明";library.groups[0].workshopItem="777";
+    library.groups[0].accounts={"321","654"};asset.localOwned=false;asset.groupNames[group.id]=L"包内名称";
+    library.entries.push_back(asset); library.failures = {L"无效图片.svg"};
+    const auto libraryCopy = Unpack<snowdesktop::IconLibrarySnapshot>(Pack(library));
+    Check(libraryCopy.workshopAvailable&&libraryCopy.coverPath==library.coverPath&&libraryCopy.preparationId==library.preparationId&&
+        libraryCopy.operationId==UINT64_MAX&&libraryCopy.publishedUrl==library.publishedUrl&&libraryCopy.completedAction==library.completedAction&&
+        libraryCopy.groups[0].license==library.groups[0].license&&libraryCopy.groups[0].accounts==library.groups[0].accounts&&
+        !libraryCopy.entries[0].localOwned&&libraryCopy.entries[0].groupNames==asset.groupNames,
+        "icon package ownership, license and frozen publication state survive settings IPC without image bytes");
+    Check(libraryCopy.session == library.session && libraryCopy.revision == 27 && libraryCopy.busy &&
+        libraryCopy.target == library.target && libraryCopy.entries.size() == 1 && libraryCopy.entries[0].id == asset.id &&
+        libraryCopy.groups.size() == 1 && libraryCopy.groups[0].name == group.name && libraryCopy.groups[0].packageId == group.packageId &&
+        libraryCopy.importedGroupId == group.id && libraryCopy.entries[0].groupIds == asset.groupIds && libraryCopy.entries[0].previewPath == asset.previewPath && libraryCopy.entries[0].uses == asset.uses && libraryCopy.failures == library.failures,
+        "icon library identities, usage guards, session tokens and Unicode paths survive the production IPC codec");
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
         largeCopy.hasEdgeColor && largeCopy.edgeColor == large.edgeColor && largeCopy.loading && largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&
@@ -412,6 +645,7 @@ void TestCodec()
     field.currentValue = MakeWidgetSettingString("must-not-leave-host");
     field.defaultValue = field.currentValue;
     field.opaque.configured = true;
+    field.opaque.secretLength = 31;
     field.opaque.displayLabel = "must-not-leave-host";
     widget.fields.push_back(field);
     PrepareWidgetSettingsSnapshot(widget);
@@ -420,6 +654,53 @@ void TestCodec()
     Check(serialized.find("must-not-leave-host") == std::string::npos &&
         Unpack<WidgetSettingsSnapshot>(wire) == widget,
         "prepared secret fields retain only opaque status across IPC");
+    Check(Unpack<WidgetSettingsSnapshot>(wire).fields.front().opaque.secretLength == 31u,
+        "ordinary snapshots carry mask length without plaintext");
+    WidgetSettingSecretReadResult explicitRead{
+        {WidgetSettingMutationStatus::Unchanged, 3, 9, {}, {}}, "offline-readback"};
+    const auto decodedSecret = Unpack<WidgetSettingSecretReadResult>(Pack(explicitRead));
+    Check(decodedSecret.result.Succeeded() && decodedSecret.plaintext == "offline-readback",
+        "only the explicit secret-read result carries editor plaintext");
+}
+
+void TestCustomCategoryCreation()
+{
+    CategorySettings persisted;
+    for (unsigned index = 1; index <= 32; ++index)
+        persisted.rules.push_back({L"custom-winui-1-" + std::to_wstring(index),
+            L"已有分类 " + std::to_wstring(index), L"TXT", index % 2 == 0});
+    const auto original = persisted.rules;
+    // Reopening a settings process resets its old generation/counter, but the
+    // complete previous rules arrive over the actual production codec.
+    for (unsigned session = 0; session < 4; ++session)
+    {
+        CategorySettings edit = Unpack<CategorySettings>(Pack(persisted));
+        for (unsigned index = 0; index < 8; ++index)
+        {
+            const std::wstring label = L"新分类 日本語 " + std::to_wstring(session * 8 + index);
+            const auto acknowledged = snowdesktop::AppendCustomCategoryRule(edit, label, L"PDF DOCX");
+            Check(acknowledged.has_value(), "creating a category returns its actual inserted identity");
+            if (!acknowledged) continue;
+            const auto snapshot = Unpack<CategorySettings>(Pack(edit));
+            unsigned matches = 0;
+            for (const auto& rule : snapshot.rules)
+                if (rule.id == *acknowledged)
+                {
+                    ++matches;
+                    Check(rule.customLabel == label && rule.extensions == L"PDF DOCX" && rule.enabled,
+                        "creation acknowledgement identifies the newly inserted row after IPC projection");
+                }
+            Check(matches == 1, "reopened settings never reuse an existing category identity");
+        }
+        persisted = Unpack<CategorySettings>(Pack(edit));
+    }
+    Check(persisted.rules.size() == original.size() + 32, "every successful creation is retained across settings sessions");
+    for (std::size_t index = 0; index < original.size(); ++index)
+        Check(persisted.rules[index].id == original[index].id &&
+            persisted.rules[index].customLabel == original[index].customLabel &&
+            persisted.rules[index].extensions == original[index].extensions &&
+            persisted.rules[index].enabled == original[index].enabled,
+            "new category creation preserves the identity, text, order and state of old rows");
 }
 
 void TestChannel()
@@ -448,6 +729,8 @@ void TestChannel()
                     return ui.Call<int>("host.preview", value) + 1;
                 });
                 ui.Bind<std::string, std::string>("ui.snapshot", [](std::string value) { return value; });
+                ui.Bind<snowdesktop::winui::GeneralAdvancedFeatureStatus,
+                    snowdesktop::winui::GeneralAdvancedFeatureStatus>("ui.advanced-status", [](auto value) { return value; });
                 ui.Bind<void>("ui.close", [] { PostQuitMessage(0); });
                 started.set_value(ui.Window());
                 MSG message{};
@@ -464,6 +747,25 @@ void TestChannel()
             const std::string large(2 * 1024 * 1024, 'x');
             Check(parent.Call<std::string>("ui.snapshot", large) == large,
                 "snapshots larger than pipe buffer arrive intact");
+            for (unsigned problem = 0;
+                problem <= static_cast<unsigned>(snowdesktop::steam_bridge::SteamConnectionProblem::SteamworksUnavailable);
+                ++problem)
+            {
+                snowdesktop::winui::GeneralAdvancedFeatureStatus value;
+                value.state = snowdesktop::winui::GeneralAdvancedFeatureState::RegistrationFailed;
+                value.failure = snowdesktop::winui::GeneralAdvancedFeatureFailure::BridgeError;
+                value.connectionProblem = static_cast<snowdesktop::steam_bridge::SteamConnectionProblem>(problem);
+                value.errorDetail = iteration % 2 ? L"DLL 初始化失败 / 日本語 / 126" : L"";
+                value.bridgeAvailable = true; value.registered = true;
+                value.validUntil = INT64_MAX; value.cardVisible = true; value.offerSteamStore = true;
+                const auto copy = parent.Call<snowdesktop::winui::GeneralAdvancedFeatureStatus>("ui.advanced-status", value);
+                Check(copy.state == value.state && copy.failure == value.failure &&
+                    copy.connectionProblem == value.connectionProblem && copy.errorDetail == value.errorDetail &&
+                    copy.bridgeAvailable == value.bridgeAvailable && copy.registered == value.registered &&
+                    copy.validUntil == value.validUntil && copy.cardVisible == value.cardVisible &&
+                    copy.offerSteamStore == value.offerSteamStore,
+                    "every advanced-feature status field survives the real private IPC channel");
+            }
             parent.Notify("ui.close");
             child.join();
             Reject([&] { (void)parent.Request("ui.flush", Pack(1), 1000); },
@@ -493,6 +795,92 @@ void TestChannel()
     Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
 }
 
+void TestIconLibraryPaging()
+{
+    // Real icon packs contain tens of thousands of entries. A single snapshot
+    // exceeded the private frame limit and made a successfully imported pack
+    // unavailable to the settings process. Keep the same frame bound and use
+    // the production paging handlers over actual anonymous pipes.
+    snowdesktop::IconLibrarySnapshot expected;
+    expected.revision = 72; expected.session = 9; expected.succeeded = true;
+    expected.target = L"item:paged"; expected.targetName = L"Target";
+    expected.groups.push_back({"pack", L"Large pack"});
+    for(unsigned i=0;i<1200;++i)
+    {
+        const auto suffix=std::to_string(i);
+        snowdesktop::IconLibraryGroup group;group.id="group-"+std::string(32-suffix.size(),'0')+suffix;group.name=L"Same pack title";
+        group.license=std::wstring(8000,L'a');group.workshopItem=std::to_string(100000+i);group.accounts={"321","654"};
+        expected.groups.push_back(std::move(group));
+    }
+    Reject([&] { (void)Pack(expected.groups); },"valid per-pack licenses can exceed a frame even before adding icon entries");
+    expected.imported = {"last"}; expected.importedGroupId = "pack";
+    expected.failures = {L"unsupported resource"};
+    expected.workshopAvailable=true;expected.coverPath=L"C:\\preview\\cover.png";expected.preparationId="456-789";expected.progress=2;
+    expected.operationId=123;expected.completedAction="prepareShare";expected.publishedUrl="https://steamcommunity.com/sharedfiles/filedetails/?id=777";
+    for (unsigned i = 0; i < 42000; ++i)
+    {
+        snowdesktop::IconLibraryEntry entry;
+        entry.id = std::string(64, 'a') + std::to_string(i) + ".png";
+        entry.name = L"Icon " + std::to_wstring(i);
+        entry.previewPath = L"C:\\library\\" + std::wstring(256, L'x') + std::to_wstring(i) + L".png";
+        entry.format = "png"; entry.width = 512; entry.height = 512;
+        entry.packageId = std::string(64, 'b'); entry.groupIds = {"pack"};
+        entry.uses = {L"Desktop"}; expected.entries.push_back(std::move(entry));
+    }
+    Reject([&] { (void)Pack(expected); }, "the real-size library fixture exceeds the old single-frame transport");
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) || !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("paging pipes failed");
+    Channel client; client.Open(mainRead, mainWrite, CurrentProcessHandle());
+    std::promise<bool> ready; std::atomic<unsigned> operations = 0;
+    std::thread host([&] {
+        try
+        {
+            Channel server; server.Open(uiRead, uiWrite, CurrentProcessHandle());
+            BindIconLibraryPages(server, [&](auto) { ++operations; return expected; });
+            server.Bind<void>("paging.exit", [] { PostQuitMessage(0); });
+            ready.set_value(true);
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        }
+        catch (...) { try { ready.set_value(false); } catch (...) {} }
+    });
+    const bool started = ready.get_future().get();
+    try
+    {
+        Check(started, "paged library endpoint starts");
+        if (started)
+        {
+            const auto result = CallIconLibraryPages(client, {});
+            bool entriesMatch = result.entries.size() == expected.entries.size();
+            if (entriesMatch) for (std::size_t i = 0; i < result.entries.size(); ++i)
+                if (Pack(result.entries[i]) != Pack(expected.entries[i])) { entriesMatch = false; break; }
+            bool groupsMatch=result.groups.size()==expected.groups.size();
+            if(groupsMatch)for(std::size_t i=0;i<result.groups.size();++i)
+                if(Pack(result.groups[i])!=Pack(expected.groups[i])){groupsMatch=false;break;}
+            Check(entriesMatch && result.revision == 72 && result.session == 9 && result.succeeded &&
+                result.target == expected.target && result.targetName == expected.targetName &&
+                groupsMatch && result.imported == expected.imported &&
+                result.importedGroupId == expected.importedGroupId && result.failures == expected.failures &&
+                result.workshopAvailable && result.coverPath==expected.coverPath && result.preparationId==expected.preparationId &&
+                result.operationId==expected.operationId && result.completedAction==expected.completedAction && result.progress==2 && result.publishedUrl==expected.publishedUrl,
+                "every filtered resource, group, usage and action field survives multi-frame transport");
+            Check(operations == 1, "reading pages never repeats the import/delete operation");
+            const auto first = client.Call<IconLibraryPage>("iconLibrary.action", snowdesktop::IconLibraryRequest{});
+            const auto token = std::get<0>(first);
+            client.Call<void>("iconLibrary.release", token);
+            Reject([&] { (void)client.Call<IconLibraryPage>("iconLibrary.page", token, std::uint32_t{1024}); },
+                "released snapshots cannot leak stale entries into a newer operation");
+            // A rejected request deliberately disconnects Channel. The owner
+            // thread is stopped below; sending cleanup on this endpoint would
+            // turn the successful stale-page rejection into a false failure.
+        }
+    }
+    catch (const std::exception& error) { Check(false, error.what()); }
+    PostThreadMessageW(GetThreadId(host.native_handle()), WM_QUIT, 0, 0);
+    host.join();
+}
+
 void TestRetiredUpdateProtocol()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -502,9 +890,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 25 omitted the no-window scene rule.
+        // Version 37 omitted the advanced-feature connection diagnostics.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{25},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{37},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -513,7 +901,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without the no-window rule disconnect before dispatch");
+            "settings peers without connection diagnostics disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);
@@ -978,8 +1366,11 @@ void TestLargeIconEditing()
 int RunSettingsIpcTests()
 {
     TestCodec();
+    TestPermissionAndRelocatedRoutesCodec();
     TestLargeIconEditing();
+    TestCustomCategoryCreation();
     TestChannel();
+    TestIconLibraryPaging();
     TestAsyncOpening();
     TestOverlappingSettingsRefresh();
     TestRetiredUpdateProtocol();

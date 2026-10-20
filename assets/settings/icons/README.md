@@ -22,14 +22,17 @@ SnowDesktop's embedded Regular font:
 | `appearance.svg` | Paint Brush 24 Regular + Filled |
 | `appearance-theme.svg` | Dark Theme 24 Regular + Filled |
 | `theme-manager.svg` | Color 24 Regular + Filled |
+| `icon-library.svg` | Image Multiple 24 Regular + Filled |
 | `appearance-widgets.svg` | Window Apps 24 Regular + Filled |
-| `appearance-desktop-icons.svg` | Icons 24 Regular + Filled |
+| `appearance-desktop-icons.svg` | Paint Brush 24 Regular + Filled (global appearance) |
 | `appearance-icon-beautification.svg` | Paint Brush Sparkle 24 Regular + Filled |
 | `desktop.svg` | Desktop 24 Regular + Filled |
 | `desktop-style.svg` | Desktop Edit 24 Regular + Filled |
+| `desktop-layout.svg` | Board 24 Regular + Filled |
+| `collections-folders.svg` | Options 24 Regular + Filled (widget preferences) |
 | `pages.svg` | Table Multiple 24 Regular + Filled |
 | `categories.svg` | Collections 24 Regular + Filled |
-| `dock.svg` | Dock Row 24 Regular + Filled |
+| `dock.svg` | Panel Bottom 20 Regular + Filled (Dock) |
 | `taskbar.svg` | Panel Bottom Contract 20 Regular + Filled |
 | `status-bar.svg` | Panel Top Contract 20 Regular + Filled |
 | `widgets.svg` | Apps 24 Regular + Filled |

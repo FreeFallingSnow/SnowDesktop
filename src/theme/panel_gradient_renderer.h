@@ -4,11 +4,12 @@
 #include <d2d1helper.h>
 #include <wrl/client.h>
 #include <array>
+#include "ui/render/smooth_corner_geometry.h"
 
 namespace snowdesktop
 {
 inline bool DrawPanelGradient(ID2D1RenderTarget* target, D2D1_RECT_F frame,
-    float radius, const PanelGradient& gradient, float opacity = 1)
+    float radius, const PanelGradient& gradient, float opacity = 1, bool smoothCorners = true)
 {
     if (!target || !gradient.enabled || !ValidatePanelGradient(gradient)) return false;
     std::array<D2D1_GRADIENT_STOP, 5> colors{};
@@ -23,7 +24,8 @@ inline bool DrawPanelGradient(ID2D1RenderTarget* target, D2D1_RECT_F frame,
     if (FAILED(target->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(
             D2D1::Point2F(frame.left + static_cast<float>(line.x1), frame.top + static_cast<float>(line.y1)),
             D2D1::Point2F(frame.left + static_cast<float>(line.x2), frame.top + static_cast<float>(line.y2))), stops.Get(), &brush))) return false;
-    target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
+    if (smoothCorners) smooth_corners::Fill(target, frame, radius, brush.Get());
+    else target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
     return true;
 }
 }

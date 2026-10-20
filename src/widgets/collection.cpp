@@ -22,6 +22,7 @@
 #include "layout/collection_titleless_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
+#include "single_cell_widget_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -116,14 +117,16 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     else
         content = widget->GetBodyRect();
     const auto metrics = CollectionVisualMetrics(widget);
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = data->scrollContainerMode
+        ? widget->GetScrollingIconSpacing()
+        : snowdesktop::layout_spacing_rules::ContentSpacing(widget->GetLayoutSpacingScale());
     if (data->scrollContainerMode && data->listMode)
     {
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight),
-            spacing);
+            widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     }
     if (CollectionTitlelessActive(widget))
         return CollectionDenseLayout(widget).geometry;
@@ -330,16 +333,8 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 // the saved-key placeholder path and the resolved-item thumbnail path.
 RECT Collection::GetThumbnailIconRect(RECT rect) const
 {
-    const int width = rect.right - rect.left;
-    const int height = rect.bottom - rect.top;
-    const int available = std::max(1,
-        std::min(width - Cu(6.0f), height - Cu(4.0f)));
-    const int iconSize = std::min(
-        std::max(Cu(16.0f), available),
-        std::max(1, std::min(width, height)));
-    const int iconX = rect.left + (width - iconSize) / 2;
-    const int iconY = rect.top + (height - iconSize) / 2;
-    return {iconX, iconY, iconX + iconSize, iconY + iconSize};
+    return snowdesktop::single_cell_widget::ThumbnailIconRect(
+        rect, Cu(6.0f), Cu(4.0f), Cu(16.0f));
 }
 
 void Collection::DrawThumbnail(ID2D1DeviceContext* context,
@@ -371,13 +366,12 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     }
     else
     {
-        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
-            item.iconBitmap,
-            app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
+        auto* bmp = app_->GetTargetIconBitmap(context, item.iconBitmap,
+            item.layoutKey, item.iconIsMediaThumbnail);
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
-                reinterpret_cast<std::uintptr_t>(&item), false);
+                reinterpret_cast<std::uintptr_t>(&item));
         }
         else
         {
@@ -481,7 +475,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         DrawListItem(context, cell, nullptr, -1, L"", false, false);
                     else
                         app_->DrawPlaceholderIcon(context, -1,
-                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_)), 1.0f);
+                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_, IsPopupHosted())), 1.0f);
                 }
                 continue;
             }
@@ -520,7 +514,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         di.sysIconIndex, di.name, di.selected,
                         di.iconIsMediaThumbnail, demoIdentity, data_,
                         { di.typeName, di.modifiedTime,
-                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
                 }
             }
         }
@@ -575,7 +569,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
                     ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
-                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_));
+                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
                 app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
             }
             continue;
@@ -671,7 +665,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 return;
             }
 
-            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_));
+            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
             if (titlelessLargeFolder)
                 mosaicRect =
                     snowdesktop::ResolveCenteredIconRect(
@@ -718,7 +712,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,
@@ -749,6 +743,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
  */
 std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -1003,6 +998,7 @@ RECT Collection::GetAllButtonRect() const
 WidgetHit Collection::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || base == WidgetHit::ResizeHandle) return base;
     if (!data_ || !app_ || data_->type != DesktopWidgetType::Collection) return base;
 
@@ -1052,6 +1048,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     if (data_ && !data_->scrollContainerMode &&
         GetCollectionPresentation(this, false).interactiveItemCount == 0)
     {
@@ -1255,7 +1252,8 @@ bool Collection::SingleColumn() const
 BarStyle Collection::GetInsertionStyle() const
 {
     if (!data_ || !data_->scrollContainerMode) return BarStyle::VBar;
-    return data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+    return data_->listMode && snowdesktop::list_detail_rules::ListColumns(*data_) == 1
+        ? BarStyle::HBar : BarStyle::VBar;
 }
 
 int Collection::GetItemHeight() const
@@ -1275,6 +1273,14 @@ int Collection::GetItemWidth() const
     if (!data_ || !data_->scrollContainerMode) return Cu(92.0f);
     return CollectionLocalLayout(
         const_cast<Collection*>(this)).horizontal.cell;
+}
+
+int Collection::GetMemberColumnCount() const
+{
+    if (!data_ || !data_->scrollContainerMode)
+        return data_ ? std::max(1, data_->gridSpan.columns) : 1;
+    return CollectionLocalLayout(
+        const_cast<Collection*>(this)).horizontal.count;
 }
 
 int Collection::GetBottomBarButtonCount() const

@@ -79,13 +79,19 @@ public:
         }
         return false;
     }
-    void Tooltip(std::uint64_t value, wchar_t (&tip)[128]) const
+    bool Tooltip(std::uint64_t value, wchar_t (&tip)[128]) const
     {
+        tip[0] = 0;
+        if (!value) return true;
         std::uint64_t buffer = 0;
-        if (!value || !Read(value + 16, buffer)) return;
+        if (!Read(value + 16, buffer)) return false;
         for (std::size_t i = 0; i + 1 < std::size(tip); ++i)
-            if (!Read(buffer + i * 2, tip[i]) || !tip[i]) break;
+        {
+            if (!Read(buffer + i * 2, tip[i])) { tip[0] = 0; return false; }
+            if (!tip[i]) return true;
+        }
         tip[127] = 0;
+        return true;
     }
 private:
     HANDLE process_ = nullptr;
@@ -145,7 +151,7 @@ inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoc
             if (value >= record && value - record <= 64 && reader.Read(value, projected) &&
                 projected >= base && projected < base + adapter.image.imageSize) visible = true;
         event.stateMask = NIS_HIDDEN; event.state = visible ? 0 : NIS_HIDDEN;
-        reader.Tooltip(tip, event.tip); if (event.tip[0]) event.flags |= NIF_TIP;
+        if (reader.Tooltip(tip, event.tip)) event.flags |= NIF_TIP;
         if (auto copy = CopyIcon(reinterpret_cast<HICON>(iconHandle))) { Pixels(copy, event); DestroyIcon(copy); }
         DWORD processAfter = 0;
         if (!reader.Bytes(record, after.data(), length) || !std::equal(before.begin(), before.begin() + length, after.begin()) ||

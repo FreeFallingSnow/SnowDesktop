@@ -7,18 +7,20 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook
     if (code >= 0 && lParam)
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        if (message->message >= 0xC000 &&
-            message->message == snowdesktop::dock_source_cloak::CommandMessage())
+        snowdesktop::dock_minimize::CloakRequest request;
+        if (message->message == WM_COPYDATA &&
+            snowdesktop::dock_minimize::ReadCloakRequest(
+                reinterpret_cast<const COPYDATASTRUCT*>(message->lParam), request))
         {
             const HWND receiver = reinterpret_cast<HWND>(
                 GetPropW(message->hwnd, snowdesktop::dock_minimize::kTargetProperty));
-            const auto owner = snowdesktop::dock_source_cloak::ReadOwner(message->hwnd);
+            const auto owner = snowdesktop::dock_source_cloak::RequestOwner(request);
             DWORD receiverProcess = 0;
             GetWindowThreadProcessId(receiver, &receiverProcess);
             if (snowdesktop::dock_minimize::HasLiveOwner(receiver) &&
-                (!message->wParam || owner.process == ULongToHandle(receiverProcess)))
+                (!request.cloak || owner.process == ULongToHandle(receiverProcess)))
                 snowdesktop::dock_source_cloak::HandleCommand(
-                    message->hwnd, message->wParam, message->lParam);
+                    message->hwnd, request);
         }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);

@@ -1,4 +1,6 @@
 #include "widget/data/widget_audio_analysis_provider.h"
+#include <mmdeviceapi.h>
+#include <wrl/implements.h>
 
 #include <algorithm>
 #include <atomic>
@@ -7,6 +9,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <numbers>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -130,12 +133,15 @@ void TestOnDemandCaptureLifecycle()
         "analysis publishes must coalesce into one pending UI wake");
     Check(provider.DrainChanged() && !provider.DrainChanged(),
         "analysis changes must be coalesced and drainable");
-    Check(WaitFor([&wakeCount] {
-            return wakeCount.load(std::memory_order_relaxed) >= 2;
+    // Hardware can remain silent throughout this test. Snapshot freshness is
+    // independent of redraw delivery; rearming on a real content change is
+    // covered by the deterministic production-publication cases below.
+    Check(WaitFor([&] {
+            const auto latest = provider.Snapshot();
+            return latest && latest->revision > snapshot->revision &&
+                latest->timestampMs > snapshot->timestampMs;
         }),
-        "draining an analysis change must re-arm the next UI wake");
-    Check(provider.DrainChanged(),
-        "the re-armed UI wake must correspond to a drainable change");
+        "capture must keep readable snapshots fresh after draining, including unchanged silence");
     provider.Stop();
     Check(!provider.Running() && !provider.ResourcesActive() &&
             !provider.Snapshot(),
@@ -165,12 +171,94 @@ void TestSubscriptionProjection()
             !projected.hasPeak && projected.peak == 0.0,
         "each subscription must receive only its selected derived features");
 }
+
+void TestInitializationFailures()
+{
+    struct Enumerator final : Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IMMDeviceEnumerator>
+    {
+        std::atomic<unsigned>* queries = nullptr;
+        HRESULT STDMETHODCALLTYPE EnumAudioEndpoints(EDataFlow, DWORD, IMMDeviceCollection**) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE GetDefaultAudioEndpoint(EDataFlow, ERole, IMMDevice**) override { ++*queries; return E_FAIL; }
+        HRESULT STDMETHODCALLTYPE GetDevice(LPCWSTR, IMMDevice**) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE RegisterEndpointNotificationCallback(IMMNotificationClient*) override { return E_ACCESSDENIED; }
+        HRESULT STDMETHODCALLTYPE UnregisterEndpointNotificationCallback(IMMNotificationClient*) override { return S_OK; }
+    };
+    for (const int stage : {0, 1, 2})
+    {
+        std::atomic<unsigned> queries{0};
+        WidgetAudioAnalysisProvider::Initialization initialization;
+        initialization.createEnumerator = [&](IMMDeviceEnumerator** result) -> long {
+            if (stage == 0) { *result = nullptr; return E_ACCESSDENIED; }
+            auto instance = Microsoft::WRL::Make<Enumerator>();
+            instance->queries = &queries;
+            *result = instance.Detach();
+            return S_OK;
+        };
+        if (stage == 1) initialization.createEndpointEvent = []() -> void* { return nullptr; };
+        WidgetAudioAnalysisProvider provider(std::move(initialization));
+        Check(provider.Start(33ms), "failure injection starts the actual audio worker");
+        Check(WaitFor([&] { const auto snapshot = provider.Snapshot(); return snapshot && !snapshot->warmingUp; }),
+            "initialization failure publishes a terminal sample without dereferencing an absent endpoint");
+        const auto snapshot = provider.Snapshot();
+        Check(snapshot && !snapshot->available && snapshot->error == (stage == 0
+            ? "audioEnumeratorUnavailable" : "audioEndpointNotificationUnavailable") && queries.load() == 0,
+            "an earlier initialization error prevents later endpoint operations and preserves its diagnostic");
+        const auto started = std::chrono::steady_clock::now();
+        provider.Stop();
+        Check(std::chrono::steady_clock::now() - started < 500ms && !provider.ResourcesActive(),
+            "failed initialization releases resources and its retry wait is canceled on shutdown");
+    }
+}
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    {
+        using snowdesktop::widget_runtime::IsRepeatedSilentWidgetAudioSnapshot;
+        WidgetAudioAnalysisDataSnapshot quiet;
+        quiet.available = true; quiet.warmingUp = false;
+        quiet.endpointId = "device-a"; quiet.sampleRate = 48000; quiet.channels = 2;
+        quiet.waveform.assign(16, 0.0); quiet.spectrum.assign(16, 0.0);
+        auto next = quiet;
+        next.timestampMs = 2000; next.revision = 42;
+        snowdesktop::widget_runtime::WidgetAudioAnalysisPublication publication;
+        Check(publication.Publish(quiet), "first silent state wakes the actual publication path");
+        Check(!publication.Publish(next) && publication.DrainChanged(),
+            "duplicate silence retains an already queued delivery without posting another wake");
+        Check(!publication.Publish(next) && !publication.DrainChanged() &&
+            publication.Latest()->timestampMs == 2000 && publication.Latest()->revision == 3,
+            "quiet publication keeps fresh readable snapshots without idle redraws");
+        auto audible = quiet; audible.silent = false;
+        Check(publication.Publish(audible) && publication.DrainChanged(), "resume wakes a quiet subscriber");
+        Check(publication.Publish(audible) && publication.DrainChanged(), "audible duplicate samples keep animation delivery");
+        Check(publication.Publish(quiet) && publication.DrainChanged(), "first quiet frame clears the last audible frame");
+        publication.Reset();
+        Check(!publication.Latest() && !publication.DrainChanged(), "stop releases publication and pending state");
+        Check(IsRepeatedSilentWidgetAudioSnapshot(quiet, next),
+            "fresh timestamps and revisions alone do not redraw identical silence");
+        next.silent = false;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "playback resumption must redraw immediately");
+        next = quiet; next.deviceChanged = true;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "device changes must be delivered even in silence");
+        next = quiet; next.endpointId = "device-b";
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "new endpoints must not reuse a silent presentation");
+        next = quiet; next.warmingUp = true;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "reconnection warming state remains observable");
+        next = quiet; next.error = "unavailable";
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "errors cannot be hidden by silent deduplication");
+        next = quiet; next.hasWaveform = false; next.waveform.clear();
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "subscription feature changes must be delivered");
+        next = quiet; next.spectrum[0] = 0.0001;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "sub-threshold audio values still remain observable");
+        next = quiet; quiet.silent = false; next.silent = false;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "audible repeated windows retain animation deliveries");
+    }
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    TestInitializationFailures();
     TestLogarithmicSpectrumDistribution();
     TestSubscriptionProjection();
+    if (argc == 2 && std::string_view(argv[1]) == "--initialization-only") return 0;
     TestOnDemandCaptureLifecycle();
     std::cout << "widget audio analysis provider tests passed\n";
     return 0;

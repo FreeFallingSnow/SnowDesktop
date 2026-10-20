@@ -119,6 +119,7 @@ public:
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
+    void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
     void Hide();
     void ScheduleHide();
     void KeepVisible();

@@ -326,7 +326,8 @@ bool LogicalSlotModel::Restore(
     std::string_view instancePrefix, std::string& error)
 {
     error.clear();
-    for (auto& [id, snapshot] : snapshots_)
+    auto restoredSnapshots = snapshots_;
+    for (auto& [id, snapshot] : restoredSnapshots)
     {
         const auto value = storage.find(StorageKey(instancePrefix, id));
         if (value == storage.end()) continue;
@@ -341,6 +342,50 @@ bool LogicalSlotModel::Restore(
         }
         snapshot = std::move(restored);
     }
+    // Older hosts could persist the same opaque identity in different slots
+    // after transfer + rebind. Preserve the first slot in stable name order,
+    // and regenerate only conflicting entries before publishing the model.
+    std::unordered_set<std::string> reservedIds, reservedReferences;
+    for (const auto& [id, snapshot] : restoredSnapshots)
+    {
+        (void)id;
+        for (const auto& item : snapshot.items)
+        {
+            reservedIds.insert(item.id);
+            reservedReferences.insert(item.reference);
+        }
+    }
+    std::unordered_set<std::string> ids, references;
+    for (auto& [id, snapshot] : restoredSnapshots)
+    {
+        bool changed = false;
+        for (auto& item : snapshot.items)
+        {
+            if (ids.contains(item.id) || references.contains(item.reference))
+            {
+                const std::string seed = id + "\n" + item.kind + "\n" + item.target + "\nrestore";
+                for (std::size_t suffix = 0;; ++suffix)
+                {
+                    const std::string uniqueSeed = seed + "\n" + std::to_string(suffix);
+                    const std::string candidateId = MakeOpaqueToken("lsi-", uniqueSeed);
+                    const std::string candidateReference = MakeOpaqueToken("lsr-", uniqueSeed);
+                    if (reservedIds.contains(candidateId) || reservedReferences.contains(candidateReference))
+                        continue;
+                    item.id = candidateId;
+                    item.reference = candidateReference;
+                    reservedIds.insert(item.id);
+                    reservedReferences.insert(item.reference);
+                    changed = true;
+                    break;
+                }
+            }
+            ids.insert(item.id);
+            references.insert(item.reference);
+        }
+        if (changed && snapshot.revision < (std::numeric_limits<std::uint64_t>::max)())
+            ++snapshot.revision;
+    }
+    snapshots_.swap(restoredSnapshots);
     return true;
 }
 
@@ -463,10 +508,14 @@ bool LogicalSlotModel::Bind(std::string_view slotId,
     candidate.reference = MakeOpaqueToken("lsr-", seed);
     std::unordered_set<std::string> ids;
     std::unordered_set<std::string> references;
-    for (const auto& item : snapshot->second.items)
+    for (const auto& [id, other] : snapshots_)
     {
-        ids.insert(item.id);
-        references.insert(item.reference);
+        (void)id;
+        for (const auto& item : other.items)
+        {
+            ids.insert(item.id);
+            references.insert(item.reference);
+        }
     }
     for (std::size_t suffix = 1;
         ids.contains(candidate.id) || references.contains(candidate.reference);

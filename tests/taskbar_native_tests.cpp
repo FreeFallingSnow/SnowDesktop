@@ -3,12 +3,15 @@
 #include "../src/taskbar_hook/taskbar_classic_appearance.h"
 #include "../src/taskbar_hook/taskbar_material_render.h"
 #include "../src/taskbar_hook/taskbar_connection.h"
+#include "../src/taskbar_hook/taskbar_autohide_rules.h"
 #include "dock/dock_settings.h"
+#include "dock/taskbar_minimize_input.h"
 #include "platform/taskbar_monitor.h"
 #include <dwmapi.h>
 #include <array>
 #include <iostream>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include "taskbar_hook/taskbar_hook_lifetime_tests.inc"
 
@@ -98,6 +101,35 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
+
+struct MinimizeInputFixture
+{
+    HOOKPROC mouse = nullptr, keyboard = nullptr;
+    HWND recipient = nullptr, foreground = nullptr;
+    DWORD thread = 0;
+    int removed = 0;
+    bool rejectKeyboard = false;
+} minimizeInputFixture;
+
+HHOOK WINAPI InstallMinimizeInput(int kind, HOOKPROC callback, HINSTANCE, DWORD thread)
+{
+    if (thread || (kind != WH_MOUSE_LL && kind != WH_KEYBOARD_LL)) return nullptr;
+    minimizeInputFixture.thread = GetCurrentThreadId();
+    if (kind == WH_MOUSE_LL) minimizeInputFixture.mouse = callback;
+    else
+    {
+        if (minimizeInputFixture.rejectKeyboard) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
+        minimizeInputFixture.keyboard = callback;
+    }
+    return reinterpret_cast<HHOOK>(static_cast<std::uintptr_t>(kind));
+}
+BOOL WINAPI RemoveMinimizeInput(HHOOK)
+{
+    ++minimizeInputFixture.removed;
+    return TRUE;
+}
+HWND WINAPI MinimizeInputWindowAt(POINT) { return minimizeInputFixture.recipient; }
+HWND WINAPI MinimizeInputForeground() { return minimizeInputFixture.foreground; }
 }
 
 // These are isolated windows in the test process, never the real Explorer
@@ -263,6 +295,16 @@ int RunNativeTaskbarTests()
         nullptr, nullptr, instance, nullptr);
     check(window != nullptr, "create isolated taskbar window");
     if (!window) return failures;
+    HWND vanished = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+        L"Destroyed cached target", WS_POPUP, -32000, -32000, 16, 16,
+        nullptr, nullptr, instance, nullptr);
+    check(vanished && DestroyWindow(vanished), "destroy an actual cached-window fixture before reconnect");
+    std::vector<HWND> currentTargets{window, vanished, nullptr};
+    RemoveStaleTaskbarWindows(currentTargets, GetCurrentProcessId());
+    check(currentTargets == std::vector<HWND>{window},
+        "reconnect discards destroyed cached handles before registering any Hook");
+    RemoveStaleTaskbarWindows(currentTargets, GetCurrentProcessId() + 1);
+    check(currentTargets.empty(), "reconnect rejects windows outside the selected Explorer process");
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SharedState shared;
     shared.ownerProcessId = GetCurrentProcessId();
@@ -278,6 +320,186 @@ int RunNativeTaskbarTests()
             (value & DWM_CLOAKED_APP) != 0;
     };
     check(!cloaked(), "uncontrolled window provides an independent visible baseline");
+    {
+        // Exercise real DWM and native subclasses on two private taskbars.
+        // Only the Windows preference boundary is substituted; no Explorer
+        // windows, cursor movement or user application minimization is used.
+        registration.lpszClassName = L"Shell_SecondaryTrayWnd";
+        check(RegisterClassW(&registration) != 0, "register private secondary taskbar for temporary suppression");
+        const HWND secondary = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            registration.lpszClassName, L"Temporary secondary taskbar", WS_POPUP,
+            -32000, -32000, 320, 48, nullptr, nullptr, instance, nullptr);
+        const HWND source = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+            L"Private minimize request source", WS_POPUP, -32000, -32000, 32, 32,
+            nullptr, nullptr, instance, nullptr);
+        check(secondary && source, "create temporary protection fixtures");
+        ShowWindow(secondary, SW_SHOWNOACTIVATE);
+        ShowWindow(source, SW_SHOWNOACTIVATE);
+        const auto secondaryCloaked = [&] {
+            DWORD value = 0;
+            return SUCCEEDED(DwmGetWindowAttribute(secondary, DWMWA_CLOAKED, &value, sizeof(value))) &&
+                (value & DWM_CLOAKED_APP) != 0;
+        };
+        SharedState temporary;
+        temporary.enabled = TRUE; temporary.ownerProcessId = GetCurrentProcessId();
+        temporary.targetCount = 2;
+        temporary.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+        temporary.targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+        temporary.targets[0].protectAutoHideActivation = TRUE;
+        temporary.targets[1].protectAutoHideActivation = TRUE;
+        appBarState = ABS_AUTOHIDE;
+        check(native::Attach(window, &temporary, false, TestAppBarMessage) &&
+            native::Attach(secondary, &temporary, false, TestAppBarMessage) &&
+            !cloaked() && !secondaryCloaked(),
+            "automatic hiding alone attaches offline protection without permanently hiding either screen");
+        temporary.minimizeSource = reinterpret_cast<std::uintptr_t>(source);
+        const auto arm = [&] {
+            ++temporary.minimizeSequence;
+            temporary.minimizeStarted = GetTickCount64();
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+        };
+        arm();
+        check(cloaked() && secondaryCloaked(), "one application minimize temporarily cloaks all taskbars without a Dock target");
+        check(SendMessageW(secondary, apply, 0, 0) == kMinimizeApplyAcknowledged,
+            "the native window thread acknowledges successful application before minimize resumes");
+        const BOOL uncloak = FALSE;
+        DwmSetWindowAttribute(secondary, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
+        check(secondaryCloaked(), "Shell cannot bypass an active temporary cloak");
+        SendMessageW(secondary, WM_MOUSEACTIVATE, 0, MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN));
+        SendMessageW(window, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked(), "explicit taskbar access cancels the matching request on every screen");
+        SendMessageW(secondary, apply, 0, 0);
+        check(!secondaryCloaked(), "appearance refresh cannot rearm a cancelled temporary cloak");
+        const HWND taskbarChild = CreateWindowExW(0, L"STATIC", L"Private taskbar input child",
+            WS_CHILD | WS_VISIBLE, 0, 0, 32, 32, secondary, nullptr, instance, nullptr);
+        check(taskbarChild != nullptr, "create a private descendant as the physical taskbar input recipient");
+        {
+            using snowdesktop::dock::MinimizeInput;
+            using snowdesktop::dock::MinimizeInputKind;
+            using snowdesktop::dock::TaskbarMinimizeInput;
+            // Substitute only OS input delivery and the system hit-test result.
+            // Production callbacks, worker lifetime, event snapshots and actual
+            // window ancestry remain intact; no physical input is synthesized.
+            minimizeInputFixture = {};
+            minimizeInputFixture.recipient = taskbarChild;
+            const TaskbarMinimizeInput::Api api{InstallMinimizeInput, RemoveMinimizeInput,
+                MinimizeInputWindowAt, MinimizeInputForeground};
+            TaskbarMinimizeInput monitor(api);
+            check(monitor.Start() == ERROR_SUCCESS && monitor.Running() &&
+                minimizeInputFixture.mouse && minimizeInputFixture.keyboard &&
+                minimizeInputFixture.thread != GetCurrentThreadId(),
+                "mouse and keyboard provenance starts on a dedicated thread without blocking the UI pump");
+            TaskbarMinimizeInput contender(api);
+            check(contender.Start() == ERROR_ALREADY_EXISTS && monitor.Running(),
+                "another observer cannot steal the active input owner");
+            const HWND taskbars[]{window, secondary};
+            MSLLHOOKSTRUCT pointer{};
+            pointer.pt = {3560, 1572}; pointer.time = 1000;
+            minimizeInputFixture.mouse(HC_ACTION, WM_LBUTTONUP, reinterpret_cast<LPARAM>(&pointer));
+            auto input = monitor.Read();
+            check(input.kind == MinimizeInputKind::Pointer && input.time == 1000 && input.Recent(1100) &&
+                TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !GetPropW(secondary, native::kMinimizeInputTickProperty),
+                "taskbar clicks are recognized even when Explorer never publishes its queued-input property");
+            pointer.pt = {100, 100}; pointer.time = 1100;
+            minimizeInputFixture.mouse(HC_ACTION, WM_MOUSEMOVE, reinterpret_cast<LPARAM>(&pointer));
+            check(monitor.Read().time == 1000 && monitor.Read().point.x == 3560,
+                "pointer movement preserves the actual click rather than replacing it with hover position");
+            TaskbarMinimizeExemptions clicks;
+            const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+            check(clicks.Exempts(sourceKey, false,
+                    TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars), 1100) &&
+                clicks.Exempts(sourceKey, true, false, 1200),
+                "a taskbar click and its delayed minimize notification stay exempt without Explorer queue delivery");
+            minimizeInputFixture.recipient = source;
+            pointer.time = 1300;
+            minimizeInputFixture.mouse(HC_ACTION, WM_LBUTTONDOWN, reinterpret_cast<LPARAM>(&pointer));
+            input = monitor.Read();
+            check(!TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !clicks.Exempts(sourceKey, false, false, 1300),
+                "a new click in the application or Dock replaces old taskbar provenance");
+            KBDLLHOOKSTRUCT key{}; key.time = 1400;
+            minimizeInputFixture.foreground = source;
+            minimizeInputFixture.keyboard(HC_ACTION, WM_KEYDOWN, reinterpret_cast<LPARAM>(&key));
+            input = monitor.Read();
+            check(input.kind == MinimizeInputKind::Keyboard &&
+                !TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars),
+                "application keyboard commands cannot inherit an earlier taskbar click");
+            minimizeInputFixture.foreground = secondary;
+            key.time = 1500;
+            minimizeInputFixture.keyboard(HC_ACTION, WM_KEYDOWN, reinterpret_cast<LPARAM>(&key));
+            input = monitor.Read();
+            check(TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !input.Recent(3001) && MinimizeInput{MinimizeInputKind::Pointer, 0xfffffff0}.Recent(0x20),
+                "taskbar keyboard activation is bounded and input age survives DWORD tick wrap");
+            monitor.Stop();
+            check(!monitor.Running() && monitor.Read().kind == MinimizeInputKind::None &&
+                minimizeInputFixture.removed == 2,
+                "stopping joins the input worker, removes both hooks and clears stale provenance");
+            minimizeInputFixture = {};
+            minimizeInputFixture.rejectKeyboard = true;
+            check(monitor.Start() == ERROR_ACCESS_DENIED && !monitor.Running() &&
+                minimizeInputFixture.removed == 1,
+                "partial input hook failure cleans up the first hook and releases ownership");
+            minimizeInputFixture.rejectKeyboard = false;
+            check(monitor.Start() == ERROR_SUCCESS && monitor.Running(),
+                "input capture can recover after a failed start without a stale active owner");
+            monitor.Stop();
+        }
+        native::ObserveTaskbarInput(source, 1000);
+        check(!GetPropW(window, native::kMinimizeInputTickProperty) &&
+            !GetPropW(secondary, native::kMinimizeInputTickProperty),
+            "input in an ordinary application cannot claim taskbar minimize provenance");
+        arm();
+        MSG click{};
+        check(PostMessageW(taskbarChild, WM_LBUTTONDOWN, 0, 0) &&
+            PeekMessageW(&click, taskbarChild, WM_LBUTTONDOWN, WM_LBUTTONDOWN, PM_REMOVE),
+            "retrieve private taskbar input through the installed thread hook without physical desktop input");
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(HandleToULong(GetPropW(secondary, native::kMinimizeInputTickProperty)) == click.time &&
+            click.time && !cloaked() && !secondaryCloaked(),
+            "queued taskbar input publishes its own timestamp before dispatch and cancels both screens");
+        arm();
+        // Substitute only physical event delivery/time, keeping native window
+        // ancestry, property publication, cancellation and real DWM untouched.
+        native::ObserveTaskbarInput(taskbarChild, 1234);
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        const DWORD recorded = HandleToULong(GetPropW(secondary, native::kMinimizeInputTickProperty));
+        check(recorded == 1234 && !GetPropW(window, native::kMinimizeInputTickProperty) &&
+            !cloaked() && !secondaryCloaked(),
+            "real taskbar descendant input publishes its origin and releases protection on all screens");
+        TaskbarMinimizeExemptions origins;
+        const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+        check(origins.Exempts(sourceKey, false, IsRecentTaskbarInput(recorded, 1234, 1240), 1240) &&
+            origins.Exempts(sourceKey, true, false, 1300) && !cloaked() && !secondaryCloaked(),
+            "taskbar-origin minimize and its later observation leave both taskbars visible");
+        check(!origins.Exempts(sourceKey, false, IsRecentTaskbarInput(recorded, 1400, 1400), 1400),
+            "a subsequent caption or Dock action retains ordinary all-monitor protection");
+        arm();
+        check(cloaked() && secondaryCloaked(), "the next application minimize starts a new independent cloak");
+        temporary.targets[1].shellPanelVisible = TRUE;
+        SendMessageW(secondary, apply, 0, 0);
+        check(cloaked() && !secondaryCloaked(), "an open shell panel reveals its own taskbar while preserving the other screen");
+        temporary.targets[1].shellPanelVisible = FALSE;
+        SendMessageW(secondary, apply, 0, 0);
+        check(!secondaryCloaked(), "closing a shell panel does not resurrect the previous minimize request");
+        check(temporary.autoHideRestore == -1 && appBarState == ABS_AUTOHIDE,
+            "temporary protection never takes ownership of or changes Windows auto-hide preferences");
+        temporary.enabled = FALSE;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked() && !GetPropW(window, native::kAttachedProperty) &&
+            !GetPropW(secondary, native::kAttachedProperty), "owner shutdown restores both taskbars and detaches temporary protection");
+        check(!GetPropW(secondary, native::kMinimizeInputTickProperty),
+            "detaching removes transient taskbar input provenance");
+        DestroyWindow(source);
+        DestroyWindow(secondary);
+        UnregisterClassW(registration.lpszClassName, instance);
+        appBarState = 0;
+    }
     HWND unrelated = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
         L"Unrelated test window", WS_POPUP, -32000, -32000, 32, 32,
         nullptr, nullptr, instance, nullptr);
@@ -671,13 +893,14 @@ int RunNativeTaskbarTests()
         if (cancel)
         {
             const std::array<HWND, 2> windows{window, secondary};
+            ConnectionStage connectionStage = ConnectionStage::RegisterHook;
             connectionState = &shared;
             shared.enabled = TRUE;
             shared.targets[0].shellPanelVisible = FALSE;
             shared.targets[1].suppressTaskbar = TRUE;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_SUCCESS &&
-                cloaked() && secondaryCloaked(),
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel, &connectionStage) == ERROR_SUCCESS &&
+                connectionStage == ConnectionStage::None && cloaked() && secondaryCloaked(),
                 "both taskbars must connect without any XAML ready notification");
             check(!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), GetCurrentProcessId() + 1),
                 "a previous host's resident callbacks cannot acknowledge the current host");
@@ -697,9 +920,21 @@ int RunNativeTaskbarTests()
                 "reconnected Dock displays immediately report completed suppression");
             acknowledgeConnection = false;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_DLL_INIT_FAILED,
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel, &connectionStage) == ERROR_DLL_INIT_FAILED &&
+                connectionStage == ConnectionStage::Acknowledge,
                 "stale owner properties cannot acknowledge a fresh connection request");
             acknowledgeConnection = true;
+            std::wstring missingRuntime = (std::filesystem::temp_directory_path() /
+                (L"SnowDesktop.missing-hook-" + std::to_wstring(GetCurrentProcessId())) /
+                L"Hook.dll").wstring();
+            unsigned fallbackCalls = 0;
+            const DWORD loadFailure = ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(),
+                GetCurrentProcessId(), missingRuntime, nullptr, cancel, [&] {
+                    ++fallbackCalls;
+                    return std::wstring{};
+                }, &connectionStage);
+            check(loadFailure != ERROR_SUCCESS && connectionStage == ConnectionStage::LoadModule &&
+                !fallbackCalls, "module load failure records its stage without minting a fallback DLL path");
             shared.enabled = FALSE;
             SendMessageW(window, apply, 0, 0);
             SendMessageW(secondary, apply, 0, 0);

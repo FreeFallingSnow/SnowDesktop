@@ -35,6 +35,9 @@ public:
     void Close() noexcept { preview_.Close(); change_ = {}; localize_ = {}; }
     Panel Content() const { return root_; }
     const PanelGradient& Value() const { return value_; }
+    winrt::Microsoft::UI::Xaml::Controls::Control FocusTarget() const { return focusTarget_; }
+    void SetAutomaticColors(bool automatic)
+    { if (automaticColors_ != automatic) { automaticColors_ = automatic; Build(); } }
     void SetValue(const PanelGradient& value, bool force = false)
     {
         if (!ValidatePanelGradient(value) || (dirty_ && !force && value != value_)) return;
@@ -62,6 +65,7 @@ public:
     void RefreshLocalizedText() { Build(); }
 private:
     Panel root_;
+    winrt::Microsoft::UI::Xaml::Controls::Control focusTarget_{nullptr};
     presenter_controls::CoalescedPreviewTimer<PanelGradient> preview_;
     PanelGradient value_, committed_;
     Localize localize_;
@@ -69,7 +73,13 @@ private:
     PickerExtras pickerExtras_;
     std::vector<std::function<void()>> sync_;
     bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false, compact_ = false;
+    bool automaticColors_ = false;
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
+    bool FirstRow() const
+    {
+        return root_.Children().Size() == 0 && winrt::unbox_value_or<bool>(
+            root_.Resources().TryLookup(winrt::box_value(L"SnowDesktopSettingsFirstRow")), true);
+    }
     void Sync()
     {
         syncing_ = true; for (const auto& sync : sync_) sync(); syncing_ = false;
@@ -102,7 +112,8 @@ private:
         restore.Click([reset = std::move(reset)](auto const&, auto const&) { reset(); });
         presenter_controls::SettingRow row;
         row.Initialize(editor, presenter_controls::kSettingControlWidth + 40);
-        row.SetText(L(key)); row.root.MinHeight(44); row.root.Margin({level * 16., 0, 0, 0});
+        row.SetText(L(key));
+        presenter_controls::StyleSettingsSubrow(row.root, FirstRow(), level * 16.);
         x::Automation::AutomationProperties::SetName(control, L(key));
         root_.Children().Append(row.root);
     }
@@ -112,7 +123,7 @@ private:
         presenter_controls::SettingRow row;
         row.Initialize(control); row.SetText(L(key));
         row.SetControlAlignment(x::HorizontalAlignment::Right);
-        row.root.MinHeight(44); row.root.Margin({level * 16., 0, 0, 0});
+        presenter_controls::StyleSettingsSubrow(row.root, FirstRow(), level * 16.);
         x::Automation::AutomationProperties::SetName(control, L(key));
         root_.Children().Append(row.root);
     }
@@ -160,7 +171,7 @@ private:
         namespace m = x::Media;
         c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
         c::StackPanel content; content.Orientation(c::Orientation::Horizontal); content.Spacing(8);
-        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4});
+        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4, 4, 4, 4});
         c::TextBlock text; content.Children().Append(swatch); content.Children().Append(text); button.Content(content);
         c::Flyout flyout; c::ColorPicker picker; picker.IsAlphaEnabled(false);
         c::StackPanel body; body.Spacing(8); body.Children().Append(picker); flyout.Content(body); button.Flyout(flyout);
@@ -177,9 +188,14 @@ private:
             }, false);
         });
         flyout.Closed([weak](auto const&, auto const&) { if (auto self = weak.lock()) self->Flush(); });
-        picker.KeyDown([weak, flyout](auto const&, auto const& args) {
+        const auto weakFlyout = winrt::make_weak(flyout);
+        picker.KeyDown([weak, weakFlyout](auto const&, auto const& args) {
             if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
-                if (auto self = weak.lock()) { self->Cancel(); args.Handled(true); flyout.Hide(); }
+                if (auto self = weak.lock())
+                {
+                    self->Cancel(); args.Handled(true);
+                    if (auto live = weakFlyout.get()) live.Hide();
+                }
         });
         sync_.push_back([this, index, picker, swatch, text] {
             if (index >= value_.stops.size()) return;
@@ -193,14 +209,42 @@ private:
     void Color(const char* key, size_t index, unsigned defaultColor, int level = 1)
     {
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
-        Row(key, ColorButton(key, index), [weak, index, defaultColor] {
+        Panel actions;
+        actions.Orientation(winrt::Microsoft::UI::Xaml::Controls::Orientation::Horizontal);
+        actions.Spacing(8);
+        actions.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
+        actions.Children().Append(ColorButton(key, index));
+        if (index > 0 && index + 1 < value_.stops.size())
+        {
+            winrt::Microsoft::UI::Xaml::Controls::Button remove;
+            remove.Content(winrt::box_value(L("panelGradient.removeStop")));
+            remove.Click([weak, index](auto const&, auto const&) {
+                if (auto self = weak.lock()) self->Apply([index](auto& v) {
+                    if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
+                }, true);
+            });
+            actions.Children().Append(remove);
+        }
+        Row(key, actions, [weak, index, defaultColor] {
             if (auto self = weak.lock()) self->Apply([&](auto& v) { if (index < v.stops.size()) v.stops[index].color = defaultColor; }, true);
         }, level);
     }
     void Stop(size_t index, bool first, bool last)
     {
-        Color(first ? "panelGradient.startColor" : last ? "panelGradient.endColor" : "panelGradient.stopColor",
+        if (!automaticColors_) Color(first ? "panelGradient.startColor" : last ? "panelGradient.endColor" : "panelGradient.stopColor",
             index, first ? 0xb6d6ef : last ? 0xd5c7ef : 0xc8d0ef, first || last ? 1 : 2);
+        else if (!first && !last)
+        {
+            winrt::Microsoft::UI::Xaml::Controls::Button remove;
+            remove.Content(winrt::box_value(L("panelGradient.removeStop")));
+            std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
+            remove.Click([weak, index](auto const&, auto const&) {
+                if (auto self = weak.lock()) self->Apply([index](auto& v) {
+                    if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
+                }, true);
+            });
+            ActionRow("panelGradient.stopColor", remove, 2);
+        }
         Numeric(first ? "panelGradient.startOpacity" : last ? "panelGradient.endOpacity" : "panelGradient.stopOpacity",
             [index](auto const& v) { return v.stops[index].opacity * 100; },
             [index](auto& v, double n) { if (index < v.stops.size()) v.stops[index].opacity = n / 100; }, 0, 100, 1, 65,
@@ -215,26 +259,18 @@ private:
                     v.stops[index].position = std::clamp(n / 100, left + gap, right - gap);
                 }
             }, 0, 100, .1, 50, L"%", 2);
-        namespace x = winrt::Microsoft::UI::Xaml;
-        x::Controls::Button remove; remove.Content(winrt::box_value(L("panelGradient.removeStop")));
-        remove.HorizontalAlignment(x::HorizontalAlignment::Right);
-        std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
-        remove.Click([weak, index](auto const&, auto const&) {
-            if (auto self = weak.lock()) self->Apply([index](auto& v) {
-                if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
-            }, true);
-        });
-        root_.Children().Append(remove);
     }
     void Build()
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         namespace c = x::Controls;
-        syncing_ = true; sync_.clear(); root_.Children().Clear(); root_.Spacing(4);
+        syncing_ = true; sync_.clear(); root_.Children().Clear(); root_.Spacing(0);
+        root_.Resources().Insert(winrt::box_value(L"SnowDesktopSettingsRowGroup"), winrt::box_value(true));
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
         if (!required_)
         {
             c::ComboBox fill;
+            focusTarget_ = fill;
             fill.HorizontalAlignment(x::HorizontalAlignment::Right);
             fill.Items().Append(winrt::box_value(L("largeIcon.solidBackground")));
             fill.Items().Append(winrt::box_value(L("largeIcon.gradientBackground")));
@@ -257,7 +293,7 @@ private:
                     std::swap(v.stops.front().opacity, v.stops.back().opacity);
                 }, true);
             });
-            if (compact_)
+            if (compact_ && !automaticColors_)
             {
                 c::StackPanel colors; colors.Orientation(c::Orientation::Horizontal); colors.Spacing(6);
                 colors.HorizontalAlignment(x::HorizontalAlignment::Right);
@@ -272,7 +308,7 @@ private:
                 }, 0);
             }
             Numeric("panelGradient.angle", [](auto const& v) { return v.angle; }, [](auto& v, double n) { v.angle = n; }, 0, 360, 1, 90, L"°", compact_ ? 0 : 1);
-            if (!compact_) ActionRow("panelGradient.swap", swap);
+            if (!compact_ && !automaticColors_) ActionRow("panelGradient.swap", swap);
             c::Button more; more.Content(winrt::box_value(L(expanded_ ? "largeIcon.hideDetails" : "largeIcon.showDetails")));
             more.HorizontalAlignment(x::HorizontalAlignment::Right);
             more.Click([weak](auto const&, auto const&) {

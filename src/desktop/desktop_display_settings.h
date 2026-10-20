@@ -12,6 +12,8 @@ struct DesktopDisplaySettings
 {
     bool dockEnabled = kDefaultDockEnabled;
     float iconSpacingScale = 1.0f;
+    float scrollingIconSpacingYScale = 1.0f;
+    float listRowSpacingScale = 1.0f;
     float itemIconSizeScale = kDefaultItemIconSizeScale;
     float itemFontSizeCu = kDefaultItemFontSizeCu;
     float listItemFontSizeCu = kDefaultItemFontSizeCu;
@@ -22,6 +24,8 @@ struct DesktopDisplaySettings
     int scrollingTitleLines = 2;
     bool titleEllipsis = true;
     int shortcutArrowMode = 0;
+    bool groupComponentBadges = true;
+    bool beautifyFileThumbnails = false;
     IconBeautifySettings iconBeautify;
 };
 } // namespace snowdesktop

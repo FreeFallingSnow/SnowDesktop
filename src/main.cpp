@@ -13,6 +13,7 @@
 
 #include "app/app.h"
 #include "platform/auto_start_elevation.h"
+#include "platform/auto_start_launch.h"
 #include "settings/settings_process.h"
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
@@ -20,6 +21,7 @@
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
+#include "platform/crash_restart_history.h"
 #include "data/data_paths.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/deployment_context.h"
@@ -28,6 +30,7 @@
 #include "platform/single_instance.h"
 #include "widget/authoring/widget_author_preview.h"
 #include "ui/preview/native_component_preview_export.h"
+#include "winui/settings_visual_preview.h"
 #include "steam/steam_runtime_startup.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 
@@ -252,7 +255,6 @@ static std::atomic_bool g_crashWatchdogStarted = false;
 
 static bool ShouldPreventAutoRestart()
 {
-    std::vector<DWORD> ticks;
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, KEY_READ | KEY_WRITE, &key) != ERROR_SUCCESS)
     {
@@ -261,15 +263,7 @@ static bool ShouldPreventAutoRestart()
             return false;
     }
 
-    DWORD type = REG_BINARY;
-    DWORD dataSize = 0;
-    if (RegQueryValueExW(key, kRegValueName, nullptr, &type, nullptr, &dataSize) == ERROR_SUCCESS &&
-        type == REG_BINARY && dataSize >= sizeof(DWORD))
-    {
-        ticks.resize(dataSize / sizeof(DWORD));
-        RegQueryValueExW(key, kRegValueName, nullptr, nullptr,
-            reinterpret_cast<BYTE*>(ticks.data()), &dataSize);
-    }
+    const std::vector<DWORD> ticks = snowdesktop::ReadCrashRestartHistory(key);
 
     DWORD now = GetTickCount();
     std::vector<DWORD> recent;
@@ -363,6 +357,19 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
+    if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
+    // Normalize login-task privileges before the Steam startup channel, data
+    // discovery and the single-instance mutex acquire any process identity.
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
+    if (autoStartLaunch.handled)
+    {
+        const std::wstring message = std::wstring(autoStartLaunch.operation) +
+            L" error=" + std::to_wstring(autoStartLaunch.error) +
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
+        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.error
+            ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
+        return static_cast<int>(autoStartLaunch.error);
+    }
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.

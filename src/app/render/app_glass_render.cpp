@@ -8,7 +8,8 @@ bool DesktopApp::DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
     float effectStrength, const snowdesktop::EdgeLightSettings& edgeLight)
 {
     return snowdesktop::widget_preview::DrawEdgeHighlight(
-        ctx, frame, radius, color, strokeWidth, effectStrength, edgeLight);
+        ctx, frame, radius, color, strokeWidth, effectStrength, edgeLight,
+        snowdesktop::widget_preview::HighlightEdge::All, true);
 }
 
 /** @brief 返回设置界面显示的原生毛玻璃合成状态。 */

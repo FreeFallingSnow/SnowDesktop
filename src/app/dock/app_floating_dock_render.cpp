@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/ui_presentation_scope.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
@@ -310,6 +311,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
             (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
             msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&
@@ -402,6 +404,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_MOUSEMOVE:
     {
         snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
+        POINT livePointer{};
+        if (GetCursorPos(&livePointer))
+            snowdesktop::desktop_hover_rules::ObserveRetainedDockLeavePointer(
+                host.retainedLeaveTracking, livePointer.x, livePointer.y);
         SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};
@@ -426,6 +432,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     }
     case WM_MOUSELEAVE:
     {
+        snowdesktop::performance::Scope leaveScope("dock.input", "mouse.leave");
         // Hiding the floating HWND generates a synthetic leave before the
         // desktop HWND receives its hand-off move. Dynamic title/rounded HRGN
         // updates can also post a stale leave while User32 still resolves the
@@ -460,10 +467,21 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                     hitWindow == hwnd,
                     host.backdrop.IsBackdropWindow(hitWindow),
                     pointerOnBaseDesktopDockSurface,
-                    [this, hwnd](bool trackDockContent) {
+                    [this, hwnd, &host, cursorScreen](bool trackDockContent) {
+                        if (!snowdesktop::desktop_hover_rules::TryRearmRetainedDockLeave(
+                                host.retainedLeaveTracking, trackDockContent,
+                                cursorScreen.x, cursorScreen.y)) return;
+                        // A native hit can belong to the window's nonclient
+                        // edge. TME_LEAVE tracks the client area only.
+                        const HWND target = trackDockContent ? hwnd : hwnd_;
+                        POINT clientPointer = cursorScreen;
+                        RECT clientRect{};
+                        if (!ScreenToClient(target, &clientPointer) ||
+                            !GetClientRect(target, &clientRect) ||
+                            !PtInRect(&clientRect, clientPointer)) return;
                         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
                         tracking.dwFlags = TME_LEAVE;
-                        tracking.hwndTrack = trackDockContent ? hwnd : hwnd_;
+                        tracking.hwndTrack = target;
                         TrackMouseEvent(&tracking);
                     }))
             {

@@ -187,6 +187,11 @@ public:
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard) = 0;
 
+    virtual WidgetSettingsBackendResult ReadSecret(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetSettingFieldSchema& field,
+        std::string& plaintext) = 0;
     virtual WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,
@@ -304,6 +309,8 @@ public:
     virtual WidgetSettingMutationResult SetSearchQuery(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string query) = 0;
+    virtual WidgetSettingSecretReadResult ReadSecret(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
     virtual WidgetSettingMutationResult SetSecret(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string_view plaintext) = 0;
@@ -382,6 +389,8 @@ public:
     WidgetSettingMutationResult SetSearchQuery(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string query);
+    WidgetSettingSecretReadResult ReadSecret(
+        const WidgetSettingMutationGuard& guard, std::string_view key);
     WidgetSettingMutationResult SetSecret(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string_view plaintext);

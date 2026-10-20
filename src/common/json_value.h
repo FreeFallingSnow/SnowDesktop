@@ -100,7 +100,7 @@ namespace json_detail
         }
 
     private:
-        bool ParseValue(JsonValue& output)
+        bool ParseValue(JsonValue& output, std::size_t depth = 0)
         {
             SkipWhitespace();
             if (position_ >= text_.size())
@@ -108,8 +108,12 @@ namespace json_detail
 
             switch (text_[position_])
             {
-            case '{': return ParseObject(output);
-            case '[': return ParseArray(output);
+            case '{':
+                if (depth >= 128) return Fail("maximum JSON nesting depth exceeded");
+                return ParseObject(output, depth + 1);
+            case '[':
+                if (depth >= 128) return Fail("maximum JSON nesting depth exceeded");
+                return ParseArray(output, depth + 1);
             case '"':
                 output = {};
                 output.type = JsonValue::Type::String;
@@ -127,7 +131,7 @@ namespace json_detail
             }
         }
 
-        bool ParseObject(JsonValue& output)
+        bool ParseObject(JsonValue& output, std::size_t depth)
         {
             ++position_;
             output = {};
@@ -146,7 +150,7 @@ namespace json_detail
                     return Fail("expected ':' after object key");
 
                 JsonValue value;
-                if (!ParseValue(value))
+                if (!ParseValue(value, depth))
                     return false;
                 if (!output.object.emplace(std::move(key), std::move(value)).second)
                     return Fail("duplicate object key");
@@ -161,7 +165,7 @@ namespace json_detail
             return Fail("unterminated object");
         }
 
-        bool ParseArray(JsonValue& output)
+        bool ParseArray(JsonValue& output, std::size_t depth)
         {
             ++position_;
             output = {};
@@ -173,7 +177,7 @@ namespace json_detail
             while (position_ < text_.size())
             {
                 JsonValue value;
-                if (!ParseValue(value))
+                if (!ParseValue(value, depth))
                     return false;
                 output.array.push_back(std::move(value));
 

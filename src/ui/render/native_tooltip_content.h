@@ -120,12 +120,11 @@ inline void DrawNativeTooltip(ID2D1RenderTarget* context, D2D1_RECT_F bounds,
         D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha);
     if (FAILED(context->CreateSolidColorBrush(background, &brush))) return;
     const float radius = NativeTooltipCornerRadius(appearance, bounds.right - bounds.left, bounds.bottom - bounds.top, scale);
-    const auto shape = D2D1::RoundedRect(bounds, radius, radius);
     if (highContrast || !DrawPanelGradient(context, bounds, radius, appearance.panelGradient))
-        context->FillRoundedRectangle(shape, brush.Get());
+        smooth_corners::Fill(context, bounds, radius, brush.Get());
     brush->SetColor(highContrast ? NativeTooltipSystemColor(COLOR_INFOTEXT) :
         D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha));
-    context->DrawRoundedRectangle(shape, brush.Get(), highContrast ? 1.f : appearance.widgetBorderWidth * scale);
+    smooth_corners::Stroke(context, bounds, radius, brush.Get(), highContrast ? 1.f : appearance.widgetBorderWidth * scale);
     DrawNativeTooltipText(context, bounds, measured, appearance);
 }
 }

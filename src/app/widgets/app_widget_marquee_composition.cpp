@@ -112,8 +112,21 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
         for (const auto& marquee : request.marquees)
         {
             liveKeys.insert(marquee.key);
-            auto [position, inserted] = items.try_emplace(marquee.key);
-            auto& item = position->second;
+            auto position = items.find(marquee.key);
+            if (position != items.end() &&
+                (!position->second.clipVisual || !position->second.textVisual || !position->second.clip))
+            {
+                if (position->second.clipVisual)
+                    (void)parent->second.visual->RemoveVisual(position->second.clipVisual.Get());
+                items.erase(position);
+                position = items.end();
+            }
+            const bool inserted = position == items.end();
+            // A fresh entry is published only after surface drawing and all
+            // visual initialization succeed. Failed first draws leave no cache
+            // entry for the next refresh to mistake for an initialized item.
+            WidgetMarqueeCompositionItem item = inserted
+                ? WidgetMarqueeCompositionItem{} : position->second;
             float phase = 0.0f;
             if (!inserted && item.scrolling && item.cycle > 0.0f &&
                 item.phaseTime.time_since_epoch().count() != 0)
@@ -202,14 +215,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
                 if (SUCCEEDED(hr))
                     hr = item.clipVisual->AddVisual(
                         item.textVisual.Get(), TRUE, nullptr);
-                if (SUCCEEDED(hr))
-                    hr = parent->second.visual->AddVisual(
-                        item.clipVisual.Get(), TRUE, nullptr);
                 if (FAILED(hr))
-                {
-                    items.erase(position);
                     return false;
-                }
             }
 
             hr = item.clip->SetLeft(0.0f);
@@ -274,6 +281,20 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             item.phase = phase;
             item.phaseTime = now;
             item.scrolling = animate;
+            if (inserted)
+            {
+                const auto published = items.try_emplace(marquee.key, std::move(item)).first;
+                if (FAILED(parent->second.visual->AddVisual(
+                        published->second.clipVisual.Get(), TRUE, nullptr)))
+                {
+                    items.erase(published);
+                    return false;
+                }
+            }
+            else
+            {
+                position->second = std::move(item);
+            }
         }
 
         for (auto item = items.begin(); item != items.end();)

@@ -9,6 +9,7 @@
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "widgets/collection_group_rules.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 
 // Desktop scene composition: static cache, dynamic overlays and frame orchestration.
 
@@ -175,10 +176,15 @@ void DesktopApp::DrawStaticBackground(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
                     isPreviewSource);
+        const bool iconEntranceDragged = dragSession_.IsActive() &&
+            std::any_of(dragSession_.SourceList().entries.begin(),
+                dragSession_.SourceList().entries.end(), [&](const DragSourceEntry& entry) {
+                    return entry.desktopWidgetIcon && entry.widgetId == widgetData.id;
+                });
         const bool presentWidgetSurface =
             snowdesktop::widget_composition_layer_rules::
                 ShouldPresentWidgetSurface(
-                    desktopSurfaceVisible, previewSourceHidden);
+                    desktopSurfaceVisible, previewSourceHidden || iconEntranceDragged);
         if (HasDesktopWidgetComposition(widgetData.id))
             SetDesktopWidgetCompositionVisible(
                 widgetData.id, presentWidgetSurface, widgetFrame);
@@ -435,7 +441,8 @@ void DesktopApp::DrawDynamicOverlays(
             GetOpenPopupWidget();
         const bool popupTarget = wc && openPopupWidget &&
             wc->GetWidgetData() == openPopupWidget &&
-            targetSlot == popupDragTarget_.Get();
+            IsPointOccludedByOpenPopup(dragSession_.CurrentPoint()) &&
+            (wc == GetGroupPopupView() || targetSlot == popupDragTarget_.Get());
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
                 ResolveDropPreviewLayer(popupTarget) ==
@@ -445,7 +452,10 @@ void DesktopApp::DrawDynamicOverlays(
             return;
         const bool groupEntryTarget =
             wc &&
-            ((dragSession_.SourceList().
+            ((wc->GetWidgetData() && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                    dragSession_.SourceList(), wc->GetWidgetData()->type,
+                    DropActionToMods(dragSession_.Action()))) ||
+             (dragSession_.SourceList().
                     hasCollectionGroupEntries &&
                 dynamic_cast<CollectionGroup*>(wc)) ||
              (dragSession_.SourceList().
@@ -463,14 +473,14 @@ void DesktopApp::DrawDynamicOverlays(
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
                 const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-                const bool listMode = UsesCollectionPopupList(*openPopupWidget);
+                const bool listMode = UsesCollectionPopupList(*openPopupWidget) && GetCollectionPopupColumnCount(popup) == 1;
                 const bool fanMode = UsesCollectionPopupFan(*openPopupWidget);
                 // List rows use their own font/spacing-dependent geometry.
                 // Both sides of a boundary must meet halfway across that gap.
-                popupInsertionPad = listMode && !fanMode
+                popupInsertionPad = UsesCollectionPopupList(*openPopupWidget) && !fanMode
                     ? snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0),
-                        GetCollectionPopupItemRect(popup, 1), false)
+                        GetCollectionPopupItemRect(popup, 1), !listMode)
                     : static_cast<float>(fanMode ? metrics.gapY : metrics.gapX) * 0.5f;
                 const long insertionGutter =
                     static_cast<long>(std::ceil(popupInsertionPad)) + 2;
@@ -577,7 +587,7 @@ void DesktopApp::DrawDynamicOverlays(
                 }
                 else
                     targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,
-                        UsesCollectionPopupList(*openPopupWidget) ? BarStyle::HBar : BarStyle::VBar,
+                        UsesCollectionPopupList(*openPopupWidget) && GetCollectionPopupColumnCount(popupTargetRect) == 1 ? BarStyle::HBar : BarStyle::VBar,
                         popupInsertionPad);
             }
             else
@@ -684,6 +694,18 @@ void DesktopApp::DrawDynamicOverlays(
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
                 icon->Draw(ctx, item->bounds, 2);
+            }
+            // Component entrances have retained child surfaces. Their live
+            // marquee state belongs to this foreground pass just like icons;
+            // repainting only the marquee must also clear a departed entrance.
+            for (auto& widget : widgets_)
+            {
+                if (!widget.selected || !snowdesktop::single_cell_widget::IsIconMode(widget) ||
+                    IsGroupedWidget(widget) || IsRectEmptyRect(widget.bounds) ||
+                    (hiddenMode && !widget.keepWhenDesktopHidden))
+                    continue;
+                Widget entrance(&widget, this);
+                entrance.Draw(ctx, widget.bounds, 2);
             }
         }
         if (marqueeDockFolderPopup_ ||

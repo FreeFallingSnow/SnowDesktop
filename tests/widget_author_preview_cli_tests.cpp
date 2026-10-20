@@ -677,6 +677,166 @@ void CopyManifestAndPreview(const std::filesystem::path& source,
     }
 }
 
+std::string MakeBinaryModule()
+{
+    // lua_dump(strip=1) of `return { value = 42 }`, generated with the
+    // vendored Lua 5.4 Windows ABI (32-bit instructions, 64-bit integer/double).
+    // The original host successfully executes this valid harmless fixture;
+    // the corrected module loader must reject it before execution.
+    const unsigned char bytes[] = {
+        0x1b,0x4c,0x75,0x61,0x54,0x00,0x19,0x93,0x0d,0x0a,0x1a,0x0a,
+        0x04,0x08,0x08,0x78,0x56,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x28,0x77,0x40,0x01,0x80,0x80,0x80,0x00,
+        0x01,0x02,0x86,0x51,0x00,0x00,0x00,0x13,0x00,0x01,0x00,0x52,
+        0x00,0x00,0x00,0x12,0x80,0x00,0x01,0x46,0x00,0x02,0x01,0x46,
+        0x00,0x01,0x01,0x82,0x04,0x86,0x76,0x61,0x6c,0x75,0x65,0x03,
+        0x2a,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x81,0x01,0x00,0x00,
+        0x80,0x80,0x80,0x80,0x80,
+    };
+    return {reinterpret_cast<const char*>(bytes), sizeof(bytes)};
+}
+
+void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& manifestSource)
+{
+    std::vector<std::string> failures;
+    const auto preview = [&](const char* name, const std::string& script,
+                             const auto& prepare) {
+        try
+        {
+            const auto source = root / name;
+            Check(std::filesystem::create_directories(source / L"modules"),
+                "runtime boundary fixture is created");
+            CopyManifestAndPreview(manifestSource, source);
+            prepare(source);
+            Write(source / L"main.lua", script);
+            const auto output = source / L"result.png";
+            const auto [exit, json] = Run(snowwidget,
+                {L"preview", source.wstring(), output.wstring(), L"--host", host.wstring()});
+            if (exit != 0) std::cerr << name << ": " << json << '\n';
+            Check(exit == 0 && json.find("\"ok\":true") != std::string::npos &&
+                    std::filesystem::is_regular_file(output),
+                "runtime boundary fixture loads and renders through the production sandbox");
+            CheckPng(output);
+        }
+        catch (const ProcessTimeout&) { throw; }
+        catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
+    };
+    const auto noFiles = [](const std::filesystem::path&) {};
+    preview("translation-linear-substitution", R"lua(
+assert(l10n.tr("{0}/{1}", "{1}", "done") == "{1}/done",
+    "inserted values must not be interpreted as another template")
+assert(l10n.tr("{0}", "prefix{0}suffix") == "prefix{0}suffix",
+    "self-referential values must terminate after one substitution")
+assert(l10n.tr("{00} {64} {missing}", "x") == "{00} {64} {missing}",
+    "unknown and noncanonical placeholders remain literal")
+return widget.define({ render = function() draw.text(8, 8, "linear translation", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    preview("translation-resource-limits", R"lua(
+local full = string.rep("x", 65536)
+assert(l10n.tr(full) == full and l10n.tr("{0}", full) == full,
+    "exact template, argument and output byte boundaries remain supported")
+local args = {}; for i = 1, 64 do args[i] = "" end
+assert(l10n.tr("{63}", table.unpack(args)) == "", "64 arguments are supported")
+args[65] = ""
+for _, attempt in ipairs({
+    function() return l10n.tr(full .. "x") end,
+    function() return l10n.tr("{0}", full .. "x") end,
+    function() return l10n.tr("{0}{1}", full, "x") end,
+    function() return l10n.tr("{0}{0}", full) end,
+    function() return l10n.tr("{0}", table.unpack(args)) end,
+}) do
+    local ok, failure = pcall(attempt)
+    assert(not ok and tostring(failure):find("l10n.tr", 1, true),
+        "oversized translation must return a catchable quota error")
+    assert(l10n.tr("ok {0}", 42) == "ok 42", "quota failure must preserve later calls")
+end
+return widget.define({ render = function() draw.text(8, 8, "translation bounded", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    preview("storage-closed-transaction-handle", R"lua(
+return widget.define({
+    setup = function()
+        local closed
+        assert(storage.transaction(function(tx) closed = tx; tx:set("committed", 1) end))
+        local ok, failure = pcall(storage.transaction, function(tx)
+            tx:set("rolledback", 2); error("expected rollback")
+        end)
+        assert(not ok and tostring(failure):find("expected rollback", 1, true))
+        assert(storage.get("committed") == 1 and storage.get("rolledback") == nil,
+            "failed callback must release the active transaction and roll back its writes")
+        assert(storage.transaction(function(tx)
+            local oldOk, oldFailure = pcall(closed.get, closed, "committed")
+            assert(not oldOk and tostring(oldFailure):find("closed", 1, true),
+                "retained handle must stay closed while another transaction is active")
+            assert(tx:get("committed") == 1); tx:set("committed", 3)
+        end))
+        assert(storage.get("committed") == 3, "current transaction remains usable after a stale handle is rejected")
+    end,
+    render = function() draw.text(8, 8, "transaction recovered", 14, 0xFFFFFF) end,
+})
+)lua", noFiles);
+    preview("numeric-preset-key", R"lua(
+return widget.define({
+    settings = {
+        fields = {{ key = "message", type = "text", label = "Message", default = "ok" }},
+        presets = {{ id = "p", label = "P", values = { message = "ok", [1] = "ignored" } }},
+    },
+    render = function() draw.text(8, 8, "preset survived", 14, 0xFFFFFF) end,
+})
+)lua", noFiles);
+    preview("module-text-only", R"lua(
+local ok, failure = pcall(module.require, "modules/binary.lua")
+assert(not ok and tostring(failure):find("binary", 1, true),
+    "module.require must reject valid binary bytecode")
+assert(module.require("modules/good.lua").value == 42, "rejected binary module must not poison loading")
+return widget.define({ render = function() draw.text(8, 8, "text only", 14, 0xFFFFFF) end })
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"modules" / L"binary.lua", MakeBinaryModule());
+        Write(source / L"modules" / L"good.lua", "return { value = 42 }");
+    });
+    preview("nested-module-quota", R"lua(
+local good = module.require("modules/good.lua")
+module.require("modules/parent1.lua")
+module.require("modules/parent2.lua")
+for attempt = 1, 3 do
+    local ok, failure = pcall(module.require, "modules/parent3.lua")
+    assert(not ok and tostring(failure):find("quota exceeded", 1, true),
+        "nested module loading must consume the same per-instance quota")
+    assert(module.require("modules/good.lua") == good, "failed parent must preserve successful cache")
+    assert(module.require("modules/leaf3_1.lua").value == 1, "successful children remain cached")
+end
+return widget.define({ render = function() draw.text(8, 8, "quota held", 14, 0xFFFFFF) end })
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"modules" / L"good.lua", "return { value = 42 }");
+        for (int parent = 1; parent <= 3; ++parent)
+        {
+            std::string script;
+            for (int child = 1; child <= 24; ++child)
+            {
+                const std::string leaf = "leaf" + std::to_string(parent) + "_" + std::to_string(child);
+                Write(source / L"modules" / (leaf + ".lua"), "return { value = " + std::to_string(child) + " }");
+                script += "module.require('modules/" + leaf + ".lua')\n";
+            }
+            script += "return { value = 42 }";
+            Write(source / L"modules" / ("parent" + std::to_string(parent) + ".lua"), script);
+        }
+    });
+    preview("empty-filesystem-write", R"lua(
+local handle = "filesystem:00000000000000000000000000000000"
+local ok, result, failure = pcall(task.start, "filesystem.write", { handle = handle, text = "" })
+assert(ok and result == nil and failure == "widget instance is not loaded",
+    "empty UTF-8 text must reach the task boundary during entry loading")
+for _, request in ipairs({ {handle = handle}, {handle = handle, text = false},
+        {handle = handle, text = "\0"} }) do
+    assert(not pcall(task.start, "filesystem.write", request), "invalid write text must remain rejected")
+end
+return widget.define({ render = function() draw.text(8, 8, "empty accepted", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    for (const auto& failure : failures) std::cerr << "REGRESSION: " << failure << '\n';
+    Check(failures.empty(), "all runtime boundary regressions pass");
+}
+
 void CheckModuleRequireErrors(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& manifestSource)
@@ -1244,6 +1404,31 @@ return widget.define({
             assert(not ok and tostring(err):find("body secret descriptor is invalid", 1, true),
                 "invalid body secret descriptor accepted")
         end
+        -- The new retry option must pass the production parser before the
+        -- permission broker, and must never allow duplicate write requests.
+        assert(widget.hasFeature("task.network.retryDirect"))
+        for _, options in ipairs({
+            {retryDirect=true}, {method="HEAD", retryDirect=true},
+            {retryDirect=false}, {method="POST", retryDirect=false, body="data"},
+        }) do
+            options.url="https://api.example.com/balance"
+            local ok, id, err=pcall(task.start, "network.request", options)
+            assert(ok and id==nil and err=="permissionDenied")
+        end
+        for _, value in ipairs({"true", 1, {}}) do
+            local ok, err=pcall(task.start, "network.request", {
+                url="https://api.example.com/balance", retryDirect=value,
+            })
+            assert(not ok and tostring(err):find("retryDirect must be a boolean", 1, true))
+        end
+        for _, options in ipairs({
+            {method="POST"}, {method="PUT"}, {method="PATCH"}, {method="DELETE"},
+            {body="data"}, {body={secretRef=reference}},
+        }) do
+            options.url="https://api.example.com/balance";options.retryDirect=true
+            local ok, err=pcall(task.start, "network.request", options)
+            assert(not ok and tostring(err):find("requires a bodyless GET or HEAD", 1, true))
+        end
         return {}
     end,
     render = function()
@@ -1258,6 +1443,40 @@ return widget.define({
     Check(code == 0 && json.find("\"ok\":true") != std::string::npos &&
             std::filesystem::is_regular_file(output),
         "production Lua accepts optional empty secret header affixes and rejects invalid affixes");
+}
+
+void CheckNetworkResponseBounds(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"network-bounds-widget";
+    Check(std::filesystem::create_directory(source), "network bounds fixture is isolated");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion":2, "apiVersion":2, "dataVersion":1,
+  "id":"286c0e36-1cd0-47ba-b523-d4b92776e42f",
+  "slug":"network-bounds-fixture", "version":"1.0.0", "entry":"main.lua",
+  "minHostVersion":"1.0.11.0", "name":"Network bounds fixture",
+  "author":"SnowDesktop", "license":"MIT", "permissions":[],
+  "defaultSize":{"columns":2,"rows":1},
+  "requiredFeatures":["draw.immediate","lifecycle.model","task.network.request","task.network.largeResponse"]
+})json");
+    for (const int maximum : {4096, 1048576, 4194304, 4194305})
+    {
+        // The real Lua argument parser runs before permission rejection.
+        // This fixture needs no internet access; all acceptance assertions are C++.
+        Write(source / L"main.lua", "return widget.define({setup=function() "
+            "task.start('network.request',{url='https://example.com/rss',maxBytes=" +
+            std::to_string(maximum) + "}); return {} end, render=function() end})");
+        const auto output = root / (L"network-bounds-" + std::to_wstring(maximum) + L".png");
+        const auto [code, json] = Run(snowwidget,
+            {L"preview", source.wstring(), output.wstring(), L"--host", host.wstring()});
+        if (maximum <= 4194304)
+            Check(code == 0 && json.find("\"ok\":true") != std::string::npos &&
+                    std::filesystem::is_regular_file(output),
+                "production task parser accepts the declared response bounds");
+        else
+            Check(code != 0 && json.find("numeric options are out of range") != std::string::npos,
+                "production task parser rejects one byte above the four-MiB ceiling");
+    }
 }
 
 void CheckWhaleSettingsChanges(const std::filesystem::path& snowwidget,
@@ -2127,6 +2346,23 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
             }
         Check(powerDifferences > 10 && chargeLevelDifferences > 4 && greenPixels > 5 && lowRedPixels > 5 && unavailable.pixels != normal.pixels,
             "battery levels, green charging bolt, low warning and unknown states reach native pixels without percentage text");
+        const auto percentage = read(L"percentage"), percentageZero = read(L"percentage-zero"),
+            percentageFull = read(L"percentage-full"), percentageCharging = read(L"percentage-charging");
+        // The percentage occupies the trailing end of the expanded group.
+        // This region excludes the shifted battery outline and charging fill.
+        const RECT percentageText{bounds.right - 40 * scale, bounds.top + 3 * scale,
+            bounds.right - 16 * scale, bounds.bottom - 3 * scale};
+        Check(CountDifferingPixels(percentageZero, percentageFull, percentageText) > 5 &&
+                CountDifferingPixels(percentage, percentageCharging, percentageText) == 0,
+            "zero and full percentages paint distinct digits while charging preserves the same numeric text");
+        const auto percentageUnknown = read(L"percentage-unknown"), percentageUnavailable = read(L"percentage-unavailable");
+        Check(percentageUnknown.pixels == percentageUnavailable.pixels && percentageUnknown.pixels != percentage.pixels,
+            "unknown and unavailable batteries both collapse the battery and percentage without an empty slot");
+        const auto percentageNarrow = PanelPixels(read(L"percentage-narrow")),
+            percentageScaled = PanelPixels(read(L"percentage-scaled"));
+        Check(percentageNarrow.right - percentageNarrow.left == 640 * scale &&
+                percentageScaled.bottom - percentageScaled.top == 48 * scale,
+            "enabled percentages preserve native narrow-screen and scaled-bar geometry");
         const RECT network{bounds.right - 96 * scale, bounds.top + 3 * scale,
             bounds.right - 72 * scale, bounds.bottom - 3 * scale};
         const auto wifiOff = read(L"wifi-off"), offline = read(L"offline");
@@ -2211,8 +2447,11 @@ void TestGpuDiagnosticsCli(const std::filesystem::path& tool, const std::filesys
         "the actual CLI preserves existing diagnostic files");
 }
 
+#include "widget/authoring/widget_doc_recipe_tests.h"
+
 int wmain(int argc, wchar_t** argv) try
 {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
     {
         std::cout << "ready\n" << std::flush;
@@ -2345,13 +2584,42 @@ int wmain(int argc, wchar_t** argv) try
             L"file-categories-list.png",
             L"folder-mapping-grid.png",
             L"folder-mapping-list.png",
+            L"collection-icon.png",
+            L"collection-icon-hover.png",
+            L"collection-group-icon.png",
+            L"collection-group-icon-hover.png",
+            L"collection-group-compact.png",
+            L"file-group-icon.png",
+            L"file-group-icon-hover.png",
+            L"file-group-compact.png",
+            L"file-categories-icon.png",
+            L"file-categories-icon-hover.png",
+            L"file-categories-compact.png",
+            L"folder-mapping-icon.png",
+            L"folder-mapping-icon-hover.png",
+            L"folder-mapping-compact.png",
         };
         for (const wchar_t* filename : transparentFilenames)
             CheckPng(transparentOutputDirectory / filename);
         Check(std::distance(
                   std::filesystem::directory_iterator(transparentOutputDirectory),
-                  std::filesystem::directory_iterator{}) == 57,
+                  std::filesystem::directory_iterator{}) == 71,
             "native all export covers every supported property combination");
+        for (const wchar_t* component : {L"collection", L"collection-group", L"file-group", L"file-categories", L"folder-mapping"})
+        {
+            const auto idle = ReadPng(transparentOutputDirectory / (std::wstring(component) + L"-icon.png"));
+            const auto hovered = ReadPng(transparentOutputDirectory / (std::wstring(component) + L"-icon-hover.png"));
+            Check(idle.width == hovered.width && idle.height == hovered.height && idle.pixels != hovered.pixels,
+                "the production icon preview reveals its external resize arc only in the hover state");
+        }
+
+        const auto groupPopupOutput = temporary.path / L"native-group-popup";
+        const auto groupPopup = Run(host, {
+            L"--native-component-preview", L"popup-group", groupPopupOutput.wstring(),
+            L"96", L"en-US", L"dark", L"", L"640", L"640", L"32", L"0", L"0",
+            (temporary.path / L"native-group-popup-result.json").wstring()});
+        Check(groupPopup.first == 0, "the isolated native renderer can inspect group popup control alignment");
+        CheckPng(groupPopupOutput / L"popup-group.png");
         CheckPng(transparentOutputDirectory /
             L"collection-group-grid-search.png");
         CheckPng(transparentOutputDirectory /
@@ -2983,12 +3251,15 @@ int wmain(int argc, wchar_t** argv) try
                 monitorPreviews[1].pixels == monitorPreviews[2].pixels &&
                 monitorPreviews[2].pixels == monitorPreviews[3].pixels,
             "System Monitor defaults, legacy all-GPU selection and missing saved selection render a concrete available device");
+        CheckRuntimeBoundaryRegressions(snowwidget, host, temporary.path, monitorSource);
         CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
         CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
         CheckRemindersInteraction(snowwidget, host, temporary.path, repository);
         CheckTextInkMetrics(snowwidget, host, temporary.path);
         CheckSecretHeaderDescriptors(snowwidget, host, temporary.path);
+        CheckNetworkResponseBounds(snowwidget, host, temporary.path);
         CheckWhaleSettingsChanges(snowwidget, host, temporary.path, repository);
+        CheckPublishedVirtualListRecipe(snowwidget, host, temporary.path, repository);
 
         const auto environmentSource =
             CreateEnvironmentFixture(temporary.path);

@@ -513,18 +513,33 @@ constexpr bool IsTaskWindowStyleEligible(
 }
 
 /**
+ * @brief Read the Shell's explicit taskbar exclusion without changing the window.
+ *
+ * ITaskbarList::DeleteTab marks a window with ITaskList_Deleted, independently
+ * of its styles or owner. Electron tray flyouts can therefore look like normal
+ * task windows while deliberately having no taskbar button. AddTab clears the
+ * marker, so query it on discovery rather than caching it by process or HWND.
+ */
+inline bool IsTaskWindowExplicitlyExcluded(HWND window) noexcept
+{
+    return window && GetPropW(window, L"ITaskList_Deleted") != nullptr;
+}
+
+/**
  * @brief 判断顶层窗口当前是否仍应显示在任务栏/Dock。
  *
  * 普通最小化窗口仍保留 WS_VISIBLE，因此可以继续显示。部分托盘应用会在
  * 处理 WM_CLOSE 时先最小化再隐藏窗口，此时 IsIconic 仍可能为真；隐藏状态
  * 必须优先，不能因为窗口仍处于最小化态就把它重新加入 Dock。
  * 系统设置等应用关闭后还可能保留 WS_VISIBLE，但已由 DWM cloak 隐藏；
- * 这种后台窗口同样不能作为正在运行的任务窗口。
+ * 这种后台窗口同样不能作为正在运行的任务窗口。应用通过任务栏接口显式
+ * 移除按钮时也应排除，即使窗口仍可见且带有 WS_EX_APPWINDOW。
  */
 constexpr bool IsTaskWindowPresentationEligible(
-    bool visible, bool /*iconic*/, bool cloaked = false) noexcept
+    bool visible, bool /*iconic*/, bool cloaked = false,
+    bool explicitlyExcluded = false) noexcept
 {
-    return visible && !cloaked;
+    return visible && !cloaked && !explicitlyExcluded;
 }
 
 /**
@@ -554,7 +569,8 @@ constexpr bool IsTaskbarDocumentProxyCandidateEligible(
     bool hasOwner,
     bool hasTitle,
     LONG_PTR windowStyle,
-    LONG_PTR extendedStyle) noexcept
+    LONG_PTR extendedStyle,
+    bool explicitlyExcluded = false) noexcept
 {
     constexpr LONG_PTR requiredWindowStyles =
         WS_POPUP | WS_CAPTION;
@@ -562,7 +578,7 @@ constexpr bool IsTaskbarDocumentProxyCandidateEligible(
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_WINDOWEDGE;
     constexpr LONG_PTR rejectedExtendedStyles =
         WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT;
-    return topLevel && !visible && !hasOwner && hasTitle &&
+    return !explicitlyExcluded && topLevel && !visible && !hasOwner && hasTitle &&
         (windowStyle & requiredWindowStyles) == requiredWindowStyles &&
         (extendedStyle & requiredExtendedStyles) ==
             requiredExtendedStyles &&

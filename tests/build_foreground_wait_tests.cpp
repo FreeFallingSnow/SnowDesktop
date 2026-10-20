@@ -1,4 +1,5 @@
 #include "build_tool_test_support.h"
+#include <algorithm>
 #include <iostream>
 #include <regex>
 #include <thread>
@@ -29,7 +30,12 @@ void test(const fs::path& repo) {
         try{atomic(folder/wide(batch+".json"),result.dump());std::this_thread::sleep_for(std::chrono::milliseconds(2200));require(r->running(),"Retirement transaction gap returned early");state["current"]=Json{};save();}catch(...){CloseHandle(lock);throw;}CloseHandle(lock);
         require(output(*r,"completed").at("result").dump()==result.dump(),"Common result changed");fs::remove(folder/wide(batch+".json"));
         state["current"]=Json::object({{"id",batch},{"phase","editing"},{"participants",Json::array({Json::object({{"id","file-editor"},{"state","editing"},{"ownedFiles",Json::array({"src/own.cpp"})}}),Json::object({{"id","peer"},{"state","editing"},{"ownedFiles",Json::array({"src/peer.cpp"})}})})}});save();
-        auto [f,ft]=begin("file-editor",{"--condition","files","--files","src/peer.cpp"});std::this_thread::sleep_for(std::chrono::milliseconds(300));require(f->running(),"Busy peer files reported eligible");state["current"]["participants"].items[1]["state"]="finished";save();output(*f,"eligible");require(state.at("current").at("participants").items[0].at("state").str()=="editing","Own edit was retired by peer handoff");
+        auto [f,ft]=begin("file-editor",{"--condition","files","--files","src/peer.cpp"});std::this_thread::sleep_for(std::chrono::milliseconds(300));require(f->running(),"Busy peer files reported eligible");state["current"]["participants"].items[1]["state"]="finished";save();output(*f,"eligible");
+        // The wait runs in another process; observe its durable handoff result.
+        const auto persisted=Json::parse(read(folder/L"state.json"));
+        const auto& participants=persisted.at("current").at("participants").items;
+        const auto ownEdit=std::find_if(participants.begin(),participants.end(),[](const auto& value){return value.at("id").str()=="file-editor";});
+        require(ownEdit!=participants.end()&&ownEdit->at("state").str()=="editing","Own edit was retired by peer handoff");
         require(ft.at("condition").str()=="files","File wait lost its condition");
         state["current"]=Json::object({{"id",batch},{"phase","editing"},{"participants",Json::array({Json::object({{"id","result"},{"editRevision",1},{"state","finished"},{"check",Json::object({{"status","passed"}})}}),Json::object({{"id","peer"},{"state","editing"}})})}});save();
         auto [check,ct]=begin("result",{"--condition","result","--batch",batch,"--revision","1"});std::this_thread::sleep_for(std::chrono::milliseconds(300));require(check->running(),"Editing peer did not block result wait");state["current"]["participants"].items[0]["check"]["status"]="failed";save();output(*check,"attention",2);

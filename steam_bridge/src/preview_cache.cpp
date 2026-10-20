@@ -287,8 +287,9 @@ struct PreviewCache::Entry
 };
 
 PreviewCache::PreviewCache(std::filesystem::path root,
-    ChangeCallback changed)
-    : root_(std::move(root)), changed_(std::move(changed))
+    ChangeCallback changed, Download download)
+    : root_(std::move(root)), changed_(std::move(changed)),
+      download_(download ? std::move(download) : Download{DownloadHttps})
 {
 }
 
@@ -326,7 +327,7 @@ void PreviewCache::Request(std::uint64_t itemId, std::string url)
         if (!std::filesystem::is_regular_file(raw->path, ec) || ec)
         {
             ec.clear();
-            if (!DownloadHttps(raw->url, raw->path, raw->error))
+            if (!download_(raw->url, raw->path, raw->error))
             {
                 raw->state.store(Entry::State::Failed);
                 NotifyChanged();
@@ -393,7 +394,9 @@ PreviewTexture PreviewCache::Get(std::uint64_t itemId) const
     result.height = found->second->height;
     result.loading = state == Entry::State::Loading ||
         state == Entry::State::Ready;
-    result.error = found->second->error;
+    // The worker exclusively owns error until its terminal release-store.
+    // Loading readers must not touch the string while the download writes it.
+    if (state == Entry::State::Failed) result.error = found->second->error;
     return result;
 }
 }

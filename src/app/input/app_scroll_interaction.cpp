@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "navigation/quick_navigation_rules.h"
 
 // Mouse-wheel routing across active drag, popup and widget containers.
 
@@ -11,6 +12,17 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
+    if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
+    {
+        const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
+        const int maximum = GetCollectionPopupMaxScrollOffset(dockTrayPopup_->widget, popup);
+        popupScrollOffset_ = std::clamp(popupScrollOffset_ - GET_WHEEL_DELTA_WPARAM(wp) / 2, 0, maximum);
+        dockTrayPopup_->keyboardNavigation = false;
+        DockTrayPopupPointerMove(pt);
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+        return;
+    }
     int currentMods = 0;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
     if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
@@ -82,11 +94,15 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     int maxTabScroll =
                         GetQuickNavigationMaxTabScrollOffset(
                             overlay);
-                    quickNavigationTabScrollOffset_ =
+                    snowdesktop::quick_navigation_rules::SetTabScrollOffset(
                         std::clamp(
                             quickNavigationTabScrollOffset_ -
                                 delta / 2,
-                            0, maxTabScroll);
+                            0, maxTabScroll),
+                        quickNavigationTabScrollOffset_,
+                        quickNavTabDragIndex_ != static_cast<size_t>(-1),
+                        quickNavTabDragStartPoint_,
+                        quickNavTabDragDeltaX_);
                 }
             }
             else

@@ -1,6 +1,8 @@
 #include "pch.h"
+#include "platform/force_restart_hotkey.h"
 
 #include "settings_window_host.h"
+#include "settings/settings_window_open_rules.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "data/data_paths.h"
@@ -29,6 +31,7 @@
 #include <shobjidl.h>
 #include <dwmapi.h>
 #include <psapi.h>
+#include <shellscalingapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Windowing.h>
@@ -68,7 +71,6 @@ constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
-constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
 constexpr UINT_PTR kWorkingSetTrimTimerIdSeed = 0x53440000;
 constexpr UINT kWorkingSetTrimDelayMs = 2000;
 constexpr ULONGLONG kWorkingSetTrimCooldownMs = 30000;
@@ -101,6 +103,39 @@ bool TrimProcessWorkingSet() noexcept
     // settings visits do not evict active desktop, Dock, or widget pages.
     return SetProcessWorkingSetSize(GetCurrentProcess(),
                static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)) != FALSE;
+}
+
+RECT SettingsWindowWorkArea(HMONITOR monitor) noexcept
+{
+    MONITORINFO info{sizeof(info)};
+    if (monitor && GetMonitorInfoW(monitor, &info) &&
+        settings_window_placement::HasArea(info.rcWork))
+    {
+        return info.rcWork;
+    }
+    RECT work{};
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) &&
+        settings_window_placement::HasArea(work))
+    {
+        return work;
+    }
+    return {0, 0, (std::max)(1, GetSystemMetrics(SM_CXSCREEN)),
+        (std::max)(1, GetSystemMetrics(SM_CYSCREEN))};
+}
+
+void ConstrainSettingsWindow(HWND window) noexcept
+{
+    // Windows owns maximized frame sizing. Only recover normal bounds;
+    // changing position must not change the settings window's Z-order.
+    if (!window || IsIconic(window) || IsZoomed(window)) return;
+    RECT bounds{};
+    if (!GetWindowRect(window, &bounds)) return;
+    const auto target = settings_window_placement::Constrain(bounds,
+        SettingsWindowWorkArea(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)));
+    if (EqualRect(&bounds, &target)) return;
+    SetWindowPos(window, nullptr, target.left, target.top,
+        target.right - target.left, target.bottom - target.top,
+        SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 bool ActivateSettingsWindow(HWND window) noexcept
@@ -191,6 +226,13 @@ void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
 {
     if (!window || !IsWindow(window))
         return;
+
+    // A restored Island can become visible after DWM has already started
+    // animating the host snapshot. Avoid exposing that empty transition frame;
+    // the existing XAML tree and the user's desktop animation settings remain.
+    const BOOL disableTransitions = TRUE;
+    (void)DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions, sizeof(disableTransitions));
 
     const BOOL dark = darkTheme ? TRUE : FALSE;
     (void)DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -387,6 +429,7 @@ struct SettingsWindowHost::Impl
     bool applyingSnapshot = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
+    bool interactiveMoveSize = false;
     bool viewReleaseQueued = false;
     bool workingSetTrimQueued = false;
     std::uint64_t workingSetTrimEpoch = 0;
@@ -398,7 +441,6 @@ struct SettingsWindowHost::Impl
     DebugPageSession debugSession;
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarInsetsUpdateQueued = false;
-    bool externalStateRefreshQueued = false;
     std::wstring lastError;
 
     struct ThemeTask
@@ -407,6 +449,7 @@ struct SettingsWindowHost::Impl
         std::uint64_t generation = 0;
         ThemeLibraryRequest request;
         unsigned previewScope = themes::All;
+        int iconProcessingMode = 0;
         themes::Package snapshot;
         steam_bridge::ThemePublishPlan plan;
         std::vector<themes::preview::Image> images;
@@ -505,7 +548,7 @@ struct SettingsWindowHost::Impl
             const char* key = image.component == "folder-mapping" ? "app.menu.folder_mapping" :
                 image.component == "dock" ? "themeLibrary.dock" : image.component == "status-bar" ? "themeLibrary.statusBar" :
                 image.component == "taskbar" ? "themeLibrary.taskbar" : image.component == "quick-navigation" ? "themeLibrary.quickPanel" :
-                image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
+                image.component == "icon" ? "themeLibrary.icon" : image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
             dialog.previewImages.push_back({L(key), image.path.wstring()});
         }
         const bool share = task->request.command == ThemeLibraryCommand::Share;
@@ -548,6 +591,7 @@ struct SettingsWindowHost::Impl
         if (themeTask || !controller || !controller->IsGenerationCurrent(generation) || !shell)
         { if (completed) completed({}); return; }
         auto task = std::make_shared<ThemeTask>(); task->generation = generation;
+        task->iconProcessingMode = controller->Snapshot()->values.desktop.iconBeautify.mode;
         task->request = std::move(request); task->completed = std::move(completed); themeTask = task;
         if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
         const bool sync = task->request.command == ThemeLibraryCommand::SyncSubscriptions;
@@ -649,13 +693,13 @@ struct SettingsWindowHost::Impl
                         success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
                             task->customCover, [host, task](const auto& package, auto root, auto applicable, const auto& directory,
                                 auto& cover, auto& error, auto* cancel) {
-                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground);
+                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground, task->iconProcessingMode);
                             }, task->plan, detail, &task->cancel, task->request.tags);
                         task->cover = task->plan.preview;
                     }
                     else
                     {
-                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground);
+                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground, task->iconProcessingMode);
                         if (success && !task->customCover.empty())
                         {
                             success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);
@@ -772,21 +816,6 @@ struct SettingsWindowHost::Impl
         catch (...)
         {
         }
-    }
-
-    void QueueExternalStateRefresh() noexcept
-    {
-        if (externalStateRefreshQueued || shuttingDown || !Visible())
-            return;
-        if (PostMessageW(window, kRefreshExternalStateMessage, 0, 0))
-            externalStateRefreshQueued = true;
-    }
-
-    void ApplyDeferredExternalStateRefresh() noexcept
-    {
-        externalStateRefreshQueued = false;
-        if (Visible())
-            RefreshExternalStateNow();
     }
 
     void ApplyIntegratedTitleBarButtonColors() noexcept
@@ -1905,6 +1934,7 @@ struct SettingsWindowHost::Impl
                 state->owner->controller->InvokeHostAction(request);
             completion(result.Succeeded(), result.message);
         };
+        const auto probeHotkey = general.probeHotkey;
         general.languageCatalog = [weak]() {
             std::vector<SettingsLanguageOption> result;
             const auto state = weak.lock();
@@ -2099,12 +2129,23 @@ struct SettingsWindowHost::Impl
             {
                 auto selected = ShowOpenPathDialog(state->owner->window,
                     state->owner->L("largeIcon.image"),
-                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico"}}, false);
+                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico;*.webp;*.svg"}}, false);
                 if (selected) request.path = selected->wstring();
                 else request.action = "status";
             }
             if (!state->alive.load() || !state->owner) return LargeIconSettingsSnapshot{};
             return state->owner->options.largeIconSettings(std::move(request));
+        });
+        shell->SetIconAppearanceAction([weak](IconAppearanceRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.iconAppearance) return IconAppearanceSnapshot{};
+            return state->owner->options.iconAppearance(std::move(request));
+        });
+        shell->SetIconLibraryAction([weak](IconLibraryRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.iconLibrary)
+                return IconLibrarySnapshot{};
+            return state->owner->options.iconLibrary(std::move(request));
         });
 
         PersonalizationPageActions personalization;
@@ -2181,6 +2222,15 @@ struct SettingsWindowHost::Impl
         shell->SetPersonalizationPageActions(std::move(personalization));
 
         DesktopPageActions desktop;
+        desktop.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner ? state->owner->ThemeOperation(generation, request) : ThemeLibraryResult{};
+        };
+        desktop.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+            else if (completed) completed({});
+        };
         desktop.updateDesktop = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2321,6 +2371,7 @@ struct SettingsWindowHost::Impl
         shell->SetDockPageActions(std::move(dock));
 
         HomeAboutPageActions homeAbout;
+        homeAbout.probeHotkey = probeHotkey;
         homeAbout.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock();
                 state && state->alive.load() && state->owner)
@@ -2660,6 +2711,7 @@ struct SettingsWindowHost::Impl
         if (request.command == ThemeLibraryCommand::Apply)
         {
             const auto apply = [&](const SettingsValues& values) {
+                if (request.target == "icon") controller->UpdateDesktop(values.desktop, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdatePersonalization(values.personalization, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateDock(values.dock, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateNavigation(values.navigation, SettingsUpdateMode::PreviewAndCommit);
@@ -2697,7 +2749,8 @@ struct SettingsWindowHost::Impl
             if (request.command == ThemeLibraryCommand::CopyLocal)
                 return themes::workshop::CopyLocal(library, request.id, result.savedId, detail);
             auto theme = themes::CaptureTarget(request.target, current->values);
-            theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
+            theme.id = request.id; theme.name = request.name;
+            theme.scopes = theme.kind == themes::Kind::Global ? request.scopes : themes::Components;
             std::array<themes::BindingDraft, 2> bindings;
             if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             {
@@ -2721,6 +2774,7 @@ struct SettingsWindowHost::Impl
             bool applied = true;
             if (!targets.empty())
             {
+                controller->UpdateDesktop(next.desktop, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdatePersonalization(next.personalization, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateDock(next.dock, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateNavigation(next.navigation, SettingsUpdateMode::PreviewAndCommit);
@@ -2728,6 +2782,7 @@ struct SettingsWindowHost::Impl
                 applied = controller->FlushAll().Succeeded();
                 if (!applied)
                 {
+                    controller->UpdateDesktop(current->values.desktop, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdatePersonalization(current->values.personalization, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdateDock(current->values.dock, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdateNavigation(current->values.navigation, SettingsUpdateMode::PreviewAndCommit);
@@ -2768,6 +2823,13 @@ struct SettingsWindowHost::Impl
                 else applied = false;
             }
             if (!applied) { result.message = L("themeLibrary.savedPending"); return result; }
+        }
+        if (result.succeeded && options.iconAppearance &&
+            (request.command == ThemeLibraryCommand::Update || request.command == ThemeLibraryCommand::Remove))
+        {
+            IconAppearanceRequest reconcile; reconcile.action = "themes";
+            if (!options.iconAppearance(reconcile).succeeded) result.message = L("themeLibrary.savedPending");
+            if (shell) shell->RefreshIconAppearanceList();
         }
         feedback(); return result;
     }
@@ -2915,6 +2977,10 @@ struct SettingsWindowHost::Impl
         }
 
         ApplySnapshotNow(snapshot);
+        if (shell && route.page == SettingsPage::IconLibrary && !route.itemKey.empty())
+            shell->OpenRequestedIconPicker();
+        if (shell && route.page == SettingsPage::AppearanceIconBeautification && !route.itemKey.empty())
+            shell->OpenRequestedIconAppearance();
         if (widgetSnapshot &&
             (!shell || !shell->ApplyWidgetSettingsSnapshot(
                 *widgetSnapshot)))
@@ -3145,6 +3211,19 @@ struct SettingsWindowHost::Impl
         if (!self)
             return DefWindowProcW(hwnd, message, wParam, lParam);
 
+        if (message == snowdesktop::ForceRestartCaptureMessage())
+        {
+            if (self->shell && self->shell->IsHotkeyCaptureActive())
+            {
+                // Acknowledge before availability probing can call back into
+                // the host STA, which may itself be stalled.
+                ReplyMessage(1);
+                self->shell->CaptureRegisteredHotkey(static_cast<UINT>(wParam),
+                    static_cast<UINT>(lParam));
+                return 1;
+            }
+            return 0;
+        }
         switch (message)
         {
         case kApplyXamlBackdropMessage:
@@ -3152,9 +3231,6 @@ struct SettingsWindowHost::Impl
             return 0;
         case kUpdateIntegratedTitleBarInsetsMessage:
             self->UpdateIntegratedTitleBarInsets();
-            return 0;
-        case kRefreshExternalStateMessage:
-            self->ApplyDeferredExternalStateRefresh();
             return 0;
         case kDispatchOwnerTaskMessage:
         {
@@ -3196,9 +3272,15 @@ struct SettingsWindowHost::Impl
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
-        case WM_ACTIVATEAPP:
-            if (wParam != FALSE)
-                self->QueueExternalStateRefresh();
+        case WM_ERASEBKGND:
+            // The full-client Island owns every client pixel. A GDI erase can
+            // be presented before its retained composition surface resumes.
+            return 1;
+        case WM_ENTERSIZEMOVE:
+            self->interactiveMoveSize = true;
+            break;
+        case WM_EXITSIZEMOVE:
+            self->interactiveMoveSize = false;
             break;
         case WM_GETMINMAXINFO:
         {
@@ -3228,6 +3310,10 @@ struct SettingsWindowHost::Impl
                 info->ptMinTrackSize.x = minimumClientWidth;
                 info->ptMinTrackSize.y = minimumClientHeight;
             }
+            const auto minimum = settings_window_placement::FitSize(
+                {info->ptMinTrackSize.x, info->ptMinTrackSize.y},
+                SettingsWindowWorkArea(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)));
+            info->ptMinTrackSize = {minimum.cx, minimum.cy};
             return 0;
         }
         case WM_DPICHANGED:
@@ -3235,6 +3321,10 @@ struct SettingsWindowHost::Impl
             const auto* suggested = reinterpret_cast<RECT*>(lParam);
             if (suggested)
             {
+                // Windows anchors this rectangle to the ongoing native drag
+                // and destination DPI. Clamping against MonitorFromWindow at
+                // this point can still select the old monitor and bounce the
+                // window back across the boundary on every pointer update.
                 SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
                     suggested->right - suggested->left,
                     suggested->bottom - suggested->top,
@@ -3244,6 +3334,9 @@ struct SettingsWindowHost::Impl
             break;
         }
         case WM_SETTINGCHANGE:
+            if (wParam == SPI_SETWORKAREA && !self->interactiveMoveSize)
+                ConstrainSettingsWindow(hwnd);
+            [[fallthrough]];
         case WM_THEMECHANGED:
         case WM_SYSCOLORCHANGE:
         case WM_DWMCOLORIZATIONCOLORCHANGED:
@@ -3252,11 +3345,13 @@ struct SettingsWindowHost::Impl
             self->QueueSystemBackdropUpdate();
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
+        case WM_DISPLAYCHANGE:
+            if (!self->interactiveMoveSize) ConstrainSettingsWindow(hwnd);
+            break;
         case WM_NCDESTROY:
             self->CancelWorkingSetTrim();
             self->systemBackdropUpdateQueued = false;
             self->integratedTitleBarInsetsUpdateQueued = false;
-            self->externalStateRefreshQueued = false;
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -3285,8 +3380,7 @@ struct SettingsWindowHost::Impl
         if (!windowClass.hIconSm)
             windowClass.hIconSm = windowClass.hIcon;
         windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        windowClass.hbrBackground =
-            reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        windowClass.hbrBackground = nullptr;
         windowClass.lpszClassName = kSettingsWindowClassName;
         if (RegisterClassExW(&windowClass) != 0)
             return true;
@@ -3299,21 +3393,32 @@ struct SettingsWindowHost::Impl
 
     [[nodiscard]] bool CreateHostWindow()
     {
-        const UINT dpi = GetDpiForSystem();
+        POINT anchor{};
+        (void)GetCursorPos(&anchor);
+        const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+        const RECT work = SettingsWindowWorkArea(monitor);
+        UINT dpiX = 0, dpiY = 0;
+        const UINT systemDpi = GetDpiForSystem();
+        const UINT dpi = SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) && dpiX != 0
+            ? dpiX : systemDpi != 0 ? systemDpi : 96;
         RECT bounds{0, 0,
             MulDiv(kDefaultClientWidth, static_cast<int>(dpi), 96),
             MulDiv(kDefaultClientHeight, static_cast<int>(dpi), 96)};
+        constexpr DWORD extendedStyle = WS_EX_APPWINDOW;
         AdjustWindowRectExForDpi(&bounds, WS_OVERLAPPEDWINDOW, FALSE,
-            WS_EX_APPWINDOW, dpi);
-        const int width = bounds.right - bounds.left;
-        const int height = bounds.bottom - bounds.top;
-        const int x = std::max(0, (GetSystemMetrics(SM_CXSCREEN) - width) / 2);
-        const int y = std::max(0, (GetSystemMetrics(SM_CYSCREEN) - height) / 2);
+            extendedStyle, dpi);
+        const auto placement = settings_window_placement::Center(
+            {bounds.right - bounds.left, bounds.bottom - bounds.top}, work);
 
-        window = CreateWindowExW(WS_EX_APPWINDOW,
+        // Keep normal top-level DWM redirection for the whole-window image
+        // retained across minimization. The Island continues to render its own
+        // composition content inside this source window.
+        window = CreateWindowExW(extendedStyle,
             kSettingsWindowClassName, options.windowTitle.c_str(),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            x, y, width, height, nullptr, nullptr, instance, this);
+            placement.left, placement.top,
+            placement.right - placement.left, placement.bottom - placement.top,
+            nullptr, nullptr, instance, this);
         if (!window)
         {
             SetError(FormatWin32Error(
@@ -3332,7 +3437,6 @@ struct SettingsWindowHost::Impl
         settingsSessionWorkingSetBaseline.reset();
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
-        externalStateRefreshQueued = false;
         interactionSuspended = true;
 
         if (shell)
@@ -3357,7 +3461,6 @@ struct SettingsWindowHost::Impl
         viewReleaseQueued = false;
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
-        externalStateRefreshQueued = false;
         interactionSuspended = true;
 
         // Keep one process-lifetime Shell and Island. WinUI retains SVG file,
@@ -3849,6 +3952,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_RESTORE);
     else
         ShowWindow(impl_->window, SW_SHOWNORMAL);
+    ConstrainSettingsWindow(impl_->window);
     (void)ActivateSettingsWindow(impl_->window);
 
     if (!IsWindowVisible(impl_->window))

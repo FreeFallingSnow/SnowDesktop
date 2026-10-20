@@ -404,6 +404,7 @@ SteamWorkshopLocalCache ReadLocalCache(
     SteamWorkshopLocalCache result;
     const std::string expectedAppId = std::to_string(appId);
     std::set<std::string> subscribed;
+    std::set<std::string> unsubscribed;
     std::map<std::string, std::filesystem::path> ready;
     bool foundManifest = false;
     bool invalidManifest = false;
@@ -453,6 +454,7 @@ SteamWorkshopLocalCache ReadLocalCache(
             FindObject(*app, "workshopitemsinstalled");
         const VdfObject* details =
             FindObject(*app, "workshopitemdetails");
+        std::vector<std::string> librarySubscriptions;
 
         std::map<std::string, std::string> installedManifests;
         if (installed)
@@ -501,8 +503,12 @@ SteamWorkshopLocalCache ReadLocalCache(
                 if (subscribedBy && std::all_of(subscribedBy->begin(),
                     subscribedBy->end(),
                     [](char value) { return value == '0'; }))
+                {
+                    unsubscribed.insert(entry.key);
                     continue;
+                }
                 subscribed.insert(entry.key);
+                librarySubscriptions.push_back(entry.key);
                 const auto latest =
                     FindValue(*entry.object, "latest_manifest");
                 if (latest && DigitsOnly(*latest))
@@ -526,6 +532,12 @@ SteamWorkshopLocalCache ReadLocalCache(
                 !filesystemError)
                 ready[publishedFileId] = content;
         }
+        const auto key = std::filesystem::path(PathKey(library)).generic_u8string();
+        std::sort(librarySubscriptions.begin(), librarySubscriptions.end());
+        librarySubscriptions.erase(std::unique(librarySubscriptions.begin(),
+            librarySubscriptions.end()), librarySubscriptions.end());
+        result.librarySubscriptions.emplace(std::string(key.begin(), key.end()),
+            std::move(librarySubscriptions));
     }
 
     result.authoritative = foundManifest && !invalidManifest;
@@ -533,6 +545,8 @@ SteamWorkshopLocalCache ReadLocalCache(
         result.error = "Steam Workshop cache is unavailable";
     result.subscribedPublishedFileIds.assign(
         subscribed.begin(), subscribed.end());
+    result.locallyUnsubscribedPublishedFileIds.assign(
+        unsubscribed.begin(), unsubscribed.end());
     for (auto& [publishedFileId, contentDirectory] : ready)
         result.readyItems.push_back(
             { std::move(publishedFileId), std::move(contentDirectory) });
@@ -590,6 +604,7 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     SteamWorkshopLocalCache result;
     bool complete = true;
     std::set<std::string> subscribed;
+    std::set<std::string> unsubscribed;
     std::map<std::string, std::filesystem::path> ready;
     for (std::size_t index = 0; index < jobs.size(); ++index)
     {
@@ -609,8 +624,16 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
         }
         // Only a fully parsed individual library contributes identities and
         // downloads. A corrupt manifest cannot contaminate healthy results.
-        if (!cache->authoritative) continue;
+        if (!cache->authoritative)
+        {
+            complete = false;
+            continue;
+        }
         result.authoritative = true;
+        result.librarySubscriptions.insert(cache->librarySubscriptions.begin(),
+            cache->librarySubscriptions.end());
+        unsubscribed.insert(cache->locallyUnsubscribedPublishedFileIds.begin(),
+            cache->locallyUnsubscribedPublishedFileIds.end());
         subscribed.insert(cache->subscribedPublishedFileIds.begin(),
             cache->subscribedPublishedFileIds.end());
         for (const auto& item : cache->readyItems)
@@ -627,6 +650,8 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
         if (result.error.empty()) result.error = "Steam Workshop cache is unavailable";
     }
     result.subscribedPublishedFileIds.assign(subscribed.begin(), subscribed.end());
+    result.locallyUnsubscribedPublishedFileIds.assign(
+        unsubscribed.begin(), unsubscribed.end());
     for (auto& [id, directory] : ready)
         result.readyItems.push_back({std::move(id), std::move(directory)});
     return result;

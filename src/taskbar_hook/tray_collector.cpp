@@ -9,6 +9,9 @@ namespace snowdesktop::tray
 namespace
 {
 constexpr UINT_PTR kSubclass = 0x53445452;
+constexpr UINT_PTR kBrokerSubclass = 0x53445442;
+bool Attach(HWND window, DWORD owner, LONG64 expectedEpoch = 0);
+LRESULT CALLBACK BrokerProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR);
 thread_local bool nativeGeometryQuery = false;
 struct NativeGeometryQuery
 {
@@ -112,6 +115,24 @@ void BootstrapClassic(Collector& collector)
             GetWindowThreadProcessId(item.window, &event.identity.process);
             event.callback = item.callback;
             event.version = item.version;
+            // Toolbar text is available before any hover. The collector runs
+            // in Explorer, so the output buffer belongs to the toolbar process.
+            TBBUTTONINFOW textInfo{};
+            textInfo.cbSize = sizeof(textInfo); textInfo.dwMask = TBIF_TEXT;
+            textInfo.pszText = event.tip; textInfo.cchText = static_cast<int>(std::size(event.tip));
+            DWORD_PTR textResult = 0;
+            SendMessageTimeoutW(child, TB_GETBUTTONINFOW, button.idCommand,
+                reinterpret_cast<LPARAM>(&textInfo), SMTO_ABORTIFHUNG | SMTO_BLOCK, 50, &textResult);
+            // A toolbar string-pool entry is not returned by GETBUTTONINFO.
+            // TB_GETBUTTON exposes an actual string pointer for native tray
+            // buttons; read it boundedly, without requesting a hover callback.
+            if (!event.tip[0] && static_cast<UINT_PTR>(button.iString) >= 0x10000)
+            {
+                for (size_t letter = 0; letter + 1 < std::size(event.tip); ++letter)
+                    if (!CopyBytes(reinterpret_cast<const wchar_t*>(button.iString) + letter, &event.tip[letter], sizeof(wchar_t)) || !event.tip[letter]) break;
+            }
+            event.tip[127] = 0;
+            if (event.tip[0]) event.flags |= NIF_TIP;
             // Internal state contains additional Explorer flags. Do not copy
             // it or the toolbar's overflow visibility into NIS_HIDDEN.
             if (auto copy = CopyIcon(item.icon)) { Pixels(copy, event); DestroyIcon(copy); }
@@ -256,6 +277,7 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 // Duplicate ADD remains a useful registration supplement after
                 // our synthetic TaskbarCreated; the model preserves its version.
                 const LRESULT nativeResult = DefSubclassProc(window, message, wp, lp);
+                pending.flags = CollectedRegistrationFlags(pending.flags, pending.operation, nativeResult != FALSE);
                 bool duplicate = false;
                 if (!nativeResult && pending.icon && !Read(self.stopping) && !Read(self.shared->stop) &&
                     self.reregister.Eligible(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()))
@@ -317,39 +339,46 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
     return DefSubclassProc(window, message, wp, lp);
 }
 
-void Attach(HWND window, DWORD owner)
+bool Attach(HWND window, DWORD owner, LONG64 expectedEpoch)
 {
     DWORD_PTR existing = 0;
     if (GetWindowSubclass(window, Procedure, kSubclass, &existing))
     {
         auto& current = **reinterpret_cast<std::shared_ptr<Collector>*>(existing);
-        if (current.shared->owner != owner || Read(current.shared->stop))
-            PostMessageW(window, RegisterWindowMessageW(kDetachMessage), current.shared->owner,
-                static_cast<LPARAM>(Read(current.shared->epoch)));
-        return;
+        if (current.shared->owner == owner && !Read(current.shared->stop) &&
+            !Read(current.stopping) && WaitForSingleObject(current.owner, 0) == WAIT_TIMEOUT)
+            return !expectedEpoch || Read(current.shared->epoch) == expectedEpoch;
+        if (!Read(current.shared->stop) && !Read(current.stopping) &&
+            WaitForSingleObject(current.owner, 0) == WAIT_TIMEOUT) return false;
+        InterlockedExchange(&current.stopping, 1); SetEvent(current.wake);
+        RemoveWindowSubclass(window, Procedure, kSubclass);
+        delete reinterpret_cast<std::shared_ptr<Collector>*>(existing);
     }
     auto self = std::make_shared<Collector>();
     self->window = window;
     self->mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, ObjectName(owner, L"State").c_str());
-    if (!self->mapping) return;
+    if (!self->mapping) return false;
     self->shared = static_cast<SharedState*>(MapViewOfFile(self->mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
     if (!self->shared || self->shared->magic != kMagic || self->shared->version != kVersion ||
-        self->shared->size != sizeof(SharedState) || self->shared->owner != owner || Read(self->shared->stop)) return;
+        self->shared->size != sizeof(SharedState) || self->shared->owner != owner || Read(self->shared->stop) ||
+        (expectedEpoch && Read(self->shared->epoch) != expectedEpoch)) return false;
     self->owner = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner);
     FILETIME creation{}, exit{}, kernel{}, user{};
     if (!self->owner || !GetProcessTimes(self->owner, &creation, &exit, &kernel, &user) ||
-        (static_cast<std::uint64_t>(creation.dwHighDateTime) << 32 | creation.dwLowDateTime) != self->shared->ownerCreation) return;
+        (static_cast<std::uint64_t>(creation.dwHighDateTime) << 32 | creation.dwLowDateTime) != self->shared->ownerCreation) return false;
     self->signal = OpenEventW(EVENT_MODIFY_STATE, FALSE, ObjectName(owner, L"Signal").c_str());
     self->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    if (!self->signal || !self->wake) return;
+    if (!self->signal || !self->wake) return false;
     // Keep code resident while subclass callbacks may still be in flight.
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(&Procedure), &pinned)) return;
+            reinterpret_cast<LPCWSTR>(&Procedure), &pinned)) return false;
+    if (!SetWindowSubclass(window, BrokerProcedure, kBrokerSubclass, 0) ||
+        !SetPropW(window, kResidentProperty, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(kVersion)))) return false;
     auto* subclassHolder = new(std::nothrow) std::shared_ptr<Collector>(self);
-    if (!subclassHolder) return;
+    if (!subclassHolder) return false;
     if (!SetWindowSubclass(window, Procedure, kSubclass, reinterpret_cast<DWORD_PTR>(subclassHolder)))
-    { delete subclassHolder; return; }
+    { delete subclassHolder; return false; }
     self->shared->explorer = GetCurrentProcessId();
     auto* workerHolder = new(std::nothrow) std::shared_ptr<Collector>(self);
     HANDLE worker = workerHolder ? CreateThread(nullptr, 0, Worker, workerHolder, 0, nullptr) : nullptr;
@@ -357,9 +386,34 @@ void Attach(HWND window, DWORD owner)
     {
         delete workerHolder;
         RemoveWindowSubclass(window, Procedure, kSubclass); delete subclassHolder;
-        return;
+        return false;
     }
     CloseHandle(worker);
+    return true;
+}
+
+LRESULT CALLBACK BrokerProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR)
+{
+    if (message == WM_NCDESTROY)
+    {
+        RemovePropW(window, kResidentProperty);
+        RemoveWindowSubclass(window, BrokerProcedure, kBrokerSubclass);
+    }
+    if (message == RegisterWindowMessageW(kResumeMessage))
+    {
+        try
+        {
+            if (!wp || !lp || !Attach(window, static_cast<DWORD>(wp), lp)) return 0;
+            DWORD_PTR value = 0;
+            if (!GetWindowSubclass(window, Procedure, kSubclass, &value) || !value) return 0;
+            auto& collector = **reinterpret_cast<std::shared_ptr<Collector>*>(value);
+            if (collector.shared->owner != wp || Read(collector.shared->epoch) != lp ||
+                Read(collector.stopping) || Read(collector.shared->stop)) return 0;
+            return lp;
+        }
+        catch (...) { return 0; }
+    }
+    return DefSubclassProc(window, message, wp, lp);
 }
 }
 }

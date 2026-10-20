@@ -110,10 +110,11 @@ struct PublishProgress
     bool submitStarted = false;
 };
 
-enum class WorkshopContentKind { Widget, Theme };
+enum class WorkshopContentKind { Widget, Theme, IconPack };
 struct PublishRequest
 {
     WorkshopContentKind contentKind = WorkshopContentKind::Widget;
+    std::string expectedPackageId;
     // Journal an uncertain creation only at the actual remote-create boundary.
     std::function<bool()> prepareCreateItem;
     // A newly allocated ID must be durably recorded before any upload starts.

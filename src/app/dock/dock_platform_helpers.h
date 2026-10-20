@@ -515,7 +515,7 @@ inline bool DockWindowMatchesAppIdentity(
             identity.steamInstallDirectory,
             executablePath,
             appUserModelId,
-            ancestorExecutablePaths);
+            ancestorExecutablePaths, identity.validatedPayloadPaths);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)
@@ -571,7 +571,9 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
             IsTaskWindowPresentationEligible(
                 IsWindowVisible(window) != FALSE,
                 IsIconic(window) != FALSE,
-                isCloaked))
+                isCloaked,
+                snowdesktop::dock_window_rules::
+                    IsTaskWindowExplicitlyExcluded(window)))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
@@ -598,7 +600,9 @@ inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
             GetWindow(window, GW_OWNER) != nullptr,
             GetWindowTextLengthW(window) > 0,
             GetWindowLongPtrW(window, GWL_STYLE),
-            GetWindowLongPtrW(window, GWL_EXSTYLE));
+            GetWindowLongPtrW(window, GWL_EXSTYLE),
+            snowdesktop::dock_window_rules::
+                IsTaskWindowExplicitlyExcluded(window));
 }
 
 inline int DockRestoreShowCommand(HWND window)

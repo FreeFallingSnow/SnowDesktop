@@ -6,6 +6,8 @@
 #include "panel_gradient_editor.h"
 #include "panel_appearance_editor.h"
 #include "merged_bar_height_editor.h"
+#include "dock_tray_settings_editor.h"
+#include "icon_library_page_presenter.h"
 
 #include "dock/dock_settings.h"
 #include "theme/taskbar_appearance.h"
@@ -69,8 +71,10 @@ struct SettingsCard
 enum class ContinuousField
 {
     ThicknessScale,
+    EdgeDistanceScale,
     MergedIconScale,
     FrequentItemCount,
+    EdgeHoverDelayMs,
     TaskbarBackgroundAlpha,
     TaskbarBorderAlpha,
     TaskbarBlurRadius,
@@ -137,6 +141,7 @@ struct DynamicRuleControl
     muxc::ComboBox contentTheme{nullptr};
     muxc::StackPanel details{nullptr};
     muxc::StackPanel appearanceDetails{nullptr};
+    muxc::StackPanel themeRows;
     muxc::StackPanel customAppearance{nullptr};
     SettingRow enabledRow;
     SettingRow themeRow;
@@ -176,19 +181,19 @@ void InitializeCard(
     bool collapsible = false)
 {
     card.root = muxc::Border{};
-    if (style && !collapsible)
-        card.root.Style(style);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(2.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
+    card.title.Margin({0, 0, 0, collapsible ? 0.0 : 8.0});
     if (collapsible)
     {
         card.section = muxc::Expander{};
         card.section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         card.section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        card.section.Padding({0, 0, 0, 0});
         card.section.IsExpanded(false);
         card.section.Header(card.title);
         card.section.Content(card.content);
@@ -196,8 +201,7 @@ void InitializeCard(
     }
     else
     {
-        card.content.Children().Append(card.title);
-        card.root.Child(card.content);
+        presenter_controls::InitializeSettingsGroup(card.root, card.title, card.content, style);
     }
     page.Children().Append(card.root);
 }
@@ -348,6 +352,7 @@ struct DockPagePresenter::Impl
     LocalizeCallback localize;
     DockPageActions actions;
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    std::unique_ptr<DockTraySettingsEditor> trayEditor;
     BarSettingsAvailability barAvailability;
     muxc::ToggleSwitch homeSize;
     presenter_controls::SettingRow homeSizeRow;
@@ -368,9 +373,11 @@ struct DockPagePresenter::Impl
     SettingsCard mergedCard;
     SettingsCard behaviorCard;
     SettingsCard appearanceCard;
+    SettingsCard animationCard;
     SettingsCard itemsCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
+    bool centralizedAppearance = false;
     std::unique_ptr<ThemeLibraryControls> taskbarThemes;
     SettingsCard taskbarRulesCard;
     SettingsCard taskbarSystemPanelCard;
@@ -404,7 +411,39 @@ struct DockPagePresenter::Impl
     };
     std::vector<FullscreenExceptionRow> fullscreenExceptionRows;
     std::vector<DockFullscreenException> fullscreenExceptionValues;
+    muxc::Button startIconChoose, startIconRestore, searchIconChoose, searchIconRestore, startIconBeautify, searchIconBeautify;
+    SettingRow startIconRow, searchIconRow;
+    muxc::InfoBar iconStatus;
+    std::function<void()> cancelIconPicker;
+    std::shared_ptr<bool> iconPickerAlive = std::make_shared<bool>(true);
+    void ChooseControlIcon(std::wstring target)
+    {
+        if (!active || closed || !actions.iconLibrary) return;
+        IconLibraryRequest begin; begin.action = "begin"; begin.target = target;
+        auto snapshot = actions.iconLibrary(begin);
+        if (!snapshot.succeeded) return;
+        const auto action = actions.iconLibrary;
+        cancelIconPicker = IconLibraryPagePresenter::Pick(startIconRow.root.XamlRoot(), localize,
+            action, {}, [this, alive = std::weak_ptr<bool>(iconPickerAlive), action, target, session = snapshot.session](std::string id) {
+                const auto guard = alive.lock();
+                if (!guard || !*guard || !active || closed) id.clear();
+                IconLibraryRequest request; request.action = id.empty() ? "cancel" : "apply";
+                request.target = target; request.session = session;
+                if (!id.empty()) request.ids.push_back(std::move(id));
+                const auto result = action(std::move(request));
+                if (!guard || !*guard) return;
+                iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+            }, snapshot.targetName);
+    }
+    void RestoreControlIcon(const std::wstring& target)
+    {
+        if (!active || closed || !actions.iconLibrary) return;
+        IconLibraryRequest request; request.action = "restore"; request.target = target;
+        const auto result = actions.iconLibrary(std::move(request));
+        iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+    }
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
+    muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
     muxc::ToggleSwitch reserveScreenSpaceToggle{nullptr};
@@ -413,15 +452,19 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
     muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
     muxc::ToggleSwitch showOnlyWhenSummonedToggle{nullptr};
+    muxc::ToggleSwitch summonOnAppMinimizeToggle{nullptr};
     ContinuousControl thicknessScale;
+    ContinuousControl edgeDistanceScale;
     ContinuousControl mergedIconScale;
     ContinuousControl frequentItemCount;
+    ContinuousControl edgeHoverDelayMs;
 
-    muxc::HyperlinkButton taskbarSettingsLink{nullptr};
+    muxc::Button taskbarSettingsLink{nullptr};
     muxc::Button restartExplorerButton{nullptr};
     muxc::ComboBox taskbarThemeCombo{nullptr};
     muxc::ComboBox taskbarContentThemeCombo{nullptr};
     muxc::StackPanel taskbarCustomAppearance{nullptr};
+    muxc::StackPanel taskbarBaseRows;
     muxc::TextBlock taskbarCustomTitle{nullptr};
     muxc::TextBlock taskbarRulesHint{nullptr};
     TaskbarGradientControl taskbarGradient;
@@ -444,12 +487,14 @@ struct DockPagePresenter::Impl
     SettingRow singleClickLaunchItemsRow;
     SettingRow fullscreenPolicyRow;
     SettingRow showWindowsButtonRow;
+    SettingRow showQuickSearchButtonRow;
     SettingRow suppressTaskbarRow;
     SettingRow taskbarSuppressRow;
     SettingRow reserveScreenSpaceRow;
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
     SettingRow showOnlyWhenSummonedRow;
+    SettingRow summonOnAppMinimizeRow;
     SettingRow taskbarSettingsRow;
     SettingRow windowsSystemThemeRow;
     SettingRow restartExplorerRow;
@@ -463,10 +508,12 @@ struct DockPagePresenter::Impl
     DynamicRuleControl shellUiRule;
     std::array<DynamicRuleControl*, 3> dynamicRules = {
         &shellUiRule, &maximizedWindowRule, &visibleWindowRule};
-    std::array<ContinuousControl*, 6> continuousControls = {
+    std::array<ContinuousControl*, 8> continuousControls = {
         &thicknessScale,
+        &edgeDistanceScale,
         &mergedIconScale,
         &frequentItemCount,
+        &edgeHoverDelayMs,
         &taskbarBackgroundAlpha,
         &taskbarBorderAlpha,
         &taskbarBlurRadius,
@@ -502,6 +549,7 @@ struct DockPagePresenter::Impl
     winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token fullscreenPolicyToken{};
     winrt::event_token showWindowsButtonToken{};
+    winrt::event_token showQuickSearchButtonToken{};
     winrt::event_token suppressTaskbarToken{};
     winrt::event_token taskbarSuppressToken{};
     winrt::event_token reserveScreenSpaceToken{};
@@ -509,6 +557,7 @@ struct DockPagePresenter::Impl
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
     winrt::event_token showOnlyWhenSummonedToken{};
+    winrt::event_token summonOnAppMinimizeToken{};
     winrt::event_token taskbarSettingsToken{};
     winrt::event_token restartExplorerToken{};
     winrt::event_token taskbarThemeToken{};
@@ -564,19 +613,19 @@ struct DockPagePresenter::Impl
     void BuildControls()
     {
         dockEnableRoot = muxc::StackPanel{};
-        dockEnableRoot.Spacing(8.0);
+        dockEnableRoot.Spacing(24.0);
         dockAppearanceRoot = muxc::StackPanel{};
-        dockAppearanceRoot.Spacing(8.0);
-        InitializeCard(appearanceCard, cardStyle, dockAppearanceRoot, true);
-        appearanceCard.content.Spacing(24.0);
+        dockAppearanceRoot.Spacing(24.0);
+        InitializeCard(appearanceCard, nullptr, dockAppearanceRoot);
+        InitializeCard(animationCard, cardStyle, dockAppearanceRoot);
         for (auto const& host : {appearanceHost, animationHost, shortcutsHost})
             host.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         appearanceCard.content.Children().Append(appearanceHost);
-        appearanceCard.content.Children().Append(animationHost);
+        animationCard.content.Children().Append(animationHost);
         dockRoot = muxc::StackPanel{};
-        dockRoot.Spacing(8.0);
+        dockRoot.Spacing(24.0);
         taskbarRoot = muxc::StackPanel{};
-        taskbarRoot.Spacing(8.0);
+        taskbarRoot.Spacing(24.0);
         root = dockRoot;
 
         InitializeCard(enableCard, cardStyle, dockEnableRoot);
@@ -587,12 +636,13 @@ struct DockPagePresenter::Impl
         dockEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         enableCard.content.Children().Append(dockEnabledRow.root);
 
-        InitializeCard(layoutCard, cardStyle, dockRoot, true);
+        presenter_controls::UpdateSettingsSubrows(enableCard.content, 0);
+        InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
+        InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(mergedCard, cardStyle, dockRoot, true);
-        InitializeCard(itemsCard, cardStyle, dockRoot, true);
-        InitializeCard(behaviorCard, cardStyle, dockRoot, true);
-        InitializeCard(edgeSwipeCard, cardStyle, dockRoot, true);
-        InitializeCard(fullscreenCard, cardStyle, dockRoot, true);
+        InitializeCard(behaviorCard, cardStyle, dockRoot);
+        InitializeCard(itemsCard, cardStyle, dockRoot);
+        InitializeCard(fullscreenCard, cardStyle, dockRoot);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
         monitorScopeCombo = NewCombo();
@@ -605,6 +655,11 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(positionRow.root);
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
+        InitializeContinuousControl(edgeDistanceScale,
+            ContinuousField::EdgeDistanceScale,
+            kDockMinimumEdgeDistanceScale * 100.0f,
+            kDockMaximumEdgeDistanceScale * 100.0, 1.0, nullptr, 100.0);
+        layoutCard.content.Children().Append(edgeDistanceScale.root);
         layoutCard.content.Children().Append(thicknessScale.root);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         mergedCard.content.Children().Append(mergedHeight->Content());
@@ -627,6 +682,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
         showWindowsButtonToggle = muxc::ToggleSwitch{};
+        showQuickSearchButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
         taskbarSuppressToggle = muxc::ToggleSwitch{};
         reserveScreenSpaceToggle = muxc::ToggleSwitch{};
@@ -634,15 +690,18 @@ struct DockPagePresenter::Impl
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
         allowDesktopContentOverlapToggle = muxc::ToggleSwitch{};
         showOnlyWhenSummonedToggle = muxc::ToggleSwitch{};
+        summonOnAppMinimizeToggle = muxc::ToggleSwitch{};
         for (const auto& toggle : {
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
                  showWindowsButtonToggle,
+                 showQuickSearchButtonToggle,
                  suppressTaskbarToggle,
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle,
                  allowDesktopContentOverlapToggle,
-                 showOnlyWhenSummonedToggle})
+                 showOnlyWhenSummonedToggle,
+                 summonOnAppMinimizeToggle})
         {
             toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         }
@@ -654,13 +713,50 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid startActions, searchActions;
+        for (const auto& panel : {startActions, searchActions})
+        {
+            panel.ColumnSpacing(8);
+            panel.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+            panel.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+            muxc::ColumnDefinition iconColumn; iconColumn.Width(mux::GridLengthHelper::Auto()); panel.ColumnDefinitions().Append(iconColumn);
+        }
+        for (const auto& button : {startIconRestore, searchIconRestore}) muxc::Grid::SetColumn(button, 1);
+        for (const auto& button : {startIconBeautify, searchIconBeautify})
+        {
+            muxc::Grid::SetColumn(button, 2);
+            button.Width(32);
+            button.Height(32);
+            button.MinWidth(32);
+            button.MinHeight(32);
+            button.Padding({0, 0, 0, 0});
+            button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            button.VerticalContentAlignment(mux::VerticalAlignment::Center);
+            button.VerticalAlignment(mux::VerticalAlignment::Center);
+        }
+        startActions.Children().Append(startIconChoose); startActions.Children().Append(startIconRestore);
+        searchActions.Children().Append(searchIconChoose); searchActions.Children().Append(searchIconRestore);
+        startActions.Children().Append(startIconBeautify); searchActions.Children().Append(searchIconBeautify);
+        startIconRow.Initialize(startActions); searchIconRow.Initialize(searchActions);
+        startIconBeautify.Click([this](const auto&, const auto&) { if (active && !closed && actions.editIconAppearance) actions.editIconAppearance(L"control:start"); });
+        searchIconBeautify.Click([this](const auto&, const auto&) { if (active && !closed && actions.editIconAppearance) actions.editIconAppearance(L"control:search"); });
+        startIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:start"); });
+        searchIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:search"); });
+        startIconRestore.Click([this](const auto&, const auto&) { RestoreControlIcon(L"control:start"); });
+        searchIconRestore.Click([this](const auto&, const auto&) { RestoreControlIcon(L"control:search"); });
+        iconStatus.IsOpen(false); iconStatus.Severity(muxc::InfoBarSeverity::Error);
+        presenter_controls::BindInfoBarVisibility(iconStatus);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
+        showQuickSearchButtonRow.Initialize(showQuickSearchButtonToggle);
+        showQuickSearchButtonRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
         suppressTaskbarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
         allowDesktopContentOverlapRow.Initialize(
             allowDesktopContentOverlapToggle);
         showOnlyWhenSummonedRow.Initialize(showOnlyWhenSummonedToggle);
+        summonOnAppMinimizeRow.Initialize(summonOnAppMinimizeToggle);
+        summonOnAppMinimizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         floatingEdgeSwipeRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         showWindowsButtonRow.SetControlAlignment(
@@ -674,7 +770,6 @@ struct DockPagePresenter::Impl
         InitializeContinuousControl(frequentItemCount,
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
-        edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
         fullscreenCard.content.Children().Append(fullscreenPolicyRow.root);
         fullscreenExceptionAdd = muxc::Button{};
         fullscreenExceptionAdd.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -692,8 +787,10 @@ struct DockPagePresenter::Impl
         exceptionActions.MaxWidth(520);
         exceptionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         exceptionActions.VerticalAlignment(mux::VerticalAlignment::Center);
-        fullscreenExceptionsRow.Initialize(exceptionActions, 0);
-        fullscreenCard.content.Children().Append(fullscreenExceptionsRow.root);
+        fullscreenRunningApps.ClearValue(mux::FrameworkElement::WidthProperty());
+        fullscreenRunningApps.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fullscreenExceptionsRow.Initialize(exceptionActions, 420);
+        presenter_controls::StyleSettingsSubrow(fullscreenExceptionsRow.root, true, 0);
         fullscreenExceptionsExpander = mux::Markup::XamlReader::Load(
             LR"(<Expander xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SubtleFillColorTransparentBrush}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False" />)")
             .as<muxc::Expander>();
@@ -701,30 +798,60 @@ struct DockPagePresenter::Impl
         fullscreenExceptionsManagementTitle.TextWrapping(mux::TextWrapping::Wrap);
         fullscreenExceptionsExpander.Header(fullscreenExceptionsManagementTitle);
         fullscreenExceptionList = muxc::StackPanel{};
-        fullscreenExceptionList.Spacing(12);
+        fullscreenExceptionList.Spacing(0);
         fullscreenExceptionListHost = muxc::ContentControl{};
         fullscreenExceptionListHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
         fullscreenExceptionListHost.Visibility(mux::Visibility::Collapsed);
-        fullscreenExceptionsExpander.Content(fullscreenExceptionListHost);
-        fullscreenCard.content.Children().Append(fullscreenExceptionsExpander);
-        edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
-        edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
+        muxc::StackPanel exceptionManagement;
+        exceptionManagement.Spacing(0);
+        exceptionManagement.Children().Append(fullscreenExceptionsRow.root);
+        exceptionManagement.Children().Append(fullscreenExceptionListHost);
+        fullscreenExceptionsExpander.Content(exceptionManagement);
+        fullscreenExceptionsExpander.Padding({0});
+        fullscreenCard.content.Children().Append(
+            presenter_controls::SettingsDisclosureRow(fullscreenExceptionsExpander));
+        edgeSwipeCard.content.Children().Append(showOnlyWhenSummonedRow.root);
+        edgeSwipeCard.content.Children().Append(summonOnAppMinimizeRow.root);
         edgeSwipeCard.content.Children().Append(shortcutsHost);
+        edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
+        edgeSwipeCard.content.Children().Append(edgeRevealGestureRow.root);
+        InitializeContinuousControl(edgeHoverDelayMs,
+            ContinuousField::EdgeHoverDelayMs,
+            snowdesktop::dock_settings_rules::kMinimumEdgeHoverDelayMs,
+            snowdesktop::dock_settings_rules::kMaximumEdgeHoverDelayMs,
+            50.0, nullptr, snowdesktop::dock_settings_rules::kDefaultEdgeHoverDelayMs);
+        edgeSwipeCard.content.Children().Append(edgeHoverDelayMs.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        edgeSwipeCard.content.Children().Append(reserveScreenSpaceRow.root);
-        edgeSwipeCard.content.Children().Append(allowDesktopContentOverlapRow.root);
+        behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
+        behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
 
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
-        edgeSwipeCard.content.Children().Append(suppressionStatus);
-        behaviorCard.content.Children().Append(singleClickLaunchItemsRow.root);
-        behaviorCard.content.Children().Append(windowPreviewsRow.root);
+        presenter_controls::BindInfoBarVisibility(suppressionStatus);
+        behaviorCard.content.Children().Append(suppressionStatus);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(startIconRow.root);
+        itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
+        itemsCard.content.Children().Append(searchIconRow.root);
+        itemsCard.content.Children().Append(iconStatus);
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
+        itemsCard.content.Children().Append(windowPreviewsRow.root);
+        itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
+        trayEditor = std::make_unique<DockTraySettingsEditor>(
+            [this](std::string_view key, std::wstring_view fallback) { return L(key, fallback); },
+            [this](auto edit) { EmitDock(SettingsUpdateMode::PreviewAndCommit, std::move(edit)); },
+            [this] {
+                if (!actions.invokeHost || closed || !active) return std::vector<DockFullscreenApplication>{};
+                SettingsHostActions::Request request;
+                request.action = SettingsHostActions::Action::GetDockTrayApplications;
+                const auto result = actions.invokeHost(generation, request);
+                return result.Succeeded() ? result.dockApplications : std::vector<DockFullscreenApplication>{};
+            });
+        itemsCard.content.Children().Append(trayEditor->Content());
         for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
             auto overlay = mux::Markup::XamlReader::Load(
@@ -733,8 +860,9 @@ struct DockPagePresenter::Impl
             const auto padding = card->root.Padding();
             overlay.Margin({-padding.Left, -padding.Top, -padding.Right, -padding.Bottom});
             muxc::Grid layer;
+            const auto content = card->root.Child();
             card->root.Child(nullptr);
-            layer.Children().Append(card->section);
+            layer.Children().Append(content);
             layer.Children().Append(overlay);
             card->root.Child(layer);
             card->highlight = overlay;
@@ -752,29 +880,31 @@ struct DockPagePresenter::Impl
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSuppressRow.root);
-        taskbarSettingsLink = muxc::HyperlinkButton{};
+        taskbarSettingsLink = muxc::Button{};
         taskbarSettingsLink.UseSystemFocusVisuals(true);
         taskbarSettingsRow.Initialize(taskbarSettingsLink);
         taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        taskbarAppearanceCard.content.Spacing(0);
         taskbarThemeCombo = NewCombo();
         taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
         taskbarThemeRow.Initialize(taskbarThemes->SelectionContent());
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
+        taskbarBaseRows.Children().Append(taskbarThemeRow.root);
+        taskbarBaseRows.Children().Append(taskbarContentThemeRow.root);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
         taskbarRuntimeStatus.IsOpen(false);
-        taskbarAppearanceCard.content.Children().Append(taskbarThemeRow.root);
+        presenter_controls::BindInfoBarVisibility(taskbarRuntimeStatus);
+        taskbarAppearanceCard.content.Children().Append(taskbarBaseRows);
         taskbarAppearanceCard.content.Children().Append(taskbarThemes->Content());
-        taskbarAppearanceCard.content.Children().Append(
-            taskbarContentThemeRow.root);
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
 
         taskbarCustomAppearance = muxc::StackPanel{};
-        taskbarCustomAppearance.Spacing(12.0);
+        taskbarCustomAppearance.Spacing(0);
         taskbarCustomTitle = muxc::TextBlock{};
         taskbarCustomTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -805,15 +935,19 @@ struct DockPagePresenter::Impl
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
         taskbarCustomAppearance.Children().Append(taskbarThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(taskbarCustomAppearance);
         taskbarThemes->SetCustomContent({taskbarCustomAppearance});
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
-        InitializeCard(taskbarRulesCard, cardStyle, taskbarRoot);
+        InitializeCard(taskbarRulesCard, nullptr, taskbarAppearanceCard.content, true);
+        taskbarRulesCard.root.Child(nullptr);
+        taskbarRulesCard.root.Child(presenter_controls::SettingsDisclosureRow(taskbarRulesCard.section));
+        taskbarRulesCard.content.Spacing(0.0);
         taskbarRulesHint = NewHint();
-        taskbarRulesCard.content.Children().Append(taskbarRulesHint);
         InitializeDynamicRule(shellUiRule,
             &DockSettings::systemTaskbarShellUi);
+        shellUiRule.enabledRow.text.Children().Append(taskbarRulesHint);
         InitializeDynamicRule(maximizedWindowRule,
             &DockSettings::systemTaskbarMaximizedWindow);
         InitializeDynamicRule(visibleWindowRule,
@@ -836,6 +970,10 @@ struct DockPagePresenter::Impl
             windowsSystemThemeRow.root);
         taskbarSystemPanelCard.content.Children().Append(
             restartExplorerRow.root);
+        for (const auto* card : {&layoutCard, &mergedCard, &itemsCard,
+                 &behaviorCard, &edgeSwipeCard, &fullscreenCard,
+                 &taskbarCard, &taskbarSystemPanelCard})
+            presenter_controls::UpdateSettingsSubrows(card->content, 0);
     }
 
     muxc::ComboBox NewCombo()
@@ -907,7 +1045,7 @@ struct DockPagePresenter::Impl
         control.number.LargeChange(step * 5.0);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
-        control.number.Width(92.0);
+        control.number.Width(presenter_controls::kSettingNumberWidth);
         control.unit = muxc::TextBlock{};
         control.unit.VerticalAlignment(mux::VerticalAlignment::Center);
         control.unit.Opacity(0.72);
@@ -941,6 +1079,7 @@ struct DockPagePresenter::Impl
         switch (field)
         {
         case ContinuousField::ThicknessScale:
+        case ContinuousField::EdgeDistanceScale:
         case ContinuousField::MergedIconScale:
         case ContinuousField::TaskbarBackgroundAlpha:
         case ContinuousField::TaskbarBorderAlpha:
@@ -948,6 +1087,9 @@ struct DockPagePresenter::Impl
             break;
         case ContinuousField::TaskbarBlurRadius:
             SetUnit(control, L"px");
+            break;
+        case ContinuousField::EdgeHoverDelayMs:
+            SetUnit(control, L"ms");
             break;
         case ContinuousField::FrequentItemCount:
             break;
@@ -987,6 +1129,7 @@ struct DockPagePresenter::Impl
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
         control.sections.Initialize(parent, true, false, false);
+        presenter_controls::JoinSettingsSections(parent);
         control.borderEditor = PanelAppearanceEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, member](const PersonalizationSettings& value, bool commit) {
@@ -1041,40 +1184,39 @@ struct DockPagePresenter::Impl
         control.enabledRow.Initialize(control.enabled);
         control.enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
 
-        muxc::StackPanel header{};
-        header.Spacing(3.0);
         control.detailTitle = muxc::TextBlock{};
         control.detailTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         control.detailTitle.TextWrapping(mux::TextWrapping::Wrap);
         control.summary = NewHint();
-        header.Children().Append(control.detailTitle);
-        header.Children().Append(control.summary);
-        header.Margin({0,12,0,0});
-        control.root.Children().Append(header);
 
         control.details = muxc::StackPanel{};
-        control.details.Spacing(12.0);
+        control.details.Spacing(0.0);
         control.details.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         control.contentThemeRow.Initialize(control.contentTheme);
         // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
+        presenter_controls::StyleSettingsSubrow(control.enabledRow.root,
+            member == &DockSettings::systemTaskbarShellUi, 0.0);
         control.appearanceDetails = muxc::StackPanel{};
-        control.appearanceDetails.Spacing(12.0);
+        control.appearanceDetails.Spacing(0.0);
+        control.appearanceDetails.Margin({16, 0, 0, 0});
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
         control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
+        control.savedThemes->SetInlineSurface();
         control.themeRow.Initialize(control.savedThemes->SelectionContent());
-        control.appearanceDetails.Children().Append(control.themeRow.root);
+        control.themeRows.Children().Append(control.themeRow.root);
+        control.themeRows.Children().Append(control.contentThemeRow.root);
+        presenter_controls::UpdateSettingsSubrows(control.themeRows, 0.0);
+        control.appearanceDetails.Children().Append(control.themeRows);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
-        control.appearanceDetails.Children().Append(
-            control.contentThemeRow.root);
 
         control.customAppearance = muxc::StackPanel{};
-        control.customAppearance.Spacing(12.0);
+        control.customAppearance.Spacing(0.0);
         InitializeTaskbarGradient(control.gradient, control.customAppearance, member);
         InitializeColorControl(control.backgroundColor,
             ColorField::TaskbarBackground, member);
@@ -1103,6 +1245,7 @@ struct DockPagePresenter::Impl
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
         control.customAppearance.Children().Append(control.savedThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(control.customAppearance);
         control.savedThemes->SetCustomContent({control.customAppearance});
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
@@ -1176,7 +1319,9 @@ struct DockPagePresenter::Impl
 
     void HookEvents()
     {
-        taskbarRootLoadedToken = taskbarRoot.Loaded(
+        // The shared appearance surface can also be mounted on the themes
+        // page, where taskbarRoot itself is not in the visual tree.
+        taskbarRootLoadedToken = taskbarAppearanceCard.root.Loaded(
             [this](const auto&, const auto&) {
                 if (closed)
                     return;
@@ -1255,6 +1400,7 @@ struct DockPagePresenter::Impl
                     });
             });
         edgeRevealGestureToken = edgeRevealGesture.SelectionChanged([this](const auto&, const auto&) {
+            UpdateDependentStates();
             const int value = edgeRevealGesture.SelectedIndex();
             if (value >= 0) EmitDock(SettingsUpdateMode::PreviewAndCommit,
                 [value](DockSettings& settings) { settings.edgeRevealGesture = value; });
@@ -1333,6 +1479,14 @@ struct DockPagePresenter::Impl
                         settings.showWindowsButton = value;
                     });
             });
+        showQuickSearchButtonToken = showQuickSearchButtonToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = showQuickSearchButtonToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) {
+                        settings.showQuickSearchButton = value;
+                    });
+            });
         showFrequentItemsToken = showFrequentItemsToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -1371,6 +1525,12 @@ struct DockPagePresenter::Impl
                     [value](DockSettings& settings) {
                         settings.showOnlyWhenSummoned = value;
                     });
+            });
+        summonOnAppMinimizeToken = summonOnAppMinimizeToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = summonOnAppMinimizeToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.summonOnAppMinimize = value; });
             });
         windowsSystemThemeToken = windowsSystemThemeChoices.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -1633,10 +1793,14 @@ struct DockPagePresenter::Impl
         {
         case ContinuousField::ThicknessScale:
             return ClampDockScale(settings.thicknessScale) * 100.0;
+        case ContinuousField::EdgeDistanceScale:
+            return ClampDockEdgeDistanceScale(settings.edgeDistanceScale) * 100.0;
         case ContinuousField::MergedIconScale:
             return ClampMergedDockIconScale(settings.mergedIconScale) * 100.0;
         case ContinuousField::FrequentItemCount:
             return std::clamp(settings.frequentItemCount, 1, 8);
+        case ContinuousField::EdgeHoverDelayMs:
+            return settings.edgeHoverDelayMs;
         case ContinuousField::TaskbarBackgroundAlpha:
             return std::clamp(
                 appearance->widgetAlpha,
@@ -1672,6 +1836,10 @@ struct DockPagePresenter::Impl
             settings.thicknessScale = ClampDockScale(
                 static_cast<float>(uiValue / 100.0));
             break;
+        case ContinuousField::EdgeDistanceScale:
+            settings.edgeDistanceScale = ClampDockEdgeDistanceScale(
+                static_cast<float>(uiValue / 100.0));
+            break;
         case ContinuousField::MergedIconScale:
             settings.mergedIconScale = ClampMergedDockIconScale(
                 static_cast<float>(uiValue / 100.0));
@@ -1679,6 +1847,9 @@ struct DockPagePresenter::Impl
         case ContinuousField::FrequentItemCount:
             settings.frequentItemCount = std::clamp(
                 static_cast<int>(std::lround(uiValue)), 1, 8);
+            break;
+        case ContinuousField::EdgeHoverDelayMs:
+            settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(uiValue);
             break;
         case ContinuousField::TaskbarBackgroundAlpha:
             if (!ruleMember)
@@ -1911,6 +2082,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems.IsOn(settings.singleClickLaunchItems);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenPolicyCombo.SelectedIndex(static_cast<int>(settings.fullscreenPolicy));
+        trayEditor->Update(settings);
         if (fullscreenExceptionValues != settings.fullscreenExceptions)
         {
             fullscreenExceptionValues = settings.fullscreenExceptions;
@@ -1927,6 +2099,7 @@ struct DockPagePresenter::Impl
         homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
+        showQuickSearchButtonToggle.IsOn(settings.showQuickSearchButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
         allowDesktopContentOverlapToggle.IsOn(
@@ -1935,6 +2108,7 @@ struct DockPagePresenter::Impl
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
+        summonOnAppMinimizeToggle.IsOn(settings.summonOnAppMinimize);
         windowsSystemThemeValue = IsClassicSystemTaskbar()
             ? std::clamp(settings.classicTaskbarSystemTheme, -1, 1) + 1
             : (IsWindowsSystemLightThemeEnabled() ? 0 : 1);
@@ -1991,6 +2165,9 @@ struct DockPagePresenter::Impl
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
+        edgeDistanceScale.root.Visibility(layoutCombo.SelectedIndex() == 0
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeDistanceScale.row.SetEnabled(dockEnabled && layoutCombo.SelectedIndex() == 0);
         mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
         suppressTaskbarRow.SetEnabled(dockEnabled);
         taskbarSuppressRow.SetEnabled(true);
@@ -2000,14 +2177,19 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
+        showQuickSearchButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
         edgeRevealGestureRow.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
+        edgeHoverDelayMs.root.Visibility(edgeRevealGesture.SelectedIndex() == 1
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeHoverDelayMs.row.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
         windowPreviewsRow.SetEnabled(dockEnabled);
         singleClickLaunchItemsRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
+        summonOnAppMinimizeRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         fullscreenCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
@@ -2036,6 +2218,7 @@ struct DockPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
+        presenter_controls::UpdateSettingsSubrows(taskbarBaseRows, 0);
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
@@ -2068,6 +2251,7 @@ struct DockPagePresenter::Impl
             control->contentThemeRow.root.Visibility(!control->savedThemes->HasSavedSelection() && !native && !IsClassicSystemTaskbar()
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
+            presenter_controls::UpdateSettingsSubrows(control->themeRows, 0);
             control->customAppearance.Visibility(custom
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
@@ -2088,8 +2272,13 @@ struct DockPagePresenter::Impl
                 enabled && custom && control->glass.IsOn());
             control->acrylicRow.SetEnabled(
                 enabled && custom && control->glass.IsOn());
+            control->gradient.sections.UpdateRows();
             RefreshDynamicRuleSummary(*control);
         }
+        taskbarGradient.sections.UpdateRows();
+        presenter_controls::UpdateSettingsSubrows(itemsCard.content, 0);
+        presenter_controls::UpdateSettingsSubrows(edgeSwipeCard.content, 0);
+        presenter_controls::StyleSettingsSubrow(edgeHoverDelayMs.root, false, 16.0);
     }
 
     void RefreshTaskbarRuntimeStatus()
@@ -2300,7 +2489,11 @@ struct DockPagePresenter::Impl
             editors.Children().Append(item.policy);
             muxc::Grid::SetColumn(item.remove, 1);
             editors.Children().Append(item.remove);
-            item.row.Initialize(editors);
+            item.policy.ClearValue(mux::FrameworkElement::WidthProperty());
+            item.policy.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            item.remove.VerticalAlignment(mux::VerticalAlignment::Center);
+            item.row.Initialize(editors, 380);
+            presenter_controls::StyleSettingsSubrow(item.row.root, false, 0);
             const auto name = std::filesystem::path(entry.executable).filename().wstring();
             item.row.SetText(name, entry.executable);
             item.row.help.FontSize(12);
@@ -2328,18 +2521,14 @@ struct DockPagePresenter::Impl
                     });
                 });
             });
-            if (!fullscreenExceptionRows.empty())
-            {
-                auto divider = mux::Markup::XamlReader::Load(
-                    LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />)")
-                    .as<muxc::Border>();
-                fullscreenExceptionList.Children().Append(divider);
-            }
             fullscreenExceptionList.Children().Append(item.row.root);
             fullscreenExceptionRows.push_back(std::move(item));
         }
         fullscreenExceptionListHost.Visibility(fullscreenExceptionRows.empty()
             ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        fullscreenExceptionsManagementTitle.Text(
+            L("settings.dock.fullscreenExceptionManage", L"Manage application exceptions") +
+            L" (" + std::to_wstring(fullscreenExceptionRows.size()) + L")");
     }
 
     void PickFullscreenException()
@@ -2618,7 +2807,9 @@ struct DockPagePresenter::Impl
         updatingControls = true;
 
         SetCardText(appearanceCard,
-            "settings.dock.appearanceAndAnimation", L"Appearance and animation");
+            centralizedAppearance ? "settings.nav.dock" : "settings.dock.appearance", L"Appearance");
+        SetCardText(animationCard,
+            "settings.animation.dock", L"Dock animations");
         SetCardText(edgeSwipeCard,
             "settings.dock.visibilityAndSummon", L"Visibility and summon");
         SetCardText(fullscreenCard,
@@ -2628,13 +2819,13 @@ struct DockPagePresenter::Impl
         SetCardText(mergedCard,
             "settings.bars.mergedSettings", L"Merged bar settings");
         SetCardText(behaviorCard,
-            "settings.dock.launchAndWindows", L"Launch and windows");
+            "settings.dock.spaceAvoidance", L"Space reservation");
         SetCardText(itemsCard,
-            "settings.dock.visibleItems", L"Visible items");
+            "settings.dock.contentAndLaunch", L"Items and launch");
         SetCardText(taskbarCard,
             "settings.taskbar.behavior", L"Behavior");
         SetCardText(taskbarAppearanceCard,
-            "settings.taskbar.defaultAppearance", L"Default appearance");
+            centralizedAppearance ? "settings.nav.taskbar" : "settings.taskbar.defaultAppearance", L"Default appearance");
         SetCardText(taskbarRulesCard,
             "settings.taskbar.scenarioOverrides", L"Scenario overrides");
         SetCardText(taskbarSystemPanelCard,
@@ -2696,6 +2887,10 @@ struct DockPagePresenter::Impl
                 L"Adjust dock bar and icon size together."));
         SetContinuousText(mergedIconScale,
             "settings.bars.iconSize", L"Icon size", L"");
+        SetContinuousText(edgeDistanceScale,
+            "settings.dock.edgeDistance", L"Distance from screen edge",
+            L("settings.dock.edgeDistance.description",
+                L"Relative to the desktop component margin."));
 
         floatingEdgeSwipeRow.SetText(
             L("app.dock.floating_edge_swipe", L"Edge Swipe"));
@@ -2703,6 +2898,8 @@ struct DockPagePresenter::Impl
             L("settings.dock.edgeRevealGesture.description", L"Dragging an item to the edge reveals the bar immediately."));
         ReplaceComboItems(edgeRevealGesture, {
             {"settings.dock.gestureSwipe", L"Swipe"}, {"settings.dock.gestureHover", L"Hover"}});
+        SetContinuousText(edgeHoverDelayMs,
+            "settings.dock.edgeHoverDelay", L"Hover delay");
         windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
             L("settings.dock.windowPreviews.description", L"Show open windows when hovering over an app."));
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
@@ -2715,7 +2912,9 @@ struct DockPagePresenter::Impl
         fullscreenExceptionsRow.SetText(
             L("settings.dock.fullscreenExceptions", L"Application exceptions"),
             L("settings.dock.fullscreenExceptions.description", L"Applies to every fullscreen window of the selected executable, including browser games."));
-        fullscreenExceptionsManagementTitle.Text(L("settings.dock.fullscreenExceptionManage", L"Manage application exceptions"));
+        trayEditor->RefreshText();
+        fullscreenExceptionsManagementTitle.Text(L("settings.dock.fullscreenExceptionManage", L"Manage application exceptions") +
+            L" (" + std::to_wstring(fullscreenExceptionValues.size()) + L")");
         muxa::AutomationProperties::SetName(fullscreenExceptionsExpander, fullscreenExceptionsManagementTitle.Text());
         fullscreenExceptionAdd.Content(winrt::box_value(L("settings.dock.fullscreenExceptionAdd", L"Add application")));
         const bool previousFullscreenUpdate = updatingControls;
@@ -2740,6 +2939,11 @@ struct DockPagePresenter::Impl
             L("settings.dock.showOnlyWhenSummoned.description",
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
+        summonOnAppMinimizeRow.SetText(
+            L("settings.dock.summonOnAppMinimize", L"Summon Dock when an app is minimized"),
+            L("settings.dock.summonOnAppMinimize.description",
+                L"When off, custom animations reveal the Dock only until they finish; system animations do not reveal it."));
+        muxa::AutomationProperties::SetName(summonOnAppMinimizeToggle, summonOnAppMinimizeRow.label.Text());
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
@@ -2758,8 +2962,29 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
+        for (const auto& button : {startIconBeautify, searchIconBeautify})
+        {
+            muxc::FontIcon icon;
+            icon.Glyph(L"\xE70F");
+            icon.FontSize(16);
+            button.Content(icon);
+            const auto label = L("iconAppearance.edit", L"Adjust this icon’s appearance");
+            muxa::AutomationProperties::SetName(button, label);
+            muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
+        }
+        startIconRow.SetText(L("iconLibrary.startIcon", L"Start button icon"));
+        searchIconRow.SetText(L("iconLibrary.searchIcon", L"Search button icon"));
+        for (const auto& button : {startIconChoose, searchIconChoose, startIconRestore, searchIconRestore})
+        {
+            const bool restore = button == startIconRestore || button == searchIconRestore;
+            muxc::TextBlock text; text.Text(L(restore ? "iconLibrary.restore" : "iconLibrary.change", restore ? L"Restore default icon" : L"Change icon"));
+            text.TextWrapping(mux::TextWrapping::Wrap); button.Content(text); button.MinWidth(0);
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch); button.VerticalAlignment(mux::VerticalAlignment::Center);
+        }
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
+        showQuickSearchButtonRow.SetText(L(
+            "app.dock.show_quick_search_button", L"Show quick search button"));
         singleClickLaunchItemsRow.SetText(
             L("settings.dock.singleClickLaunchItems", L"Launch pinned and frequent icons with a single click"),
             L("settings.dock.singleClickLaunchItems.description",
@@ -2778,6 +3003,8 @@ struct DockPagePresenter::Impl
             showOnlyWhenSummonedRow.label.Text());
         muxa::AutomationProperties::SetName(
             showWindowsButtonToggle, showWindowsButtonRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            showQuickSearchButtonToggle, showQuickSearchButtonRow.label.Text());
         muxa::AutomationProperties::SetName(
             showFrequentItemsToggle, showFrequentItemsRow.label.Text());
         SetContinuousText(frequentItemCount,
@@ -2888,8 +3115,7 @@ struct DockPagePresenter::Impl
     {
         const std::wstring context = L(titleKey, fallback);
         control.detailTitle.Text(context);
-        control.enabledRow.SetText(
-            L("app.settings.widgets_enabled", L"Enabled"));
+        control.enabledRow.SetText(context);
         control.themeRow.SetText(L(
             "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
         ReplaceTaskbarThemeItems(control.theme);
@@ -2977,49 +3203,115 @@ struct DockPagePresenter::Impl
         updatingControls = previousUpdating;
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, SettingsFocusPrerequisite* prerequisite) const noexcept
     {
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
+            return target;
+        };
+        const auto dockTarget = [&](mux::FrameworkElement target) {
+            // Apply only to the rows disabled by UpdateDependentStates. The
+            // taskbar and independently editable appearance routes stay usable.
+            return dockEnabledToggle.IsOn() ? target : prerequisiteTarget(dockEnabledToggle,
+                "enable", dockEnabledRow.label.Text().c_str());
+        };
+        const auto edgeRevealTarget = [&] {
+            return dockTarget(showOnlyWhenSummonedToggle.IsOn()
+                ? prerequisiteTarget(showOnlyWhenSummonedToggle, "disable", showOnlyWhenSummonedRow.label.Text().c_str())
+                : floatingEdgeSwipeToggle.as<mux::FrameworkElement>());
+        };
         if (id == "dock.enable") return dockEnabledToggle;
-        if (id == "dock.position") return positionCombo;
+        if (id == "dock.position") return dockTarget(positionCombo);
         if (id == "dock.layout" || id == "dock.edgeAttached")
-            return layoutCombo;
+            return dockTarget(layoutCombo);
+        if (id == "dock.edgeDistanceScale")
+            return dockTarget(layoutCombo.SelectedIndex() == 0
+                ? edgeDistanceScale.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(layoutCombo, "choice", layoutRow.label.Text().c_str()));
         if (id == "dock.monitor" || id == "dock.monitorScope")
-            return monitorScopeCombo;
-        if (id == "dock.mergedBarHeight") return mergedHeight->FocusTarget();
-        if (id == "dock.mergedIconScale") return mergedIconScale.slider;
-        if (id == "dock.lastMonitorUseHomeSize") return homeSize;
+            return dockTarget(monitorScopeCombo);
+        if (id == "dock.mergedBarHeight")
+            return dockTarget(barAvailability.anyMerged ? mergedHeight->FocusTarget().as<mux::FrameworkElement>()
+                : prerequisiteTarget(positionCombo, "dependency", positionRow.label.Text().c_str()));
+        if (id == "dock.mergedIconScale")
+            return dockTarget(barAvailability.anyMerged ? mergedIconScale.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(positionCombo, "dependency", positionRow.label.Text().c_str()));
+        if (id == "dock.lastMonitorUseHomeSize")
+        {
+            if (!barAvailability.dockOnLastMonitor)
+                return dockTarget(prerequisiteTarget(monitorScopeCombo, "choice", monitorScopeRow.label.Text().c_str()));
+            if (barAvailability.allDockMerged)
+                return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+            return dockTarget(homeSize);
+        }
         if (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide") return taskbarMode;
         if (id == "dock.thickness" || id == "dock.thicknessScale")
-            return thicknessScale.slider;
-        if (id == "dock.floatingShortcutMode")
-            return floatingShortcutToggle;
-        if (id == "dock.edgeRevealGesture") return edgeRevealGesture;
-        if (id == "dock.showWindowPreviews") return windowPreviews;
-        if (id == "dock.singleClickLaunchItems") return singleClickLaunchItems;
+            return dockTarget(thicknessScale.slider);
+        if (id == "dock.floatingShortcutMode" || id == "dock.floatingShortcutMode.hotkey")
+        {
+            if (!dockEnabledToggle.IsOn()) return dockTarget(dockEnabledToggle);
+            return nullptr; // General owns the mounted shortcut editor.
+        }
+        if (id == "dock.edgeRevealGesture" || id == "dock.edgeHoverDelayMs")
+        {
+            if (!floatingEdgeSwipeToggle.IsOn())
+            {
+                auto target = prerequisiteTarget(floatingEdgeSwipeToggle, "enable", floatingEdgeSwipeRow.label.Text().c_str());
+                return showOnlyWhenSummonedToggle.IsOn() ? edgeRevealTarget() : dockTarget(target);
+            }
+            if (id == "dock.edgeHoverDelayMs")
+            {
+                if (edgeRevealGesture.SelectedIndex() != 1)
+                    return dockTarget(prerequisiteTarget(edgeRevealGesture,
+                        "choice", edgeRevealGestureRow.label.Text().c_str()));
+                return dockTarget(edgeHoverDelayMs.slider);
+            }
+            return dockTarget(edgeRevealGesture);
+        }
+        if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
+        if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
+        if (id == "dock.trayApplications") return dockTarget(trayEditor->FocusTarget());
         if (id == "dock.fullscreenPolicy" || id == "dock.floatingEdgeSwipeBlockFullscreen")
-            return fullscreenPolicyCombo;
+            return dockTarget(fullscreenPolicyCombo);
         if (id == "dock.fullscreenExceptions")
         {
-            return fullscreenExceptionAdd;
+            return dockTarget(fullscreenExceptionAdd);
         }
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
-            return floatingEdgeSwipeToggle;
-        if (id == "dock.suppressSystemTaskbar") return suppressTaskbarToggle;
-        if (id == "taskbar.suppressSystemTaskbar") return taskbarSuppressToggle;
-        if (id == "dock.reserveScreenSpace") return reserveScreenSpaceToggle;
+            return edgeRevealTarget();
+        if (id == "dock.suppressSystemTaskbar") return taskbarMode;
+        if (id == "dock.reserveScreenSpace" || id == "dock.allowDesktopContentOverlap")
+        {
+            if (showOnlyWhenSummonedToggle.IsOn())
+                return dockTarget(prerequisiteTarget(showOnlyWhenSummonedToggle, "disable", showOnlyWhenSummonedRow.label.Text().c_str()));
+            if (spaceReservedByStatusBar)
+                return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+            return dockTarget(id == "dock.reserveScreenSpace" ? reserveScreenSpaceToggle : allowDesktopContentOverlapToggle);
+        }
+        if (id == "dock.startIcon") return dockTarget(startIconChoose);
+        if (id == "dock.searchIcon") return dockTarget(searchIconChoose);
         if (id == "dock.showWindowsButton")
-            return showWindowsButtonToggle;
+            return dockTarget(showWindowsButtonToggle);
+        if (id == "dock.showQuickSearchButton")
+            return dockTarget(showQuickSearchButtonToggle);
         if (id == "dock.showFrequentItems")
-            return showFrequentItemsToggle;
+            return dockTarget(showFrequentItemsToggle);
         if (id == "dock.frequentItemCount")
-            return frequentItemCount.slider;
+            return dockTarget(showFrequentItemsToggle.IsOn() ? frequentItemCount.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(showFrequentItemsToggle, "enable", showFrequentItemsRow.label.Text().c_str()));
         if (id == "dock.keepWhenDesktopHidden")
-            return keepWhenDesktopHiddenToggle;
-        if (id == "dock.allowDesktopContentOverlap")
-            return allowDesktopContentOverlapToggle;
+            return dockEnabledToggle; // Retained data field has no page control.
         if (id == "dock.showOnlyWhenSummoned" || id == "dock.autoHide")
-            return showOnlyWhenSummonedToggle;
+            return dockTarget(showOnlyWhenSummonedToggle);
+        if (id == "dock.summonOnAppMinimize")
+            return dockTarget(summonOnAppMinimizeToggle);
         if (id == "taskbar.systemSettings" || id == "taskbar.autoHide" ||
             id == "taskbar.alignment") return taskbarSettingsLink;
         if (id == "taskbar.systemTheme" || id == "taskbar.systemPanel")
@@ -3028,18 +3320,41 @@ struct DockPagePresenter::Impl
             id == "taskbar.followGlobal")
             return taskbarThemeCombo;
         if (id == "taskbar.contentTheme")
-            return taskbarContentThemeCombo;
+            return taskbarContentThemeRow.root.Visibility() == mux::Visibility::Visible
+                ? taskbarContentThemeCombo : prerequisiteTarget(taskbarThemeCombo, "choice", taskbarThemeRow.label.Text().c_str());
+        // Classic taskbars cannot expose blur radius under any theme. A theme
+        // change or enabling glass would therefore be misleading guidance.
+        if (id == "taskbar.blurRadius" && IsClassicSystemTaskbar())
+            return prerequisiteTarget(taskbarThemeCombo, "unavailable", taskbarBlurRadius.row.label.Text().c_str());
+        // A search may target a value whose prerequisite is not selected.
+        // Locate that visible prerequisite without changing the user's values.
+        if ((id == "taskbar.backgroundColor" || id == "taskbar.borderColor" ||
+                id == "taskbar.backgroundOpacity" || id == "taskbar.borderOpacity" ||
+                id == "taskbar.glass" || id == "taskbar.blurRadius" || id == "taskbar.acrylic") &&
+            taskbarCustomAppearance.Visibility() != mux::Visibility::Visible)
+            return prerequisiteTarget(taskbarThemeCombo, "customTheme", taskbarThemeRow.label.Text().c_str());
         if (id == "taskbar.backgroundColor")
-            return taskbarBackgroundColor.editor.button;
+            return taskbarGradient.enabled ? taskbarGradient.editor->Content().as<mux::FrameworkElement>()
+                : taskbarBackgroundColor.editor.button;
         if (id == "taskbar.borderColor")
             return taskbarGradient.borderEditor->FocusTarget("app.settings.border_color");
         if (id == "taskbar.backgroundOpacity")
-            return taskbarBackgroundAlpha.slider;
+            return taskbarGradient.enabled ? taskbarGradient.editor->Content().as<mux::FrameworkElement>()
+                : taskbarBackgroundAlpha.slider;
         if (id == "taskbar.borderOpacity")
             return taskbarGradient.borderEditor->FocusTarget("largeIcon.borderOpacity");
         if (id == "taskbar.glass") return taskbarGlassToggle;
-        if (id == "taskbar.blurRadius") return taskbarBlurRadius.slider;
-        if (id == "taskbar.acrylic") return taskbarAcrylicToggle;
+        if (id == "taskbar.blurRadius")
+        {
+            if (!taskbarGlassToggle.IsOn())
+                return prerequisiteTarget(taskbarGlassToggle, "enable", taskbarGlassRow.label.Text().c_str());
+            if (taskbarAcrylicToggle.IsOn())
+                return prerequisiteTarget(taskbarAcrylicToggle, "disable", taskbarAcrylicRow.label.Text().c_str());
+            return taskbarBlurRadius.slider;
+        }
+        if (id == "taskbar.acrylic")
+            return taskbarGlassToggle.IsOn() ? taskbarAcrylicToggle
+                : prerequisiteTarget(taskbarGlassToggle, "enable", taskbarGlassRow.label.Text().c_str());
         if (id == "taskbar.restartExplorer") return restartExplorerButton;
         if (id == "taskbar.dynamic.visibleWindow" ||
             id == "taskbar.visibleWindow")
@@ -3153,7 +3468,7 @@ struct DockPagePresenter::Impl
             runtimeTimer.Stop();
             runtimeTimer.Tick(runtimeTimerToken);
             highlightTimer.Tick(highlightTimerToken);
-            taskbarRoot.Loaded(taskbarRootLoadedToken);
+            taskbarAppearanceCard.root.Loaded(taskbarRootLoadedToken);
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
             layoutCombo.SelectionChanged(layoutToken);
@@ -3168,7 +3483,9 @@ struct DockPagePresenter::Impl
             fullscreenRunningApps.DropDownOpened(fullscreenRunningOpenToken);
             fullscreenRunningApps.SelectionChanged(fullscreenRunningSelectToken);
             ClearFullscreenExceptionRows();
+            trayEditor.reset();
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            showQuickSearchButtonToggle.Toggled(showQuickSearchButtonToken);
             mergedHeight->Close();
             homeSize.Toggled(homeSizeToken);
             taskbarMode.SelectionChanged(taskbarModeToken);
@@ -3180,6 +3497,7 @@ struct DockPagePresenter::Impl
             allowDesktopContentOverlapToggle.Toggled(
                 allowDesktopContentOverlapToken);
             showOnlyWhenSummonedToggle.Toggled(showOnlyWhenSummonedToken);
+            summonOnAppMinimizeToggle.Toggled(summonOnAppMinimizeToken);
             taskbarSettingsLink.Click(taskbarSettingsToken);
             windowsSystemThemeChoices.SelectionChanged(
                 windowsSystemThemeToken);
@@ -3206,6 +3524,8 @@ struct DockPagePresenter::Impl
             UnhookColorControl(control->borderColor);
             UnhookDynamicRule(*control);
         }
+        *iconPickerAlive = false;
+        if (cancelIconPicker) { cancelIconPicker(); cancelIconPicker = {}; }
         actions = {};
         localize = {};
     }
@@ -3257,9 +3577,39 @@ mux::UIElement DockPagePresenter::DockEnableContent() const noexcept
     return impl_ ? impl_->dockEnableRoot : nullptr;
 }
 
-mux::UIElement DockPagePresenter::DockAppearanceContent() const noexcept
+mux::UIElement DockPagePresenter::DockAppearanceContent() const
 {
+    if (impl_)
+    {
+        impl_->centralizedAppearance = false;
+        impl_->SetCardText(impl_->appearanceCard, "settings.dock.appearance", L"Appearance");
+        uint32_t index = 0;
+        if (!impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
+            impl_->dockAppearanceRoot.Children().InsertAt(0, impl_->appearanceCard.root);
+    }
     return impl_ ? impl_->dockAppearanceRoot : nullptr;
+}
+
+mux::UIElement DockPagePresenter::DockThemeContent() const
+{
+    if (!impl_) return nullptr;
+    impl_->centralizedAppearance = true;
+    impl_->SetCardText(impl_->appearanceCard, "settings.nav.dock", L"Dock");
+    uint32_t index = 0;
+    if (impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
+        impl_->dockAppearanceRoot.Children().RemoveAt(index);
+    return impl_->appearanceCard.root;
+}
+
+mux::UIElement DockPagePresenter::TaskbarAppearanceContent() const
+{
+    if (!impl_) return nullptr;
+    impl_->centralizedAppearance = true;
+    impl_->SetCardText(impl_->taskbarAppearanceCard, "settings.nav.taskbar", L"Windows taskbar");
+    uint32_t index = 0;
+    if (impl_->taskbarRoot.Children().IndexOf(impl_->taskbarAppearanceCard.root, index))
+        impl_->taskbarRoot.Children().RemoveAt(index);
+    return impl_->taskbarAppearanceCard.root;
 }
 
 void DockPagePresenter::SetSupplementalContent(const mux::UIElement& appearance,
@@ -3279,8 +3629,16 @@ mux::UIElement DockPagePresenter::DockContent() const noexcept
     return impl_ ? impl_->dockRoot : nullptr;
 }
 
-mux::UIElement DockPagePresenter::TaskbarContent() const noexcept
+mux::UIElement DockPagePresenter::TaskbarContent() const
 {
+    if (impl_)
+    {
+        impl_->centralizedAppearance = false;
+        impl_->SetCardText(impl_->taskbarAppearanceCard, "settings.taskbar.defaultAppearance", L"Default appearance");
+        uint32_t index = 0;
+        if (!impl_->taskbarRoot.Children().IndexOf(impl_->taskbarAppearanceCard.root, index))
+            impl_->taskbarRoot.Children().InsertAt(1, impl_->taskbarAppearanceCard.root);
+    }
     return impl_ ? impl_->taskbarRoot : nullptr;
 }
 
@@ -3322,6 +3680,8 @@ void DockPagePresenter::ActivateTaskbar() noexcept
 
 void DockPagePresenter::Deactivate() noexcept
 {
+    if (impl_ && impl_->cancelIconPicker)
+    { auto cancel = std::exchange(impl_->cancelIconPicker, {}); cancel(); }
     if (!impl_ || impl_->closed)
         return;
     impl_->mergedHeight->Flush();
@@ -3335,9 +3695,10 @@ void DockPagePresenter::Deactivate() noexcept
 }
 
 mux::FrameworkElement DockPagePresenter::FocusTarget(
-    std::string_view focusId) const noexcept
+    std::string_view focusId, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, prerequisite) : nullptr;
 }
 
 void DockPagePresenter::Close() noexcept

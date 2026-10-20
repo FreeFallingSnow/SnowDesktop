@@ -9,4 +9,11 @@ enum class ReconcileMode
     AllowImmediateActivation,
     AllowActivationAfterForegroundSettle,
 };
+
+struct RetainedDockLeaveTracking
+{
+    int screenX = 0, screenY = 0;
+    bool pointerKnown = false;
+    bool contentRearmed = false, desktopRearmed = false;
+};
 }

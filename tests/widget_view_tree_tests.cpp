@@ -2093,11 +2093,12 @@ void TestVirtualizedCollections()
         "virtualList must place its global item window and reuse host scrolling");
     std::vector<InteractionRegion> regions;
     Check(CollectViewInteractionRegions(list, regions, error) &&
-            regions.size() == 3 &&
-            regions.front().key == "virtual-item-6" &&
-            regions.back().key == "virtual-item-8" &&
-            regions.front().clip && Near(regions.front().clip->height, 100.0f),
-        "only visible virtual list items must expose clipped interactions");
+            regions.size() == 7 &&
+            regions.front().key == "virtual-item-4" &&
+            regions.back().key == "virtual-item-10" &&
+            regions.front().clip && Near(regions.front().clip->height, 100.0f) &&
+            regions.front().keyboardScrollAncestors == std::vector<std::string>{"virtual-feed"},
+        "realized virtual items must retain clipped keyboard targets and their scroll owner");
 
     ViewNode incomplete = list;
     incomplete.firstIndex = 1;
@@ -2167,11 +2168,11 @@ void TestVirtualizedCollections()
         "horizontal virtualList must place its global item window on the x axis");
     regions.clear();
     Check(CollectViewInteractionRegions(horizontal, regions, error) &&
-            regions.size() == 3 &&
-            regions.front().key == "horizontal-item-3" &&
-            regions.back().key == "horizontal-item-5" &&
+            regions.size() == 5 &&
+            regions.front().key == "horizontal-item-2" &&
+            regions.back().key == "horizontal-item-6" &&
             regions.front().clip && Near(regions.front().clip->width, 120.0f),
-        "horizontal virtualList must clip interaction regions to its viewport");
+        "horizontal virtualList must keep realized keyboard targets with pointer clips");
 
     lua_pop(state, 1);
     Check(luaL_dostring(state, R"lua(
@@ -2245,9 +2246,9 @@ void TestVirtualizedCollections()
         "virtualGrid must place overscan rows around the visible grid rows");
     regions.clear();
     Check(CollectViewInteractionRegions(grid, regions, error) &&
-            regions.size() == 8 && regions.front().key == "tile-9" &&
-            regions.back().key == "tile-16",
-        "virtualGrid must only materialize interaction regions for visible rows");
+            regions.size() == 16 && regions.front().key == "tile-5" &&
+            regions.back().key == "tile-20",
+        "virtualGrid must keep the realized overscan rows available to keyboard navigation");
     lua_close(state);
 }
 
@@ -2830,6 +2831,67 @@ void TestDeclarativeInputControls()
     lua_close(state);
 }
 
+void TestKeyboardScrollReveal()
+{
+    ViewNode root;
+    root.type = ViewNodeType::Scroll;
+    root.key = "outer";
+    root.orientation = ViewOrientation::Vertical;
+    root.frame = {0, 0, 200, 100};
+    root.clipFrame = root.frame;
+    root.scrollContentExtent = 500;
+    root.scrollViewportExtent = 100;
+    ViewNode inner;
+    inner.type = ViewNodeType::Scroll;
+    inner.key = "inner";
+    inner.orientation = ViewOrientation::Vertical;
+    inner.frame = {0, 150, 180, 80};
+    inner.clipFrame = inner.frame;
+    inner.scrollContentExtent = 300;
+    inner.scrollViewportExtent = 80;
+    ViewNode input;
+    input.type = ViewNodeType::TextInput;
+    input.key = "input";
+    input.frame = {0, 350, 100, 24};
+    input.events["change"].id = "input.change";
+    inner.children.push_back(input);
+    root.children.push_back(inner);
+    std::vector<InteractionRegion> regions;
+    std::vector<ViewInputControl> controls;
+    std::string error;
+    Check(CollectViewInteractionRegions(root, regions, error) && regions.size() == 1 &&
+            regions[0].key == "input" && regions[0].keyboardScrollAncestors ==
+                std::vector<std::string>{"outer", "inner"} &&
+            CollectViewInputControls(root, controls, error) && controls.size() == 1,
+        "a completely clipped nested editor must retain logical input and keyboard scroll ownership");
+    WidgetInteractionRegions interaction;
+    interaction.BeginFrame();
+    Check(interaction.Submit(regions[0], error), "clipped logical editor must submit");
+    interaction.CommitFrame();
+    Check(interaction.IsKeyboardFocusable("input") && interaction.TargetAt(20, 360).empty(),
+        "nested offscreen controls must support keyboard focus without accepting physical pointer hits");
+    const auto offsets = ComputeViewKeyboardScrollOffsets(root, regions[0]);
+    Check(offsets.size() == 2 && offsets[0].first == "inner" && Near(offsets[0].second, 144) &&
+            offsets[1].first == "outer" && Near(offsets[1].second, 130),
+        "focus reveal must scroll the inner viewport first, then reveal its resulting bounds in the outer viewport");
+
+    ViewNode horizontal;
+    horizontal.type = ViewNodeType::Scroll;
+    horizontal.key = "horizontal";
+    horizontal.frame = {0, 0, 100, 40};horizontal.clipFrame = horizontal.frame;
+    horizontal.orientation = ViewOrientation::Horizontal;
+    horizontal.scrollContentExtent = 300;horizontal.scrollViewportExtent = 100;
+    auto button = input;button.type = ViewNodeType::Button;button.key = "offscreen";
+    button.frame = {180, 0, 40, 30};button.events.clear();button.events["click"].id = "open";
+    horizontal.children.push_back(button);
+    Check(CollectViewInteractionRegions(horizontal, regions, error) && regions.size() == 1,
+        "horizontal offscreen target must remain keyboard accessible");
+    const auto horizontalOffsets = ComputeViewKeyboardScrollOffsets(horizontal, regions[0]);
+    Check(horizontalOffsets.size() == 1 && horizontalOffsets[0].first == "horizontal" &&
+            Near(horizontalOffsets[0].second, 120),
+        "horizontal keyboard navigation must reveal its destination on the x axis");
+}
+
 void TestSelectPopupViewportAndHitOrder()
 {
     ViewNode root;
@@ -2880,6 +2942,19 @@ void TestSelectPopupViewportAndHitOrder()
     Check(interaction.TargetAt(40.0f, 155.0f) == "reminder/5" &&
             interaction.TargetAt(40.0f, 195.0f) == "reminder/6",
         "popup options win over an underlying input and remain hittable beyond the parent clip");
+    Check(interaction.IsKeyboardFocusable("reminder/0") &&
+            interaction.IsKeyboardFocusable("reminder/6") &&
+            interaction.SelectKeyboardTarget("reminder/5", -1, true) == "reminder/0" &&
+            interaction.SelectKeyboardTarget("reminder/0", 1, true) == "reminder/6" &&
+            interaction.ReconcileKeyboardFocus("reminder") == "reminder/6",
+        "scrolling select must retain all logical options and focus its selected value");
+    Check(interaction.TargetAt(40.0f, 80.0f) == "reminder",
+        "a clipped option cannot intercept the physical combobox hit");
+    const auto* first = interaction.Find("reminder/0");
+    Check(first != nullptr, "first select option must remain realized");
+    const auto reveal = ComputeViewKeyboardScrollOffsets(root, *first);
+    Check(reveal.size() == 1 && reveal[0].first == "reminder" && Near(reveal[0].second, 0),
+        "keyboard focus on an offscreen select option must reveal that option");
 
     Check(ApplyViewScrollOffsets(root,
             [](std::string_view key, float) -> std::optional<float> {
@@ -5135,6 +5210,7 @@ int main()
     TestCollectionContentStates();
     TestDeclarativeInputControls();
     TestSelectPopupViewportAndHitOrder();
+    TestKeyboardScrollReveal();
     TestStyledTextAndMonthCalendar();
     TestLogicalSlotSceneContract();
     TestBoundedSizeConstraints();

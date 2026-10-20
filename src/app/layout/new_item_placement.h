@@ -1,5 +1,5 @@
 #pragma once
-#include "app/drag_drop/pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
 
 namespace snowdesktop::new_item_placement
 {

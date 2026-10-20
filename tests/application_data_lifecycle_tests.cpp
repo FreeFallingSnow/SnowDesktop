@@ -2,16 +2,26 @@
 #include "desktop/desktop_source.h"
 #include "data/full_data_backup.h"
 #include "icons/large_icon_backup.h"
+#include "icons/icon_appearance_codec.h"
 #include "data/layout_storage.h"
+#include "data/dock_layout_codec.h"
+#include "data/widget_layout_codec.h"
+#include <sstream>
 #include "layout/page_management_rules.h"
 #include "common/json_value.h"
+#include "common/json_string.h"
+#include "data/executable_path.h"
+#include "data/data_path_policy.h"
 #include "widget/packages/widget_package.h"
 #include "widget/packages/widget_removal.h"
 #include "data/portable_data_migration.h"
 #include "platform/single_instance.h"
+#include "dock/dock_folder_order_cases.h"
 
 #include <windows.h>
 #include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +32,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+int RunDesktopMembershipRecoveryTests(const std::filesystem::path& root);
 
 namespace
 {
@@ -50,6 +62,138 @@ std::string Read(const std::filesystem::path& path)
     return std::string(
         std::istreambuf_iterator<char>(file),
         std::istreambuf_iterator<char>());
+}
+
+constexpr wchar_t kLibraryFixtureName[] = L"ac308cdc947fb054538666cfd4a0c92c3fab0d5dd51083c0e8eae204aed8c645.png";
+std::string LibraryFixturePng()
+{
+    constexpr std::string_view hex = "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0d00000048101802c55ceb00000000049454e44ae426082";
+    std::string out; for (size_t i = 0; i < hex.size(); i += 2) out += static_cast<char>(std::stoul(std::string(hex.substr(i, 2)), nullptr, 16)); return out;
+}
+std::string LibraryFixtureIndex()
+{
+    return R"({"version":2,"groups":[{"id":"group-cccccccccccccccccccccccccccccccc","name":"Backup group","source":"zip","packageId":"package-fixture"}],"entries":[{"id":"ac308cdc947fb054538666cfd4a0c92c3fab0d5dd51083c0e8eae204aed8c645.png","name":"Half transparent red","width":1,"height":1,"groupIds":["group-cccccccccccccccccccccccccccccccc"]}]})";
+}
+bool DecodesLibraryFixture(const std::filesystem::path& file)
+{
+    struct Apartment { HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); } } apartment;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> factory; Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame; Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    UINT width = 0, height = 0; std::uint32_t pixel = 0;
+    return SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&width, &height)) && width == 1 && height == 1 &&
+        SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) &&
+        SUCCEEDED(converter->CopyPixels(nullptr, 4, 4, reinterpret_cast<BYTE*>(&pixel))) && pixel == 0x80800000;
+}
+
+std::wstring fakeExecutable;
+DWORD WINAPI ReadFakeExecutable(HMODULE, LPWSTR target, DWORD capacity)
+{
+    const auto copied = (std::min)(static_cast<std::size_t>(capacity), fakeExecutable.size());
+    std::copy_n(fakeExecutable.data(), copied, target);
+    return static_cast<DWORD>(copied);
+}
+
+void TestPersistenceTransactions(const std::filesystem::path& root)
+{
+    // Use the production string encoder with the complete accepted control
+    // range; saving the decoded custom title must remain a valid layout.
+    std::string title = "Unicode \xe9\x9b\xaa ";
+    for (char value = 0; value < 32; ++value) title += value;
+    title += "\\\"";
+    const std::string encoded = snowdesktop::json::EscapeString(title);
+    JsonValue decoded;
+    Expect(ParseJson('"' + encoded + '"', decoded) && decoded.string == title,
+        "every JSON control character and Unicode title round trips through the production encoder");
+    const auto titlePath = root / L"control-title.layout.json";
+    const std::string document = "{\"layoutSchemaVersion\":1,\"widgets\":[{\"id\":\"controls\","
+        "\"page\":\"page-a\",\"x\":0,\"y\":0,\"type\":\"collection\",\"title\":\"" + encoded + "\",\"customTitle\":\"" + encoded +
+        "\",\"titleMode\":\"custom\",\"userRenamed\":true}]}";
+    snowdesktop::layout_storage::Document layout;
+    std::string error;
+    const std::string assetId = std::string(64, 'a') + ".webp";
+    const std::string dockIconDocument = "{\"layoutSchemaVersion\":1,\"widgets\":[{\"id\":\"collection\",\"page\":\"__dock\",\"x\":0,\"y\":0,\"type\":\"collection\",\"dockIconAssetId\":\"" + assetId + "\"}]}";
+    const std::string overrideDocument = "{\"layoutSchemaVersion\":1,\"iconOverrides\":["
+        "{\"target\":\"control:start\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"control:search\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"item:C:\\\\A.LNK\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"recycle-empty:BIN\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"recycle-full:BIN\",\"asset\":\"" + std::string(64, 'b') + ".png\"}]}";
+    const auto overridePath = root / L"small-icon.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(overridePath, overrideDocument, &error) &&
+        snowdesktop::layout_storage::LoadDocument(overridePath, layout).status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.iconOverrides.size() == 5 && layout.iconOverrides[3].second != layout.iconOverrides[4].second,
+        "small icons and Dock controls persist independently, including distinct empty/full recycle states");
+    Expect(!snowdesktop::layout_storage::ValidateDocument("{\"iconOverrides\":[{\"target\":\"control:start\",\"asset\":\"../outside.png\"}]}"),
+        "layout cannot inject a path outside the managed icon library");
+    const auto dockIconPath = root / L"dock-icon.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(dockIconPath, dockIconDocument, &error) &&
+        snowdesktop::layout_storage::LoadDocument(dockIconPath, layout).status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.widgets.size() == 1 && layout.widgets.front().dockIconAssetId == assetId,
+        "component-owned Dock icon identity survives the production layout transaction independently of Dock array positions");
+    Expect(snowdesktop::layout_storage::SaveDocument(titlePath, document, &error) &&
+        snowdesktop::layout_storage::LoadDocument(titlePath, layout).status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.widgets.size() == 1 && layout.widgets.front().customTitle == title,
+        "a decoded control-character custom title can be saved and loaded as a real layout");
+
+    fakeExecutable = L"C:\\portable";
+    for (int part = 0; part < 8; ++part) fakeExecutable += L"\\long-executable-directory-component";
+    fakeExecutable += L"\\SnowDesktop.exe";
+    const auto directory = snowdesktop::data_paths::ExecutableDirectory(ReadFakeExecutable);
+    snowdesktop::deployment::RuntimeDeploymentContext portable;
+    portable.kind = snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    const auto first = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(portable, {}, directory);
+    Expect(directory.is_absolute() && directory == std::filesystem::path(fakeExecutable).parent_path() &&
+        first.dataRoot == directory / L"data" && first.dataRoot.is_absolute(),
+        "a truncated first OS path buffer expands and portable data remains beside the long executable path");
+
+    using snowdesktop::backup::detail::AppendStoreZipSize;
+    constexpr auto limit = snowdesktop::backup::kMaxArchiveBytes;
+    for (const std::uint64_t target : {limit - 1, limit, limit + 1})
+    {
+        std::uint64_t bytes = 22;
+        // Two entries, two 76-byte header pairs, and UTF-8 names of 10/15 bytes.
+        const std::uint64_t firstPayload = snowdesktop::backup::kMaxFileBytes;
+        const std::uint64_t secondPayload = target - 22 - 152 - 50 - firstPayload;
+        const bool accepted = AppendStoreZipSize(bytes, firstPayload, 10) &&
+            AppendStoreZipSize(bytes, secondPayload, 15);
+        Expect(target <= limit ? accepted && bytes == target : !accepted,
+            "the actual stored-ZIP size policy accepts limit-1/limit and rejects limit+1 including both header/name copies");
+    }
+    std::uint64_t size = 22;
+    Expect(!AppendStoreZipSize(size, limit - 1, 1) && size == 22,
+        "an importable payload alone cannot bypass the complete archive limit or mutate a rejected size");
+
+    const auto primary = root / L"paired-backup.json";
+    const auto companion = root / L"paired-backup.storage.json";
+    for (const bool lockCompanion : {true, false})
+    {
+        Write(primary, "layout backup"); Write(companion, "component storage backup");
+        const auto& lockedPath = lockCompanion ? companion : primary;
+        HANDLE lock = CreateFileW(lockedPath.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Expect(lock != INVALID_HANDLE_VALUE, "lock one backup member against deletion");
+        const bool removed = snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error);
+        Expect(!removed && !error.empty() && Read(primary) == "layout backup" &&
+            Read(companion) == "component storage backup",
+            "a locked member leaves both original backup files and a visible retryable layout entry");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        Expect(snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+            !std::filesystem::exists(primary) && !std::filesystem::exists(companion),
+            "releasing either lock allows the same backup deletion to remove both members");
+    }
+    Write(primary, "layout backup"); Write(companion, "component storage backup");
+    SetFileAttributesW(primary.c_str(), FILE_ATTRIBUTE_READONLY);
+    Expect(!snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+        Read(primary) == "layout backup" && Read(companion) == "component storage backup",
+        "failure to mark the layout for deletion restores a previously marked storage member");
+    SetFileAttributesW(primary.c_str(), FILE_ATTRIBUTE_NORMAL);
+    std::filesystem::remove(companion);
+    Expect(snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+        !std::filesystem::exists(primary), "legacy backups without a storage companion remain deletable");
 }
 
 bool CorruptArchivePayload(const std::filesystem::path& path,
@@ -110,6 +254,39 @@ void MakeStoredZipEntryFragment(const std::filesystem::path& path,
         Write16(output, 0);
         output.write(name.data(), static_cast<std::streamsize>(name.size()));
     }
+}
+
+void TestJsonNestingBoundary()
+{
+    for (const bool mixed : {false, true})
+    {
+        for (const int levels : {128, 129})
+        {
+            std::string text;
+            for (int index = 0; index < levels; ++index)
+                text += mixed && index % 2 ? "{\"child\":" : "[";
+            text += '0';
+            for (int index = levels - 1; index >= 0; --index)
+                text += mixed && index % 2 ? '}' : ']';
+            JsonValue value;
+            std::string error;
+            const bool parsed = ParseJson(text, value, &error);
+            Expect(levels == 128 ? parsed : !parsed && error.find("nesting") != std::string::npos,
+                "JSON accepts 128 containers and rejects the next array/object nesting level");
+        }
+    }
+    JsonValue value;
+    std::string error;
+    Expect(!ParseJson(std::string(129, '['), value, &error) &&
+        error.find("nesting") != std::string::npos,
+        "an unclosed nested input is bounded before reaching end-of-file");
+    Expect(!ParseJson(std::string(129, '[') + std::string(129, ']'), value, &error),
+        "empty containers cannot bypass the same nesting boundary");
+    std::string wide = "[[]";
+    for (int index = 0; index < 512; ++index) wide += ",[]";
+    wide += ']';
+    Expect(ParseJson(wide, value, &error) && value.array.size() == 513,
+        "many sibling containers do not consume a cumulative nesting budget");
 }
 
 void MakePackage(const std::filesystem::path& root, std::string version,
@@ -297,6 +474,34 @@ void TestWidgetCatalogRediscovery(const std::filesystem::path& root)
 void TestDockLayoutBackup(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
+    {
+        layout::Document saved;
+        Expect(layout::ParseDocument("{}", saved) && saved.groupComponentBadges.value_or(true),
+            "layouts predating the badge preference retain visible group-component badges");
+        const auto preference = root / L"group-badges" / L"layout.json";
+        const std::string disabled = R"({"groupComponentBadges":false})";
+        Expect(layout::SaveDocument(preference, disabled) &&
+                layout::LoadDocument(preference, saved).status == layout::LoadStatus::LoadedPrimary &&
+                saved.groupComponentBadges == false,
+            "disabled group-component badges survive an actual layout save and reload");
+        std::string cleared;
+        Expect(layout::BuildClearedDocument(disabled, cleared) && layout::ParseDocument(cleared, saved) &&
+                saved.groupComponentBadges == false,
+            "clearing desktop placements preserves the group badge appearance preference");
+        Expect(!layout::ParseDocument(R"({"groupComponentBadges":"false"})", saved),
+            "invalid badge preferences are rejected instead of silently enabling badges");
+    }
+    for (const auto* type : {"collection", "fileCategories", "folderMapping", "collectionGroup", "fileGroup"})
+    {
+        const auto prefix = std::string("{\"widgets\":[{\"id\":\"single\",\"page\":\"p\",\"x\":0,\"y\":0,\"type\":\"") + type + "\",\"w\":1,\"h\":1";
+        layout::Document saved;
+        Expect(layout::ParseDocument(prefix + "}]}", saved) && !saved.widgets.front().singleCellIconMode,
+            "legacy layouts default every single-cell native widget to component mode");
+        Expect(layout::ParseDocument(prefix + ",\"singleCellIconMode\":true}]}", saved) && saved.widgets.front().singleCellIconMode,
+            "icon-mode preference loads independently of native widget type");
+        Expect(!layout::ParseDocument(prefix + ",\"singleCellIconMode\":\"true\"}]}", saved),
+            "a malformed single-cell preference cannot silently change presentation");
+    }
     const auto primary = root / L"dock-layout" / L"SnowDesktop.layout.json";
     const auto backup = root / L"dock-layout" / L"backups" / L"saved.json";
     for (int position = 0; position < 4; ++position)
@@ -306,8 +511,10 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             DockLayoutSettings saved;
             saved.position = static_cast<DockPosition>(position);
             saved.edgeAttached = attached;
+            saved.edgeDistanceScale = attached ? 0.1f : 5.f;
             saved.monitorScope = DockMonitorScope::All;
             saved.showWindowsButton = false;
+            saved.showQuickSearchButton = false;
             saved.showFrequentItems = true;
             saved.keepWhenDesktopHidden = true;
             saved.allowDesktopContentOverlap = true;
@@ -340,6 +547,49 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
         }
     }
     layout::Document legacy;
+    {
+        snowdesktop::IconBeautifySettings style; style.enabled = false; style.mode = 1;
+        style.preset = snowdesktop::IconBeautifyPreset::Custom;
+        const auto record = std::string(R"({"target":"control:start","name":"Start","themeId":"","style":)") +
+            snowdesktop::icon_appearance::EncodeStyle(style) + "}";
+        const auto document = std::string(R"({"layoutSchemaVersion":1,"iconBeautifyOverrides":[)") + record + "]}";
+        Expect(layout::ParseDocument(document, legacy) && legacy.iconBeautifyOverrides.size() == 1 &&
+            legacy.iconBeautifyOverrides[0].target == L"control:start" && !legacy.iconBeautifyOverrides[0].settings.enabled &&
+            legacy.iconBeautifyOverrides[0].settings.mode == 1,
+            "independent disabled Start appearance reloads without becoming global inheritance");
+        Expect(!legacy.iconBeautifyOverrides[0].followGlobalTheme,
+            "legacy per-icon styles retain explicit themes when the inheritance field is absent");
+        const auto inheritedDocument = std::string(R"({"iconBeautifyOverrides":[{"target":"control:search","name":"Search","themeId":"","followGlobalTheme":true,"style":)") +
+            snowdesktop::icon_appearance::EncodeStyle(style) + "}]}";
+        Expect(layout::ParseDocument(inheritedDocument, legacy) && legacy.iconBeautifyOverrides[0].followGlobalTheme &&
+            legacy.iconBeautifyOverrides[0].settings.mode == 1, "theme inheritance reloads independently of processing mode");
+        std::string inheritedCleared;
+        Expect(layout::BuildClearedDocument(inheritedDocument, inheritedCleared) && layout::ParseDocument(inheritedCleared, legacy) &&
+            legacy.iconBeautifyOverrides[0].followGlobalTheme, "placement reset preserves theme inheritance metadata");
+        auto malformedFollow = inheritedDocument; const auto followAt = malformedFollow.find("true");
+        malformedFollow.replace(followAt, 4, "1");
+        Expect(!layout::ParseDocument(malformedFollow, legacy), "non-boolean inheritance metadata is rejected");
+        std::string cleared;
+        Expect(layout::BuildClearedDocument(document, cleared) && layout::ParseDocument(cleared, legacy) &&
+            legacy.iconBeautifyOverrides.size() == 1, "clearing placement preserves independent icon appearance");
+        Expect(!layout::ParseDocument(std::string(R"({"iconBeautifyOverrides":[)") + record + "," + record + "]}", legacy),
+            "duplicate stable appearance identities reject rather than silently picking an arbitrary style");
+        Expect(layout::ParseDocument("{}", legacy) && legacy.iconBeautifyOverrides.empty(),
+            "legacy layouts have no implicit per-icon appearance list entries");
+    }
+    Expect(layout::ParseDocument(R"({"iconBeautifyEnabled":true,"iconBeautifyPreset":5,"iconBeautifyMode":1,"iconBeautifyGradientEnabled":true,"iconBeautifyGradientDirection":3,"iconBeautifyFilterEnabled":true,"iconBeautifyFilterStrength":0.7,"iconBeautifyBgOpacity":0.4})", legacy) &&
+            legacy.iconBeautifyMode == 1 && legacy.iconBeautifyGradientDirection == 3 && legacy.iconBeautifyFilterStrength == .7f &&
+            !legacy.iconBeautifyBackgroundGradient && !legacy.iconBeautifyBackgroundSource && !legacy.iconBeautifyFilterMode,
+        "old icon layouts retain their original strategy and filter without opting into new appearance rules");
+    Expect(layout::ParseDocument(R"({"iconBeautifyMode":1,"iconBeautifyBackgroundSource":2,"iconBeautifyFilterMode":1,"iconBeautifyBackgroundGradient":{"enabled":true,"angle":135,"start":0.1,"end":0.9,"stops":[{"position":0,"color":16711680,"opacity":0.3},{"position":0.4,"color":65280,"opacity":0.7},{"position":1,"color":255,"opacity":1}]}})", legacy) &&
+            legacy.iconBeautifyMode == 1 && legacy.iconBeautifyBackgroundSource == 2 && legacy.iconBeautifyFilterMode == 1 &&
+            legacy.iconBeautifyBackgroundGradient && legacy.iconBeautifyBackgroundGradient->stops.size() == 3 &&
+            legacy.iconBeautifyBackgroundGradient->stops[1].position == .4,
+        "new icon appearances reload every gradient stop independently of their local strategy");
+    Expect(!layout::ParseDocument(R"({"iconBeautifyBackgroundSource":3})", legacy) &&
+            !layout::ParseDocument(R"({"iconBeautifyFilterMode":-1})", legacy) &&
+            !layout::ParseDocument(R"({"iconBeautifyBackgroundGradient":{"stops":[{"position":0,"color":0,"opacity":1},{"position":0,"color":255,"opacity":1}]}})", legacy),
+        "unknown color sources, coloring modes and invalid gradients reject before layout state is replaced");
     for (const char* savedLayout : {
              R"({"pages":[{"id":"empty-page","columns":22,"rows":10}]})",
              R"({"items":[{"key":"file","page":"old","x":1,"y":0}]})",
@@ -353,7 +603,8 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
     Expect(layout::ParseDocument(R"({"dockLayout":{"edgeAttached":true}})", legacy) &&
-            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
+            legacy.dockLayout && legacy.dockLayout->edgeDistanceScale == 1.f && !legacy.dockLayout->reserveScreenSpace &&
+            legacy.dockLayout->showQuickSearchButton &&
             legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
         "legacy Dock layouts do not opt into screen reservation when the field is absent");
     Expect(layout::ParseDocument(R"({"dockLayout":{"thicknessScale":0.75}})", legacy) &&
@@ -372,6 +623,10 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
              R"({"dockLayout":{"position":1.5}})",
              R"({"dockLayout":{"monitorScope":-1}})",
              R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"edgeDistanceScale":0.09}})",
+             R"({"dockLayout":{"edgeDistanceScale":5.01}})",
+             R"({"dockLayout":{"edgeDistanceScale":"far"}})",
+             R"({"dockLayout":{"showQuickSearchButton":1}})",
              R"({"dockLayout":{"reserveScreenSpace":1}})",
              R"({"dockLayout":{"lastMonitorUseHomeSize":1}})",
              R"({"dockLayout":{"mergedBarHeight":31}})",
@@ -619,6 +874,58 @@ void TestDebugProfile(const std::filesystem::path& fixture)
         Read(paths.root / L"unmanaged.txt") == "unmanaged", "reset preserves both desktops, normal data and unmanaged profile files");
     Expect(profile::Read(paths, config, error) && config.enabled && !config.pendingReset && config.desktop == otherDesktop,
         "reset preserves the active mode and selected directory");
+
+    // A real image mapping reproduces Explorer retaining the debug Hook after
+    // switching back to normal mode. No real Hook is injected or executed.
+    const auto cachedRuntime = paths.data /
+        L"ShellHook/shared/slots-v1/SnowDesktopTaskbarHook.dll/slot-0/SnowDesktopTaskbarHook.dll";
+    std::filesystem::create_directories(cachedRuntime.parent_path());
+    wchar_t system[MAX_PATH]{};
+    const UINT systemLength = GetSystemDirectoryW(system, MAX_PATH);
+    Expect(systemLength && systemLength < MAX_PATH &&
+        CopyFileW((std::filesystem::path(system) / L"version.dll").c_str(), cachedRuntime.c_str(), TRUE),
+        "copy a system DLL into the isolated debug runtime cache");
+    const HMODULE mappedRuntime = LoadLibraryExW(cachedRuntime.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+    Expect(mappedRuntime != nullptr, "retain an image mapping after the debug host exits");
+    const auto runtimeBytes = Read(cachedRuntime);
+    Write(paths.data / L"debug.txt", "reset-again");
+    Write(paths.data / L"widgets" / L"storage.json", "component-state");
+    Write(paths.data / L"ShellHookSymbols" / L"symbols.bin", "cached-symbols");
+    Write(paths.root / L"FullBackups" / L"backup.txt", "backup");
+    config.enabled = false;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        !profile::Enabled(), "return to normal mode while a debug runtime remains mapped");
+    Expect(profile::Clear(paths, error), "inactive reset succeeds while the debug runtime is still mapped");
+    Expect(Read(cachedRuntime) == runtimeBytes && !runtimeBytes.empty() &&
+        !std::filesystem::exists(paths.data / L"debug.txt") &&
+        !std::filesystem::exists(paths.data / L"widgets") &&
+        !std::filesystem::exists(paths.data / L"ShellHookSymbols") &&
+        !std::filesystem::exists(paths.root / L"FullBackups"),
+        "inactive reset retains only the runtime cache while clearing settings, components, symbols and backups");
+    if (mappedRuntime) FreeLibrary(mappedRuntime);
+
+    // An active host also holds cache owner leases without FILE_SHARE_DELETE.
+    const auto owner = cachedRuntime.parent_path() / L".owner.lock";
+    HANDLE runtimeLease = CreateFileW(owner.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    Expect(runtimeLease != INVALID_HANDLE_VALUE, "retain an active debug runtime lease");
+    Write(paths.data / L"debug.txt", "reset-on-startup");
+    Write(paths.root / L"TempState" / L"pending.txt", "restore");
+    Write(paths.root / L"PrivateState" / L"secrets.txt", "secret");
+    config.enabled = true;
+    config.pendingReset = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        profile::Enabled(), "startup reset succeeds with an outstanding runtime owner lease");
+    Expect(Read(cachedRuntime) == runtimeBytes && std::filesystem::exists(owner) &&
+        !std::filesystem::exists(paths.data / L"debug.txt") &&
+        !std::filesystem::exists(paths.root / L"TempState") &&
+        !std::filesystem::exists(paths.root / L"PrivateState") &&
+        profile::Read(paths, config, error) && config.enabled && !config.pendingReset &&
+        config.desktop == otherDesktop, "startup reset clears state and pending reset without modifying leased runtime files");
+    if (runtimeLease != INVALID_HANDLE_VALUE) CloseHandle(runtimeLease);
+    Expect(Read(otherDesktop / L"keep.txt") == "keep-demo" && Read(paths.defaultDesktop / L"demo.txt") == "demo-file" &&
+        Read(paths.normalData / L"normal.txt") == "normal-state" && Read(realDesktop / L"original.txt") == "real-desktop",
+        "mapped and leased runtime resets preserve normal data, real desktop and both simulated desktop selections");
     config.desktop = root / L"missing-custom-folder";
     Expect(profile::Write(paths, config, error) && !profile::Initialize(paths.normalData, {realDesktop}, error),
         "missing custom folder fails startup rather than falling back to the real desktop");
@@ -737,9 +1044,256 @@ void TestWidgetRemoval(const std::filesystem::path& root)
         "catalog publication and reload preserve the removal declaration");
 }
 
+// Exercise the real atomic layout store between partial classification and a
+// fresh process cache. The runtime rank is reconstructed from array order;
+// no new layout field or migration is required.
+void TestDockFolderOrderPersistence(const std::filesystem::path& root)
+{
+    namespace order = snowdesktop::tests::dock_folder_order;
+    using namespace snowdesktop::layout_storage;
+    const auto path = root / L"dock-folder-order.json";
+    std::string error;
+    const auto saveAndLoad = [&](const std::vector<DockEntry>& entries) {
+        std::string json = "{\"dockEntries\":[";
+        bool first = true;
+        for (const auto* entry : snowdesktop::dock_folder_rules::EntriesInUserOrder(entries))
+        {
+            if (!first) json += ',';
+            first = false;
+            json += "{\"type\":\"";
+            json += entry->type == DockEntryType::FolderMapping ? "folderMapping" : "item";
+            json += "\",\"ref\":\"";
+            for (const wchar_t name : entry->reference) json += static_cast<char>(name);
+            json += "\"}";
+        }
+        json += "]}";
+        Expect(SaveDocument(path, json, &error), "Dock order must save through the validated atomic layout store");
+        Document loaded;
+        Expect(LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary,
+            "Dock order must reload from the actual primary layout document");
+        std::vector<DockEntry> restored;
+        for (const auto& record : loaded.dockEntries)
+        {
+            DockEntry entry;
+            entry.reference.assign(record.reference.begin(), record.reference.end());
+            entry.type = record.type == "folderMapping" ? DockEntryType::FolderMapping : DockEntryType::DesktopItem;
+            restored.push_back(std::move(entry));
+        }
+        return restored;
+    };
+
+    std::array<wchar_t, 3> sequence{L'A', L'B', L'C'};
+    do
+    {
+        auto entries = order::Entries(L"PAMBCR");
+        order::Cache cache;
+        order::Normalize(entries, cache);
+        for (std::size_t completed = 0; completed <= sequence.size(); ++completed)
+        {
+            auto restored = saveAndLoad(entries);
+            Expect(order::Order(restored) == L"PAMBCR",
+                "partial classification must not replace the saved array with temporary section order");
+            order::Cache restarted;
+            order::Normalize(restored, restarted);
+            for (auto name = sequence.rbegin(); name != sequence.rend(); ++name)
+            {
+                Expect(order::Complete(restarted, *name), "restart fixture must accept each fresh folder result");
+                order::Normalize(restored, restarted);
+            }
+            Expect(order::Order(restored) == L"PAMBCR",
+                "real save/load followed by cold classification must preserve ordinary/mapped folder order");
+            if (completed < sequence.size())
+            {
+                Expect(order::Complete(cache, sequence[completed]), "partial fixture must publish its next result");
+                order::Normalize(entries, cache);
+            }
+        }
+    } while (std::next_permutation(sequence.begin(), sequence.end()));
+}
+
+void TestPackageMutationTransactions(const std::filesystem::path& root)
+{
+    using namespace snowdesktop::widget;
+    struct ReplacementLock
+    {
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        explicit ReplacementLock(const std::filesystem::path& path)
+            : handle(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr))
+        { Expect(handle != INVALID_HANDLE_VALUE, "real registry/index replacement lock opens"); }
+        ~ReplacementLock() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    };
+    for (unsigned index = 0; index < 4; ++index)
+    {
+        const auto fixture = root / (L"package-state-" + std::to_wstring(index));
+        const auto id = "9ce293fa-877e-4c43-9c24-2fdcfe10700" + std::to_string(index);
+        const std::string permissions = index % 2 ? "\"ui.input\"" : "";
+        const PackageSourceRef source{index < 2 ? "local" : "steam-workshop", "isolated-source"};
+        const auto firstSource = fixture / L"first";
+        MakePackage(firstSource, "1.0.0", id, permissions);
+        auto paths = TestPaths(fixture / L"manager");
+        WidgetPackageManager manager(paths);
+        InstalledPackage installed;
+        ValidationReport report;
+        std::string error;
+        if (!manager.Initialize(error) || !manager.InstallDirectory(firstSource, source, false, installed, report, error))
+        { Expect(false, "transaction fixture installs its first real package"); continue; }
+        Expect(manager.SetEnabled(id, false, error), "transaction fixture persists disabled choice");
+        const auto secondSource = fixture / L"second";
+        MakePackage(secondSource, "1.1.0", id, permissions, "", "lua/nested/main.lua");
+        bool updated = false;
+        if (index < 2)
+            updated = manager.InstallDirectory(secondSource, source, false, installed, report, error);
+        else
+        {
+            PackageArtifact update;
+            const auto zip = fixture / L"update.snowwidget";
+            updated = manager.ExportDirectory(secondSource, zip, update, report, error) &&
+                manager.InstallArchive(zip, source, false, installed, report, error);
+        }
+        const auto selected = manager.ResolveSelected(id);
+        Expect(updated && selected && selected->manifest.version == "1.1.0" && !selected->enabled &&
+                !installed.enabled && !manager.Resolve(id) && !manager.ResolveEntry(id),
+            "directory and prepared Workshop archive updates preserve disabled state with unchanged permission scope");
+        const auto selectedEntry = manager.ResolveSelectedEntry(id);
+        const auto selectedByEntry = selectedEntry ? manager.ResolveSelectedEntryPath(*selectedEntry) : std::nullopt;
+        Expect(selectedEntry && selectedByEntry && selectedByEntry->root == installed.root &&
+                selectedByEntry->manifest.entry == "lua/nested/main.lua" && !manager.ResolveEntryPath(*selectedEntry),
+            "isolated inspection finds the nested selected entry without enabling ordinary execution");
+        const auto expansion = fixture / L"expansion";
+        MakePackage(expansion, "1.2.0", id, permissions.empty() ? "\"network.http\"" :
+            permissions + ",\"network.http\"", "\"example.com\"");
+        const auto beforeExpansion = Read(paths.registry);
+        Expect(!manager.InstallDirectory(expansion, source, false, installed, report, error) &&
+                Read(paths.registry) == beforeExpansion && manager.ResolveSelected(id) &&
+                manager.ResolveSelected(id)->manifest.version == "1.1.0" && !manager.ResolveSelected(id)->enabled,
+            "a genuine permission expansion rejects a disabled update without changing selected old version");
+        Expect(manager.Rollback(id, "1.0.0", error) && manager.ResolveSelected(id) &&
+                manager.ResolveSelected(id)->manifest.version == "1.0.0" && !manager.ResolveSelected(id)->enabled,
+            "recovering the selected previous version preserves the user's disabled choice");
+        Expect(manager.SetEnabled(id, true, error), "a deliberate enable is persisted");
+        const auto enabledBytes = Read(paths.registry);
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, false, error) && Read(paths.registry) == enabledBytes &&
+                    manager.Resolve(id) && manager.ResolveSelected(id)->enabled,
+                "a real failed disable preserves disk, execution and in-memory selected state");
+        }
+        Expect(manager.UpdateSteamSubscriptionHistory("123", {"1"}, error), "an unrelated save after failed disable succeeds");
+        WidgetPackageManager enabledReload(paths);
+        Expect(enabledReload.Initialize(error) && enabledReload.Resolve(id) && enabledReload.ResolveSelected(id)->enabled,
+            "a later successful save cannot leak an earlier failed disable into persistence");
+        Expect(manager.SetEnabled(id, false, error), "a deliberate disable still works after the failed transaction");
+        const auto disabledBytes = Read(paths.registry);
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, true, error) && Read(paths.registry) == disabledBytes &&
+                    !manager.Resolve(id) && manager.ResolveSelected(id) && !manager.ResolveSelected(id)->enabled,
+                "a real failed enable also preserves the selected disabled state");
+        }
+        Expect(manager.UpdateSteamSubscriptionHistory("123", {"1", "2"}, error), "another unrelated save succeeds");
+        WidgetPackageManager disabledReload(paths);
+        Expect(disabledReload.Initialize(error) && !disabledReload.Resolve(id) && disabledReload.ResolveSelected(id) &&
+                !disabledReload.ResolveSelected(id)->enabled,
+            "disabled state is consistent after restart and subsequent persistence");
+        Expect(manager.SetEnabled(id, true, error), "retry fixture explicitly enables the selected package");
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, false, error), "retry fixture observes a real replacement failure");
+        }
+        Expect(manager.SetEnabled(id, false, error) && !manager.Resolve(id),
+            "the same failed toggle can be retried with its error object after the lock is released");
+    }
+
+    const auto source = root / L"publication-source";
+    const std::string id = "f415355d-6f9c-48c6-9b0b-7df2eebcd21e";
+    MakePackage(source, "1.0.0", id, "");
+    const auto paths = TestPaths(root / L"publication-manager");
+    WidgetPackageManager manager(paths);
+    ValidationReport report;
+    std::string error;
+    Expect(manager.Initialize(error), "publication fixture manager initializes");
+    PackageArtifact artifactA, artifactB;
+    Expect(manager.ExportDirectory(source, root / L"a.snowwidget", artifactA, report, error), "first same-version artifact exports");
+    Write(source / L"assets" / L"label.txt", "changed same-version bytes");
+    Expect(manager.ExportDirectory(source, root / L"b.snowwidget", artifactB, report, error) && artifactA.sha256 != artifactB.sha256,
+        "second same-version artifact has distinct valid content and digest");
+    const auto catalogDirectory = root / L"transaction-catalog";
+    const auto catalogPath = catalogDirectory / L"catalog.json";
+    LocalCatalogPublisher publisher(catalogDirectory, root / L"publication-validation");
+    PublishRequest request;
+    request.artifact = artifactA;
+    request.title = "Preserved package";
+    request.description = "Local transaction fixture";
+    const auto published = publisher.Publish(request);
+    if (!published.ok) std::cerr << "initial publication error: " << published.error << '\n';
+    Expect(published.ok, "initial local publication succeeds");
+    const auto oldCatalog = Read(catalogPath);
+    const auto oldDigest = WidgetPackageManager::Sha256File(catalogPath);
+    JsonValue catalogRoot;
+    Expect(ParseJson(oldCatalog, catalogRoot), "published index parses");
+    const auto* records = catalogRoot.Find("packages");
+    const auto* oldRelative = records && records->IsArray() && !records->array.empty() ? records->array.front().Find("artifact") : nullptr;
+    if (!oldRelative || !oldRelative->IsString()) { Expect(false, "published index names its artifact"); return; }
+    const auto oldArtifact = catalogDirectory / oldRelative->string;
+    request.artifact = artifactB;
+    {
+        ReplacementLock lock(catalogPath);
+        Expect(!publisher.Publish(request).ok && WidgetPackageManager::Sha256File(catalogPath) == oldDigest &&
+                WidgetPackageManager::Sha256File(oldArtifact) == artifactA.sha256,
+            "failed same-version index commit preserves the original index and original artifact digest");
+        StaticCatalogSource oldSource(catalogPath);
+        WidgetPackageManager consumer(TestPaths(root / L"preserved-consumer"));
+        InstalledPackage installed;
+        Expect(consumer.Initialize(error) && consumer.InstallFromSource(oldSource, published.externalItemId,
+                artifactA.version, false, installed, report, error) && Read(installed.root / L"assets" / L"label.txt") == "asset",
+            "the previously published version remains actually installable after a failed replacement publication");
+    }
+    for (const auto& damaged : {std::string("{"), std::string("{\"schemaVersion\":1,\"packages\":{}}"),
+            std::string("{\"schemaVersion\":1,\"packages\":[{\"broken\":true}]}"), std::string(8 * 1024 * 1024 + 1, ' ')})
+    {
+        Write(catalogPath, damaged);
+        Expect(!publisher.Publish(request).ok && Read(catalogPath) == damaged &&
+                WidgetPackageManager::Sha256File(oldArtifact) == artifactA.sha256,
+            "an existing unreadable, malformed or oversized index is preserved instead of replaced by an empty catalog");
+    }
+    Write(catalogPath, oldCatalog);
+    Expect(publisher.Publish(request).ok, "same-version publication succeeds once index replacement is available");
+    StaticCatalogSource newSource(catalogPath);
+    const auto materialized = newSource.Materialize(published.externalItemId, artifactB.version, root / L"new-copy.snowwidget", error);
+    Expect(materialized && WidgetPackageManager::Sha256File(materialized->localPath) == artifactB.sha256,
+        "successful index commit resolves the new immutable artifact digest");
+
+    const auto large = root / L"large-export";
+    MakePackage(large, "1.0.0", "4011809e-f9b9-430e-b2c5-acdf125c7ec2", "");
+    {
+        std::ofstream payload(large / L"payload.bin", std::ios::binary);
+        std::array<char, 64 * 1024> chunk{};
+        for (unsigned block = 0; block < 21 * 16; ++block) payload.write(chunk.data(), chunk.size());
+    }
+    const auto output = root / L"existing-output.snowwidget";
+    Write(output, "previous release artifact");
+    const auto unrelatedTemporary = std::filesystem::path(output.wstring() + L".tmp");
+    Write(unrelatedTemporary, "unrelated pre-existing user file");
+    PackageArtifact unchanged{output, "sentinel-package", "sentinel-version", "sentinel-hash"};
+    auto exported = unchanged;
+    Expect(manager.ValidateDirectory(large).Ok() && !manager.ExportDirectory(large, output, exported, report, error) &&
+            Read(output) == "previous release artifact" && exported.sha256 == unchanged.sha256 && exported.packageId == unchanged.packageId &&
+            Read(unrelatedTemporary) == "unrelated pre-existing user file",
+        "oversized directory export rejects before replacing a previous release or its result metadata");
+    InstalledPackage installedLarge;
+    Expect(manager.InstallDirectory(large, {"local", "large-export"}, false, installedLarge, report, error),
+        "a valid 21 MiB extracted package can be installed within the 64 MiB source limit");
+    exported = unchanged;
+    Expect(!manager.ExportArchive(installedLarge.manifest.id, output, exported, report, error) &&
+            Read(output) == "previous release artifact" && exported.sha256 == unchanged.sha256,
+        "oversized installed-package export also preserves the previous release bytes");
+}
+
 int RunDataCleanupTests();
 int main()
 {
+    TestJsonNestingBoundary();
     failures += RunDataCleanupTests();
     // PIDs are reused across runs, and a previous interrupted cleanup can
     // leave an installed version behind. Never reuse or delete that tree.
@@ -762,10 +1316,14 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestPersistenceTransactions(root);
+    TestPackageMutationTransactions(root / L"package-transactions");
+    TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);
     TestWidgetRemoval(root);
     TestDockLayoutBackup(root);
+    failures += RunDesktopMembershipRecoveryTests(root);
     TestLayoutReset(root);
     TestInitializationExperiment(root);
     Write(hashInput, "abc");
@@ -863,6 +1421,10 @@ int main()
             "fanTitleFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
+        { "scrollingIconSpacingY type", "{\"scrollingIconSpacingY\":\"1.5\"}",
+            "scrollingIconSpacingY" },
+        { "listRowSpacing type", "{\"listRowSpacing\":\"1.5\"}",
+            "listRowSpacing" },
         { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
             "iconSizeScale" },
         { "collection titleless mode type",
@@ -999,7 +1561,8 @@ int main()
         Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
             roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
             "large icon settings preserve desired span independently of adapted layout and without entitlement data");
-        for (const auto invalid : {R"({"version":3})", R"({"version":1,"columns":0})",
+        for (const auto invalid : {R"({"version":4})", R"({"version":3,"imageAssetId":"../outside.png"})",
+                 R"({"version":3,"foregroundImageAssetId":"bad-id"})", R"({"version":1,"columns":0})",
                  R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
                  R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
@@ -1109,6 +1672,23 @@ int main()
                 std::vector<std::string>({"programs", "others", "all", "folders"}),
         "restart preserves the position of All and program category tabs");
     Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    Expect(typedLayout.widgets[0].autoCollectCategoryIds.empty(),
+        "legacy layouts default to collecting all categories");
+    {
+        snowdesktop::layout_storage::Document scoped;
+        const std::string scopedText = R"({"widgets":[{"id":"images","page":"page-a","x":0,"y":0,"type":"fileCategories","autoCollect":true,"autoCollectCategoryIds":["images","custom-work"]},{"id":"docs","page":"page-a","x":2,"y":0,"type":"fileCategories","autoCollect":true,"autoCollectCategoryIds":["documents"]}]})";
+        const auto scopedPath = root / L"layout-storage" / L"auto-collect-categories.layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(scopedPath, scopedText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(scopedPath, scoped).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            scoped.widgets.size() == 2 && scoped.widgets[0].autoCollect && scoped.widgets[1].autoCollect &&
+            scoped.widgets[0].autoCollectCategoryIds == std::vector<std::string>({"images", "custom-work"}) &&
+            scoped.widgets[1].autoCollectCategoryIds == std::vector<std::string>{"documents"},
+            "independent collection scopes and custom category IDs survive a disk round trip");
+        Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"files","page":"page-a","x":0,"y":0,"type":"fileCategories","autoCollectCategoryIds":[123]}]})",
+            scoped, &layoutError), "malformed collection scope IDs are rejected without broadening collection");
+    }
     {
         snowdesktop::layout_storage::Document converted;
         const std::string convertedText = R"({"widgets":[{"id":"folder-map","page":"__snowdesktop_dock__","x":0,"y":0,"type":"folderMapping","sourceFolderPath":"D:\\Projects","sourceDesktopItemKey":"C:\\Desktop\\Projects.lnk","items":["D:\\Projects\\notes.txt"]}]})";
@@ -1179,6 +1759,17 @@ int main()
             spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f &&
             spacingLayout.collectionLargeFolderTitleless.value_or(false),
         "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
+    const std::string contentSpacingText =
+        R"({"iconSpacing":1.5,"scrollingIconSpacingX":"ignored legacy preference","scrollingIconSpacingY":5.0,"listRowSpacing":4.5})";
+    const auto contentSpacingPath = root / L"content-spacing-layout.json";
+    snowdesktop::layout_storage::Document contentSpacingLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(contentSpacingPath, contentSpacingText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(contentSpacingPath, contentSpacingLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            contentSpacingLayout.iconSpacing == 1.5f &&
+            contentSpacingLayout.scrollingIconSpacingY == 5.0f &&
+            contentSpacingLayout.listRowSpacing == 4.5f,
+        "layout storage retains vertical settings up to 500 percent and ignores obsolete horizontal preferences");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16,\"itemFontWeight\":600}",
@@ -1208,6 +1799,57 @@ int main()
             titleSettingsLayout.scrollingTitleLines.value_or(0) == 1 &&
             titleSettingsLayout.titleEllipsis.has_value() && !*titleSettingsLayout.titleEllipsis,
         "restart retains title limits and direct truncation alongside the original weight");
+    // Exercise the same writers used by SaveLayoutSlots, then the typed reader.
+    for (int columns = 1; columns <= 4; ++columns)
+    {
+        DesktopWidget view;
+        view.id = L"columns-widget";
+        view.gridCell.pageId = L"page-a";
+        view.listMode = true;
+        snowdesktop::list_detail_rules::SetListColumns(view, columns);
+        DockEntry dock;
+        dock.reference = L"folder-a";
+        dock.listMode = true;
+        snowdesktop::list_detail_rules::SetListColumns(dock, columns);
+        const auto encode = [](const std::wstring& value) {
+            const int characters = static_cast<int>(value.size());
+            const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                value.data(), characters, nullptr, 0, nullptr, nullptr);
+            std::string utf8(static_cast<size_t>(bytes), '\0');
+            if (bytes > 0) WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                value.data(), characters, utf8.data(), bytes, nullptr, nullptr);
+            return utf8;
+        };
+        std::ostringstream document;
+        document << "{\"widgets\":[";
+        snowdesktop::widget_layout_codec::Write(document, view, encode, encode);
+        document << "],\"dockEntries\":[";
+        snowdesktop::dock_layout_codec::Write(document, dock, encode);
+        document << "]}";
+        snowdesktop::layout_storage::Document parsed;
+        Expect(snowdesktop::layout_storage::ParseDocument(document.str(), parsed, &layoutError) &&
+                parsed.widgets.size() == 1 && parsed.dockEntries.size() == 1 &&
+                parsed.widgets.front().listColumns == columns &&
+                parsed.dockEntries.front().listColumns == columns,
+            "production widget and Dock codecs round-trip all four list column choices");
+        if (!parsed.dockEntries.empty())
+        {
+            const auto restored = snowdesktop::dock_layout_codec::Restore(parsed.dockEntries.front(),
+                std::vector<DesktopWidget>{}, [](const std::string& value) {
+                    return std::wstring(value.begin(), value.end());
+                }, [](const std::wstring& value) { return value; });
+            Expect(restored.listColumns == columns, "Dock popup restoration retains list column count");
+        }
+    }
+    snowdesktop::layout_storage::Document legacyColumns;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"legacy\",\"page\":\"page-a\",\"x\":0,\"y\":0}],"
+            "\"dockEntries\":[{\"type\":\"folderMapping\",\"ref\":\"folder\"}]}", legacyColumns, &layoutError) &&
+            legacyColumns.widgets.front().listColumns == 1 && legacyColumns.dockEntries.front().listColumns == 1,
+        "older layouts without a list column field remain single-column");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"bad\",\"page\":\"page-a\",\"x\":0,\"y\":0,\"listColumns\":\"three\"}]}",
+            legacyColumns, &layoutError), "list column field rejects non-integer values");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
@@ -1329,6 +1971,7 @@ int main()
             "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",
             legacyBeautifyLayout, &layoutError) &&
             legacyBeautifyLayout.iconBeautifyEnabled.value_or(false) &&
+            !legacyBeautifyLayout.beautifyFileThumbnails.value_or(false) &&
             !legacyBeautifyLayout.iconBeautifyPreset.has_value() &&
             !legacyBeautifyLayout.iconBeautifyShape.has_value() &&
             !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
@@ -1337,6 +1980,17 @@ int main()
             !legacyBeautifyLayout.iconBeautifyFilterStrength.has_value() &&
             !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
         "legacy icon beautify layouts keep new fields optional");
+    for (const bool enabled : {true, false})
+    {
+        snowdesktop::layout_storage::Document thumbnails;
+        const auto json = std::string("{\"beautifyFileThumbnails\":") + (enabled ? "true}" : "false}");
+        Expect(snowdesktop::layout_storage::ParseDocument(json, thumbnails, &layoutError) &&
+                thumbnails.beautifyFileThumbnails.has_value() && *thumbnails.beautifyFileThumbnails == enabled,
+            "layout loading retains both enabled and explicitly disabled file thumbnail beautification");
+    }
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            "{\"beautifyFileThumbnails\":1}", legacyBeautifyLayout, &layoutError),
+        "file thumbnail beautification rejects a non-boolean setting");
     snowdesktop::layout_storage::Document iconBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"iconBeautifyPreset\":5,"
@@ -2467,6 +3121,18 @@ int main()
             INVALID_FILE_ATTRIBUTES,
         "portable migration creates the long destination file");
 
+    const auto iconMigrationSource = root / L"icon-library-portable-source";
+    Write(iconMigrationSource / L"SnowDesktop.layout.json", "{\"widgets\":[]}");
+    Write(iconMigrationSource / L"icon-library" / L"library.json", LibraryFixtureIndex());
+    Write(iconMigrationSource / L"icon-library" / L"originals" / kLibraryFixtureName, LibraryFixturePng());
+    Write(iconMigrationSource / L"icon-library" / L"packs" / L"fixture.zip", "retained package source");
+    const auto iconMigrationDestination = root / L"icon-library-portable-destination";
+    const auto iconMigration = snowdesktop::migration::CopyDataTree(iconMigrationSource, iconMigrationDestination);
+    Expect(iconMigration.ok && DecodesLibraryFixture(iconMigrationDestination / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(iconMigrationDestination / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        Read(iconMigrationDestination / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source",
+        "portable data migration retains group metadata, decodable alpha icon originals and original packages together");
+
     std::stop_source cancelledCopySource;
     cancelledCopySource.request_stop();
     const auto cancelledCopyDestination =
@@ -2585,6 +3251,8 @@ int main()
         L"uploads" / L"package.snowwidget", "excluded upload staging\n");
     Write(fullBackupData / L"SteamWorkshopManager" / L"staging" /
         L"packages" / L"package.snowwidget", "excluded manager staging\n");
+    Write(fullBackupData/L"IconPackWorkshop"/L"publications"/L"group.json","retained publication binding");
+    Write(fullBackupData/L"IconPackWorkshop"/L"prepared"/L"cover.png","rebuildable icon cover");
     std::filesystem::path longBackupRelative;
     for (int index = 0; index < 4; ++index)
     {
@@ -2596,6 +3264,10 @@ int main()
         "{ \"longPath\": true }\n");
 
     Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
+    Write(fullBackupData / L"icon-library" / L"library.json", LibraryFixtureIndex());
+    Write(fullBackupData / L"icon-library" / L"originals" / kLibraryFixtureName, LibraryFixturePng());
+    Write(fullBackupData / L"icon-library" / L"packs" / L"fixture.zip", "retained package source");
+    Write(fullBackupData / L"icon-library" / L"previews" / L"rebuildable.png", LibraryFixturePng());
     Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
     const auto upgradeState = root / L"large-icon-upgrade-state";
     const auto upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
@@ -2660,9 +3332,38 @@ int main()
         "a rejected backup commit gate removes its staging directory");
 
     const auto createdFullBackup = fullBackupManager.Create();
+    if (createdFullBackup.ok)
+    {
+        const auto manifestPath = createdFullBackup.backup.root / L"backup.json";
+        const std::string originalManifest = Read(manifestPath);
+        const auto opening = originalManifest.find('{');
+        Expect(opening != std::string::npos, "the production backup has an object manifest");
+        if (opening != std::string::npos)
+        {
+            const std::string nested = std::string(129, '[') + "0" + std::string(129, ']');
+            std::string extended = originalManifest;
+            extended.insert(opening + 1, "\"extension\":" + nested + ",");
+            Write(manifestPath, extended);
+            int commitCalls = 0;
+            const auto rejected = fullBackupManager.QueueRestore(createdFullBackup.backup,
+                {{}, [&] { ++commitCalls; return false; }});
+            Expect(!rejected.ok && !rejected.cancelled && commitCalls == 0 &&
+                rejected.error.find("invalid JSON") != std::string::npos,
+                "the real backup restore rejects an otherwise valid deep manifest before migration commit");
+            Write(manifestPath, originalManifest);
+        }
+    }
     Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
         Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
         "complete backups retain user image sources and the currently needed offline covers");
+    Expect(Read(createdFullBackup.backup.data / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        DecodesLibraryFixture(createdFullBackup.backup.data / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(createdFullBackup.backup.data / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source" &&
+        !std::filesystem::exists(createdFullBackup.backup.data / L"icon-library" / L"previews"),
+        "complete backups retain groups, decodable alpha icons and package sources while omitting rebuildable previews");
+    Expect(Read(createdFullBackup.backup.data/L"IconPackWorkshop"/L"publications"/L"group.json")=="retained publication binding"&&
+        !std::filesystem::exists(createdFullBackup.backup.data/L"IconPackWorkshop"/L"prepared"),
+        "complete backups retain icon publication bindings while omitting frozen temporary artifacts");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),
@@ -2820,6 +3521,10 @@ int main()
     Expect(Read(appliedRestore.backup /
             L"SnowDesktop.layout.json") == modifiedLayout,
         "pre-restore active data is retained as a rollback backup");
+    Expect(Read(fullBackupData / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        DecodesLibraryFixture(fullBackupData / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(fullBackupData / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source",
+        "actual full restore preserves icon groups and original alpha pixels without needing thumbnail caches");
 
     const auto backupsAfterRestore = fullBackupManager.List();
     const auto rollbackBackup = std::find_if(
@@ -2946,7 +3651,13 @@ int main()
         !std::filesystem::exists(createdFullBackup.backup.root),
         "complete backup can be deleted from managed storage");
 
-    std::filesystem::remove_all(root, ec);
+    const auto cleanupTarget = std::filesystem::absolute(root).lexically_normal();
+    const bool safeCleanup = std::filesystem::equivalent(cleanupTarget.parent_path(),
+            std::filesystem::weakly_canonical(std::filesystem::temp_directory_path())) &&
+        cleanupTarget.filename() == L"SDDataTest-" + std::wstring(runIdText + 1, 36) &&
+        (GetFileAttributesW(cleanupTarget.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+    Expect(safeCleanup, "recursive lifecycle cleanup stays in the exact owned temporary run root");
+    if (safeCleanup) std::filesystem::remove_all(cleanupTarget, ec);
     if (failures)
         std::cerr << failures
             << " application data lifecycle test(s) failed\n";

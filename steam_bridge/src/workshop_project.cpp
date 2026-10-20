@@ -10,8 +10,10 @@
 
 #include "workshop_project.h"
 #include "bridge_json.h"
+#include "workshop_staging.h"
 
 #include <algorithm>
+#include <charconv>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -90,6 +92,50 @@ bool IsReparsePoint(const std::filesystem::path& path)
     const DWORD attributes = GetFileAttributesW(path.c_str());
     return attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool ReadStoreFile(const std::filesystem::path& path, std::optional<std::string>& text, std::string& error)
+{
+    text.reset();
+    const auto attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+    {
+        const auto status = GetLastError();
+        if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND) return true;
+        error = "cannot inspect projects.json"; return false;
+    }
+    if (attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))
+    { error = "projects.json cannot be a directory or reparse point"; return false; }
+    std::error_code ec;
+    if (std::filesystem::file_size(path, ec) > 4u * 1024u * 1024u || ec)
+    { error = "projects.json exceeds the safety limit or cannot be read"; return false; }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) { error = "cannot open projects.json"; return false; }
+    text.emplace(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    if (input.bad()) { error = "cannot read projects.json"; return false; }
+    return true;
+}
+
+bool WriteDurableFile(const std::filesystem::path& path, std::string_view bytes, DWORD disposition)
+{
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, disposition,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION info{};
+    DWORD written = 0;
+    const bool safe = GetFileInformationByHandle(file, &info) &&
+        !(info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY));
+    const bool result = safe && bytes.size() <= MAXDWORD && WriteFile(file, bytes.data(),
+        static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size() && FlushFileBuffers(file);
+    CloseHandle(file);
+    return result;
+}
+
+std::filesystem::path CreationJournal(const std::filesystem::path& root, std::string_view id)
+{
+    if (id.size() != 36 || !std::all_of(id.begin(), id.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '-'; })) return {};
+    return root / (L"creation-" + Utf8ToWide(id) + L".pending");
 }
 
 bool ContainsReparsePoint(const std::filesystem::path& absolutePath)
@@ -552,27 +598,22 @@ std::filesystem::path ProjectStore::StorePath() const
 
 bool ProjectStore::Load(std::string& error)
 {
+    error.clear();
     projects_.clear();
-    std::error_code ec;
-    if (!std::filesystem::exists(StorePath(), ec)) return !ec;
-    if (IsReparsePoint(StorePath()))
+    loaded_ = false;
+    loadFailed_ = true;
+    if (root_.empty() || IsReparsePoint(root_))
     {
-        error = "projects.json cannot be a symbolic link or reparse point";
+        error = "project store directory is unavailable or unsafe";
         return false;
     }
-    std::ifstream input(StorePath(), std::ios::binary);
-    if (!input)
     {
-        error = "cannot open projects.json";
-        return false;
+        WorkshopFileLock lock(root_);
+        if (!lock || !ReadStoreFile(StorePath(), baseline_, error))
+        { if (error.empty()) error = "project store is busy"; return false; }
     }
-    const std::string text((std::istreambuf_iterator<char>(input)), {});
-    input.close();
-    if (text.size() > 4u * 1024u * 1024u)
-    {
-        error = "projects.json exceeds the 4 MiB safety limit";
-        return false;
-    }
+    if (!baseline_) { loaded_ = true; loadFailed_ = false; return true; }
+    const std::string& text = *baseline_;
     JsonValue root;
     if (!ParseJson(text, root, error) || !root.IsObject())
     {
@@ -608,16 +649,37 @@ bool ProjectStore::Load(std::string& error)
         }
         projects_.push_back(std::move(project));
     }
-    if (*schema == 1 && !Save(error))
+    loaded_ = true; loadFailed_ = false;
+    bool recovered = false;
+    std::vector<std::filesystem::path> recoveredJournals;
+    for (auto& project : projects_)
+    {
+        const auto path = CreationJournal(root_, project.localId);
+        if (path.empty()) continue;
+        std::optional<std::string> journal;
+        if (!ReadStoreFile(path, journal, error)) { loadFailed_ = true; return false; }
+        if (!journal || *journal == "pending") continue;
+        std::uint64_t id = 0;
+        const auto parsed = std::from_chars(journal->data(), journal->data() + journal->size(), id);
+        if (parsed.ec != std::errc{} || parsed.ptr != journal->data() + journal->size() || !id ||
+            (project.publishedFileId && *project.publishedFileId != id))
+        { error = "Workshop creation journal needs manual reconciliation"; loadFailed_ = true; return false; }
+        project.publishedFileId = id; recovered = true; recoveredJournals.push_back(path);
+    }
+    if ((*schema == 1 || recovered) && !Save(error))
     {
         projects_.clear();
+        loadFailed_ = true;
         return false;
     }
+    for (const auto& path : recoveredJournals) DeleteFileW(path.c_str());
     return true;
 }
 
 bool ProjectStore::Save(std::string& error) const
 {
+    error.clear();
+    if (loadFailed_) { error = "project store load failed; reload successfully before modifying it"; return false; }
     if (root_.empty())
     {
         error = "SnowDesktop data directory is unavailable";
@@ -630,6 +692,12 @@ bool ProjectStore::Save(std::string& error) const
         error = "project store directory is unavailable or is a reparse point";
         return false;
     }
+    WorkshopFileLock lock(root_);
+    if (!lock) { error = "project store is busy"; return false; }
+    std::optional<std::string> current;
+    if (!ReadStoreFile(StorePath(), current, error)) return false;
+    if ((!loaded_ && current) || current != baseline_)
+    { error = "project store changed in another process; reload before saving"; return false; }
     JsonValue root = JsonValue::Object();
     root.object["schemaVersion"] =
         JsonValue::Number(kProjectStoreSchemaVersion);
@@ -647,16 +715,8 @@ bool ProjectStore::Save(std::string& error) const
         error = "project store files cannot be symbolic links or reparse points";
         return false;
     }
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output || !output.write(serialized.data(),
-                static_cast<std::streamsize>(serialized.size())) ||
-            !output.flush())
-        {
-            error = "cannot write projects.json.tmp";
-            return false;
-        }
-    }
+    if (!WriteDurableFile(temporary, serialized, CREATE_ALWAYS))
+    { error = "cannot durably write projects.json.tmp"; return false; }
     if (std::filesystem::exists(target, ec) &&
         !CopyFileW(target.c_str(), backup.c_str(), FALSE))
     {
@@ -671,13 +731,22 @@ bool ProjectStore::Save(std::string& error) const
         error = "cannot atomically replace projects.json";
         return false;
     }
+    baseline_ = serialized; loaded_ = true;
     return true;
+}
+
+bool ProjectStore::Writable(std::string& error)
+{
+    if (loadFailed_) { error = "project store load failed; reload successfully before modifying it"; return false; }
+    return loaded_ || Load(error);
 }
 
 bool ProjectStore::AddDirectory(const std::filesystem::path& source,
     WorkshopProject*& project, std::string& error)
 {
+    error.clear();
     project = nullptr;
+    if (!Writable(error)) return false;
     const auto safe = SafeDirectory(source, error);
     if (!safe) return false;
     const auto found = std::find_if(projects_.begin(), projects_.end(),
@@ -704,7 +773,9 @@ bool ProjectStore::AddDirectory(const std::filesystem::path& source,
 bool ProjectStore::Discover(const std::filesystem::path& developmentRoot,
     std::size_t& added, std::string& error)
 {
+    error.clear();
     added = 0;
+    if (!Writable(error)) return false;
     std::error_code ec;
     if (!std::filesystem::is_directory(developmentRoot, ec) || ec)
         return true;
@@ -744,6 +815,8 @@ bool ProjectStore::Discover(const std::filesystem::path& developmentRoot,
 
 bool ProjectStore::Remove(std::string_view localId, std::string& error)
 {
+    error.clear();
+    if (!Writable(error)) return false;
     const auto found = std::find_if(projects_.begin(), projects_.end(),
         [&](const WorkshopProject& project)
         { return project.localId == localId; });
@@ -753,6 +826,42 @@ bool ProjectStore::Remove(std::string_view localId, std::string& error)
         return false;
     }
     projects_.erase(found);
+    return true;
+}
+
+bool ProjectStore::BeginCreation(std::string_view localId, std::string& error)
+{
+    error.clear();
+    if (!Writable(error)) return false;
+    WorkshopFileLock lock(root_);
+    if (!lock) { error = "project store is busy"; return false; }
+    std::optional<std::string> current;
+    if (!ReadStoreFile(StorePath(), current, error)) return false;
+    if (current != baseline_)
+    { error = "project store changed before creation; reload before publishing"; return false; }
+    const auto found = std::find_if(projects_.begin(), projects_.end(), [&](const auto& project) { return project.localId == localId; });
+    const auto path = CreationJournal(root_, localId);
+    if (found == projects_.end() || found->publishedFileId || path.empty())
+    { error = "cannot create a Workshop item for this project"; return false; }
+    if (!WriteDurableFile(path, "pending", CREATE_NEW))
+    { error = "Workshop creation is pending or its journal cannot be saved; reconcile it before creating another item"; return false; }
+    return true;
+}
+
+bool ProjectStore::PersistCreatedItem(std::string_view localId, std::uint64_t id, std::string& error)
+{
+    error.clear();
+    const auto found = std::find_if(projects_.begin(), projects_.end(), [&](const auto& project) { return project.localId == localId; });
+    const auto path = CreationJournal(root_, localId);
+    if (found == projects_.end() || !id || path.empty() || IsReparsePoint(path))
+    { error = "cannot record the newly created Workshop item"; return false; }
+    found->publishedFileId = id;
+    auto temporary = path; temporary += L".tmp";
+    if (!WriteDurableFile(temporary, std::to_string(id), CREATE_ALWAYS) ||
+        !MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    { error = "cannot persist created Workshop ID " + std::to_string(id) + "; upload was stopped"; return false; }
+    if (!Save(error)) { error += " (created Workshop ID " + std::to_string(id) + ")"; return false; }
+    DeleteFileW(path.c_str());
     return true;
 }
 

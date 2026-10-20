@@ -4,6 +4,7 @@
 #include "common/json_value.h"
 #include "dock_platform_helpers.h"
 #include "dock/dock_pin_cleanup.h"
+#include "dock/dock_drop_model.h"
 
 // Dock entry identity, grouping, usage history and drag-out mutation.
 
@@ -280,7 +281,7 @@ bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 
 void DesktopApp::NormalizeDockRecycleBinPosition()
 {
-    snowdesktop::dock_folder_rules::StableNormalize(
+    snowdesktop::dock_folder_rules::NormalizeKeepingUserOrder(
         dockEntries_,
         [this](const DockEntry& entry) {
             if (IsRecycleBinDockEntry(entry))
@@ -396,20 +397,14 @@ bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceItems)
         }
     }
 
-    std::sort(mappedEntryIndices.begin(), mappedEntryIndices.end());
-    mappedEntryIndices.erase(
-        std::unique(mappedEntryIndices.begin(), mappedEntryIndices.end()),
-        mappedEntryIndices.end());
-    for (auto it = mappedEntryIndices.rbegin(); it != mappedEntryIndices.rend(); ++it)
-        dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(*it));
-
+    const bool mappingsChanged = snowdesktop::dock_drop_model::RemoveMappings(
+        dockEntries_, std::move(mappedEntryIndices), DockDropServices());
     if (usageChanged) SaveDockUsageStats();
-    if (!mappedEntryIndices.empty())
-    {
-        NormalizeDockRecycleBinPosition();
-        RefreshCollectedKeysCache();
-    }
-    if (!usageChanged && mappedEntryIndices.empty()) return false;
+    if (mappingsChanged) RefreshCollectedKeysCache();
+    if (!usageChanged && !mappingsChanged) return false;
+    // The drag still owns Dock item wrappers here. Let its release/unwind
+    // refresh running membership after those references have been released.
+    dockRunningWindowsRefreshTick_ = 0;
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     return true;
@@ -432,6 +427,10 @@ bool DesktopApp::RemoveDockMappingAt(
     SaveLayoutSlots();
     RebuildContainersAndItems();
     LayoutItems();
+    // Removing a pin changes running-area membership without a window event.
+    // Do not leave the app missing until the periodic discovery fallback.
+    dockRunningWindowsRefreshTick_ = 0;
+    RefreshDockRunningWindows(false);
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -518,7 +517,7 @@ std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
                         identity.steamInstallDirectory,
                         running.executablePath,
                         running.appUserModelId,
-                        running.ancestorExecutablePaths);
+                        running.ancestorExecutablePaths, identity.validatedPayloadPaths);
             });
         if (isShownAsRunning) continue;
         result.push_back(candidate.itemIndex);
@@ -545,7 +544,7 @@ DesktopApp::FindDesktopItemForDockRunningApp(
                     identity.steamInstallDirectory,
                     running.executablePath,
                     running.appUserModelId,
-                    running.ancestorExecutablePaths))
+                    running.ancestorExecutablePaths, identity.validatedPayloadPaths))
             continue;
         if (match)
             return std::nullopt;

@@ -24,6 +24,7 @@
 #include "container.h"
 #include "slot.h"
 #include "layout/item_visual_metrics.h"
+#include "layout/layout_spacing_rules.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -77,6 +78,7 @@ enum class WidgetHit {
     DetailsModifiedDivider, ///< 详细信息：修改日期列宽分隔线
     DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
     DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
+    IconTitle,          ///< 单格图标入口的标题及选择区域，不打开弹窗
 };
 
 /**
@@ -116,8 +118,10 @@ public:
 
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
-    float GetCellScale() const;
+    virtual float GetCellScale() const;
     float GetLayoutSpacingScale() const;
+    snowdesktop::layout_spacing_rules::ContentSpacing GetScrollingIconSpacing() const;
+    snowdesktop::layout_spacing_rules::ContentSpacing GetListSpacing() const;
     bool UsesLightContentTheme() const;
     virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
@@ -173,6 +177,7 @@ protected:
  */
 class WidgetContainer : public Widget, public ListContainer
 {
+    friend struct NativeDragIntegrationAccess;
 public:
     using Widget::Widget;
 
@@ -185,9 +190,15 @@ public:
     RECT GetFrameRect() const;
     RECT GetLayoutFrameRect() const;
     bool IsCollapsed() const;
+    bool IsSingleCellPresentation() const;
+    bool IsSingleCellDesktopPoint(POINT point) const;
+    bool IsSingleCellIconMode() const;
+    RECT GetSingleCellIconRect() const;
+    void DrawSingleCellContents(ID2D1DeviceContext* context, RECT body);
     RECT GetCollapseButtonRect() const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;
+    virtual int GetMemberColumnCount() const;
     virtual RECT GetMemberLayoutRect(size_t index) const
     {
         (void)index;
@@ -253,6 +264,7 @@ public:
     virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
     void SetHostedFrame(const RECT* frame);
     void SetPopupFrame(const RECT* frame);
+    float GetCellScale() const override;
     bool IsHosted() const { return hostedFrameActive_; }
     bool IsPopupHosted() const { return popupFrameActive_; }
 
@@ -261,15 +273,16 @@ protected:
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 
     // ── Cached D2D resources (recreated only when frame/radius changes) ──
-    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> cachedClipGeometry_;
     RECT cachedClipFrame_{ -1, -1, -1, -1 };
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
     bool popupFrameActive_ = false;
+    float popupFrameScale_ = 1.0f;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
-    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+    ID2D1Geometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);
 };
 
@@ -312,7 +325,8 @@ public:
         const DesktopWidget* demoCollection = nullptr,
         const ListItemDetails& details = {},
         std::optional<bool> lightTheme = std::nullopt,
-        bool drawTitle = true) const;
+        bool drawTitle = true, std::wstring_view iconIdentity = {},
+        std::optional<RECT> hoverViewport = std::nullopt) const;
 
     int GetListRowHeight() const;
     RECT GetListItemTextRect(RECT cell) const;
@@ -473,7 +487,7 @@ private:
         size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
         RECT iconRect, const std::wstring& title,
-        bool lightTheme) const;
+        bool lightTheme, RECT hoverRect, std::wstring_view identity) const;
     snowdesktop::list_detail_rules::Columns GetDetailsColumns(
         int availableWidth) const;
     int categorizedTabRowOffset_ = 0;
@@ -536,6 +550,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth()  const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
 
     int  GetMaxScrollOffset() const override;
@@ -623,6 +638,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
 
     int GetMaxScrollOffset() const override;
@@ -657,6 +673,7 @@ private:
     mutable std::wstring layoutCacheCategory_;
     mutable bool layoutCacheListMode_ = false;
     mutable int layoutCacheItemHeight_ = 0;
+    mutable int layoutCacheColumns_ = 0;
     mutable std::vector<std::wstring> searchResultCache_;
 };
 
@@ -701,6 +718,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth()  const override;
+    int GetMemberColumnCount() const override;
     bool IncludeTrailingEmptySlot() const override { return true; }
     Item* GetSlotItem(size_t idx) const override;
 
@@ -752,6 +770,7 @@ private:
     mutable std::vector<size_t> dateLayoutSource_;
     mutable bool dateLayoutListMode_ = false;
     mutable int dateLayoutItemHeight_ = 0;
+    mutable int dateLayoutColumns_ = 0;
 };
 
 /**
@@ -819,6 +838,7 @@ public:
     size_t GetSlotCount() const override;
     int GetItemHeight() const override;
     int GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
     bool SingleColumn() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -918,6 +938,7 @@ public:
     size_t GetSlotCount() const override;
     int GetItemHeight() const override;
     int GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
     bool SingleColumn() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -1067,11 +1088,11 @@ private:
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
         WidgetEngine* engine, bool preview, bool registerBackdrop);
 
-    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+    ID2D1Geometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);
 
     // Cached clip geometry (recreated only when frame/radius changes)
-    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> cachedClipGeometry_;
     RECT cachedClipFrame_{ -1, -1, -1, -1 };
     float cachedClipRadius_ = 0.0f;
 };

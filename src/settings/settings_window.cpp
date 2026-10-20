@@ -1,3 +1,4 @@
+#include "platform/force_restart_hotkey.h"
 #include "settings_window.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
@@ -39,6 +40,18 @@ struct SettingsWindow::Impl
     {
         try
         {
+            if (options.iconAppearance)
+            { snowdesktop::IconAppearanceRequest request; request.action = "close"; options.iconAppearance(std::move(request)); }
+        }
+        catch (...) {}
+        try
+        {
+            if(options.iconLibrary)
+            {snowdesktop::IconLibraryRequest request;request.action="cancelWorkshop";options.iconLibrary(std::move(request));}
+        }
+        catch (...) {}
+        try
+        {
             if (options.largeIconSettings)
             {
                 snowdesktop::LargeIconSettingsRequest request;
@@ -47,6 +60,7 @@ struct SettingsWindow::Impl
             }
         }
         catch (...) {}
+        snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr);
         window = nullptr;
         closing = false;
         if (channel) channel->Close();
@@ -98,7 +112,7 @@ struct SettingsWindow::Impl
         {
             channel = std::make_unique<ipc::Channel>();
             backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
-            channel->Bind<void>("ui.closed", [this] { closing = true; window = nullptr; });
+            channel->Bind<void>("ui.closed", [this] { closing = true; snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr); window = nullptr; });
             channel->SetDisconnected([this] { EndSession(); });
         }
         // A normal close has acknowledged durable commits. An immediate
@@ -126,6 +140,7 @@ struct SettingsWindow::Impl
                         return;
                     }
                     window = candidate;
+                    snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(window);
                     closing = false;
                     StartOpen();
                 }
@@ -163,6 +178,7 @@ void SettingsWindow::Shutdown() noexcept
     impl_->opening = false;
     impl_->openCompleted = {};
     if (impl_->channel) impl_->channel->SetDisconnected({});
+    snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr);
     impl_->window = nullptr;
     if (impl_->backends) impl_->backends->ClosePages();
     if (impl_->controller)

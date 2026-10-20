@@ -188,24 +188,53 @@ bool Clear(const Paths& paths, std::string& error)
     // set before deleting anything; recursive iterators never follow symlinks.
     const std::vector<std::filesystem::path> targets = {
         paths.data, paths.root / L"FullBackups", paths.root / L"TempState", paths.root / L"PrivateState"};
+    std::vector<std::filesystem::path> removals;
+    const auto fail = [&](const std::filesystem::path& path, const std::error_code& ec) {
+        const auto utf8 = path.u8string();
+        error = ec.message() + " [" + std::string(utf8.begin(), utf8.end()) + "]";
+        return false;
+    };
     for (const auto& target : targets)
     {
         if (!SafeAncestors(target, error)) return false;
         std::error_code ec;
         if (!std::filesystem::exists(target, ec))
-        { if (ec) { error = ec.message(); return false; } continue; }
+        { if (ec) return fail(target, ec); continue; }
         for (std::filesystem::recursive_directory_iterator it(target, ec), end;
             !ec && it != end; it.increment(ec))
         {
             if (!SafeAncestors(it->path(), error)) return false;
         }
-        if (ec) { error = ec.message(); return false; }
+        if (ec) return fail(target, ec);
+        if (target == paths.data)
+        {
+            // Explorer and other processes can retain these DLLs after the
+            // debug host exits. Their cache/leases outlive a profile reset;
+            // neither deleting nor renaming a mapped runtime is safe.
+            bool retainRuntime = false;
+            std::vector<std::filesystem::path> children;
+            for (std::filesystem::directory_iterator it(target, ec), end;
+                !ec && it != end; it.increment(ec))
+            {
+                if (_wcsicmp(it->path().filename().c_str(), L"ShellHook") == 0 && it->is_directory(ec))
+                    retainRuntime = true;
+                else
+                    children.push_back(it->path());
+            }
+            if (ec) return fail(target, ec);
+            if (retainRuntime)
+            {
+                removals.insert(removals.end(), children.begin(), children.end());
+                continue;
+            }
+        }
+        removals.push_back(target);
     }
-    for (const auto& target : targets)
+    for (const auto& target : removals)
     {
         std::error_code ec;
         std::filesystem::remove_all(target, ec);
-        if (ec) { error = ec.message(); return false; }
+        if (ec) return fail(target, ec);
     }
     return true;
 }

@@ -20,8 +20,10 @@
 #include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/category_collection_rules.h"
+#include "layout/file_date_category.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
+#include "file_category_auto_collect_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -107,22 +109,6 @@ static std::wstring FileCategoryLabelByDate(const std::wstring& id)
 }
 
 /**
- * @brief 计算两个 SYSTEMTIME 之间的天数差（date1 - date2 的差）。
- */
-static int DayDiff(const SYSTEMTIME& st1, const SYSTEMTIME& st2)
-{
-    FILETIME ft1{}, ft2{};
-    SystemTimeToFileTime(&st1, &ft1);
-    SystemTimeToFileTime(&st2, &ft2);
-    ULARGE_INTEGER u1{}, u2{};
-    u1.LowPart = ft1.dwLowDateTime;
-    u1.HighPart = ft1.dwHighDateTime;
-    u2.LowPart = ft2.dwLowDateTime;
-    u2.HighPart = ft2.dwHighDateTime;
-    return static_cast<int>((u1.QuadPart - u2.QuadPart) / 864000000000ULL);
-}
-
-/**
  * @brief 根据文件修改日期确定所属的日期分类 ID。
  *        类似 Windows 资源管理器的"按修改日期分组"。
  * @param item 桌面项目。
@@ -141,40 +127,7 @@ static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 
     GetLocalTime(&nowTime);
 
-    SYSTEMTIME todayStart = nowTime;
-    todayStart.wHour = 0; todayStart.wMinute = 0;
-    todayStart.wSecond = 0; todayStart.wMilliseconds = 0;
-
-    SYSTEMTIME fileDayStart = fileTime;
-    fileDayStart.wHour = 0; fileDayStart.wMinute = 0;
-    fileDayStart.wSecond = 0; fileDayStart.wMilliseconds = 0;
-
-    int daysFromToday = DayDiff(todayStart, fileDayStart);
-
-    if (daysFromToday == 0)
-        return L"today";
-    if (daysFromToday == 1)
-        return L"yesterday";
-
-    int todayDOW = (nowTime.wDayOfWeek == 0) ? 7 : nowTime.wDayOfWeek;
-    if (daysFromToday >= 1 && daysFromToday < todayDOW)
-        return L"this_week";
-
-    if (daysFromToday >= todayDOW && daysFromToday < todayDOW + 7)
-        return L"last_week";
-
-    if (daysFromToday >= 0 && fileTime.wMonth == nowTime.wMonth && fileTime.wYear == nowTime.wYear)
-        return L"this_month";
-
-    if (fileTime.wYear == nowTime.wYear &&
-        (fileTime.wMonth == nowTime.wMonth - 1 ||
-         (nowTime.wMonth == 1 && fileTime.wMonth == 12 && fileTime.wYear == nowTime.wYear - 1)))
-        return L"last_month";
-
-    if (fileTime.wYear == nowTime.wYear)
-        return L"this_year";
-
-    return L"older";
+    return snowdesktop::file_date_category::ForLocalDate(fileTime, nowTime, false);
 }
 
 /**
@@ -353,8 +306,8 @@ std::wstring FileCategories::CachedActiveCategoryId() const
 /**
  * @brief 构建当前激活分类的布局段表（LayoutSegment），缓存到 layoutCache_。
  *
- * 列表模式下：每组先插入一个 Header 段（高 28px），接着一个 Item 段包含该组全部条目。
- * 网格模式下：每组先插入一个 Header 段（高 24px，占满行宽），接着一个 Item 段，
+ * 列表模式下：每组先插入一个 Header 段（高 28Cu），接着一个 Item 段包含该组全部条目。
+ * 网格模式下：每组先插入一个 Header 段（高 36Cu，占满行宽），接着一个 Item 段，
  * 其内条目按 columns 列排布。
  */
 void FileCategories::EnsureLayout() const
@@ -368,6 +321,7 @@ void FileCategories::EnsureLayout() const
     if (activeId == layoutCacheCategory_ &&
         data_->listMode == layoutCacheListMode_ &&
         currentItemHeight == layoutCacheItemHeight_ &&
+        itemLayout.horizontal.count == layoutCacheColumns_ &&
         !layoutCache_.empty())
         return;
 
@@ -375,6 +329,7 @@ void FileCategories::EnsureLayout() const
     layoutCacheCategory_ = activeId;
     layoutCacheListMode_ = data_->listMode;
     layoutCacheItemHeight_ = currentItemHeight;
+    layoutCacheColumns_ = itemLayout.horizontal.count;
 
     const auto& keys = CachedCategoryKeys(activeId);
     if (keys.empty()) return;
@@ -492,10 +447,14 @@ bool FileCategories::CollectTopLevelDesktopItems()
         // Wait before admitting a new unknown link. Existing members remain in
         // place during a refresh until their target classification completes.
         const auto extension = DesktopItemExtensionUpper(item);
-        if (!app_->GetCategorySettings().collectProgramsEnabled &&
+        if ((!app_->GetCategorySettings().collectProgramsEnabled ||
+                !data_->autoCollectCategoryIds.empty()) &&
             (extension == L".LNK" || extension == L".URL") && !item.shortcutTarget.classified)
             continue;
         if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
+            continue;
+        if (!snowdesktop::file_category_auto_collect_rules::Matches(*data_,
+                FileCategoryIdForItem(item, app_->GetCategorySettings())))
             continue;
 
         std::wstring key = ToUpperInvariant(item.layoutKey);
@@ -526,8 +485,16 @@ bool FileCategories::PruneUncollectableItems()
         std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
             [&](const std::wstring& key) {
                 size_t itemIdx = app_->FindItemIndexByKey(key);
-                return itemIdx != static_cast<size_t>(-1) &&
-                    !IsCollectable(app_->GetCategorySettings(), app_->GetDesktopItems()[itemIdx]);
+                if (itemIdx == static_cast<size_t>(-1)) return false;
+                const auto& item = app_->GetDesktopItems()[itemIdx];
+                if (!IsCollectable(app_->GetCategorySettings(), item)) return true;
+                const auto extension = DesktopItemExtensionUpper(item);
+                if ((extension == L".LNK" || extension == L".URL") &&
+                    !item.shortcutTarget.classified)
+                    return false;
+                return data_->autoCollect &&
+                    !snowdesktop::file_category_auto_collect_rules::Matches(*data_,
+                        FileCategoryIdForItem(item, app_->GetCategorySettings()));
             }),
         data_->itemKeys.end());
     if (data_->itemKeys.size() == oldSize) return false;
@@ -733,16 +700,16 @@ static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = FileCategoryContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -894,6 +861,7 @@ static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIn
  */
 std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -1062,6 +1030,8 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
         snowdesktop::collection_group_rules::ReorderItems(
             data_->itemKeys, std::move(movingIndices),
             insertBefore);
+    data_->contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
     InvalidateCategorySnapshot();
     InvalidateSlots();
 }
@@ -1094,6 +1064,12 @@ int FileCategories::GetItemWidth() const
 {
     return FileCategoryLocalLayout(
         const_cast<FileCategories*>(this)).horizontal.cell;
+}
+
+int FileCategories::GetMemberColumnCount() const
+{
+    return FileCategoryLocalLayout(
+        const_cast<FileCategories*>(this)).horizontal.count;
 }
 
 /**
@@ -1267,7 +1243,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     di.sysIconIndex, di.name, di.selected,
                     di.iconIsMediaThumbnail, {}, nullptr,
                     { di.typeName, di.modifiedTime,
-                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
         }
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
@@ -1341,14 +1317,16 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         {
             if (!seg.isHeader) continue;
             RECT headerRect = MakeRect(content.left,
-                std::max<LONG>(content.top, content.top + seg.y - scroll),
+                content.top + seg.y - scroll,
                 content.right,
-                std::min<LONG>(content.bottom, content.top + seg.y + seg.height - scroll));
-            if (headerRect.top >= headerRect.bottom) continue;
+                content.top + seg.y + seg.height - scroll);
+            if (headerRect.bottom <= content.top ||
+                headerRect.top >= content.bottom) continue;
 
+            // Center in the full row: vertical insets can clip fallback glyphs.
+            // ScrollContentClip crops the viewport without moving the baseline.
             RECT labelRect = headerRect;
             labelRect.left += Cu(8.0f);
-            InflateRect(&labelRect, 0, -Cu(8.0f));
             app_->DrawD2DText(context, seg.label, labelRect,
                 (lt && lightHeaderFormat) ? lightHeaderFormat :
                     (headerFormat ? headerFormat : app_->listItemTextFormat_.Get()),
@@ -1395,7 +1373,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 di.sysIconIndex, di.name, di.selected,
                 di.iconIsMediaThumbnail, {}, nullptr,
                 { di.typeName, di.modifiedTime,
-                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
     }
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
@@ -1462,6 +1440,7 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 WidgetHit FileCategories::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || !data_) return base;
 
     if ((!data_->showSearchBox || searchText_.empty()) &&

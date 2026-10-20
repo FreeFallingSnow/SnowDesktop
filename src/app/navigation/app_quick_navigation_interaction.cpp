@@ -4,8 +4,11 @@
 
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "shell/shortcut_application_rules.h"
+#include "shell/shortcut_category_target.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
+
+#include <filesystem>
 
 namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
@@ -151,7 +154,7 @@ BeginQuickNavigationFolderEntryRename(
     renameController_.BeginFolderEntry(
         widgetIndex, entryIndex);
     BeginQuickNavigationItemRename(
-        entry.name, entry.fullPath, entry.isDirectory);
+        entry.DisplayName(), entry.fullPath, entry.isDirectory);
     if (!renameController_.
             IsQuickNavigationPresentation())
     {
@@ -171,6 +174,22 @@ void DesktopApp::ToggleQuickNavigation()
             QuickNavigationInvocationSource::Hotkey);
 }
 
+bool DesktopApp::ActivateQuickNavigationTab(size_t tab)
+{
+    const auto indices = GetQuickNavigationCollectionIndices();
+    if (tab >= 2 && tab - 2 >= indices.size())
+        return false;
+    CancelQuickNavigationTabHover();
+    quickNavigationActiveWidgetIndex_ = tab == 0 ? static_cast<size_t>(-1) :
+        tab == 1 ? static_cast<size_t>(-2) : indices[tab - 2];
+    UpdateQuickNavTabWidths();
+    quickNavigationScrollOffset_ = 0;
+    quickNavigationInitialJumpOpen_ = false;
+    ResetQuickNavigationKeyboardTarget();
+    InvalidateQuickNavigationWindow();
+    return true;
+}
+
 /**
  * @brief 处理快捷导航面板内的点击事件
  * @param point 点击坐标（客户端坐标）
@@ -180,6 +199,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
 {
     if (!quickNavigationOpen_)
         return false;
+    CancelQuickNavigationTabHover();
     ResetQuickNavigationKeyboardTarget();
 
     RECT overlay = quickNavigationRect_;
@@ -220,28 +240,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     if (!searching)
     {
-        if (TrySetQuickNavigationDesktopViewModeAtPoint(
+        if (TrySetQuickNavigationViewModeAtPoint(
                 point))
             return true;
 
-        RECT tab0Rect = GetQuickNavigationTabRect(overlay, 0);
-        if (PtInRect(&tab0Rect, point))
-        {
-            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
-            quickNavigationScrollOffset_ = 0;
-            quickNavigationInitialJumpOpen_ = false;
-            InvalidateQuickNavigationWindow();
-            return true;
-        }
-        RECT tab1Rect = GetQuickNavigationTabRect(overlay, 1);
-        if (PtInRect(&tab1Rect, point))
-        {
-            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-2);
-            quickNavigationScrollOffset_ = 0;
-            quickNavigationInitialJumpOpen_ = false;
-            InvalidateQuickNavigationWindow();
-            return true;
-        }
+        if (const auto tab = GetQuickNavigationTabAtPoint(point))
+            return ActivateQuickNavigationTab(*tab);
     }
 
     RECT content = GetQuickNavigationContentRect(overlay);
@@ -253,9 +257,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         return true;
 
     if (!searching &&
-        quickNavigationActiveWidgetIndex_ ==
-            static_cast<size_t>(-1) &&
-        navigationSettings_.desktopViewMode ==
+        GetQuickNavigationViewMode() ==
             QuickNavigationDesktopViewMode::Initial)
     {
         const QuickNavigationContentModel model =
@@ -421,10 +423,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            const size_t itemIndex = entry.itemIndex;
+            const auto key = items_[entry.itemIndex].layoutKey;
             CloseQuickNavigationThen(
-                [this, itemIndex]() {
-                    LaunchDesktopItem(itemIndex, true);
+                [this, key]() {
+                    const auto currentIndex = FindItemIndexByKey(key);
+                    if (currentIndex < items_.size())
+                        LaunchDesktopItem(currentIndex, true);
                 });
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
@@ -750,7 +754,9 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
 
     return shortcutRules::IsApplicationsShellLinkTarget(
         resolvedPath, arguments, appUserModelId,
-        targetParsingPath, applicationsPidlTarget);
+        targetParsingPath, applicationsPidlTarget) ||
+        (!resolvedPath[0] && snowdesktop::category_collection_rules::
+            HasApplicationsShellLinkPidlTarget(shellLink));
 }
 
 bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayName,
@@ -766,10 +772,8 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
     std::wstring stem = SanitizeShortcutFileStem(displayName);
     if (stem.empty() && !targetPath.empty())
     {
-        wchar_t nameBuf[MAX_PATH]{};
-        wcscpy_s(nameBuf, PathFindFileNameW(targetPath.c_str()));
-        PathRemoveExtensionW(nameBuf);
-        stem = SanitizeShortcutFileStem(nameBuf);
+        stem = SanitizeShortcutFileStem(
+            std::filesystem::path(targetPath).stem().wstring());
     }
 
     std::wstring shortcutPath;
@@ -778,19 +782,17 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
         std::wstring fileName = i == 1
             ? stem + L".lnk"
             : stem + L" (" + std::to_wstring(i) + L").lnk";
-        wchar_t candidate[MAX_PATH]{};
-        PathCombineW(candidate, desktopPath, fileName.c_str());
-        if (GetFileAttributesW(candidate) == INVALID_FILE_ATTRIBUTES)
+        const auto candidate = std::filesystem::path(desktopPath) / fileName;
+        if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
         {
-            shortcutPath = candidate;
+            shortcutPath = candidate.wstring();
             break;
         }
     }
     if (shortcutPath.empty())
     {
-        wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath, (stem + L" (1000).lnk").c_str());
-        shortcutPath = fallback;
+        shortcutPath = (std::filesystem::path(desktopPath) /
+            (stem + L" (1000).lnk")).wstring();
     }
 
     ComPtr<IShellLinkW> shellLink;
@@ -804,8 +806,9 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
     if (FAILED(setTargetHr))
         return false;
 
-    if (!workingDirectory.empty())
-        shellLink->SetWorkingDirectory(workingDirectory.c_str());
+    if (!workingDirectory.empty() &&
+        FAILED(shellLink->SetWorkingDirectory(workingDirectory.c_str())))
+        return false;
 
     ComPtr<IPersistFile> persistFile;
     if (FAILED(shellLink.As(&persistFile)) ||
@@ -836,19 +839,13 @@ bool DesktopApp::CreateDesktopShortcutForPath(
     }
     else
     {
-        wchar_t dir[MAX_PATH]{};
-        wcscpy_s(dir, path.c_str());
-        if (PathRemoveFileSpecW(dir))
-            workingDirectory = dir;
+        workingDirectory = std::filesystem::path(path).parent_path().wstring();
     }
 
     std::wstring stem = displayName;
     if (stem.empty())
     {
-        wchar_t nameBuf[MAX_PATH]{};
-        wcscpy_s(nameBuf, PathFindFileNameW(path.c_str()));
-        PathRemoveExtensionW(nameBuf);
-        stem = nameBuf;
+        stem = std::filesystem::path(path).stem().wstring();
     }
     return CreateDesktopShortcutForShellLink(stem, nullptr, path, workingDirectory);
 }
@@ -939,8 +936,11 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
 }
 
 void DesktopApp::ShowQuickNavigationEverythingContextMenu(
-    const QuickNavigationEverythingEntry& entry, POINT screenPoint)
+    const QuickNavigationEverythingEntry& selectedEntry, POINT screenPoint)
 {
+    // ShowModernMenu dispatches search completions, which can replace the
+    // result vector. Own the action target before entering that message loop.
+    const QuickNavigationEverythingEntry entry = selectedEntry;
     if (entry.path.empty())
         return;
     PrepareMenuIconsForPoint(screenPoint);

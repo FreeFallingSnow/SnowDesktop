@@ -412,6 +412,7 @@ void TestV2Contract()
                 "settings.description") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.desktopItemReference") &&
+            snowdesktop::widget_api::SupportsFeature("settings.duration") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.fileReference") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -461,7 +462,11 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.request") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.network.largeResponse") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.network.standardHttp") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "task.network.retryDirect") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.headers") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -1455,10 +1460,41 @@ end
 assert(not pcall(function() state.set("overflow", 1) end))
 assert(#state.keys() == 256)
 assert(state.clear() and not state.clear())
+
+local failures = {}
+local function expect(ok, message)
+    if not ok then failures[#failures + 1] = message end
+end
+expect(state.get("absent") == nil, "missing state without a default must be nil")
+state.set("sentinel", "unrelated")
+expect(state.get("absent") == nil, "missing state must not expose unrelated values")
+expect(state.get("absent", nil) == nil and state.get("absent", false) == false
+    and state.get("absent", 0) == 0, "explicit defaults preserve their types")
+local fallback = { nested = { value = 1 } }
+local copied = state.get("absent", fallback)
+copied.nested.value = 2
+expect(fallback.nested.value == 1, "table defaults return an isolated copy")
+
+local low, high = 9007199254740992, 9007199254740993
+state.set("wide", low)
+expect(state.set("wide", high), "adjacent integers above 2^53 must change state")
+expect(state.get("wide") == high, "wide integer update must preserve its exact value")
+expect(not state.set("wide", high), "an identical integer remains unchanged")
+state.set("nested-wide", { count = low })
+expect(state.set("nested-wide", { count = high }), "nested wide integer updates must not coalesce")
+expect(state.get("nested-wide").count == high, "nested state preserves the updated integer")
+state.set("integer-limit", math.maxinteger)
+expect(state.set("integer-limit", math.maxinteger - 1), "integer-limit neighbours remain distinct")
+state.set("mixed-number", low + 0.0)
+expect(state.set("mixed-number", high), "rounded floats cannot hide a distinct exact integer")
+state.set("equal-number", 1)
+expect(not state.set("equal-number", 1.0), "exactly equal integer and float values retain Lua equality")
+assert(#failures == 0, table.concat(failures, "; "))
 )lua";
-    Check(luaL_loadbuffer(state, script, sizeof(script) - 1,
-            "@transient-state-test") == LUA_OK &&
-            lua_pcall(state, 0, 0, 0) == LUA_OK,
+    const int loaded = luaL_loadbuffer(state, script, sizeof(script) - 1,
+        "@transient-state-test");
+    const int executed = loaded == LUA_OK ? lua_pcall(state, 0, 0, 0) : loaded;
+    Check(executed == LUA_OK,
         lua_gettop(state) > 0 && lua_isstring(state, -1)
             ? lua_tostring(state, -1)
             : "transient state script must execute");

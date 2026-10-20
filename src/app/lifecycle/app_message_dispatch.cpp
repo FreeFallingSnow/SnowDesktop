@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "layout/page_navigation_rules.h"
 #include "desktop/desktop_hover_rules.h"
 #include "app/shell/shell_change_notification.h"
 #include "desktop/desktop_keyboard_rules.h"
@@ -7,6 +8,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "dock/dock_minimize_protocol.h"
+#include "ui/render/ui_presentation_scope.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -75,6 +77,18 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
+        hwnd == dockShellHookWindow_)
+    {
+        HandleDockShellHook(wp, reinterpret_cast<HWND>(lp));
+        return 0;
+    }
+    if (msg >= 0xC000 && msg == snowdesktop::tray::ChangeMessage())
+    {
+        if (dockTrayService_ && dockTrayService_->AcknowledgeChange(hwnd, wp)) RefreshDockTrayPopup();
+        return 0;
+    }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::CancelMessage())
@@ -303,7 +317,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
-            RestoreInteractionInputFocus();
+            RestoreInteractionInputFocus(true);
             ShowHiddenHint();
             return 0;
         }
@@ -595,6 +609,28 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         CancelRenameClick();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (!IsPointOccludedByOpenPopup(pt) && !GetDockContainerAtPoint(pt))
+        {
+            for (size_t index = widgets_.size(); index-- > 0;)
+            {
+                const auto& widget = widgets_[index];
+                if (widget.type != DesktopWidgetType::FolderMapping ||
+                    !snowdesktop::single_cell_widget::IsIconMode(widget) || IsGroupedWidget(widget) ||
+                    (desktopIconsHidden_ && !widget.keepWhenDesktopHidden) || IsRectEmptyRect(widget.bounds))
+                    continue;
+                const RECT icon = GetItemIconRect(widget.bounds);
+                if (!PtInRect(&icon, pt)) continue;
+                const std::wstring path = widget.sourceFolderPath;
+                CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapturePreservingPointerState();
+                CloseCollectionPopup(false);
+                if (!path.empty() && shellLaunchWorker_.Enqueue(hwnd_, path)) ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+        }
+        if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
+        { OnLeftButtonDown(wp, lp); return 0; }
         if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
             [this](bool accepted) {
@@ -757,7 +793,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         {
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
-                            if (itemIndex < items_.size())
+                            if (itemIndex < items_.size() && DockTrayTargetCount(itemIndex) <= 1 &&
+                                (!dockTrayPopup_ || dockTrayPopup_->itemKey != DockItemWindowKey(items_[itemIndex])))
                                 clearSelectionAfterAcceptedOpen(
                                     LaunchDesktopItem(
                                         itemIndex, true));
@@ -791,7 +828,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        if (itemIndex < items_.size() &&
+                        if (itemIndex < items_.size() && DockTrayTargetCount(itemIndex) <= 1 &&
+                            (!dockTrayPopup_ || dockTrayPopup_->itemKey != DockItemWindowKey(items_[itemIndex])) &&
                             snowdesktop::dock_window_rules::ShouldWaitForDockLaunchDoubleClick(
                                 dockSettings_.singleClickLaunchItems,
                                 snowdesktop::dock_window_rules::DockClickAction::Launch))
@@ -936,6 +974,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
             if (!wc) continue;
+            if (wc->GetWidgetData() && wc->GetWidgetData()->singleCellIconMode &&
+                wc->IsSingleCellDesktopPoint(pt) && wc->HitTestWidget(pt) != WidgetHit::None)
+            {
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
             if (wc->HitTestWidget(pt) == WidgetHit::CollapseToggleBtn)
             {
                 // The double-click message replaces the second button-down.
@@ -1039,23 +1083,33 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             overWidgetArea = IsPointOverWidgetChrome(pt);
 
         if (!overWidgetArea && generalSettings_.doubleClickHideDesktop)
+        {
+            if (MaxPageOffset() > 0)
+            {
+                RECT previousEdge{};
+                RECT nextEdge{};
+                GetNavHotEdgeRects(previousEdge, nextEdge);
+                // The first click may have reached the first or last page.
+                // Keep both rails excluded even if that direction is now unavailable.
+                if (snowdesktop::page_navigation_rules::IsEdgeTarget(
+                        snowdesktop::page_navigation_rules::HitTestPointerTarget(
+                            pt, previousEdge, nextEdge)))
+                    return 0;
+            }
             ToggleDesktopIconsVisibility();
+        }
 
         return 0;
     }
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
-    {
-        const bool repeated =
-            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
-        if (TryHandlePageNavigationKey(wp, repeated))
-            return 0;
-        DispatchLuaWidgetViewKeyEvent(wp, true,
-            repeated);
-        OnKeyDown(wp, repeated);
-        return 0;
-    }
+    case WM_CHAR:
+    case WM_IME_CHAR:
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_COMPOSITION:
+    case WM_IME_ENDCOMPOSITION:
+        return HandleInputMessage(hwnd, msg, wp, lp);
     case WM_SYSKEYDOWN:
     {
         if (wp == VK_RETURN && OnKeyDown(wp,
@@ -1140,6 +1194,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        typeToSelectSession_.Reset();
+        typeToSelectImeComposing_ = false;
+        typeToSelectSuppressChar_ = false;
         CancelRenameClick();
         if (widgetEngine_)
         {

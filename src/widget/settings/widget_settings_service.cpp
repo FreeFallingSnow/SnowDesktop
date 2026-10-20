@@ -130,11 +130,12 @@ InteractionValue EmptyDefault(const WidgetSettingFieldSchema& schema)
     {
     case WidgetSettingKind::Boolean:
         return MakeWidgetSettingBoolean(false);
+    case WidgetSettingKind::Duration:
     case WidgetSettingKind::Integer:
     case WidgetSettingKind::Color:
     {
         long long value = 0;
-        if (schema.Kind() == WidgetSettingKind::Integer &&
+        if ((schema.Kind() == WidgetSettingKind::Integer || schema.Kind() == WidgetSettingKind::Duration) &&
             schema.minimum > 0.0 &&
             !ReadWidgetSettingInteger(schema.minimum, value))
             value = 0;
@@ -1061,6 +1062,33 @@ WidgetSettingMutationResult WidgetSettingsService::SetSearchQuery(
     return ReloadAfterMutation(*this, session, backendResult);
 }
 
+WidgetSettingSecretReadResult WidgetSettingsService::ReadSecret(
+    const WidgetSettingMutationGuard& guard, std::string_view key)
+{
+    SessionCopy session;
+    auto checked = GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return { std::move(checked), {} };
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} }, {} };
+    if (field->schema.Channel() != WidgetSettingValueChannel::Secret)
+        return { { WidgetSettingMutationStatus::WrongValueChannel,
+            session.snapshot.generation, session.snapshot.revision,
+            "wrongValueChannel", {} }, {} };
+    if (!field->enabled || !field->visible)
+        return { { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} }, {} };
+    WidgetSettingSecretReadResult result;
+    const auto read = state_->backend.ReadSecret(
+        session.descriptor, guard, field->schema, result.plaintext);
+    result.result = WithIdentity(MutationResultFor(read), session.snapshot);
+    if (!read.Succeeded()) result.ClearPlaintext();
+    return result;
+}
+
 WidgetSettingMutationResult WidgetSettingsService::SetSecret(
     const WidgetSettingMutationGuard& guard, std::string_view key,
     std::string_view plaintext)
@@ -1646,8 +1674,7 @@ WidgetSettingMutationResult WidgetSettingsService::CancelSearch(
         auto found = state_->sessions.find(guard.widgetId);
         if (found == state_->sessions.end()) return checked;
         const auto search = found->second.searches.find(std::string(key));
-        if (search == found->second.searches.end() ||
-            !search->second.snapshot.pending)
+        if (search == found->second.searches.end())
             return { WidgetSettingMutationStatus::Unchanged,
                 session.snapshot.generation, session.snapshot.revision,
                 {}, {} };
@@ -1666,10 +1693,7 @@ WidgetSettingMutationResult WidgetSettingsService::CancelSearch(
                 search != found->second.searches.end() &&
                     search->second.request.requestId == request.requestId)
             {
-                search->second.snapshot.pending = false;
-                search->second.snapshot.completed = false;
-                search->second.snapshot.errorCode = "cancelled";
-                search->second.snapshot.results.clear();
+                found->second.searches.erase(search);
             }
     }
     return { WidgetSettingMutationStatus::Cancelled,

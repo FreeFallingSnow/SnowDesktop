@@ -3880,6 +3880,7 @@ bool CollectSelectOptions(const ViewNode& node,
     if (node.type == ViewNodeType::Select && node.expanded)
     {
         const ViewRect popup = ViewSelectPopupFrame(node, viewportHeight);
+        if (popup.width <= 0.0f || popup.height <= 0.0f) return true;
         for (std::size_t index = 0; index < node.options.size(); ++index)
         {
             const auto& option = node.options[index];
@@ -3909,6 +3910,7 @@ bool CollectSelectOptions(const ViewNode& node,
             region.checked = option.value == node.selectedValue;
             region.currentSelection = node.selectedValue;
             region.proposedSelection = option.value;
+            region.keyboardNavigationGroup = node.key;
             region.accessibilityRole = "option";
             region.accessibilityLabel = option.label;
             region.enabled = node.enabled && option.enabled;
@@ -5720,6 +5722,77 @@ bool ValidateViewLogicalSlots(const ViewNode& root,
     return validate(validate, root);
 }
 
+static std::vector<std::string> KeyboardScrollAncestors(
+    const ViewNode& root, std::string_view key)
+{
+    std::vector<std::string> path, result;
+    std::size_t matchedLength = 0;
+    const auto visit = [&](const auto& self, const ViewNode& node) -> void {
+        if (!node.visible || node.visibility == ViewVisibility::Hidden) return;
+        const bool generated = key.size() > node.key.size() &&
+            key.starts_with(node.key) && key[node.key.size()] == '/';
+        if ((key == node.key || generated) && node.key.size() >= matchedLength)
+        {
+            matchedLength = node.key.size();
+            result = path;
+            if (generated && node.type == ViewNodeType::Select && node.expanded)
+                result.push_back(node.key);
+        }
+        const bool scroll = IsScrollContainer(node.type);
+        if (scroll) path.push_back(node.key);
+        for (const auto& child : node.children) self(self, child);
+        if (scroll) path.pop_back();
+    };
+    visit(visit, root);
+    return result;
+}
+
+std::vector<std::pair<std::string, float>> ComputeViewKeyboardScrollOffsets(
+    const ViewNode& root, const InteractionRegion& target)
+{
+    std::vector<std::pair<std::string, float>> offsets;
+    const bool circle = target.shape.type == InteractionShapeType::Circle;
+    ViewRect bounds{circle ? target.shape.x - target.shape.radius : target.shape.x,
+        circle ? target.shape.y - target.shape.radius : target.shape.y,
+        circle ? target.shape.radius * 2.0f : target.shape.width,
+        circle ? target.shape.radius * 2.0f : target.shape.height};
+    const auto find = [&](const auto& self, const ViewNode& node,
+                          std::string_view key) -> const ViewNode* {
+        if (node.key == key) return &node;
+        for (const auto& child : node.children)
+            if (const auto* match = self(self, child, key)) return match;
+        return nullptr;
+    };
+    for (auto id = target.keyboardScrollAncestors.rbegin();
+         id != target.keyboardScrollAncestors.rend(); ++id)
+    {
+        const auto* node = find(find, root, *id);
+        if (!node) continue;
+        const bool select = node->type == ViewNodeType::Select;
+        const bool horizontal = !select && node->orientation == ViewOrientation::Horizontal;
+        const auto transform = ResolveViewTransformForKey(root, *id);
+        const auto viewport = ApplyViewTransform(select ?
+            ViewSelectPopupFrame(*node, root.frame.height) :
+            node->clipFrame.value_or(node->frame), transform);
+        const float scale = horizontal ? transform.m11 : transform.m22;
+        if (viewport.width <= 0.0f || viewport.height <= 0.0f || std::abs(scale) < 0.000001f) continue;
+        const float start = horizontal ? bounds.x : bounds.y;
+        const float end = start + (horizontal ? bounds.width : bounds.height);
+        const float viewportStart = horizontal ? viewport.x : viewport.y;
+        const float viewportEnd = viewportStart + (horizontal ? viewport.width : viewport.height);
+        const float delta = start < viewportStart ? start - viewportStart :
+            end > viewportEnd ? std::min(start - viewportStart, end - viewportEnd) : 0.0f;
+        const float maximum = std::max(0.0f, node->scrollContentExtent - node->scrollViewportExtent);
+        const float next = std::clamp(node->scrollOffset + delta / scale, 0.0f, maximum);
+        const float change = next - node->scrollOffset;
+        if (std::abs(change) < 0.5f) continue;
+        offsets.emplace_back(*id, next);
+        bounds.x -= change * (horizontal ? transform.m11 : transform.m21);
+        bounds.y -= change * (horizontal ? transform.m12 : transform.m22);
+    }
+    return offsets;
+}
+
 bool CollectViewInteractionRegions(const ViewNode& root,
     std::vector<InteractionRegion>& regions, std::string& error)
 {
@@ -5737,9 +5810,16 @@ bool CollectViewInteractionRegions(const ViewNode& root,
         return false;
     }
     for (std::size_t index = 0; index < regions.size(); ++index)
+    {
         ApplyViewTransform(root, regions[index], index >= optionStart);
+        regions[index].keyboardScrollAncestors = KeyboardScrollAncestors(root, regions[index].key);
+    }
     std::erase_if(regions, [](const auto& region) {
-        return !InteractionRegionOverlapsClip(region);
+        // Keep realized logical controls for keyboard navigation and scrolling.
+        // Physical pointer hit testing still enforces their popup clip.
+        const bool scrollable = !region.keyboardScrollAncestors.empty() &&
+            region.focusable.value_or(false) && region.clip;
+        return !scrollable && !InteractionRegionOverlapsClip(region);
     });
     return true;
 }
@@ -5763,8 +5843,10 @@ bool CollectViewInputControls(const ViewNode& root,
         control.padding.bottom *= scaleY;
         control.padding.left *= scaleX;
     }
-    std::erase_if(controls, [](const auto& control) {
-        return control.clip && !Overlaps(control.frame, *control.clip);
+    std::erase_if(controls, [&root](const auto& control) {
+        const bool scrollable = control.focusable &&
+            !KeyboardScrollAncestors(root, control.key).empty() && control.clip;
+        return !scrollable && control.clip && !Overlaps(control.frame, *control.clip);
     });
     return true;
 }

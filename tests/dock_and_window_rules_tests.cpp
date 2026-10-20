@@ -1,4 +1,6 @@
 #include "test_source_boundary.h"
+#include "layout/list_columns_cases.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "layout/layout_scroll_save.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "dock/dock_magnification.h"
@@ -13,6 +15,9 @@
 #include <fstream>
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_refresh_cache.h"
+#include "dock/dock_folder_order_cases.h"
+#include "dock/dock_insertion_cases.h"
+#include "dock/dock_task_window_filter_tests.h"
 #include "dock/dock_process_snapshot.h"
 #include "common/bounded_lru_cache.h"
 #include "diagnostics/slow_call_limiter.h"
@@ -21,6 +26,8 @@
 #include "layout/item_location.h"
 #include "dock/dock_collection_icon_rules.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/popup_scrollbar_layout.h"
+#include "widget/view/widget_scroll_rules.h"
 #include "layout/folder_sort_rules.h"
 #include "shell/shell_item_visibility.h"
 #include "shell/shell_file_operation_worker.h"
@@ -29,10 +36,13 @@
 #include "layout/item_title_layout.h"
 #include "layout/item_render_layer_rules.h"
 #include "dock/dock_window_rules.h"
+#include "dock/dock_window_attention.h"
+#include "dock/dock_attention_dot.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
 #include "dock/dock_app_identity_rules.h"
+#include "dock/dock_installed_application.h"
 #include "../src/app/dock/dock_running_app_pin_rules.h"
 #include "../src/app/dock/dock_explorer_pin.h"
 #include "layout/page_navigation_rules.h"
@@ -72,7 +82,9 @@
 #include "../src/app/layout/layout_reload.h"
 #include "../src/taskbar_hook/taskbar_autohide_trace.h"
 #include "../src/taskbar_hook/taskbar_autohide_rules.h"
+#include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "../src/taskbar_hook/taskbar_hook_lifecycle.h"
+#include "taskbar_hook/taskbar_xaml_readiness.h"
 #include "../src/taskbar_hook/taskbar_symbol_resolver.h"
 
 int RunTaskbarSymbolResolverTests();
@@ -101,6 +113,7 @@ namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 int RunDesktopBackdropCompositorTests();
+int RunExplorerIconVisibilityTests();
 int RunNativeTaskbarTests();
 int RunTrayModelTests();
 int RunDockWindowPinTests();
@@ -588,6 +601,8 @@ void CheckTaskbarAutoHideTraceTransport()
         "the trace buffer must accept new samples after draining");
 }
 
+#include "taskbar_hook/taskbar_xaml_readiness_tests.inc"
+
 void CheckTaskbarHookLifecycle()
 {
     using namespace snowdesktop::taskbar_hook;
@@ -634,165 +649,119 @@ void CheckTaskbarHookLifecycle()
         "a failed installation must not permanently consume future reconnect attempts");
 }
 
-void CheckTaskbarActivationRevealDispatch()
+void CheckTaskbarMinimizeProtection()
 {
     using namespace snowdesktop::taskbar_hook;
-    ActivationRevealContext hidden;
-    // The failed runtime candidate excluded this real configuration by
-    // confusing an enabled summon hotkey with an absent ordinary Dock.
-    DockSettings settings;
-    settings.position = DockPosition::Bottom;
-    settings.floatingShortcutMode = true;
-    settings.showOnlyWhenSummoned = false;
-    hidden.protectedTaskbar = ShouldProtectAutoHideTaskbar(settings, true, true);
-    hidden.geometryValid = true;
-    hidden.activation = WA_ACTIVE;
-    hidden.callerIsActivationHandler = true;
-    hidden.monitor = {0, 0, 2560, 1440};
-    hidden.taskbar = {0, 1438, 2560, 1498};
-    hidden.cursor = {987, 1407};
-    auto expect = [&](const ActivationRevealContext& context, int flags, int request,
-        bool suppress, const char* failure) {
-        int originalCalls = 0;
-        const bool result = DispatchActivationReveal(context, flags, request, [&](int f, int r) {
-            ++originalCalls;
-            Check(f == flags && r == request, "forwarding must preserve native request arguments");
-        });
-        Check(result == suppress && originalCalls == (suppress ? 0 : 1), failure);
-    };
-    // Values from the user's ordinary Dock minimization, Trace 5. The fake
-    // boundary is only Explorer's native Unhide function, never the decision.
-    expect(hidden, 0, 8, true, "known hidden-taskbar activation must not invoke native expansion");
-    auto alternate = hidden;
-    alternate.explicitFocus = true;
-    expect(alternate, 0, 8, false, "Win+T/Win+B can share request 8 and must retain native expansion");
-    alternate = hidden;
-    alternate.cursor = {987, 1439};
-    expect(alternate, 0, 8, false, "intentional bottom-edge reveal must survive activation during minimization");
-    expect(hidden, 0, 15, false, "native edge request 15 must pass without any focus context");
-    expect(hidden, 1, 2, false, "Start-menu request must preserve native flags and expansion");
-    expect(hidden, 1, 9, false, "other observed native requests must remain untouched");
-    expect(hidden, 0, 27, false, "unknown request semantics must fail open");
-    alternate = hidden;
-    alternate.activation = WA_CLICKACTIVE;
-    expect(alternate, 0, 8, false, "direct taskbar mouse activation must pass");
-    alternate = hidden;
-    alternate.protectedTaskbar = false;
-    expect(alternate, 0, 8, false, "disabled Dock or unavailable adapter must pass");
-    alternate = hidden;
-    alternate.geometryValid = false;
-    expect(alternate, 0, 8, false, "failed geometry or pointer queries must fail open");
-    alternate = hidden;
-    alternate.callerIsActivationHandler = false;
-    expect(alternate, 0, 8, false, "request 8 from an unrecognized call site must pass");
-    alternate = hidden;
-    alternate.taskbar = {0, 1380, 2560, 1440};
-    expect(alternate, 0, 8, false, "an already revealed taskbar must retain its native interaction");
-    alternate = hidden;
-    alternate.taskbar = {0, 1410, 2560, 1470};
-    expect(alternate, 0, 8, false, "an ongoing reveal must not be interrupted");
-    alternate = hidden;
-    alternate.taskbar = {0, -58, 2560, 2};
-    expect(alternate, 0, 8, false, "a top taskbar is outside the bottom-Dock policy");
-    alternate = hidden;
-    alternate.secondary = true;
-    alternate.monitor = {-1920, 0, 0, 1080};
-    alternate.taskbar = {-1920, 1078, 0, 1138};
-    alternate.cursor = {987, 1407};
-    expect(alternate, 0, 8, true, "secondary passive activation must not depend on pointer monitor");
-    alternate.cursor = {-500, 1079};
-    expect(alternate, 0, 8, false, "negative-coordinate monitor edges must retain intentional reveal");
+    Check(IsRecentTaskbarInput(1000, 1000, 1100),
+        "a real taskbar click or key operation can identify its own minimize request");
+    Check(!IsRecentTaskbarInput(0, 1000, 1100) &&
+        !IsRecentTaskbarInput(1000, 1050, 1100) && !IsRecentTaskbarInput(1000, 1000, 1501),
+        "hover alone, later input elsewhere and old taskbar interactions do not exempt application minimization");
+    Check(IsRecentTaskbarInput(0xfffffff0, 0xfffffff0, 0x20),
+        "input provenance keeps its age bound across the Windows DWORD tick wrap");
+    TaskbarMinimizeExemptions origins;
+    Check(origins.Exempts(42, false, true, 1000),
+        "the synchronous taskbar-origin minimize is excluded before any taskbar is cloaked");
+    Check(origins.Exempts(42, true, false, 1200),
+        "its asynchronous WinEvent stays excluded after pointer movement changes last input");
+    Check(!origins.Exempts(43, true, false, 1200),
+        "the exclusion belongs to the minimized window and cannot suppress unrelated application protection");
+    Check(!origins.Exempts(42, false, false, 1250) && !origins.Exempts(42, true, false, 1300),
+        "a new application-caption or Dock minimize clears an older taskbar exemption for the same window");
+    Check(origins.Exempts(42, false, true, 2000) &&
+        !origins.Exempts(42, true, false, 3501) && !origins.Exempts(0, false, true, 3600),
+        "expired callbacks and invalid windows cannot inherit taskbar input provenance");
+    MinimizeProtection state;
+    MinimizeProtectionInput input{1, 1000, 1000, true, false, false, false, true};
+    Check(state.Update(input), "a minimize request cloaks immediately before its source becomes iconic");
+    input.now = 1100; input.sourceMinimized = true;
+    Check(state.Update(input), "native hidden geometry during the minimize handoff must not release the cloak too early");
+    input.now = 1500; input.nativeHidden = false;
+    Check(state.Update(input), "a taskbar expanded by passive activation remains cloaked");
+    input.now = 5000;
+    Check(state.Update(input), "a fixed timeout must not expose an internally expanded taskbar as a delayed flash");
+    input.nativeHidden = true;
+    Check(!state.Update(input), "Shell returning to hidden geometry completes temporary protection");
+    input.nativeHidden = false;
+    Check(!state.Update(input), "an already consumed request cannot rearm on a timer or appearance refresh");
+    input.sequence = 2; input.started = input.now; input.explicitReveal = true;
+    Check(!state.Update(input), "an intentional edge, keyboard, or shell-panel request releases protection");
+    input.explicitReveal = false;
+    Check(!state.Update(input), "finishing explicit access cannot resurrect an old minimize request");
+    input.sequence = 3; input.sourceMinimized = false;
+    Check(state.Update(input), "a later minimize gets an independent request");
+    input.now += MinimizeProtection::kMinimizeTimeoutMs;
+    Check(!state.Update(input), "a rejected or cancelled application minimize cannot leave its taskbars cloaked");
+    input.sequence = 4; input.started = input.now; input.cancelled = true;
+    Check(!state.Update(input), "another taskbar's explicit input cancels the same request across monitors");
+    input.sequence = 5; input.cancelled = false; input.sourceMinimized = true;
+    Check(state.Update(input), "a newer request is independent of earlier cancellation");
+    input.sourceMinimized = false;
+    Check(!state.Update(input), "restoring the source releases a still expanded taskbar");
+    input.sequence = 6; input.started = input.now - MinimizeProtection::kMinimizeTimeoutMs;
+    Check(!state.Update(input), "a recreated taskbar must not adopt a stale request");
+    input.sequence = 7; input.started = input.now; input.enabled = false;
+    Check(!state.Update(input), "disabled auto-hide relinquishes temporary protection");
 
-    // Production target policy feeds the Explorer Unhide dispatch. A Dock
-    // placed on either monitor must protect both taskbars; the native Unhide
-    // call is the only substitute. This catches the old hasDock activation gate.
+    const RECT screen{-1920, 510, 0, 1590};
+    const RECT hidden{-1920, 1588, 0, 1648}, visible{-1920, 1530, 0, 1590};
+    Check(IsAutoHiddenTaskbar(hidden, screen) && !IsAutoHiddenTaskbar(visible, screen),
+        "the original two-pixel versus sixty-pixel secondary taskbar regression is distinguished");
+    Check(IsTaskbarRevealEdge(hidden, screen, {-500, 1589}) &&
+        !IsTaskbarRevealEdge(hidden, screen, {1094, 1526}) &&
+        !IsTaskbarRevealEdge(hidden, screen, {-500, 1539}),
+        "only intentional access at that monitor's edge releases its temporary cloak");
+    Check(IsAutoHiddenTaskbar({-1920, 462, 0, 512}, screen) &&
+        IsTaskbarRevealEdge({-1920, 462, 0, 512}, screen, {-500, 510}),
+        "top taskbars use the same offline protection and intentional reveal policy");
+    Check(IsAutoHiddenTaskbar({-1968, 510, -1918, 1590}, screen) &&
+        IsTaskbarRevealEdge({-1968, 510, -1918, 1590}, screen, {-1920, 600}) &&
+        IsAutoHiddenTaskbar({-2, 510, 48, 1590}, screen) &&
+        IsTaskbarRevealEdge({-2, 510, 48, 1590}, screen, {-1, 600}),
+        "left and right taskbars retain intentional access on negative-origin monitors");
+    Check(!IsAutoHiddenTaskbar({}, screen), "invalid geometry cannot finish a temporary cloak");
+
+    DockSettings settings;
+    settings.suppressSystemTaskbar = false;
+    Check(ShouldProtectAutoHideTaskbar(settings, false, true) &&
+        !ShouldProtectAutoHideTaskbar(settings, true, false),
+        "native auto-hide protection is independent of Dock enablement");
+    settings.position = DockPosition::Left;
+    Check(ShouldProtectAutoHideTaskbar(settings, true, true),
+        "a side Dock does not exclude passive taskbar activation on other screens");
     settings.suppressSystemTaskbar = true;
-    Check(ShouldProtectAutoHideTaskbar(settings, true, false),
-        "permanent hiding must protect its auto-hide override even when the original preference was off");
-    Check(!ShouldProtectAutoHideTaskbar(settings, false, false),
-        "an inactive Dock cannot enable protection through its persisted hiding preference");
+    Check(ShouldProtectAutoHideTaskbar(settings, true, false) &&
+        !ShouldProtectAutoHideTaskbar(settings, false, false),
+        "permanent hiding protects only its active auto-hide override");
     for (const bool dockOnPrimary : {false, true})
     {
-        for (const bool secondary : {false, true})
+        SharedState shared;
+        shared.enabled = TRUE; shared.suppressTaskbar = TRUE; shared.targetCount = 2;
+        shared.minimizeSequence = 9; shared.minimizeStarted = 1000; shared.minimizeSource = 42;
+        for (LONG i = 0; i < 2; ++i)
         {
-            const bool hasDock = secondary ? !dockOnPrimary : dockOnPrimary;
             SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
-            ConfigureSystemTaskbarTargetProtection(target, true,
-                ShouldProtectAutoHideTaskbar(settings, true, false), hasDock);
-            Check(target.suppressTaskbar == hasDock,
-                "permanent taskbar hiding must remain limited to Dock screens");
-            alternate = hidden;
-            alternate.secondary = secondary;
-            alternate.monitor = secondary ? RECT{-1920, 0, 0, 1080} : hidden.monitor;
-            alternate.taskbar = secondary ? RECT{-1920, 1078, 0, 1138} : hidden.taskbar;
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, true,
-                "minimization activation must stay suppressed on screens with or without a Dock");
-
-            alternate.explicitFocus = true;
-            expect(alternate, 0, 8, false,
-                "explicit keyboard taskbar focus must remain available on every screen");
-            alternate.explicitFocus = false;
-            alternate.cursor = {alternate.monitor.left + 100, alternate.monitor.bottom - 1};
-            expect(alternate, 0, 8, false,
-                "intentional edge reveal must remain available on every screen");
-            alternate.cursor = hidden.cursor;
-
-            target.shellPanelVisible = true;
-            ConfigureSystemTaskbarTargetProtection(target, true, true, hasDock);
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, false,
-                "an open shell panel must release activation protection on its screen");
-
-            target.shellPanelVisible = false;
-            ConfigureSystemTaskbarTargetProtection(target, false, true, hasDock);
-            Check(!target.suppressTaskbar, "activation protection must not enable permanent hiding");
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, true,
-                "closing a shell panel must restore protection even without permanent hiding");
-
-            ConfigureSystemTaskbarTargetProtection(target, false, false, hasDock);
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, false,
-                "turning off protection must restore native activation on every screen");
+            ConfigureSystemTaskbarTargetProtection(target, true, true, (i == 0) == dockOnPrimary);
+            shared.targets[i].taskbar = static_cast<std::uintptr_t>(i + 1);
+            shared.targets[i].suppressTaskbar = target.suppressTaskbar;
+            shared.targets[i].protectAutoHideActivation = target.protectAutoHideActivation;
+        }
+        Snapshot snapshot;
+        Check(ReadSharedSnapshot(&shared, snapshot) && snapshot.minimizeSequence == 9 &&
+            snapshot.minimizeStarted == 1000 && snapshot.minimizeSource == 42,
+            "the same minimize request reaches all taskbars without a symbol adapter");
+        for (LONG i = 0; i < 2; ++i)
+        {
+            const auto taskbar = static_cast<std::uintptr_t>(i + 1);
+            Check(ProtectsTaskbarMinimize(snapshot, taskbar),
+                "temporary protection covers both Dock and non-Dock screens");
+            Check(ShouldSuppressTaskbar(snapshot, taskbar) == ((i == 0) == dockOnPrimary),
+                "permanent hiding retains its original monitor scope");
+            snapshot.targets[i].shellPanelVisible = TRUE;
+            Check(!ProtectsTaskbarMinimize(snapshot, taskbar) && !ShouldSuppressTaskbar(snapshot, taskbar),
+                "an explicitly open shell panel retains its taskbar access");
         }
     }
-
-    settings.suppressSystemTaskbar = false;
-    Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
-        !ShouldProtectAutoHideTaskbar(settings, true, false),
-        "disabled Dock or native auto-hide must relinquish protection");
-    settings.position = DockPosition::Left;
-    settings.suppressSystemTaskbar = true;
-    Check(!ShouldProtectAutoHideTaskbar(settings, true, true),
-        "a side Dock must not control bottom-taskbar activation");
-
-    auto expectExplicit = [&](const ActivationRevealContext& context, bool primaryForeground,
-        bool reveal, const char* failure) {
-        int originalCalls = 0;
-        const bool result = DispatchExplicitForegroundReveal(context, primaryForeground, [&](int flags, int request) {
-            ++originalCalls;
-            Check(flags == 0 && request == 8, "explicit focus must use the verified native activation request");
-        });
-        Check(result == reveal && originalCalls == (reveal ? 1 : 0), failure);
-    };
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    expectExplicit(alternate, true, true,
-        "keyboard focus must reveal a foreground taskbar left hidden after passive activation");
-    expectExplicit(alternate, false, false,
-        "keyboard focus to a different foreground window must retain normal native activation");
-    expectExplicit(hidden, true, false, "passive focus must not undo activation suppression");
-    alternate.taskbar = {0, 1380, 2560, 1440};
-    expectExplicit(alternate, true, false, "keyboard focus must not add a reveal to an already visible taskbar");
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    alternate.protectedTaskbar = false;
-    expectExplicit(alternate, true, false, "disabled protection must not add keyboard reveals");
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    alternate.secondary = true;
-    expectExplicit(alternate, true, false, "primary TrayUI must not receive a secondary taskbar object");
 }
 
 void CheckNativeDesktopCaptureReadiness()
@@ -1471,6 +1440,100 @@ void CheckStatusBarInteraction()
         if (tray) { value.icon.emplace(); value.icon->key = key; value.key = "tray"; }
         return value;
     };
+    // A real edge click must survive both layouts and DPI changes, without
+    // stealing the last control or dispatching after the option is disabled.
+    for (const float scale : {.75f, 1.f, 1.25f, 2.f, 3.f})
+        for (const LONG height : {32L, 64L})
+        {
+            const LONG width = static_cast<LONG>(1920 * scale);
+            const auto edge = StatusBarShowDesktopTarget(width, height, scale);
+            Check(edge.left == width - static_cast<LONG>(std::ceil(8 * scale)) &&
+                edge.right == width && edge.top == 0 && edge.bottom == height,
+                "show-desktop hit target keeps the full right edge at every scale and merged height");
+            const std::vector<StatusBarItem> targets{
+                item("controlCenter", StatusBarAction::ControlCenter, {edge.left - 56, 0, edge.left, height}, false),
+                item("showDesktop", StatusBarAction::ShowDesktop, edge, false)};
+            Check(HitTestStatusBarItems(targets, {width - 1, height - 1}) == 1 &&
+                HitTestStatusBarItems(targets, {edge.left - 1, height - 1}) == 0 &&
+                !HitTestStatusBarItems(targets, {width, height - 1}),
+                "edge hit testing separates show desktop from the adjacent control and monitor");
+            StatusBarInteraction edgeInteraction;
+            edgeInteraction.Press(targets, {width - 1, 0}, false);
+            const auto release = edgeInteraction.Release(targets, {width - 1, 0}, false);
+            const auto invocation = ResolveStatusBarInvocation(targets, release.item, false);
+            Check(release.accepted && invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "a complete edge gesture resolves to the show-desktop production action");
+            edgeInteraction.Press(targets, {width - 1, 0}, false);
+            auto disabled = targets; disabled.pop_back();
+            edgeInteraction.Reconcile(targets, disabled);
+            Check(!edgeInteraction.Release(disabled, {width - 1, 0}, false).accepted &&
+                !HitTestStatusBarItems(disabled, {width - 1, 0}),
+                "disabling the edge removes its hit target and cancels a pending click");
+        }
+    for (const bool merged : {false, true})
+        for (const LONG width : {96L, 240L, 320L, 1920L})
+        {
+            const auto layout = LayoutRightStatusBar(width, 64, 1.f, 12, 180, 28,
+                std::vector<LONG>{28, 56}, 1, merged, 8);
+            for (const auto bounds : {layout.clock, layout.notifications, layout.right[0], layout.right[1]})
+                Check(IsRectEmpty(&bounds) || bounds.right <= width - 8,
+                    "even narrow-layout fallback keeps visible controls out of the show-desktop edge");
+        }
+    {
+        // Reproduce the press/release/invocation path. Only native popup hiding
+        // is replaced: clearing twice used to erase the visible tip and deadline.
+        const std::vector<StatusBarItem> targets{
+            item("controlCenter", StatusBarAction::ControlCenter, {160, 0, 296, 32}, false),
+            item("showDesktop", StatusBarAction::ShowDesktop, {312, 0, 320, 32}, false)};
+        StatusBarInteraction click;
+        NativeTooltipState tooltip;
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 100, 400);
+        click.hovered = 1;
+        int hides = 0, presses = 0;
+        const auto clearHover = [&] { ++hides; tooltip.Leave(); click.hovered.reset(); };
+        for (const bool doubleClick : {false, true})
+        {
+            Check(click.Press(targets, {319, 16}, false, doubleClick,
+                [&] { ++presses; }, clearHover) == StatusBarAction::None,
+                "show desktop still notifies the host and arms the pointer gesture");
+            const auto released = click.Release(targets, {319, 16}, false);
+            const auto invocation = ResolveStatusBarInvocation(targets, released.item, false);
+            Check(released.accepted && invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "retaining the tooltip must not swallow the show-desktop action");
+            click.PrepareActionHover(targets, released.item, false, clearHover);
+            Check(hides == 0 && click.hovered == 1 && tooltip.key == "bar/showDesktop" && tooltip.readyAt == 500,
+                "press and invocation retain the existing tooltip without restarting its hover deadline");
+        }
+        Check(presses == 2, "retaining the tooltip never suppresses host pointer notification");
+        click.Press(targets, {319, 16}, true, false, {}, clearHover);
+        Check(hides == 1 && tooltip.key.empty() && !click.hovered,
+            "the same edge's context click dismisses the tooltip before opening a menu");
+        const auto context = click.Release(targets, {319, 16}, true);
+        const auto contextInvocation = ResolveStatusBarInvocation(targets, context.item, true);
+        Check(context.accepted && contextInvocation && contextInvocation->action == StatusBarAction::Menu,
+            "tooltip retention does not alter the edge's context-menu routing");
+        tooltip.Enter("bar/controlCenter", L"Controls", {}, 600, 400); click.hovered = 0;
+        click.Press(targets, {319, 16}, false, false, {}, clearHover);
+        Check(hides == 2 && tooltip.key.empty(), "clicking the edge cannot retain another target's stale tooltip");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.Press(targets, {180, 16}, false, false, {}, clearHover);
+        Check(hides == 3 && tooltip.key.empty(), "clicking another button keeps normal tooltip dismissal");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.Press(targets, {305, 16}, false, false, {}, clearHover);
+        Check(hides == 4 && !click.hovered, "blank-area dismissal must not preserve the edge tooltip");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.PrepareActionHover(targets, {}, false, clearHover);
+        Check(hides == 5 && tooltip.key.empty(), "invalid invocation cannot retain a removed edge's tooltip");
+        // Negative control: replay the old window's unconditional pre-press
+        // hide with the same gesture; the preservation check must reject it.
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 100, 400); click.hovered = 1;
+        clearHover();
+        click.Press(targets, {319, 16}, false, false, {}, clearHover);
+        const auto legacyRelease = click.Release(targets, {319, 16}, false);
+        click.PrepareActionHover(targets, legacyRelease.item, false, clearHover);
+        Check(legacyRelease.accepted && tooltip.key.empty() && tooltip.readyAt == 0 && !click.hovered,
+            "the original unconditional hide reproduces the lost tooltip and hover deadline");
+    }
     const std::vector<StatusBarItem> before{
         item("menu", StatusBarAction::SystemMenu, {0, 0, 32, 32}, false),
         item("menu", StatusBarAction::Tray, {64, 0, 96, 32}, true),
@@ -1551,6 +1614,67 @@ void CheckStatusBarInteraction()
     state.Press(before, {70, 16}, false, true);
     Check(state.Release(before, {70, 16}, false).item == 1,
         "Task View suppression preserves tray double-click release delivery");
+
+    // Exercise scrolling, clipped hits and insertion together. In particular,
+    // dropping after the last visible icon must not append past hidden icons.
+    for (const LONG scale : {1L, 2L, 3L})
+    {
+        StatusBarTrayScroll scrolling;
+        const RECT viewport{100 * scale, 0, 170 * scale, 32 * scale};
+        scrolling.Arrange(viewport, 140 * scale);
+        Check(scrolling.Maximum() == 70 * scale && scrolling.offset == 0,
+            "tray overflow retains the entire content width without changing order");
+        Check(!scrolling.Wheel(-30, 28 * scale) && !scrolling.Wheel(-30, 28 * scale) &&
+            !scrolling.Wheel(-30, 28 * scale) && scrolling.Wheel(-30, 28 * scale) && scrolling.offset == 28 * scale,
+            "precision-wheel fragments accumulate to one complete tray scroll step");
+        Check(scrolling.EdgeDirection({101 * scale, 16 * scale}, 18 * scale) == -1 &&
+            scrolling.EdgeDirection({169 * scale, 16 * scale}, 18 * scale) == 1 &&
+            scrolling.EdgeDirection({135 * scale, 16 * scale}, 18 * scale) == 0 &&
+            scrolling.EdgeDirection({169 * scale, 40 * scale}, 18 * scale) == 0,
+            "only a real overflowing viewport edge requests drag auto-scroll");
+        Check(scrolling.Move(1000 * scale) && scrolling.offset == scrolling.Maximum() &&
+            !scrolling.Move(scale) && scrolling.EdgeDirection({169 * scale, 16 * scale}, 18 * scale) == 0,
+            "drag scrolling clamps and stops at the content end");
+        Check(scrolling.Reveal({30 * scale, 0, 58 * scale, 32 * scale}) && scrolling.offset == 0,
+            "keyboard reveal brings the first hidden tray cell back into view");
+        auto clipped = before;
+        clipped.clear();
+        for (int index = 0; index < 5; ++index)
+        {
+            auto value = item(("scroll-" + std::to_string(index)).c_str(), StatusBarAction::Tray, {}, true);
+            value.contentBounds = {viewport.left - 10 * scale + index * 28 * scale, 0,
+                viewport.left - 10 * scale + (index + 1) * 28 * scale, viewport.bottom};
+            IntersectRect(&value.bounds, &value.contentBounds, &viewport);
+            clipped.push_back(std::move(value));
+        }
+        clipped.push_back(item("tray", StatusBarAction::Tray, {170 * scale, 0, 198 * scale, 32 * scale}, false));
+        const auto drop = ResolveStatusBarTrayDrop(clipped, {169 * scale, 16 * scale}, 5 * scale, 2 * scale, viewport);
+        Check(drop && drop->pinned && drop->before == "scroll-3" && drop->indicator.right <= viewport.right,
+            "trailing clipped-cell drop inserts before the next hidden identity with an in-viewport marker");
+        Check(HitTestStatusBarItems(clipped, {171 * scale, 16 * scale}) == 5 &&
+            !HitTestStatusBarItems(clipped, {99 * scale, 16 * scale}),
+            "offscreen tray content cannot steal the chevron or a blank-area hit");
+        const auto unpin = ResolveStatusBarTrayDrop(clipped, {180 * scale, 16 * scale}, 5 * scale, 2 * scale, viewport);
+        Check(unpin && !unpin->pinned && EqualRect(&unpin->indicator, &clipped.back().bounds),
+            "scrollable tray retains the explicit chevron drop for unpinning");
+        state.focused = 2; state.MoveFocus(clipped, false);
+        Check(state.focused == 3 && !ResolveStatusBarInvocation(clipped, state.focused, false),
+            "keyboard traversal selects hidden tray identities but cannot invoke them before reveal");
+        state.Press(clipped, {110 * scale, 16 * scale}, false);
+        auto shifted = clipped;
+        for (auto& value : shifted) if (value.icon)
+        { OffsetRect(&value.contentBounds, -28 * scale, 0); IntersectRect(&value.bounds, &value.contentBounds, &viewport); }
+        Check(!state.Release(shifted, {110 * scale, 16 * scale}, false).accepted,
+            "scrolling between press and release cannot activate a replacement tray icon");
+        scrolling.Move(60 * scale); scrolling.Arrange(viewport, 84 * scale);
+        Check(scrolling.offset == 14 * scale, "removing tray icons clamps the previous scroll offset");
+        scrolling.Arrange(viewport, 28 * scale);
+        Check(scrolling.offset == 0 && !scrolling.Maximum() && !scrolling.wheelRemainder,
+            "overflow disappearing resets offset and wheel residue");
+        scrolling.Arrange({}, 140 * scale);
+        Check(!scrolling.Move(scale) && scrolling.offset == 0,
+            "an unavailable viewport never scrolls into invisible content");
+    }
 }
 
 struct StatusBarVisibilityTestState
@@ -1788,6 +1912,128 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    snowdesktop::tests::list_columns::Run(Check);
+    {
+        namespace single = snowdesktop::single_cell_widget;
+        for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
+                DesktopWidgetType::FolderMapping, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+        {
+            DesktopWidget widget;
+            widget.type = type;
+            widget.gridSpan = {1, 1};
+            Check(single::IsSingleCell(widget) && !widget.singleCellIconMode,
+                "all five native single-cell containers default to four-thumbnail widget mode");
+            widget.gridSpan = {1, 2};
+            Check(!single::IsSingleCell(widget), "single-column widgets are not compact single-cell entrances");
+        }
+        DesktopWidget lua;
+        lua.type = DesktopWidgetType::LuaScript;
+        lua.gridSpan = {1, 1};
+        Check(!single::IsSingleCell(lua), "Lua widget contracts do not inherit native storage presentation");
+        DesktopWidget dockPopup;
+        dockPopup.type = DesktopWidgetType::FolderMapping;
+        dockPopup.gridSpan = {1, 1};
+        dockPopup.gridCell.pageId = kDockPageId;
+        Check(!single::IsDesktopSingleCell(dockPopup),
+            "the internal Dock directory popup is never treated as a compact desktop entrance");
+        const auto arc = single::ResolveArc({0, 0, 64, 64}, 1.0f);
+        Check(arc.centerX == 64 && arc.centerY == 64 && arc.radius == 5 &&
+            single::HitArc(arc, {69, 64}) && single::HitArc(arc, {68, 68}) &&
+            !single::HitArc(arc, {63, 63}) && !single::HitArc(arc, {64, 64}) &&
+            !single::HitArc(arc, {32, 32}),
+            "the resize arc stays outside the icon without capturing the icon or its hollow corner");
+        const RECT first = single::ThumbnailCell({0, 0, 100, 100}, 0, 6);
+        const RECT fourth = single::ThumbnailCell({0, 0, 100, 100}, 3, 6);
+        Check(first.left == 6 && first.top == 6 && first.right == 50 && first.bottom == 50 &&
+            fourth.left == 50 && fourth.top == 50 && fourth.right == 94 && fourth.bottom == 94,
+            "four-thumbnail component mode fills the same compact grid as a collection");
+        const RECT tiny = single::ThumbnailIconRect({0, 0, 12, 12}, 6, 4, 16);
+        Check(tiny.left == 0 && tiny.top == 0 && tiny.right == 12 && tiny.bottom == 12,
+            "small-scale collection thumbnails retain the existing minimum while fitting the actual tile");
+    }
+    if (argc == 2 &&
+        (std::string_view(argv[1]) == "--dock-taskbar-exclusion" ||
+         std::string_view(argv[1]) == "--dock-taskbar-exclusion-negative-control"))
+    {
+        snowdesktop::tests::dock_task_window_filter::Run(Check,
+            std::string_view(argv[1]) == "--dock-taskbar-exclusion-negative-control");
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--dock-folder-order-negative-control")
+    {
+        snowdesktop::tests::dock_folder_order::Run(Check, true);
+        return failures == 0 ? 0 : 1;
+    }
+    snowdesktop::tests::dock_folder_order::Run(Check);
+    snowdesktop::tests::dock_task_window_filter::Run(Check);
+    {
+        namespace dot = snowdesktop::dock_attention_dot;
+        const auto closeTo = [](float actual, float expected) { return std::abs(actual - expected) < 0.0001f; };
+        const auto defaults = dot::Resolve(48.0f, 1.0f, 0.0f);
+        Check(closeTo(defaults.radius, 4.32f) && closeTo(defaults.cornerInset, 3.416f),
+            "default attention geometry retains the existing 48-pixel icon appearance");
+        const auto smallIcon = dot::Resolve(8.0f, 1.0f, 0.0f);
+        const auto largeIcon = dot::Resolve(96.0f, 1.0f, 0.0f);
+        Check(closeTo(smallIcon.radius, 2.0f) && closeTo(smallIcon.cornerInset, 1.85f) &&
+                closeTo(largeIcon.radius, 6.0f) && closeTo(largeIcon.cornerInset, 4.55f),
+            "default attention geometry retains tiny-icon and magnified-icon bounds");
+        const auto smaller = dot::Resolve(48.0f, 0.5f, 0.0f);
+        const auto larger = dot::Resolve(48.0f, 2.0f, 0.0f);
+        Check(closeTo(smaller.radius, 2.16f) && closeTo(larger.radius, 8.64f) &&
+                smaller.cornerInset == defaults.cornerInset && larger.cornerInset == defaults.cornerInset,
+            "attention size can change from 50 to 200 percent without shifting the center");
+        const auto inward = dot::Resolve(48.0f, 1.0f, -0.25f);
+        const auto outward = dot::Resolve(48.0f, 1.0f, 0.25f);
+        Check(closeTo(inward.cornerInset, 15.416f) && closeTo(outward.cornerInset, -8.584f) &&
+                inward.radius == defaults.radius && outward.radius == defaults.radius,
+            "negative attention offsets move inward and positive offsets move outward without resizing");
+        Check(closeTo(dot::Resolve(96.0f, 1.0f, 0.25f).cornerInset, -19.45f),
+            "attention offsets follow the rendered icon size during magnification");
+        Check(dot::NormalizeSizeScale(0.0f) == 0.5f && dot::NormalizeSizeScale(10.0f) == 2.0f &&
+                dot::NormalizeOffset(-1.0f) == -0.25f && dot::NormalizeOffset(1.0f) == 0.25f &&
+                dot::NormalizeSizeScale(std::numeric_limits<float>::quiet_NaN()) == 1.0f &&
+                dot::NormalizeOffset(std::numeric_limits<float>::infinity()) == 0.0f &&
+                dot::Resolve(0.0f, 1.0f, 0.0f).radius == 0.0f,
+            "invalid attention settings stay finite and within the supported range");
+    }
+    {
+        namespace attention = snowdesktop::dock_window_attention;
+        attention::Tracker tracker;
+        const HWND first = reinterpret_cast<HWND>(UINT_PTR{101});
+        const HWND sibling = reinterpret_cast<HWND>(UINT_PTR{102});
+        const HWND unrelated = reinterpret_cast<HWND>(UINT_PTR{103});
+        const std::vector<HWND> windows{first, sibling};
+        Check(!tracker.HasAny(first, windows), "a running application starts without an attention badge");
+        Check(!tracker.Flash(nullptr, {1, 2}, false) &&
+            !tracker.Flash(first, {0, 2}, false) &&
+            !tracker.Flash(first, {1, 0}, false) &&
+            !tracker.Flash(first, {1, 2}, true),
+            "invalid and already foreground windows cannot create attention requests");
+        Check(tracker.Flash(sibling, {1, 3}, false) &&
+            tracker.HasAny(first, windows) &&
+            !tracker.HasAny(unrelated, std::vector<HWND>{unrelated}),
+            "a non-representative flashing sibling lights only its application badge");
+        Check(!tracker.Flash(sibling, {1, 3}, false) && tracker.HasAny(first, windows),
+            "repeated flash pulses retain a steady badge without toggling it off");
+        Check(tracker.Flash(first, {1, 2}, false), "each sibling keeps its own attention request");
+        Check(tracker.Retain([first](HWND window, attention::WindowIdentity) {
+                return window != first;
+            }) && tracker.HasAny(first, windows),
+            "acknowledging one window preserves a different sibling's pending attention");
+        Check(tracker.Remove(sibling) && !tracker.HasAny(first, windows) &&
+            !tracker.Remove(sibling),
+            "destroying the last flashing window clears the application badge idempotently");
+        tracker.Flash(first, {1, 2}, false);
+        Check(tracker.Retain([](HWND, attention::WindowIdentity identity) {
+                return identity == attention::WindowIdentity{7, 8};
+            }) && !tracker.HasAny(first, windows),
+            "a recycled window handle cannot inherit a previous process or thread's badge");
+        Check(tracker.Flash(first, {7, 8}, false) &&
+            tracker.HasAny(sibling, windows),
+            "identity refinement and a changed representative retain the actual window request");
+        tracker.Clear();
+        Check(!tracker.HasAny(first, windows), "resetting attention tracking clears transient requests");
+    }
     {
         SYSTEMTIME time{};
         time.wYear = 2026; time.wMonth = 10; time.wDay = 11;
@@ -2085,6 +2331,38 @@ int main(int argc, char** argv)
             Check(registrations == 1 && placements == 2 && stable.Bounds().right == 72,
                 "moving a reserved Dock to another edge reuses its registration and commits one new geometry");
         }
+        {
+            // Replay Shell losing its registrations while keeping the same
+            // monitor and native window bounds. No real Explorer/work area is
+            // touched; only the SHAppBarMessage boundary is substituted.
+            std::vector<DWORD> restartMessages;
+            snowdesktop::StatusBarAppBar restarted([&](DWORD message, APPBARDATA&) -> UINT_PTR {
+                restartMessages.push_back(message);
+                return TRUE;
+            });
+            const HWND endpoint = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+            const RECT monitor{0, 0, 1920, 1080};
+            Check(restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor),
+                "the merged strip establishes its reservation before Explorer restarts");
+            const RECT previousBounds = restarted.Bounds();
+            restartMessages.clear();
+            restarted.ExplorerRestarted();
+            Check(!restarted.Registered() && restartMessages.empty(),
+                "Explorer replacement invalidates the registration without removing a new generation's bar");
+            const RECT unconstrained = restarted.RestoreWorkArea({0, 0, 1920, 1016});
+            Check(unconstrained.bottom == 1016,
+                "a lost AppBar cannot claim ownership of the replacement Explorer's work area");
+            const bool restored = restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor);
+            const RECT restoredBounds = restarted.Bounds();
+            Check(restored && restarted.Registered() && EqualRect(&previousBounds, &restoredBounds),
+                "the merged strip recovers its unchanged geometry in the new Explorer");
+            Check(restartMessages == std::vector<DWORD>{ABM_NEW, ABM_QUERYPOS, ABM_SETPOS},
+                "unchanged bounds still require one new Shell registration and position commit");
+            restartMessages.clear();
+            Check(restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor) &&
+                    restartMessages == std::vector<DWORD>{ABM_QUERYPOS},
+                "a recovered strip settles without repeatedly registering or committing its position");
+        }
         snowdesktop::StatusBarAppBar reservation([&](DWORD message, APPBARDATA& data) -> UINT_PTR {
             messages.push_back(message);
             if (message == ABM_QUERYPOS) data.rc.left = -1880;
@@ -2240,10 +2518,13 @@ int main(int argc, char** argv)
         using snowdesktop::StatusBarFullscreenCandidate;
         Check(StatusBarFullscreenCandidate(WS_POPUP,0,false,false) &&
                 !StatusBarFullscreenCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
+                StatusBarFullscreenCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
+                StatusBarFullscreenCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
+                !StatusBarFullscreenCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,0,false,true),
-            "fullscreen candidates exclude inactive overlays, shell helpers and decorated maximized windows");
+            "fullscreen candidates accept browser fullscreen retaining WS_MAXIMIZE, while excluding overlays, shell helpers and maximized windows retaining caption or resize frames");
         Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&
@@ -2262,9 +2543,11 @@ int main(int argc, char** argv)
     CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarHookLifecycle();
-    CheckTaskbarActivationRevealDispatch();
+    CheckTaskbarXamlReadiness();
+    CheckTaskbarMinimizeProtection();
     failures += RunTaskbarSymbolResolverTests();
     CheckNativeDesktopCaptureReadiness();
+    failures += RunExplorerIconVisibilityTests();
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
@@ -3241,6 +3524,37 @@ int main(int argc, char** argv)
     const auto standardPopupMetrics =
         popupLayout::ResolveMetrics(
             92, 116, 84, 108, 1.0f, 34);
+    for (const float scale : {0.75f, 1.0f, 1.5f, 2.0f})
+    {
+        const auto px = [scale](int value) { return static_cast<LONG>(std::lround(value * scale)); };
+        const RECT panel{0, 0, px(360), px(640)};
+        const RECT icons{px(18), px(54), px(342), px(620)};
+        const RECT scrollbar = snowdesktop::popup_scrollbar_layout::Viewport(panel, icons);
+        Check(scrollbar.left == icons.left && scrollbar.top == icons.top &&
+                scrollbar.bottom == icons.bottom && scrollbar.right == px(360),
+            "popup scrollbars must use the outer panel edge without changing the content's vertical range");
+        const auto axis = snowdesktop::widget_scroll_rules::ResolveScrollbarAxisGeometry(
+            scrollbar.top, scrollbar.bottom, px(1200), px(566), 0, scale);
+        const int thumbY = (axis.thumbStart + axis.thumbEnd) / 2;
+        Check(snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    axis, thumbY, px(356), scrollbar.right, scale) &&
+                !snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    axis, thumbY, icons.right - 1, scrollbar.right, scale),
+            "the popup scrollbar hit target must follow the edge track without covering the last icon column");
+    }
+    const RECT clippedScrollbar = snowdesktop::popup_scrollbar_layout::Viewport(
+        RECT{100, 200, 460, 840}, RECT{118, 180, 442, 860});
+    Check(clippedScrollbar.top == 200 && clippedScrollbar.bottom == 840 && clippedScrollbar.right == 460,
+        "popup scrollbar tracks must remain inside the panel when the content viewport extends beyond it");
+    RECT emptyScrollbar = snowdesktop::popup_scrollbar_layout::Viewport(RECT{0, 0, 360, 640}, RECT{});
+    Check(IsRectEmpty(&emptyScrollbar), "empty popup content must not create a scrollbar hit target");
+    const RECT controlsFrame{0, 0, 360, 640};
+    const RECT contentBeforeGutter{4, 80, 356, 620};
+    const RECT contentWithGutter = snowdesktop::popup_scrollbar_layout::ReserveContent(
+        controlsFrame, contentBeforeGutter, 14);
+    Check(contentWithGutter.left == 4 && contentWithGutter.right == 346 &&
+            contentWithGutter.top == 80 && contentWithGutter.bottom == 620 && controlsFrame.right == 360,
+        "group popup scrollbar space belongs only to the item viewport, preserving the full symmetric control frame");
     Check(
         standardPopupMetrics.cellWidth == 92 &&
             standardPopupMetrics.cellHeight == 116 &&
@@ -3285,10 +3599,10 @@ int main(int argc, char** argv)
         popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, groupPopupOverhead) == 456,
         "complete group popup compensation must still fit a short screen work area");
     Check(
-        popupLayout::ResolveGridColumnCount(552, 84, 1.0f) == 5 &&
-            popupLayout::ResolveGridColumnCount(300, 84, 1.0f) == 3 &&
-            popupLayout::ResolveGridColumnCount(40, 84, 1.0f) == 1 &&
-            popupLayout::ResolveGridColumnCount(828, 126, 1.0f) == 5,
+        popupLayout::ResolveGridColumnCount(552, 84) == 5 &&
+            popupLayout::ResolveGridColumnCount(300, 84) == 3 &&
+            popupLayout::ResolveGridColumnCount(40, 84) == 1 &&
+            popupLayout::ResolveGridColumnCount(828, 126) == 5,
         "native popup grids must fit their own width and scaled icon metrics instead of desktop widget spans");
     Check(
         popupLayout::DetailsVisible(
@@ -3345,10 +3659,6 @@ int main(int argc, char** argv)
                 headerBounds.sortButtonTop -
                 headerBounds.sortButtonBottom) <= 1,
             "folder popup title and sort button must share a vertical center");
-        Check(
-            headerBounds.sortLabelOffsetY ==
-                popupLayout::ScaleDimension(2, scale),
-            "folder popup sort labels must retain their downward optical offset");
         // A Dock collection can have empty desktop bounds. Its title editor
         // must track the visible popup even on a monitor with negative coordinates.
         const RECT popup{ -1200, -600, -640, 40 };
@@ -4006,6 +4316,66 @@ int main(int argc, char** argv)
             bottomTooltip.bottom <= 176,
         "a titleless tooltip near the lower edge must flip above its icon and remain inside the Collection frame");
 
+    // Scrolling columns use fixed horizontal geometry; vertical row gaps have
+    // an independent 10-to-500 percent range.
+    const RECT independentViewport{0, 0, 360, 500};
+    const auto independentDefault = localLayout::ResolveGrid(
+        independentViewport, 3, 0, 40, 80, {1.0f, 1.0f});
+    const auto independentY = localLayout::ResolveGrid(
+        independentViewport, 3, 0, 40, 80, {1.0f, 5.0f});
+    Check(independentY.horizontal.cell == independentDefault.horizontal.cell &&
+            independentY.horizontal.gap == independentDefault.horizontal.gap &&
+            localLayout::ItemRect(independentY, 3).top -
+            localLayout::ItemRect(independentY, 0).top == 136 &&
+            localLayout::ContentHeight(independentY, 6) == 272,
+        "500-percent vertical scrolling spacing changes row positions and content height without changing columns");
+    const auto firstDefaultTitle = localLayout::ItemRect(independentDefault, 0);
+    const auto lastDefaultTitle = localLayout::ItemRect(independentDefault, 2);
+    for (int percentage = 10; percentage <= 500; ++percentage)
+    {
+        const auto rowStep = localLayout::ResolveGrid(
+            independentViewport, 3, 0, 40, 80, {0.1f, percentage / 100.0f});
+        Check(localLayout::ItemRect(rowStep, 0).left == firstDefaultTitle.left &&
+                localLayout::ItemRect(rowStep, 2).right == lastDefaultTitle.right &&
+                rowStep.horizontal.cell == independentDefault.horizontal.cell &&
+                rowStep.horizontal.gap == independentDefault.horizontal.gap &&
+                rowStep.horizontal.count == 3,
+            "every vertical spacing step must keep title widths, horizontal gaps, outside padding and column capacity fixed");
+    }
+    const auto narrowDefault = localLayout::ResolveGrid(
+        {0, 0, 380, 500}, 4, 0, 90, 80, {1.0f, 1.0f});
+    Check(narrowDefault.horizontal.count == 4 &&
+            narrowDefault.horizontal.gap == 5 &&
+            localLayout::ItemRect(narrowDefault, 3).right <= 380,
+        "100-percent scrolling spacing preserves columns when the baseline gap is limited by minimum cell width");
+    const auto zeroGapExpanded = localLayout::ResolveGrid(
+        {0, 0, 360, 500}, 4, 0, 90, 80, {2.0f, 1.0f});
+    Check(zeroGapExpanded.horizontal.gap == 0 &&
+            zeroGapExpanded.horizontal.count == 4 && zeroGapExpanded.horizontal.cell == 90 &&
+            localLayout::ItemRect(zeroGapExpanded, 0).left == 0 &&
+            localLayout::ItemRect(zeroGapExpanded, 3).right == 360,
+        "scrolling columns ignore the old horizontal factor and preserve the fixed icon footprint");
+    const auto denseDefault = localLayout::ResolveGrid(
+        {0, 0, 100, 500}, 30, 0, 3, 8, {1.0f, 1.0f});
+    Check(denseDefault.horizontal.count == 30,
+        "pixel rounding at 100 percent cannot silently increase the saved grid column capacity");
+    const auto independentList = localLayout::ResolveList(
+        independentViewport, 38, {1.0f, 0.1f});
+    const auto spaciousList = localLayout::ResolveList(
+        independentViewport, 38, {1.0f, 5.0f});
+    Check(independentList.vertical.gap == 1 && spaciousList.vertical.gap == 27 &&
+            independentList.horizontal.cell == spaciousList.horizontal.cell &&
+            localLayout::ItemRect(spaciousList, 1).top -
+                localLayout::ItemRect(spaciousList, 0).top == 65,
+        "list row spacing has its own full 10-to-500 percent range and preserves list width");
+    Check(layoutSpacing::ResolveStoredRowSpacing(std::nullopt, 0.2f) == 0.5f &&
+            layoutSpacing::ResolveStoredRowSpacing(std::nullopt, 1.4f) == 1.4f &&
+            layoutSpacing::ResolveStoredRowSpacing(0.1f, 1.4f) == 0.1f &&
+            layoutSpacing::ResolveStoredRowSpacing(5.0f, 1.4f) == 5.0f &&
+            layoutSpacing::ResolveStoredRowSpacing(9.0f, 1.4f) == 5.0f &&
+            layoutSpacing::ClampScale(5.0f) == 2.0f,
+        "row settings preserve 500 percent on reload and clamp above it without widening the global layout range");
+
     const RECT roomyViewport{
         0, 0,
         pageVisual.minimumGridWidth * 4 + 160,
@@ -4027,7 +4397,7 @@ int main(int argc, char** argv)
             defaultGaps.horizontal.gap <= expandedGaps.horizontal.gap &&
             compactGaps.vertical.gap <= defaultGaps.vertical.gap &&
             defaultGaps.vertical.gap <= expandedGaps.vertical.gap,
-        "the one layout-spacing value must drive both local grid axes");
+        "uniform fixed-grid callers retain their shared spacing on both axes");
     Check(expandedGaps.horizontal.cell >= pageVisual.minimumGridWidth &&
             expandedGaps.vertical.cell >= pageVisual.minimumGridHeight,
         "larger requested gaps must never consume the fixed icon and two-line title cell");
@@ -4454,6 +4824,68 @@ int main(int argc, char** argv)
         "DirectWrite factory must be available for the collapsed-title layout regression");
     if (dwriteFactory)
     {
+        namespace popupLayout = snowdesktop::collection_popup_layout;
+        for (const float fontSize : {16.0f, 24.0f})
+        {
+            Microsoft::WRL::ComPtr<IDWriteTextFormat> fanFormat;
+            const auto formatResult = dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr,
+                DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &fanFormat);
+            Check(SUCCEEDED(formatResult) && fanFormat,
+                "DirectWrite fan title format must be created");
+            if (!fanFormat) continue;
+            fanFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            fanFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            fanFormat->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+            Check(SUCCEEDED(dwriteFactory->CreateEllipsisTrimmingSign(fanFormat.Get(), &sign)) && sign,
+                "fan title ellipsis must be available for real overflow");
+            if (!sign) continue;
+            const std::array<std::wstring, 4> titles{
+                L"SnowDesktop", L"中文标题", L"app.txt   ", std::wstring(100, L'W')};
+            for (const float scale : {0.75f, 0.9f, 1.0f, 1.2f, 1.33f, 1.5f, 2.0f})
+            for (const bool mirrored : {false, true})
+            for (std::size_t i = 0; i < titles.size(); ++i)
+            {
+                const auto& title = titles[i];
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> natural;
+                Check(SUCCEEDED(dwriteFactory->CreateTextLayout(title.c_str(),
+                    static_cast<UINT32>(title.size()), fanFormat.Get(), 10000, 1000, &natural)),
+                    "fan title measurement must succeed");
+                if (!natural) continue;
+                DWRITE_TEXT_METRICS measured{};
+                Check(SUCCEEDED(natural->GetMetrics(&measured)), "fan title metrics must be available");
+                popupLayout::Metrics metrics;
+                metrics.scale = scale;
+                const auto pose = popupLayout::ResolveFanItem(metrics, {0, 0, 1000, 1000},
+                    0, false, mirrored);
+                const auto label = popupLayout::FitFanLabelToText(pose.label,
+                    measured.widthIncludingTrailingWhitespace, scale, mirrored);
+                const auto textRect = popupLayout::FanLabelTextRect(label, scale);
+                Check(label.left >= pose.label.left && label.right <= pose.label.right &&
+                        (mirrored ? label.left == pose.label.left : label.right == pose.label.right),
+                    "fitted fan labels retain their icon-side anchor and maximum width");
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> fitted;
+                Check(SUCCEEDED(dwriteFactory->CreateTextLayout(title.c_str(),
+                    static_cast<UINT32>(title.size()), fanFormat.Get(),
+                    static_cast<float>(textRect.right - textRect.left),
+                    static_cast<float>(textRect.bottom - textRect.top), &fitted)),
+                    "fan title drawing layout must be created");
+                if (!fitted) continue;
+                const DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                Check(SUCCEEDED(fitted->SetTrimming(&trim, sign.Get())),
+                    "fan title overflow policy must apply");
+                DWRITE_LINE_METRICS line{};
+                UINT32 count = 0;
+                Check(SUCCEEDED(fitted->GetLineMetrics(&line, 1, &count)) && count == 1,
+                    "fan titles remain single-line labels");
+                const bool overflow = i == titles.size() - 1;
+                Check((line.isTrimmed != FALSE) == overflow,
+                    "only genuinely oversized fan titles show an ellipsis, including fractional scales");
+            }
+        }
+
         Microsoft::WRL::ComPtr<
             IDWriteTextFormat> format;
         dwriteFactory->CreateTextFormat(
@@ -4880,14 +5312,14 @@ int main(int argc, char** argv)
         sortEntries,
         folderSort::kType, false);
     Check(
-        sortEntries[0].name == L"folder-a" &&
+        sortEntries[0].name == L"zeta.txt" &&
             sortEntries[1].name ==
-                L"folder-b" &&
+                L"alpha.png" &&
             sortEntries[2].name ==
-                L"zeta.txt" &&
+                L"folder-b" &&
             sortEntries[3].name ==
-                L"alpha.png",
-        "descending type sort keeps directories first and uses stable names for ties");
+                L"folder-a",
+        "descending type sort reverses type priority and puts directories last in descending name order");
     folderSort::StableSort(
         sortEntries,
         folderSort::kSize, true);
@@ -4946,6 +5378,7 @@ int main(int argc, char** argv)
             folderRange.begin == 3 &&
             folderRange.end == 8,
         "Dock insertion ranges must isolate main and folder ordering");
+    snowdesktop::tests::dock_insertion::Run(Check);
     Check(
         dockDrop::ShouldPreferMetadataReorder(
             true, false, false) &&
@@ -5802,6 +6235,38 @@ int main(int argc, char** argv)
     hoverReveal.Update({-1400,1079},negativeBottomMonitor,DockPosition::Bottom,2200,4,72);
     Check(!hoverAt({-1400,1079},2500) && hoverAt({-1400,1079},2750),
         "switching gesture mode cannot reuse elapsed time from the previous mode");
+    // Exercise the production detector with a controlled clock: a hard-coded
+    // 250 ms threshold would open long delays early and short delays too late.
+    for (const DWORD delay : {100UL, 850UL, 3000UL})
+    {
+        for (const DockPosition position : {DockPosition::Bottom, DockPosition::Top,
+                DockPosition::Left, DockPosition::Right})
+        {
+            const POINT edge = position == DockPosition::Bottom ? POINT{-1500, 1079} :
+                position == DockPosition::Top ? POINT{-1500, 0} :
+                position == DockPosition::Left ? POINT{-1920, 500} : POINT{-1, 500};
+            floatingDock::EdgeSwipeDetector detector;
+            const DWORD start = 0xffffffc0;
+            const auto update = [&](POINT point, DWORD tick) {
+                return detector.Update(point, negativeBottomMonitor, position,
+                    tick, 4, 72, floatingDock::kEdgeSwipeMaximumDurationMs, true, delay);
+            };
+            Check(!update(edge, start) && !update(edge, start + delay - 1) &&
+                    update(edge, start + delay),
+                "custom edge dwell fires at its threshold on all sides across tick wrap");
+            Check(!update(edge, start + delay + 100),
+                "a custom edge dwell still fires only once until the pointer leaves");
+            Check(!update({-960, 540}, 5000) && !update(edge, 5010) &&
+                    !update(edge, 5010 + delay - 1) && update(edge, 5010 + delay),
+                "leaving the edge restarts the complete configured dwell");
+        }
+    }
+    floatingDock::EdgeSwipeDetector swipeWithHoverDelay;
+    Check(!swipeWithHoverDelay.Update({-1500, 1079}, negativeBottomMonitor,
+            DockPosition::Bottom, 100, 4, 72, 480, false, 3000) &&
+            swipeWithHoverDelay.Update({-1428, 1079}, negativeBottomMonitor,
+                DockPosition::Bottom, 200, 4, 72, 480, false, 3000),
+        "the hover delay cannot slow down swipe invocation");
     for (const LONG origin : {0L,-1920L}) for (const float scale : {1.f,1.5f})
     {
         const RECT work{origin,40,origin+1920,1040};
@@ -6323,6 +6788,21 @@ int main(int argc, char** argv)
         "a closed application must keep the existing launch gesture");
     {
         const DockSettings defaults;
+        Check(defaults.summonOnAppMinimize,
+            "new and upgraded settings summon Dock on application minimization by default");
+        snowdesktop::floating_dock_rules::WindowActionPromotion promotion;
+        promotion.Begin(false, false);
+        Check(promotion.Release(false) && !promotion.Release(false),
+            "an animation-only promotion is released once when its presentation retires");
+        promotion.Begin(true, false);
+        Check(!promotion.Release(false), "minimizing must preserve a Dock that was already manually summoned");
+        promotion.Begin(false, false);
+        promotion.Retain();
+        Check(!promotion.Release(false), "an explicit summon during animation takes over the borrowed promotion");
+        promotion.Begin(false, false);
+        Check(!promotion.Release(true), "enabling minimize summon during animation retains the Dock");
+        promotion.Begin(false, true);
+        Check(!promotion.Release(false), "a retained summon must not acquire animation-only dismissal ownership");
         Check(!defaults.singleClickLaunchItems,
             "upgrading without a single-click preference must retain double-click launching");
         Check(rules::ShouldWaitForDockLaunchDoubleClick(
@@ -6338,6 +6818,27 @@ int main(int argc, char** argv)
                 Check(!rules::ShouldWaitForDockLaunchDoubleClick(enabled, action),
                     "running applications must keep immediate window commands in either area");
         }
+    }
+    {
+        const identityRules::ExecutableProduct launcher{L"EXAMPLE PUBLISHER", L"CHAT CLIENT LAUNCHER"};
+        const identityRules::ExecutableProduct payload{L"EXAMPLE PUBLISHER", L"CHAT CLIENT"};
+        Check(identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", payload),
+            "a stable launcher and its published payload share a pin after the launcher process exits");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT2\\APP\\CLIENT.EXE", payload) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"E:\\CHAT\\APP\\CLIENT.EXE", payload) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\OTHER.EXE", payload),
+            "the filename alone cannot merge another installation or another payload");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", {L"OTHER PUBLISHER", L"CHAT CLIENT"}) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", {L"EXAMPLE PUBLISHER", L"OTHER PRODUCT"}) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", {}, L"D:\\CHAT\\APP\\CLIENT.EXE", {}),
+            "missing or conflicting publisher/product evidence must preserve separate app identities");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", payload, L"D:\\CHAT\\APP\\CLIENT.EXE", payload),
+            "ordinary product metadata cannot reinterpret a program as a launcher merely because a child has the same filename");
+        const std::vector<std::wstring> aliases{L"D:\\CHAT\\APP\\CLIENT.EXE", L"D:\\CHAT\\8.1\\CLIENT.EXE"};
+        Check(identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, aliases[0], {}, {}, aliases) &&
+            identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, aliases[1], {}, {}, aliases) &&
+            !identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, L"D:\\OTHER\\APP\\CLIENT.EXE", {}, {}, aliases),
+            "all validated installed payloads share the original launcher pin without absorbing another installation");
     }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Executable,
@@ -7815,6 +8316,10 @@ int main(int argc, char** argv)
             // turns native foreground activation into an unbounded wait. The
             // injected request tests above do not exercise that Win32 hazard.
             {"src/app/dock/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
+            // The permutation tests exercise the rule; this boundary keeps
+            // asynchronous production grouping wired to that rule.
+            {"src/app/dock/app_dock_model.cpp", "void DesktopApp::NormalizeDockRecycleBinPosition()",
+             "void DesktopApp::LoadDockUsageStats()", {"StableNormalize("}},
             // A source's transition policy is setter-only. The overlay may
             // disable its own policy, but must never overwrite the app's one.
             {"src/dock/dock_window_transition.cpp", "bool DockWindowTransition::Start(",

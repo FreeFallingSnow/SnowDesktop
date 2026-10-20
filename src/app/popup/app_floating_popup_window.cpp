@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/ui_presentation_scope.h"
 #include "drag_drop/drag_input_rules.h"
 #include "popup_window_pair_z_order.h"
 #include "layout/popup_round_geometry.h"
@@ -1227,6 +1228,7 @@ POINT DesktopApp::FloatingPopupClientToDesktop(
 LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;

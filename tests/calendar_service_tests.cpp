@@ -38,6 +38,117 @@ void Write(
         std::ios::binary | std::ios::trunc);
     file << text;
 }
+
+void CheckReminderStorageRetry(const std::filesystem::path& root)
+{
+    using snowdesktop::calendar::CalendarSeries;
+    // Exercise each persisted side independently and both together, including
+    // a failed startup catch-up followed by an ordinary poll next minute.
+    for (const int failureMask : {1, 2, 3})
+    for (const bool startup : {false, true})
+    {
+        const auto path = root / (L"reminder-retry-" + std::to_wstring(failureMask) +
+            (startup ? L"-startup" : L"-regular")) / L"calendar.json";
+        const auto seriesPath = path.parent_path() / L"calendar-series.json";
+        CalendarNow now{"2026-07-30", 599};
+        CalendarService service(path, [&] { return now; });
+        Expect(service.Load(), "retry fixture loads an empty actual calendar store");
+        CalendarEvent event;
+        event.title = "Single retry"; event.date = now.date;
+        event.startMinutes = 600; event.endMinutes = 660; event.reminderMinutes = 0;
+        Expect(service.Create(event).ok, "create a persisted one-off reminder");
+        CalendarSeries series;
+        series.event = event; series.event.title = "Series retry";
+        series.rule.kind = "dates"; series.rule.dates = {now.date};
+        Expect(service.CreateSeries(series).ok, "create a persisted recurring reminder");
+        int singleCount = 0, seriesCount = 0;
+        const auto notify = [&](const CalendarEvent& delivered) {
+            if (delivered.seriesId.empty()) ++singleCount; else ++seriesCount;
+        };
+        service.SetNotificationCallback(notify);
+        if (!startup) service.CheckReminders(now, false);
+        HANDLE singleLock = INVALID_HANDLE_VALUE, seriesLock = INVALID_HANDLE_VALUE;
+        if (failureMask & 1) singleLock = CreateFileW(path.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (failureMask & 2) seriesLock = CreateFileW(seriesPath.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Expect(!(failureMask & 1) || singleLock != INVALID_HANDLE_VALUE,
+            "hold the one-off file against atomic replacement");
+        Expect(!(failureMask & 2) || seriesLock != INVALID_HANDLE_VALUE,
+            "hold the series file against atomic replacement");
+        now.minutes = startup ? 605 : 600;
+        service.CheckReminders(now, startup);
+        service.CheckReminders(now, false);
+        Expect(singleCount == ((failureMask & 1) ? 0 : 1) &&
+            seriesCount == ((failureMask & 2) ? 0 : 1),
+            "failed persistence emits no notification while the successful side deduplicates repeated same-minute polls");
+        if (singleLock != INVALID_HANDLE_VALUE) CloseHandle(singleLock);
+        if (seriesLock != INVALID_HANDLE_VALUE) CloseHandle(seriesLock);
+        ++now.minutes;
+        service.CheckReminders(now, false);
+        service.CheckReminders(now, false);
+        Expect(singleCount == 1 && seriesCount == 1,
+            "the next ordinary minute retries both failed stores once and never repeats a successfully delivered reminder");
+        CalendarService restarted(path, [&] { return now; });
+        restarted.SetNotificationCallback(notify);
+        Expect(restarted.Load(), "reload both actual calendar files after recovery");
+        restarted.CheckReminders(now, true);
+        Expect(singleCount == 1 && seriesCount == 1,
+            "successful retry persists deduplication across a process restart");
+    }
+}
+void CheckCalendarEditorOccurrenceSelection()
+{
+    using snowdesktop::CalendarEditorOccurrenceDate;
+    using snowdesktop::calendar::CalendarSeries;
+    CalendarSeries dates;
+    dates.rule.kind = "dates";
+    dates.rule.dates = {"2026-10-01", "2026-10-03", "2026-10-06"};
+    dates.exceptions["2026-10-01"].canceled = true;
+    dates.exceptions["2026-10-03"].event.date = "2026-10-04";
+    Expect(CalendarEditorOccurrenceDate(dates) == "2026-10-03",
+        "editor skips canceled dates and selects the original date of a moved occurrence");
+    Expect(CalendarEditorOccurrenceDate(dates, "2026-10-06") == "2026-10-06" &&
+        CalendarEditorOccurrenceDate(dates, "2026-10-01") == "2026-10-03",
+        "editor preserves a selected live occurrence and replaces a canceled one");
+    dates.exceptions["2026-10-03"].canceled = true;
+    dates.exceptions["2026-10-06"].canceled = true;
+    Expect(!CalendarEditorOccurrenceDate(dates),
+        "a series with all explicit dates canceled has no default occurrence");
+
+    CalendarSeries weekly;
+    weekly.rule.kind = "weekly";
+    weekly.rule.startDate = "2026-10-06"; // Tuesday, after the selected Monday.
+    weekly.rule.interval = 2;
+    weekly.rule.weekdays = {2};
+    Expect(CalendarEditorOccurrenceDate(weekly) == "2026-10-19",
+        "editor honors the anchored week interval when the start date is not an occurrence");
+    weekly.exceptions["2026-10-19"].canceled = true;
+    Expect(CalendarEditorOccurrenceDate(weekly) == "2026-11-02",
+        "editor moves to the next active week after a canceled occurrence");
+    weekly.rule.endDate = "2026-11-01";
+    Expect(!CalendarEditorOccurrenceDate(weekly),
+        "editor cannot choose an occurrence beyond the inclusive series end");
+    weekly.rule.interval = 0;
+    Expect(!CalendarEditorOccurrenceDate(weekly, "2026-11-02"),
+        "editor rejects an invalid interval before checking a preferred occurrence");
+
+    CalendarSeries monthly;
+    monthly.rule.kind = "monthly";
+    monthly.rule.startDate = "2026-04-01";
+    monthly.rule.monthDay = 31;
+    Expect(CalendarEditorOccurrenceDate(monthly) == "2026-05-31",
+        "editor skips short months for a monthly day 31 series");
+    monthly.rule.endDate = "2026-05-30";
+    Expect(!CalendarEditorOccurrenceDate(monthly),
+        "editor leaves occurrence selection empty when the date range contains no occurrence");
+    monthly.rule.startDate = "2024-02-01";
+    monthly.rule.endDate.clear();
+    monthly.rule.monthDay = 0;
+    Expect(CalendarEditorOccurrenceDate(monthly) == "2024-02-29",
+        "editor selects the correct final day in leap February");
+}
+
 void CheckNativeCalendarEditor(const std::filesystem::path& root)
 {
     using snowdesktop::SystemCalendarEditorState;
@@ -404,8 +515,10 @@ int wmain(int argc, wchar_t* argv[])
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
     CheckNativeCalendarEditor(root);
+    CheckCalendarEditorOccurrenceSelection();
     CheckSeries(root);
     CheckOccurrenceReminderEdits(root);
+    CheckReminderStorageRetry(root);
 
     const auto leap =
         CalendarService::GetDateInfo("2024-02-29");

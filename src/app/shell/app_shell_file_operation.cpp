@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "drag_drop/ole_async_operation.h"
 #include "platform/pending_window_message.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
@@ -11,93 +12,10 @@
 
 // Asynchronous path-based Shell file operations.
 
-namespace
-{
-
-void SetPerformedDropEffectData(IDataObject* dataObject, DWORD effect)
-{
-    if (!dataObject)
-        return;
-    const CLIPFORMAT format = static_cast<CLIPFORMAT>(
-        RegisterClipboardFormatW(CFSTR_PERFORMEDDROPEFFECT));
-    if (!format)
-        return;
-
-    HGLOBAL storage = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-    if (!storage)
-        return;
-    auto* value = static_cast<DWORD*>(GlobalLock(storage));
-    if (!value)
-    {
-        GlobalFree(storage);
-        return;
-    }
-    *value = effect;
-    GlobalUnlock(storage);
-
-    FORMATETC formatEtc{
-        format, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-    STGMEDIUM medium{};
-    medium.tymed = TYMED_HGLOBAL;
-    medium.hGlobal = storage;
-    if (FAILED(dataObject->SetData(&formatEtc, &medium, TRUE)))
-        ReleaseStgMedium(&medium);
-}
-
-class OleAsyncFileOperationCompletion final
-{
-public:
-    OleAsyncFileOperationCompletion(
-        ComPtr<IStream> stream, DWORD effect)
-        : stream_(std::move(stream)), effect_(effect)
-    {
-    }
-
-    ~OleAsyncFileOperationCompletion()
-    {
-        Finish(false);
-    }
-
-    void Finish(bool succeeded)
-    {
-        if (finished_.exchange(true))
-            return;
-        ComPtr<IDataObjectAsyncCapability> asyncCapability;
-        if (stream_)
-        {
-            CoGetInterfaceAndReleaseStream(
-                stream_.Detach(), IID_PPV_ARGS(&asyncCapability));
-        }
-        if (asyncCapability)
-        {
-            // A successful target-side move is optimized: the target already
-            // moved/deleted the source, so the source must not delete it again.
-            if (succeeded && effect_ == DROPEFFECT_NONE)
-            {
-                ComPtr<IDataObject> dataObject;
-                if (SUCCEEDED(asyncCapability.As(&dataObject)))
-                    SetPerformedDropEffectData(
-                        dataObject.Get(), DROPEFFECT_NONE);
-            }
-            asyncCapability->EndOperation(
-                succeeded ? S_OK : E_ABORT,
-                nullptr,
-                succeeded ? effect_ : DROPEFFECT_NONE);
-        }
-    }
-
-private:
-    std::atomic_bool finished_ = false;
-    ComPtr<IStream> stream_;
-    DWORD effect_ = DROPEFFECT_NONE;
-};
-
-}
-
 void DesktopApp::ReportPerformedDropEffect(
     IDataObject* dataObject, DWORD effect)
 {
-    SetPerformedDropEffectData(dataObject, effect);
+    snowdesktop::ole_async_operation::SetPerformedDropEffectData(dataObject, effect);
 }
 
 bool DesktopApp::QueueShellFileOperation(
@@ -130,6 +48,21 @@ bool DesktopApp::QueueShellFileOperation(
         return false;
     }
 
+    std::vector<std::wstring> removedPaths;
+    for (const auto& step : request.steps)
+        if (step.function == FO_DELETE || step.function == FO_MOVE)
+            removedPaths.insert(removedPaths.end(), step.sources.begin(), step.sources.end());
+    if (!removedPaths.empty())
+    {
+        auto callback = std::move(result->callback);
+        result->callback = [this, removedPaths = std::move(removedPaths),
+            callback = std::move(callback)](bool succeeded) {
+            // A cancelled/failed operation must retain its original ownership.
+            // Successful user deletions/moves must not become recoverable gaps.
+            if (succeeded) RemoveDesktopKeysFromWidgets(removedPaths);
+            if (callback) callback(succeeded);
+        };
+    }
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
         [completionWindow, result](bool succeeded) {
@@ -325,75 +258,16 @@ bool DesktopApp::QueueAsyncShellDrop(
 }
 
 bool DesktopApp::PrepareOleAsyncFileOperation(
-    IDataObject* dataObject,
-    DWORD completionEffect,
-    FileOperationCompletion completion,
-    FileOperationCompletion& asyncCompletion)
+    IDataObject* dataObject, DWORD completionEffect,
+    FileOperationCompletion completion, FileOperationCompletion& asyncCompletion)
 {
-    asyncCompletion = {};
-    const DWORD effect = completionEffect &
-        (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
-    if (!dataObject)
-        return false;
-
-    ComPtr<IDataObjectAsyncCapability> asyncCapability;
-    BOOL asyncMode = FALSE;
-    if (FAILED(dataObject->QueryInterface(
-            IID_PPV_ARGS(&asyncCapability))) ||
-        !asyncCapability ||
-        FAILED(asyncCapability->GetAsyncMode(&asyncMode)) ||
-        !asyncMode)
-        return false;
-
-    ComPtr<IStream> asyncStream;
-    if (FAILED(CoMarshalInterThreadInterfaceInStream(
-            IID_IDataObjectAsyncCapability,
-            asyncCapability.Get(), &asyncStream)) ||
-        !asyncStream)
-        return false;
-    if (FAILED(asyncCapability->StartOperation(nullptr)))
-    {
-        ComPtr<IDataObjectAsyncCapability> discarded;
-        CoGetInterfaceAndReleaseStream(
-            asyncStream.Detach(), IID_PPV_ARGS(&discarded));
-        return false;
-    }
-
-    std::shared_ptr<OleAsyncFileOperationCompletion> state;
-    try
-    {
-        state = std::make_shared<OleAsyncFileOperationCompletion>(
-            std::move(asyncStream), effect);
-        asyncCompletion = [state,
-            completion = std::move(completion)](bool succeeded) mutable {
-            state->Finish(succeeded);
-            if (completion)
-                completion(succeeded);
-        };
-    }
-    catch (...)
-    {
-        if (state)
-        {
-            state->Finish(false);
-            return false;
-        }
-        ComPtr<IDataObjectAsyncCapability> cancelCapability;
-        CoGetInterfaceAndReleaseStream(
-            asyncStream.Detach(),
-            IID_PPV_ARGS(&cancelCapability));
-        if (cancelCapability)
-            cancelCapability->EndOperation(
-                E_OUTOFMEMORY, nullptr, DROPEFFECT_NONE);
-        return false;
-    }
-    return true;
+    return snowdesktop::ole_async_operation::Prepare(dataObject, completionEffect,
+        std::move(completion), asyncCompletion);
 }
 
 void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
 {
-    std::unique_ptr<ShellFileOperationUiCompletion> result(
-        reinterpret_cast<ShellFileOperationUiCompletion*>(lParam));
+    auto result = snowdesktop::TakeShellFileOperationCompletion(lParam);
     if (!result || exitRequested_)
         return;
     if (result->fileOperation && shellFileOperationInFlight_ > 0)
@@ -590,6 +464,10 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
         if (folder == snapshot.folders.end() || !folder->second.complete) continue;
         const auto oldOrder = widget.itemKeys;
         EnumerateFolderMappingEntries(widget, true, &folder->second);
+        // A folder-only result may arrive without a structural desktop reload.
+        // Reconcile the actual outputs before publishing the mapped view and
+        // saving its order; alphabetical enumeration is not the chosen drop.
+        ApplyPendingFolderPlacements(widget, widget.id, {});
         orderChanged |= oldOrder != widget.itemKeys;
         changed.insert(widget.id);
     }

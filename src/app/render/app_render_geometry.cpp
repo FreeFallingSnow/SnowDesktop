@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_helpers.h"
 
 // Render geometry and item layout metrics.
 
@@ -112,25 +113,29 @@ RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
     const int cellW = std::max<LONG>(1, bounds.right - bounds.left);
     const int cellH = std::max<LONG>(1, bounds.bottom - bounds.top);
     const int inset = std::max(1, QuickNavScale(2));
-    const int titleBandH = std::max(1, QuickNavScale((navigationSettings_.layout.fontSize + 4) * navigationSettings_.layout.labelLines));
+    const float fontSize = quickNavItemTextFormat_ ? quickNavItemTextFormat_->GetFontSize()
+        : static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
+    const int titleBandH = QuickNavigationItemTextHeight(fontSize, navigationSettings_.layout.labelLines);
     const int titleGap = std::max(1, QuickNavScale(10));
     const int maxIconW = std::max(1, cellW - inset * 2);
-    const int maxIconH = std::max(1, cellH - titleBandH - titleGap - inset);
+    const int maxIconH = std::max(1, cellH - titleBandH - titleGap - inset * 2);
     const int iconSz = std::max(1, std::min({
         QuickNavScale(navigationSettings_.layout.iconSize),
         maxIconW,
         maxIconH
     }));
     const int iconX = bounds.left + (cellW - iconSz) / 2;
-    const int iconY = bounds.top + inset;
+    // Center the complete icon/title group in the shared hover and hit cell.
+    const int visualHeight = iconSz + titleGap + titleBandH;
+    const int iconY = bounds.top + std::max(inset, (cellH - visualHeight) / 2);
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
-int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget) const
+int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget, bool popupHosted) const
 {
-    if (!widget) return desktopTitleLines_;
-    return widget->type == DesktopWidgetType::Collection && !widget->scrollContainerMode
-        ? largeFolderTitleLines_ : scrollingTitleLines_;
+    return snowdesktop::item_layout_rules::ResolveTitleLines(widget != nullptr,
+        widget && widget->type == DesktopWidgetType::Collection && !widget->scrollContainerMode,
+        popupHosted, desktopTitleLines_, largeFolderTitleLines_, scrollingTitleLines_);
 }
 
 RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines) const

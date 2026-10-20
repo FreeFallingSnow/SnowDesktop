@@ -42,6 +42,7 @@ enum class WidgetSettingKind
     Url,
     Date,
     Time,
+    Duration,
     AppSearch,
     AppReference,
     DesktopItemReference,
@@ -96,6 +97,7 @@ struct WidgetSettingFieldSchema
     std::string group;
     std::string validationMessage;
     std::string rawType;
+    std::string durationUnit = "seconds";
     std::string searchKey;
     std::string binding;
     std::string access = "read";
@@ -103,7 +105,7 @@ struct WidgetSettingFieldSchema
     std::string noResultsLabel;
     double minimum = 0.0;
     double maximum = 100.0;
-    double step = 1.0;
+    double step = 0.1;
     int minimumLength = -1;
     int maximumLength = -1;
     bool required = false;
@@ -214,6 +216,8 @@ struct WidgetSettingOpaqueState
     bool canChoose = false;
     bool canClear = false;
     std::string displayLabel;
+    // UTF-16 units, matching PasswordBox. Legacy records may not know it yet.
+    std::optional<std::uint32_t> secretLength;
 
     bool operator==(const WidgetSettingOpaqueState&) const = default;
 };
@@ -320,6 +324,21 @@ struct WidgetSettingMutationResult
     }
 };
 
+/** Returned only for an explicit settings editor read, never in snapshots. */
+struct WidgetSettingSecretReadResult
+{
+    WidgetSettingMutationResult result;
+    std::string plaintext;
+
+    void ClearPlaintext() noexcept
+    {
+        volatile char* data = plaintext.data();
+        for (std::size_t i = 0; i < plaintext.size(); ++i) data[i] = 0;
+        plaintext.clear();
+    }
+    ~WidgetSettingSecretReadResult() { ClearPlaintext(); }
+};
+
 struct WidgetSettingSearchResult
 {
     std::string id;
@@ -360,6 +379,7 @@ inline WidgetSettingKind WidgetSettingKindFromType(
     if (type == "url") return WidgetSettingKind::Url;
     if (type == "date") return WidgetSettingKind::Date;
     if (type == "time") return WidgetSettingKind::Time;
+    if (type == "duration") return WidgetSettingKind::Duration;
     if (type == "appSearch") return WidgetSettingKind::AppSearch;
     if (type == "appReference") return WidgetSettingKind::AppReference;
     if (type == "desktopItemReference")
@@ -521,6 +541,7 @@ inline bool NormalizeWidgetSettingValue(
         if (schema.required && !input.boolean)
             return fail("required");
         return true;
+    case WidgetSettingKind::Duration:
     case WidgetSettingKind::Integer:
     {
         long long value = 0;
@@ -531,6 +552,10 @@ inline bool NormalizeWidgetSettingValue(
         {
         }
         else return fail("expectedInteger");
+        if (schema.Kind() == WidgetSettingKind::Duration &&
+            !IsValidDurationSettingValue(static_cast<double>(value), schema.durationUnit,
+                schema.minimum, schema.maximum, schema.step))
+            return fail("invalidDuration");
         if (static_cast<double>(value) < schema.minimum ||
             static_cast<double>(value) > schema.maximum)
             return fail("outOfRange");
@@ -651,6 +676,7 @@ inline bool DecodeLegacyWidgetSettingValue(
             return false;
         }
         break;
+    case WidgetSettingKind::Duration:
     case WidgetSettingKind::Integer:
     case WidgetSettingKind::Color:
     {
@@ -710,6 +736,7 @@ inline bool EncodeLegacyWidgetSettingValue(
     case WidgetSettingKind::Boolean:
         output = normalized.boolean ? "1" : "0";
         return true;
+    case WidgetSettingKind::Duration:
     case WidgetSettingKind::Integer:
     case WidgetSettingKind::Color:
         output = std::to_string(normalized.integer);

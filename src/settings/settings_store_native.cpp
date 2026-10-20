@@ -1,4 +1,5 @@
 #include "settings_controller.h"
+#include "personalization_initialization.h"
 
 #include "common/l10n.h"
 #include "theme/theme_library_settings.h"
@@ -44,7 +45,7 @@ public:
         const std::wstring personalizationPath = GetPersonalizationPath();
         const bool personalizationExists = fileExists(
             personalizationPath, SettingsDomain::Personalization);
-        const bool personalizationLoaded = LoadPersonalization(
+        const bool personalizationLoaded = LoadInitialPersonalization(
             personalizationPath.c_str(),
             values.personalization,
             &categorizedTabHeightLoaded);

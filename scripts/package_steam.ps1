@@ -83,6 +83,8 @@ if (-not $SkipBuild) {
 }
 
 $runtimeFiles = @(
+    "SnowDesktopHookEntry.dll",
+    "SnowDesktopHookEntry32.dll",
     "SnowDesktopTaskbarHook.dll",
     "SnowDesktopDockMinimizeHook.dll",
     "SnowDesktopDockMinimizeHook32.dll",
@@ -94,6 +96,8 @@ $runtimeFiles = @(
 )
 $required = @(
     "SnowDesktop.exe",
+    "SnowDesktopHookEntry.dll",
+    "SnowDesktopHookEntry32.dll",
     "SnowDesktopTaskbarHook.dll",
     "SnowDesktopDockMinimizeHook.dll",
     "SnowDesktopDockMinimizeHook32.dll",

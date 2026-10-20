@@ -1,13 +1,16 @@
 #pragma once
 
 #include "icons/large_icon_config.h"
+#include "icons/icon_appearance.h"
 #include "dock/dock_layout_settings.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 
 namespace snowdesktop::layout_storage
 {
@@ -32,6 +35,19 @@ struct ItemRecord
     std::optional<LargeIconConfig> largeIcon;
 };
 
+struct MissingItemRecord
+{
+    std::string key;
+    int index = 0;
+    std::int64_t missingSince = 0;
+};
+
+struct MissingIconTargetRecord
+{
+    std::string target;
+    std::int64_t missingSince = 0;
+};
+
 struct WidgetRecord
 {
     std::string id;
@@ -45,6 +61,7 @@ struct WidgetRecord
     std::optional<std::string> customTitle;
     std::optional<std::string> titleMode;
     std::string demoIconCategory;
+    std::string dockIconAssetId;
     std::string sourceFolderPath;
     std::string sourceDesktopItemKey;
     std::string packageId;
@@ -58,8 +75,10 @@ struct WidgetRecord
     int folderSortMode = -1;
     bool folderSortAscending = true;
     bool autoCollect = false;
+    std::vector<std::string> autoCollectCategoryIds;
     bool dissolveWhenSingle = false;
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showDetails = false;
     bool detailShowModified = false;
@@ -79,6 +98,7 @@ struct WidgetRecord
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool singleCellIconMode = false;
     bool titleBarCollapsed = false;
     bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;
@@ -87,6 +107,7 @@ struct WidgetRecord
     std::optional<bool> bottomBarHover;
     std::optional<bool> userRenamed;
     std::vector<std::string> items;
+    std::vector<MissingItemRecord> missingItems;
     std::vector<std::string> childWidgets;
 };
 
@@ -99,9 +120,11 @@ struct DockRecord
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;
+    bool dateHeaders = false;
     std::vector<std::string> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;
@@ -136,12 +159,16 @@ struct Document
     std::optional<int> scrollingTitleLines;
     std::optional<bool> titleEllipsis;
     std::optional<float> iconSpacing;
+    std::optional<float> scrollingIconSpacingY;
+    std::optional<float> listRowSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;
     // Legacy layout-wide migration input. New layouts persist the widget field.
     std::optional<bool> collectionLargeFolderTitleless;
     std::optional<int> shortcutArrowMode;
+    std::optional<bool> groupComponentBadges;
     std::optional<bool> iconBeautifyEnabled;
+    std::optional<bool> beautifyFileThumbnails;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;
     std::optional<float> iconBeautifyGlassBlurRadius;
@@ -149,6 +176,9 @@ struct Document
     std::optional<float> iconBeautifyEdgeHighlightWidth;
     std::optional<float> iconBeautifyEdgeHighlightStrength;
     std::optional<EdgeLightSettings> iconBeautifyEdgeLight;
+    std::optional<PanelGradient> iconBeautifyBackgroundGradient;
+    std::optional<int> iconBeautifyBackgroundSource;
+    std::optional<int> iconBeautifyFilterMode;
 
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;
@@ -183,6 +213,9 @@ struct Document
     std::optional<float> iconBeautifyOutlineG;
     std::optional<float> iconBeautifyOutlineB;
     std::optional<float> iconBeautifyShadowStrength;
+    std::vector<std::pair<std::string, std::string>> iconOverrides;
+    std::vector<IconAppearanceRecord> iconBeautifyOverrides;
+    std::vector<MissingIconTargetRecord> missingIconTargets;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;
@@ -214,6 +247,8 @@ LoadResult LoadDocument(const std::filesystem::path& layoutPath,
 bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
 std::string SerializeDockLayout(const DockLayoutSettings& settings);
+std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items);
+std::string SerializeMissingIconTargets(const std::vector<MissingIconTargetRecord>& targets);
 // Clear placement records and reset Dock layout while preserving appearance.
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error = nullptr);
@@ -222,6 +257,10 @@ bool BuildClearedDocument(std::string_view contents, std::string& cleared,
 bool SaveClearedDocument(const std::filesystem::path& layoutPath,
     std::string_view cleared, std::string* error = nullptr);
 bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error = nullptr);
+// Acquire both delete rights before changing either member; failure leaves a
+// visible layout backup that the user can retry, including a missing companion.
+bool DeleteBackupPair(const std::filesystem::path& layoutPath,
     const std::filesystem::path& storagePath, std::string* error = nullptr);
 // Prepare a fresh layout/storage pair in a new, exclusive experiment directory.
 // The original layout, recovery file and component storage are never replaced.

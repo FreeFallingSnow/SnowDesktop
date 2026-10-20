@@ -1,11 +1,13 @@
 #include "../src/icons/large_icon_preset_rules.h"
 #include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "icons/icon_render_rules.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_motion.h"
 #include "icons/icon_bitmap_pixels.h"
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/icon_beautify.h"
+#include "icons/icon_control_source.h"
 #include "icons/large_icon_transform.h"
 #include "icons/large_icon_settings_rules.h"
 #include "icons/large_icon_visibility_rules.h"
@@ -13,11 +15,16 @@
 
 #include <iostream>
 #include <cstring>
+#include <utility>
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
+int RunIconLibraryTests();
+int RunIconPackProbe(const char* source, const char* destination);
+int RunReportedWebpFillProbe(const char* sourcePath, const char* outputDirectory);
 int RunLargeIconShellAssetTests();
 int RunLargeIconRenderingTests(const char* outputDirectory);
+int RunIconBitmapRenderingTests();
 int RunLargeIconSourceProbe(const char* shortcutPath, const char* outputDirectory);
 
 namespace
@@ -32,15 +39,21 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
 }
 #include "icon_hbitmap_cases.h"
+#include "icons/icon_bitmap_sizing_cases.h"
 } // namespace
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string_view(argv[1]) == "--icon-pack-probe") return RunIconPackProbe(argv[2], argv[3]);
+    if (argc == 2 && std::string_view(argv[1]) == "--icon-library") return RunIconLibraryTests();
+    if (argc == 4 && std::string_view(argv[1]) == "--webp-fill-probe") return RunReportedWebpFillProbe(argv[2], argv[3]);
     if (argc == 4 && std::string_view(argv[1]) == "--source-probe") return RunLargeIconSourceProbe(argv[2], argv[3]);
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
+    if (argc == 2 && std::string_view(argv[1]) == "--icon-bitmap-rendering") return RunIconBitmapRenderingTests();
     failures += RunLargeIconAssetTests();
     TestIconBitmapRowOrder();
+    CheckIconBitmapSizing();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
     {
@@ -412,6 +425,24 @@ int main(int argc, char** argv)
     config = {};
     Check(presets::DefaultEffect(config) == 2, "new foreground icons and explicit effect resets default to dynamic title");
     {
+        const std::string replacement = std::string(64, 'a') + ".webp";
+        for (const bool fill : {false, true})
+        {
+            auto c = config;
+            if (fill) { c.backgroundStyle = -2; c.content = 2; }
+            const auto original = c;
+            presets::UseLibraryIcon(c, {});
+            Check(c == original, "conversion without a replacement retains ordinary and Steam defaults");
+            presets::UseLibraryIcon(c, replacement);
+            Check(snowdesktop::LargeIconActiveContent(c) == 1 && snowdesktop::LargeIconActiveImage(c) == replacement &&
+                c.backgroundStyle == original.backgroundStyle && c.columns == original.columns && c.rows == original.rows,
+                "conversion retains the selected library source in the active foreground or Steam fill layer without changing layout");
+            JsonValue encoded; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+                "converted library source survives the production config codec");
+        }
+    }
+    {
         auto c = config; c.effect = presets::DefaultEffect(c);
         Check(presets::ApplyBackground(c, -2, true, true) && c.effect == 3 && presets::DefaultEffect(c) == 3,
             "choosing image fill replaces unsupported default title with gentle zoom");
@@ -479,8 +510,60 @@ int main(int argc, char** argv)
     const auto contour = snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96);
     Check(contour && contour->r == 32 && contour->g == 200 && contour->b == 112,
         "visible rounded contour survives transparent image margins and an opaque contrasting logo");
+    {
+        // The real replacement decode must preserve the same smart plate at rest
+        // and when magnified, rather than reclassifying a smaller WIC thumbnail.
+        const auto apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        snowdesktop::icon_image::Image original; original.width = original.height = 96; original.pixels = rounded;
+        std::string png, error;
+        const bool encoded = snowdesktop::icon_image::EncodePng(original, png, error);
+        Check(encoded, "replacement fixture encodes through production PNG codec");
+        for (const auto identity : {L"control:start", L"control:search", L"widget:collection", L"widget:files",
+            L"widget:folder", L"widget:group", L"item:C:/fixture/icon.lnk", L"recycle-empty:BIN", L"recycle-full:BIN"})
+        {
+            snowdesktop::icon_image::Image idle, hover;
+            const bool loaded = encoded && snowdesktop::icon_image::DecodeBytes(png, snowdesktop::icon_control::ReplacementSourcePixels(identity, 48), idle, error) &&
+                snowdesktop::icon_image::DecodeBytes(png, snowdesktop::icon_control::ReplacementSourcePixels(identity, 96), hover, error);
+            Check(loaded && idle.width == 96 && hover.width == 96 && idle.pixels == hover.pixels,
+                "idle replacement preserves the clear source used by its hover rendering");
+            if (loaded)
+            {
+                snowdesktop::icon_image::Image oldThumbnail;
+                Check(snowdesktop::icon_image::DecodeBytes(png, 64, oldThumbnail, error) && oldThumbnail.width != idle.width,
+                    "negative control reproduces the different source pixels selected by target-size thumbnails");
+                const auto fill = snowdesktop::icon_beautify::DetectPlateFill(idle.pixels, idle.width, idle.height);
+                Check(fill && fill->g == 200, "desktop, recycle and Dock replacements share stable production smart recognition");
+                auto style = snowdesktop::icon_beautify::MakePreset(snowdesktop::IconBeautifyPreset::FrostedGlassDark);
+                Check(snowdesktop::icon_beautify::Render(idle.pixels, idle.width, idle.height, style, fill) ==
+                    snowdesktop::icon_beautify::Render(hover.pixels, hover.width, hover.height, style,
+                        snowdesktop::icon_beautify::DetectPlateFill(hover.pixels, hover.width, hover.height)),
+                    "idle and hover replacements share the same beautified pixels before Dock scaling");
+            }
+        }
+        if (SUCCEEDED(apartment)) CoUninitialize();
+    }
     for (int y = 36; y < 60; ++y) for (int x = 36; x < 60; ++x) rounded[y * 96 + x] = 0;
     Check(!snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96), "a hollow icon silhouette is not mistaken for a solid background plate");
+    {
+        std::vector<std::uint32_t> rimmed(256 * 256, 0);
+        for (int y = 4; y < 252; ++y) for (int x = 4; x < 252; ++x)
+        {
+            const double dx = x + .5 - std::clamp(x + .5, 44., 212.);
+            const double dy = y + .5 - std::clamp(y + .5, 44., 212.);
+            if (dx * dx + dy * dy <= 40. * 40.) rimmed[y * 256 + x] = 0xff20c870;
+        }
+        for (int y = 48; y < 208; ++y) rimmed[y * 256 + 2] = rimmed[y * 256 + 253] = 0xff101010;
+        for (int x = 90; x < 166; ++x) rimmed[2 * 256 + x] = rimmed[253 * 256 + x] = 0xff101010;
+        rimmed[3 * 256 + 128] = rimmed[252 * 256 + 128] = 0xff20c870;
+        rimmed[128 * 256 + 3] = rimmed[128 * 256 + 252] = 0xff20c870;
+        const auto saved = rimmed;
+        const auto plate = snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256);
+        Check(plate && plate->g == 200 && rimmed == saved,
+            "thin detached outline and alpha seams still identify the inner plate without mutating original pixels");
+        for (int y = 80; y < 176; ++y) for (int x = 80; x < 176; ++x) rimmed[y * 256 + x] = 0;
+        Check(!snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256),
+            "seam tolerance never reclassifies a hollow symbol as an opaque icon plate");
+    }
     config.backgroundStyle = 7;
     Check(TextColor(config, 0x111111, 0x161616) == 0x161616, "component title color uses theme foreground even when luminance disagrees");
     config.autoTitleColor = false; config.titleColor = 0x123456;
@@ -509,6 +592,10 @@ int main(int argc, char** argv)
         "content/media thumbnails bypass icon beautification");
     Check(!rules::ShouldBeautify(false, false),
         "ordinary icons remain untouched when beautification is disabled");
+    Check(rules::ShouldBeautify(true, true, true) && rules::ShouldBeautify(true, false, true),
+        "thumbnail opt-in extends the enabled global style without excluding ordinary icons");
+    Check(!rules::ShouldBeautify(false, true, true) && !rules::ShouldBeautify(false, false, true),
+        "thumbnail opt-in cannot turn on disabled global beautification");
 
     Check(rules::ShouldRequestShellThumbnail(true, false, false),
         "full-quality non-application loads may request a Shell thumbnail");
@@ -525,13 +612,13 @@ int main(int argc, char** argv)
     Check(!rules::IsMediaThumbnail(false, false),
         "ordinary icons are not classified as media thumbnails");
 
-    const auto downscaled = rules::FitWithoutUpscaling(96, 96, 65, 65);
+    const auto downscaled = rules::FitToBounds(96, 96, 65, 65);
     Check(downscaled.width == 65 && downscaled.height == 65,
         "large square sources fit the requested target exactly");
-    const auto noUpscale = rules::FitWithoutUpscaling(64, 64, 96, 96);
-    Check(noUpscale.width == 64 && noUpscale.height == 64,
-        "undersized sources are never enlarged");
-    const auto aspectFit = rules::FitWithoutUpscaling(96, 64, 65, 65);
+    const auto upscaled = rules::FitToBounds(64, 64, 96, 96);
+    Check(upscaled.width == 96 && upscaled.height == 96,
+        "low-resolution icon sources fill the requested layout size");
+    const auto aspectFit = rules::FitToBounds(96, 64, 65, 65);
     Check(aspectFit.width == 65 && aspectFit.height == 43,
         "non-square thumbnails keep their aspect ratio");
 

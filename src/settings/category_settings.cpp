@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file category_settings.cpp
  * @brief 桌面文件分类设置持久化与规则匹配
@@ -479,8 +481,7 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
     CategorySettings normalized = settings;
     NormalizeCategorySettings(normalized);
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
 
     file << "{\n";
     file << "  \"ruleSyntaxVersion\": 2,\n";
@@ -501,7 +502,7 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
     }
     file << "  ]\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }
 
 std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings)

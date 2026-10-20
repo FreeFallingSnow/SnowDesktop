@@ -1,10 +1,12 @@
 #include "dock_window_transition.h"
-#include "dock_minimize_protocol.h"
-#include "dock_window_source_cloak.h"
-#include "dock_window_rules.h"
-#include "settings/animation_settings.h"
-#include "platform/shell_overlay_window.h"
 #include "diagnostics/performance_trace.h"
+#include "dock_attraction_timeline.h"
+#include "dock_genie_timeline.h"
+#include "dock_minimize_protocol.h"
+#include "dock_window_rules.h"
+#include "dock_window_source_cloak.h"
+#include "platform/shell_overlay_window.h"
+#include "settings/animation_settings.h"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +21,8 @@ namespace
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
 std::atomic<unsigned> presentationWaitJobs{0};
+std::atomic<unsigned> sceneRetirementJobs{0};
+constexpr UINT kRetireSceneWindow = WM_APP + 51;
 
 BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
 {
@@ -35,6 +39,46 @@ bool IsUsableRect(const RECT& rect)
         rect.bottom - rect.top > 1;
 }
 
+snowdesktop::dock_genie::Rect DeformationRect(RECT rect) noexcept
+{
+    return {static_cast<double>(rect.left), static_cast<double>(rect.top), static_cast<double>(rect.right),
+            static_cast<double>(rect.bottom)};
+}
+
+struct GenieSourceBand
+{
+    D2D1_RECT_F clip;
+    RECT crop;
+};
+
+GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge edge, std::size_t index,
+                                       bool attraction = false) noexcept
+{
+    const float width = static_cast<float>(size.cx), height = static_cast<float>(size.cy);
+    const float begin = static_cast<float>(index) / snowdesktop::dock_genie::StripCount;
+    const float end = static_cast<float>(index + 1) / snowdesktop::dock_genie::StripCount;
+    // Preserve the fractional overlap, with integer crops providing its
+    // bilinear sampling neighbours and no change to the image's pixel scale.
+    const auto cell = snowdesktop::dock_attraction::SourceCell(index);
+    const D2D1_RECT_F clip =
+        attraction ? D2D1::RectF(std::max(0.0f, static_cast<float>(cell.left) * width - 0.5f),
+                                 std::max(0.0f, static_cast<float>(cell.top) * height - 0.5f),
+                                 std::min(width, static_cast<float>(cell.right) * width + 0.5f),
+                                 std::min(height, static_cast<float>(cell.bottom) * height + 0.5f))
+        : snowdesktop::dock_genie::Vertical(edge)
+            ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f), width, std::min(height, end * height + 0.75f))
+            : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0, std::min(width, end * width + 0.75f), height);
+    RECT crop{static_cast<LONG>(std::floor(clip.left)), static_cast<LONG>(std::floor(clip.top)),
+        static_cast<LONG>(std::ceil(clip.right)), static_cast<LONG>(std::ceil(clip.bottom))};
+    // The shared-image API requires dimensions above one pixel, even when
+    // an individual band of a tiny source window is subpixel-sized.
+    crop.right = std::min(size.cx, std::max(crop.right, crop.left + 2));
+    crop.bottom = std::min(size.cy, std::max(crop.bottom, crop.top + 2));
+    crop.left = std::min(crop.left, crop.right - 2);
+    crop.top = std::min(crop.top, crop.bottom - 2);
+    return {clip, crop};
+}
+
 bool SystemWindowAnimationsEnabled()
 {
     BOOL compositionEnabled = FALSE;
@@ -48,8 +92,11 @@ bool SystemWindowAnimationsEnabled()
 
 double TransitionDuration(int effect) noexcept
 {
-    return (effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0) *
-        snowdesktop::animation::RuntimeDurationScale();
+    return (effect == 4   ? 420.0
+            : effect == 3 ? 360.0
+            : effect == 2 ? 180.0
+                          : 240.0) *
+           snowdesktop::animation::RuntimeDurationScale();
 }
 
 double MonotonicTimeMilliseconds() noexcept
@@ -97,6 +144,118 @@ struct DockWindowTransition::PresentationBarrier
     std::atomic<bool> completed{false};
     HRESULT result = E_PENDING;
 };
+
+// Reserve the complete retirement owner before publishing a scene. No
+// allocation or fallible thread-pool submission is needed during cancellation.
+struct DockWindowTransition::RetiredScene
+{
+    std::atomic<unsigned> references{1};
+    std::atomic<bool> windowDestroyed{false};
+    std::atomic<bool> completed{false};
+    PTP_WORK work = nullptr;
+    HWND window = nullptr;
+    HANDLE token = nullptr;
+    HWND source = nullptr;
+    snowdesktop::dock_source_cloak::Owner owner;
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
+    Microsoft::WRL::ComPtr<IDCompositionTarget> target;
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
+    Microsoft::WRL::ComPtr<IDCompositionScaleTransform> scale;
+    Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
+    Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> strips;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> triangles;
+    snowdesktop::dock_thumbnail::SharedVisual image, previousImage;
+    std::vector<snowdesktop::dock_thumbnail::SharedVisual> images, previousImages;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> wait;
+    std::function<BOOL(HWND, UINT, WPARAM, LPARAM)> post;
+
+    void ReleaseResources() noexcept
+    {
+        // Thumbnail unregistration and COM release belong to this worker too.
+        // Keep the resource budget until those releases have finished.
+        image.Reset(); previousImage.Reset();
+        images.clear(); previousImages.clear();
+        strips.clear(); triangles.clear();
+        clip.Reset(); effect.Reset(); scale.Reset(); visual.Reset();
+        target.Reset(); device.Reset();
+    }
+    void Release() noexcept
+    {
+        if (references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete this;
+    }
+    ~RetiredScene()
+    {
+        ReleaseResources();
+        if (work) CloseThreadpoolWork(work);
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+    }
+};
+
+DockWindowTransition::DockWindowTransition() = default;
+
+bool DockWindowTransition::ReserveSceneRetirement()
+{
+    if (sceneRetirement_) return true;
+    if (sceneRetirementJobs.fetch_add(1, std::memory_order_relaxed) >= 4)
+    {
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    auto state = std::unique_ptr<RetiredScene>(new (std::nothrow) RetiredScene());
+    if (!state)
+    {
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    try { state->wait = cleanupWait_; state->post = retirementPost_; }
+    catch (...) { return false; }
+    state->work = CreateThreadpoolWork(RunRetiredScene, state.get(), nullptr);
+    if (!state->work) return false;
+    sceneRetirement_ = std::move(state);
+    return true;
+}
+
+void CALLBACK DockWindowTransition::RunRetiredScene(
+    PTP_CALLBACK_INSTANCE instance, void* context, PTP_WORK)
+{
+    CallbackMayRunLong(instance);
+    auto* state = static_cast<RetiredScene*>(context);
+    try
+    {
+        if (state->wait) state->wait(state->device.Get());
+        else if (state->device && SUCCEEDED(state->device->WaitForCommitCompletion())) DwmFlush();
+    }
+    catch (...) { /* A failed acknowledgement still retires this hidden scene. */ }
+    // The source-thread recovery timer can finish a timed-out release while
+    // composition is stalled. Otherwise retain this exact old lease and retry
+    // away from the UI. A newer owner is never released by this completion.
+    while (state->source && IsWindow(state->source) &&
+        snowdesktop::dock_source_cloak::SameOwner(state->source, state->owner))
+    {
+        if (SUCCEEDED(snowdesktop::dock_source_cloak::Release(state->source, state->owner))) break;
+        Sleep(100);
+    }
+    state->ReleaseResources();
+    state->completed.store(true, std::memory_order_release);
+    // The HWND owns a second reference and keeps its budget until NCDESTROY.
+    // Failed notification still has this worker owner and can be retried.
+    while (state->window && !state->windowDestroyed.load(std::memory_order_acquire))
+    {
+        BOOL posted = FALSE;
+        try
+        {
+            posted = state->post ? state->post(state->window, kRetireSceneWindow,
+                reinterpret_cast<WPARAM>(state->token), reinterpret_cast<LPARAM>(state)) :
+                PostMessageW(state->window, kRetireSceneWindow,
+                    reinterpret_cast<WPARAM>(state->token), reinterpret_cast<LPARAM>(state));
+        }
+        catch (...) {}
+        if (posted) break;
+        Sleep(30);
+    }
+    state->Release();
+}
 
 void CALLBACK DockWindowTransition::RunPresentationBarrier(
     PTP_CALLBACK_INSTANCE instance, void* context)
@@ -340,49 +499,54 @@ RECT ResolveDockWindowImageHostRect(
     };
 }
 
-std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(
-    RECT host, std::span<const RECT> monitors) noexcept
+std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(RECT host, std::span<const RECT> monitors) noexcept
 {
     const auto valid = [](RECT rect) { return rect.right > rect.left && rect.bottom > rect.top; };
-    if (!valid(host) || monitors.empty()) return std::nullopt;
+    if (!valid(host) || monitors.empty())
+        return std::nullopt;
     const auto covers = [](RECT rect, RECT monitor) {
-        return rect.left <= monitor.left && rect.top <= monitor.top &&
-            rect.right >= monitor.right && rect.bottom >= monitor.bottom;
+        return rect.left <= monitor.left && rect.top <= monitor.top && rect.right >= monitor.right &&
+               rect.bottom >= monitor.bottom;
     };
-    std::array<RECT, 4> candidates{host, host, host, host};
     bool fullscreen = false;
     for (const RECT monitor : monitors)
     {
-        if (!valid(monitor)) return std::nullopt;
-        if (!covers(host, monitor)) continue;
+        if (!valid(monitor))
+            return std::nullopt;
+        if (!covers(host, monitor))
+            continue;
         fullscreen = true;
-        candidates[0].left = std::max(candidates[0].left, monitor.left + 1);
-        candidates[1].top = std::max(candidates[1].top, monitor.top + 1);
-        candidates[2].right = std::min(candidates[2].right, monitor.right - 1);
-        candidates[3].bottom = std::min(candidates[3].bottom, monitor.bottom - 1);
     }
-    if (!fullscreen) return host;
+    if (!fullscreen)
+        return host;
     std::optional<RECT> best;
     std::uint64_t largestArea = 0;
-    for (const RECT candidate : candidates)
+    // Offset displays may need different guarded edges. A single edge cannot
+    // uncover both monitors; still remove at most one pixel from any edge.
+    for (unsigned edges = 1; edges < 16; ++edges)
     {
-        if (!valid(candidate) ||
-            static_cast<std::int64_t>(candidate.left) - host.left > 1 ||
-            static_cast<std::int64_t>(candidate.top) - host.top > 1 ||
-            static_cast<std::int64_t>(host.right) - candidate.right > 1 ||
-            static_cast<std::int64_t>(host.bottom) - candidate.bottom > 1)
+        const RECT candidate{host.left + ((edges & 1u) ? 1 : 0), host.top + ((edges & 2u) ? 1 : 0),
+                             host.right - ((edges & 4u) ? 1 : 0), host.bottom - ((edges & 8u) ? 1 : 0)};
+        if (!valid(candidate))
             continue;
-        if (std::any_of(monitors.begin(), monitors.end(),
-                [&](RECT monitor) { return covers(candidate, monitor); })) continue;
+        if (std::any_of(monitors.begin(), monitors.end(), [&](RECT monitor) { return covers(candidate, monitor); }))
+            continue;
         const auto area = static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.right) - candidate.left) *
-            static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.bottom) - candidate.top);
-        if (area > largestArea) { best = candidate; largestArea = area; }
+                          static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.bottom) - candidate.top);
+        if (area > largestArea)
+        {
+            best = candidate;
+            largestArea = area;
+        }
     }
     return best;
 }
 
 DockWindowTransition::~DockWindowTransition()
 {
+    if (animationScheduler_ && minimizeObservationToken_)
+        animationScheduler_->Cancel(minimizeObservationToken_);
+    pendingMinimizes_.Clear();
     Cancel();
     if (compositionTarget_)
         compositionTarget_->SetRoot(nullptr);
@@ -414,20 +578,23 @@ bool DockWindowTransition::Initialize(
     compositionDevice_.Reset();
     if (compositionDevice)
         DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&compositionDevice_));
+    const bool registered = RegisterWindowClass();
+    if (registered) EnsureWindow();
+    return registered;
+}
+
+bool DockWindowTransition::RegisterWindowClass()
+{
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
+    windowClass.cbWndExtra = sizeof(LONG_PTR);
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance_;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName =
         kDockWindowTransitionClassName;
-    const bool registered =
-        RegisterClassExW(&windowClass) != 0 ||
-        GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    if (registered)
-        EnsureWindow();
-    return registered;
+    return RegisterClassExW(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
 bool DockWindowTransition::EnsureWindow()
@@ -436,6 +603,9 @@ bool DockWindowTransition::EnsureWindow()
         return true;
     if (!instance_)
         return false;
+    // Another initialized transition can retire its last HWND and unregister
+    // the shared class while this object temporarily has no presentation HWND.
+    if (!RegisterWindowClass()) return false;
 
     hwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         kDockWindowTransitionExStyle,
@@ -480,10 +650,88 @@ bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
     HWND keepBelowWindow)
 {
+    ObserveMinimize(sourceWindow, dockRect, true);
     return Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Minimize,
         {}, keepBelowWindow);
+}
+
+void DockWindowTransition::SetMinimizeCompletionCallbacks(MinimizeTargetProvider target,
+    std::function<void(const MinimizeTarget&)> completed)
+{
+    if (animationScheduler_ && minimizeObservationToken_)
+        animationScheduler_->Cancel(minimizeObservationToken_);
+    minimizeObservationToken_ = 0;
+    pendingMinimizes_.Clear();
+    minimizeTargetProvider_ = std::move(target);
+    minimizeCompletedCallback_ = std::move(completed);
+}
+
+std::optional<DockWindowTransition::MinimizeTarget> DockWindowTransition::ResolveMinimizeTarget(
+    HWND source, std::optional<RECT> anchor) const
+{
+    return minimizeTargetProvider_ ? minimizeTargetProvider_(source, anchor) : std::nullopt;
+}
+
+void DockWindowTransition::ObserveMinimize(HWND source, std::optional<RECT> anchor, bool explicitAction)
+{
+    if (!animationScheduler_ || !minimizeCompletedCallback_ || !source || !IsWindow(source)) return;
+    if (const HWND root = GetAncestor(source, GA_ROOT)) source = root;
+    if (explicitAction && IsIconic(source) &&
+        !(IsActiveFor(source) && direction_ == DockWindowTransitionDirection::Restore)) return;
+    DWORD process = 0;
+    GetWindowThreadProcessId(source, &process);
+    if (!explicitAction)
+    {
+        if (!pendingMinimizes_.Contains(source, process)) pendingMinimizes_.Forget(source);
+        if (pendingMinimizes_.Completed(source) && !IsIconic(source)) pendingMinimizes_.Forget(source);
+        if (pendingMinimizes_.Contains(source, process)) return; // Retain the Dock clicked on another screen.
+    }
+    if (const auto target = ResolveMinimizeTarget(source, anchor))
+    {
+        pendingMinimizes_.Track(source, process, *target, GetTickCount64());
+        ScheduleMinimizeObservation();
+    }
+}
+
+void DockWindowTransition::ObserveNativeMinimize(HWND source)
+{
+    ObserveMinimize(source, {}, false);
+}
+
+void DockWindowTransition::ForgetNativeMinimize(HWND source)
+{
+    pendingMinimizes_.Forget(source);
+}
+
+void DockWindowTransition::ScheduleMinimizeObservation()
+{
+    if (!animationScheduler_ || minimizeObservationToken_ || pollingMinimizeObservation_ ||
+        !pendingMinimizes_.Waiting()) return;
+    minimizeObservationToken_ = animationScheduler_->ScheduleOnce(20, [this](snowdesktop::UiScheduleToken) {
+        minimizeObservationToken_ = 0;
+        PollMinimizeObservation();
+    });
+}
+
+void DockWindowTransition::PollMinimizeObservation()
+{
+    pollingMinimizeObservation_ = true;
+    pendingMinimizes_.Poll(GetTickCount64(), [this](HWND source) {
+        snowdesktop::dock_minimize_completion::WindowState state;
+        if (!IsWindow(source)) return state;
+        GetWindowThreadProcessId(source, &state.process);
+        state.minimized = IsIconic(source) != FALSE;
+        const bool active = IsActiveFor(source);
+        state.minimizing = active && direction_ == DockWindowTransitionDirection::Minimize;
+        state.restoring = active && direction_ == DockWindowTransitionDirection::Restore;
+        return state;
+    }, [this](const MinimizeTarget& target) {
+        if (minimizeCompletedCallback_) minimizeCompletedCallback_(target);
+    });
+    pollingMinimizeObservation_ = false;
+    ScheduleMinimizeObservation();
 }
 
 bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRect,
@@ -662,11 +910,6 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    imageHostRect_ =
-        UsesCompositionImage()
-        ? ResolveDockWindowImageHostRect(
-            fromRect_, toRect_)
-        : fromRect_;
     if (!EnumDisplayMonitors(nullptr, nullptr, CollectAnimationMonitor,
             reinterpret_cast<LPARAM>(&animationMonitorRects_)))
     {
@@ -674,6 +917,10 @@ bool DockWindowTransition::Start(
         nativeFallbackRequested_ = true;
         return false;
     }
+    // A fresh restore starts with a transparent point at the Dock. Its full
+    // envelope must use actual restored geometry, after native preparation.
+    imageHostRect_ =
+        effect_ == 4 && direction_ == DockWindowTransitionDirection::Restore ? dockRect_ : ResolveImageHostRect();
     const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
         imageHostRect_, animationMonitorRects_);
     if (!safeHost)
@@ -826,10 +1073,10 @@ bool DockWindowTransition::Reverse(
 
     if (!awaitingRestoreVisibility_)
     {
-        const double progress = std::clamp(
-            (MonotonicTimeMilliseconds() - animationStartTimeMs_) /
-                std::max(1.0, animationDurationMs_),
-            0.0, 1.0);
+        const double progress = preparingRestore_ ? 0.0
+                                                  : std::clamp((MonotonicTimeMilliseconds() - animationStartTimeMs_) /
+                                                                   std::max(1.0, animationDurationMs_),
+                                                               0.0, 1.0);
         if (!ApplyFrame(progress))
             return false;
         compositionTimelineActive_ = false;
@@ -878,7 +1125,7 @@ bool DockWindowTransition::Reverse(
 
     const double targetCollapse =
         direction == DockWindowTransitionDirection::Minimize ? 1.0 : 0.0;
-    if (effect_ == 3)
+    if (effect_ == 3 || effect_ == 4)
         remainingRatio = std::abs(targetCollapse - lastCollapse_);
     else if (effect_ == 2)
         remainingRatio = std::abs(static_cast<double>(lastFrameOpacity_) -
@@ -976,6 +1223,16 @@ bool DockWindowTransition::ResolveRestoreWindowRect(
 
 bool DockWindowTransition::EnsureCompositionVisuals()
 {
+    if (!compositionDevice_)
+    {
+        imageResult_ = E_NOTIMPL;
+        return false;
+    }
+    if (!ReserveSceneRetirement() || !EnsureWindow())
+    {
+        imageResult_ = E_OUTOFMEMORY;
+        return false;
+    }
     if (!compositionDevice_ || !hwnd_ || !IsWindow(hwnd_))
     {
         imageResult_ = E_NOTIMPL;
@@ -1041,7 +1298,7 @@ bool DockWindowTransition::CreateSharedWindowImage()
     if (SUCCEEDED(hr)) hr = compositionClip_->SetTop(0.0f);
     if (SUCCEEDED(hr)) hr = compositionClip_->SetRight(static_cast<float>(size.cx));
     if (SUCCEEDED(hr)) hr = compositionClip_->SetBottom(static_cast<float>(size.cy));
-    if (SUCCEEDED(hr) && effect_ == 3)
+    if (SUCCEEDED(hr) && (effect_ == 3 || effect_ == 4))
     {
         if (!CreateGenieStrips()) hr = FAILED(imageResult_) ? imageResult_ : E_FAIL;
     }
@@ -1069,13 +1326,16 @@ bool DockWindowTransition::CreateSharedWindowImage()
 
 void DockWindowTransition::ClearGenieStrips()
 {
-    if (genieStrips_.empty())
+    if (genieStrips_.empty() && attractionTriangles_.empty())
         return;
     if (compositionVisual_)
         compositionVisual_->RemoveAllVisuals();
     for (auto& strip : genieStrips_)
         strip->SetContent(nullptr);
     genieStrips_.clear();
+    for (auto &triangle : attractionTriangles_)
+        triangle->RemoveAllVisuals();
+    attractionTriangles_.clear();
     genieWindowImages_.clear();
     if (compositionVisual_)
     {
@@ -1088,50 +1348,137 @@ void DockWindowTransition::ClearGenieStrips()
 
 bool DockWindowTransition::CreateGenieStrips()
 {
+    if (effect_ == 4)
+        return CreateAttractionMesh();
     if (!compositionVisual_ || !compositionSharedWindowActive_ || !compositionDevice_)
     {
         imageResult_ = E_UNEXPECTED;
         return false;
     }
-    const float width = static_cast<float>(compositionImageSize_.cx);
-    const float height = static_cast<float>(compositionImageSize_.cy);
-    const bool vertical = snowdesktop::dock_genie::Vertical(genieEdge_);
-    genieStrips_.reserve(snowdesktop::dock_genie::StripCount);
-    for (std::size_t i = 0; i < snowdesktop::dock_genie::StripCount; ++i)
+    const std::size_t count = snowdesktop::dock_genie::StripCount;
+    genieStrips_.reserve(count);
+    for (std::size_t i = 0; i < count; ++i)
     {
-        Microsoft::WRL::ComPtr<IDCompositionVisual3> strip;
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, effect_ == 4);
+        const D2D1_RECT_F clip = band.clip;
+        // Each DWM relationship supplies only this source band, rather than
+        // another full-size window image. Keep integer pixel crops unscaled
+        // and preserve the original fractional overlap inside the crop.
+        const RECT crop = band.crop;
+        const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
+        const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
+            compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
         snowdesktop::dock_thumbnail::SharedVisual image;
-        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), compositionImageSize_,
-            &compositionSourceRegion_);
-        strip = image.visual;
-        if (SUCCEEDED(hr)) genieWindowImages_.push_back(std::move(image));
+        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size, &source);
+        if (SUCCEEDED(hr) && !image.visual)
+            hr = E_UNEXPECTED;
+        Microsoft::WRL::ComPtr<IDCompositionVisual3> strip = image.visual;
         if (FAILED(hr) || !strip)
         {
             imageResult_ = FAILED(hr) ? hr : E_FAIL;
             return false;
         }
+        genieWindowImages_.push_back(std::move(image));
         genieStrips_.push_back(strip);
-        const float begin = static_cast<float>(i) /
-            static_cast<float>(snowdesktop::dock_genie::StripCount);
-        const float end = static_cast<float>(i + 1) /
-            static_cast<float>(snowdesktop::dock_genie::StripCount);
-        // Slight overlap avoids transparent seams under fractional GPU sampling.
-        // Opacity belongs to the parent so overlapping strips do not darken.
-        const D2D1_RECT_F clip = vertical
-            ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f),
-                width, std::min(height, end * height + 0.75f))
-            : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0,
-                std::min(width, end * width + 0.75f), height);
-        if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
+        // Keep clips in cropped-image coordinates. The mesh and timeline
+        // explicitly translate that origin inside their projective matrices.
+        const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
+        if (SUCCEEDED(hr)) hr = strip->SetClip(D2D1::RectF(
+            clip.left - cropLeft, clip.top - cropTop, clip.right - cropLeft, clip.bottom - cropTop));
         if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
         if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
             DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-        if (SUCCEEDED(hr)) hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
         if (FAILED(hr))
         {
             imageResult_ = hr;
             return false;
         }
+    }
+    HRESULT hr = compositionVisual_->SetContent(nullptr);
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetClip(static_cast<IDCompositionClip *>(nullptr));
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetX(0.0f);
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetY(0.0f);
+    imageResult_ = hr;
+    return SUCCEEDED(hr);
+}
+
+bool DockWindowTransition::CreateAttractionMesh()
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    if (!compositionVisual_ || !compositionSharedWindowActive_ || !compositionDevice_)
+    {
+        imageResult_ = E_UNEXPECTED;
+        return false;
+    }
+    attractionTriangles_.reserve(attraction::TriangleCount);
+    genieWindowImages_.reserve(attraction::TriangleCount);
+    for (std::size_t triangle = 0; triangle < attraction::TriangleCount; ++triangle)
+    {
+        const auto cell = attraction::SourceCell(triangle / 2);
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, triangle / 2, true);
+        const RECT crop = band.crop;
+        const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
+        const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
+                          compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
+        snowdesktop::dock_thumbnail::SharedVisual image;
+        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size, &source);
+        Microsoft::WRL::ComPtr<IDCompositionVisual2> clipper;
+        if (SUCCEEDED(hr) && !image.visual)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateVisual(&clipper);
+        const float width = static_cast<float>((cell.right - cell.left) * compositionImageSize_.cx);
+        const float height = static_cast<float>((cell.bottom - cell.top) * compositionImageSize_.cy);
+        const float left = static_cast<float>(cell.left * compositionImageSize_.cx - crop.left);
+        const float top = static_cast<float>(cell.top * compositionImageSize_.cy - crop.top);
+        const float sign = triangle % 2 == 0 ? 1.0f : -1.0f;
+        const float offsetS = triangle % 2 == 0 ? 0.0f : 2.0f;
+        const float offsetT = triangle % 2 == 0 ? 0.0f : 1.0f;
+        const D2D1_MATRIX_3X2_F toTriangle{sign / width,
+                                           0,
+                                           sign / height,
+                                           sign / height,
+                                           offsetS - sign * (left / width + top / height),
+                                           offsetT - sign * top / height};
+        if (SUCCEEDED(hr))
+            hr = static_cast<IDCompositionVisual *>(image.visual.Get())->SetTransform(toTriangle);
+        const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetClip(D2D1::RectF(band.clip.left - cropLeft, band.clip.top - cropTop,
+                                                   band.clip.right - cropLeft, band.clip.bottom - cropTop));
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+        // The source rectangle becomes a parallelogram in (s,t). Clipping
+        // s<=1 selects an affine triangle without any perspective division.
+        // Tiny overlap covers float roundoff; internal clips must not add AA
+        // transparency independently on either side of a shared edge.
+        const float diagonalGuard = std::min(0.02f, 0.25f / std::max(width, height));
+        if (SUCCEEDED(hr))
+            hr = clipper->SetClip(D2D1::RectF(-16, -16, 1 + diagonalGuard, 16));
+        if (SUCCEEDED(hr))
+            hr = clipper->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+        if (SUCCEEDED(hr))
+            hr = clipper->SetBackFaceVisibility(DCOMPOSITION_BACKFACE_VISIBILITY_VISIBLE);
+        if (SUCCEEDED(hr))
+            hr = clipper->AddVisual(image.visual.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->AddVisual(clipper.Get(), TRUE, nullptr);
+        if (FAILED(hr))
+        {
+            imageResult_ = hr;
+            return false;
+        }
+        genieWindowImages_.push_back(std::move(image));
+        attractionTriangles_.push_back(std::move(clipper));
     }
     HRESULT hr = compositionVisual_->SetContent(nullptr);
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1159,12 +1506,14 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
     if (!geometryChanged && !opacityChanged) return true;
     for (std::size_t i = 0; geometryChanged && i < genieStrips_.size() && SUCCEEDED(hr); ++i)
     {
-        const auto transform = snowdesktop::dock_genie::StripProjectiveMatrix(
+        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i).crop;
+        const auto transform = snowdesktop::dock_genie::SourceLocalMatrix(
+            snowdesktop::dock_genie::StripProjectiveMatrix(
             rect(windowRect_), rect(dockRect_), genieEdge_, collapsed,
             compositionImageSize_.cx, compositionImageSize_.cy,
             static_cast<double>(i) / static_cast<double>(genieStrips_.size()),
             static_cast<double>(i + 1) / static_cast<double>(genieStrips_.size()),
-            imageHostRect_.left, imageHostRect_.top);
+            imageHostRect_.left, imageHostRect_.top), crop.left, crop.top);
         const D2D1_MATRIX_4X4_F matrix{
             static_cast<float>(transform.m11), static_cast<float>(transform.m12), 0, static_cast<float>(transform.m14),
             static_cast<float>(transform.m21), static_cast<float>(transform.m22), 0, static_cast<float>(transform.m24),
@@ -1177,6 +1526,184 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
     if (SUCCEEDED(hr)) hr = compositionDevice_->Commit();
     if (SUCCEEDED(hr)) lastGenieCollapse_ = collapsed;
     return SUCCEEDED(hr);
+}
+
+bool DockWindowTransition::StartGenieTimeline()
+{
+    snowdesktop::performance::Scope performanceScope("dock.transition", "genie.timeline.prepare");
+    namespace genie = snowdesktop::dock_genie;
+    if (genieStrips_.size() != genie::StripCount) return false;
+    const genie::Rect window{static_cast<double>(windowRect_.left), static_cast<double>(windowRect_.top),
+        static_cast<double>(windowRect_.right), static_cast<double>(windowRect_.bottom)};
+    const genie::Rect dock{static_cast<double>(dockRect_.left), static_cast<double>(dockRect_.top),
+        static_cast<double>(dockRect_.right), static_cast<double>(dockRect_.bottom)};
+    const bool vertical = genie::Vertical(genieEdge_);
+    const std::array<std::array<int, 2>, 7> elements{{{0, 0},
+        vertical ? std::array<int, 2>{1, 0} : std::array<int, 2>{0, 1}, {1, 1},
+        vertical ? std::array<int, 2>{1, 3} : std::array<int, 2>{0, 3}, {3, 0}, {3, 1}, {3, 3}}};
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionAnimation>> ownedAnimations;
+    std::vector<IDCompositionAnimation*> animations;
+    ownedAnimations.reserve(genieStrips_.size() * elements.size() + 1);
+    animations.reserve(ownedAnimations.capacity());
+    const double duration = animationDurationMs_ / 1000.0;
+    const double stepSeconds = duration / genie::TimelineSteps;
+    HRESULT hr = S_OK;
+    for (std::size_t strip = 0; strip < genieStrips_.size() && SUCCEEDED(hr); ++strip)
+    {
+        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform3D> transform;
+        hr = compositionDevice_->CreateMatrixTransform3D(&transform);
+        const double begin = static_cast<double>(strip) / static_cast<double>(genieStrips_.size());
+        const double end = static_cast<double>(strip + 1) / static_cast<double>(genieStrips_.size());
+        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, strip).crop;
+        std::array<genie::TimelineSample, genie::TimelineSteps + 1> samples{};
+        for (std::size_t step = 0; step < samples.size(); ++step)
+            samples[step] = genie::SampleTimeline(window, dock, genieEdge_, collapseFrom_, collapseTo_,
+                static_cast<double>(step) / genie::TimelineSteps, compositionImageSize_.cx,
+                compositionImageSize_.cy, begin, end, imageHostRect_.left, imageHostRect_.top,
+                crop.left, crop.top);
+        for (std::size_t element = 0; element < elements.size() + (strip == 0 ? 1 : 0) && SUCCEEDED(hr); ++element)
+        {
+            Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+            hr = compositionDevice_->CreateAnimation(&animation);
+            for (std::size_t step = 0; step < genie::TimelineSteps && SUCCEEDED(hr); ++step)
+            {
+                const auto curve = genie::TimelineSegment(samples[step], samples[step + 1], element, duration);
+                hr = animation->AddCubic(step * stepSeconds,
+                    curve.constant, curve.linear, curve.quadratic, curve.cubic);
+            }
+            if (SUCCEEDED(hr)) hr = animation->End(duration, static_cast<float>(samples.back().value[element]));
+            if (SUCCEEDED(hr))
+            {
+                if (element == elements.size()) hr = compositionEffect_->SetOpacity(animation.Get());
+                else hr = transform->SetMatrixElement(
+                    elements[element][0], elements[element][1], animation.Get());
+            }
+            if (SUCCEEDED(hr))
+            {
+                animations.push_back(animation.Get());
+                ownedAnimations.push_back(std::move(animation));
+            }
+        }
+        if (SUCCEEDED(hr)) hr = genieStrips_[strip]->SetTransform(transform.Get());
+    }
+    return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
+}
+
+RECT DockWindowTransition::ResolveImageHostRect() const
+{
+    RECT host{};
+    if (effect_ == 4)
+    {
+        const auto bounds =
+            snowdesktop::dock_attraction::Bounds(DeformationRect(windowRect_), DeformationRect(dockRect_));
+        host = {static_cast<LONG>(bounds.left), static_cast<LONG>(bounds.top), static_cast<LONG>(bounds.right),
+                static_cast<LONG>(bounds.bottom)};
+    }
+    else if (effect_ == 3)
+        host = ResolveDockWindowImageHostRect(windowRect_, dockRect_);
+    else
+        return UsesCompositionImage() ? ResolveDockWindowImageHostRect(fromRect_, toRect_) : fromRect_;
+
+    const bool coversMonitor =
+        std::any_of(animationMonitorRects_.begin(), animationMonitorRects_.end(), [&](RECT monitor) {
+            return host.left <= monitor.left && host.top <= monitor.top && host.right >= monitor.right &&
+                   host.bottom >= monitor.bottom;
+        });
+    if (coversMonitor)
+    {
+        RECT desktop = animationMonitorRects_.front();
+        for (const RECT monitor : animationMonitorRects_)
+            UnionRect(&desktop, &desktop, &monitor);
+        RECT visible{};
+        // A restored maximized HWND can include resize borders outside the
+        // desktop. Keep the full cross-monitor deformation, but discard only
+        // pixels no display can show before applying the one-pixel Shell guard.
+        if (IntersectRect(&visible, &host, &desktop))
+            host = visible;
+    }
+    return host;
+}
+
+bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    if (attractionTriangles_.size() != attraction::TriangleCount)
+        return false;
+    const auto frame = attraction::MeshFrame(DeformationRect(windowRect_), DeformationRect(dockRect_), collapsed);
+    HRESULT hr = S_OK;
+    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+    {
+        const auto value = attraction::TriangleValues(frame, triangle, imageHostRect_.left, imageHostRect_.top);
+        const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[0]), static_cast<float>(value[1]),
+                                       static_cast<float>(value[2]), static_cast<float>(value[3]),
+                                       static_cast<float>(value[4]), static_cast<float>(value[5])};
+        hr = attractionTriangles_[triangle]->SetTransform(matrix);
+    }
+    if (SUCCEEDED(hr))
+        hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
+    if (SUCCEEDED(hr))
+        hr = compositionDevice_->Commit();
+    return SUCCEEDED(hr);
+}
+
+bool DockWindowTransition::StartAttractionTimeline()
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    if (attractionTriangles_.size() != attraction::TriangleCount)
+        return false;
+    const auto window = DeformationRect(windowRect_), dock = DeformationRect(dockRect_);
+    std::array<attraction::Frame, attraction::TimelineSteps + 1> frames{};
+    for (std::size_t step = 0; step < frames.size(); ++step)
+        frames[step] = attraction::TimelineFrame(window, dock, collapseFrom_, collapseTo_,
+                                                 static_cast<double>(step) / attraction::TimelineSteps);
+    const auto tangents = attraction::MeshTangents(frames);
+    constexpr std::array<std::array<int, 2>, 6> elements{{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}};
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionAnimation>> owned;
+    std::vector<IDCompositionAnimation *> animations;
+    owned.reserve(attractionTriangles_.size() * 6 + 1);
+    animations.reserve(owned.capacity());
+    const double duration = animationDurationMs_ / 1000.0, stepSeconds = duration / attraction::TimelineSteps;
+    HRESULT hr = S_OK;
+    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+    {
+        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform> transform;
+        hr = compositionDevice_->CreateMatrixTransform(&transform);
+        std::array<attraction::Values, attraction::TimelineSteps + 1> values{}, slopes{};
+        for (std::size_t step = 0; step < frames.size(); ++step)
+        {
+            values[step] = attraction::TriangleValues(frames[step], triangle, imageHostRect_.left, imageHostRect_.top);
+            slopes[step] = attraction::TriangleValues(tangents[step], triangle, 0, 0);
+        }
+        for (std::size_t element = 0; element < (triangle == 0 ? 7u : 6u) && SUCCEEDED(hr); ++element)
+        {
+            Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+            hr = compositionDevice_->CreateAnimation(&animation);
+            for (std::size_t step = 0; step < attraction::TimelineSteps && SUCCEEDED(hr); ++step)
+            {
+                const auto curve = attraction::TimelineSegment(values[step], values[step + 1], slopes[step],
+                                                               slopes[step + 1], element, duration);
+                hr =
+                    animation->AddCubic(step * stepSeconds, curve.constant, curve.linear, curve.quadratic, curve.cubic);
+            }
+            if (SUCCEEDED(hr))
+                hr = animation->End(duration, static_cast<float>(values.back()[element]));
+            if (SUCCEEDED(hr))
+            {
+                if (element == 6)
+                    hr = compositionEffect_->SetOpacity(animation.Get());
+                else
+                    hr = transform->SetMatrixElement(elements[element][0], elements[element][1], animation.Get());
+            }
+            if (SUCCEEDED(hr))
+            {
+                animations.push_back(animation.Get());
+                owned.push_back(std::move(animation));
+            }
+        }
+        if (SUCCEEDED(hr))
+            hr = attractionTriangles_[triangle]->SetTransform(transform.Get());
+    }
+    return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
 }
 
 bool DockWindowTransition::CommitCompositionTimeline(
@@ -1227,6 +1754,11 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
         const std::array<IDCompositionAnimation*, 1> animations{opacity.Get()};
         return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
     }
+
+    if (effect_ == 3)
+        return StartGenieTimeline();
+    if (effect_ == 4)
+        return StartAttractionTimeline();
 
     const auto width = [](const RECT& rect) {
         return std::max(1L, rect.right - rect.left);
@@ -1331,7 +1863,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
     animationToken_ = 0;
 
     const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
-    if (UsesCompositionImage() && !preparingRestore_ && (effect_ != 3 || retiring))
+    if (UsesCompositionImage() && !preparingRestore_)
     {
         if (!StartCompositionTimeline(retiring))
             return false;
@@ -1397,13 +1929,16 @@ bool DockWindowTransition::ApplyFrame(double progress)
             0, 255));
     if (!awaitingRestoreVisibility_)
         lastCollapse_ = snowdesktop::dock_genie::Mix(collapseFrom_, collapseTo_, eased);
-    if (effect_ == 3)
+    if (effect_ == 3 || effect_ == 4)
     {
         if (!awaitingRestoreVisibility_)
             frameOpacity = static_cast<BYTE>(std::clamp(
-                static_cast<int>(std::lround(
-                    snowdesktop::dock_genie::Opacity(lastCollapse_) * 255.0)), 0, 255));
-        if (!ApplyGenieFrame(lastCollapse_, frameOpacity))
+                static_cast<int>(std::lround((effect_ == 4 ? snowdesktop::dock_attraction::Opacity(lastCollapse_)
+                                                           : snowdesktop::dock_genie::Opacity(lastCollapse_)) *
+                                             255.0)),
+                0, 255));
+        if (!(effect_ == 4 ? ApplyAttractionFrame(lastCollapse_, frameOpacity)
+                           : ApplyGenieFrame(lastCollapse_, frameOpacity)))
             return false;
         lastFrameRect_ = frame;
         lastFrameOpacity_ = frameOpacity;
@@ -1532,21 +2067,24 @@ bool DockWindowTransition::OnAnimationFrame(
     if (preparingRestore_)
     {
         if (!PrepareRestoredWindow(now)) return IsActive();
-        if (effect_ != 3)
+        // The preparation poll owns a CPU frame token, but the restored
+        // image now has its final geometry and can run independently.
+        if (!ScheduleAnimationWake())
         {
-            // The preparation poll owns a CPU frame token, but the restored
-            // image now has its final geometry and can run independently.
-            if (!ScheduleAnimationWake())
-            {
-                CompleteRestoreAfterRenderFailure();
-                Finish();
-            }
-            return false;
+            CompleteRestoreAfterRenderFailure();
+            Finish();
         }
-        return true;
+        return false;
     }
     if (awaitingRestoreVisibility_)
     {
+        // This deadline covers every handoff branch, including ready geometry
+        // with a failed uncloak and each asynchronous presentation phase.
+        if (now >= restoreCleanupDeadlineMs_)
+        {
+            Finish();
+            return false;
+        }
         if (restorePresentationPhase_ == RestorePresentationPhase::AlignedImage)
         {
             const auto result = PresentationBarrierResult(now);
@@ -1649,8 +2187,9 @@ bool DockWindowTransition::OnAnimationFrame(
                 // the real window to return to the earlier, now stale bounds.
                 windowRect_ = restoredFrame;
                 fromRect_ = toRect_ = windowRect_;
+                const RECT requestedHost = ResolveImageHostRect();
                 RECT retainedHost{};
-                UnionRect(&retainedHost, &imageHostRect_, &windowRect_);
+                UnionRect(&retainedHost, &imageHostRect_, &requestedHost);
                 const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
                     retainedHost, animationMonitorRects_);
                 bool aligned = safeHost.has_value();
@@ -1816,31 +2355,64 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         windowRect_ = frame;
         toRect_ = windowRect_;
         if (effect_ == 2) fromRect_ = toRect_;
-        const RECT requestedHost = UsesCompositionImage()
-            ? ResolveDockWindowImageHostRect(fromRect_, toRect_) : fromRect_;
+        // A reversed Genie's interpolated frame is only a timing proxy: its
+        // pulled edge can already reach the Dock outside that rectangle. Keep
+        // the full deformation envelope when rebinding the restored image.
+        const RECT requestedHost = ResolveImageHostRect();
         const auto safeHost = ResolveDockWindowNonFullscreenHostRect(requestedHost, animationMonitorRects_);
         bool prepared = safeHost.has_value();
+        const wchar_t* rebindStage = L"host-bounds";
+        HRESULT rebindResult = prepared ? S_OK : E_INVALIDARG;
         if (prepared)
         {
+            rebindStage = L"host-position";
             imageHostRect_ = *safeHost;
             prepared = SetWindowPos(hwnd_, nullptr, imageHostRect_.left, imageHostRect_.top,
                 imageHostRect_.right - imageHostRect_.left,
                 imageHostRect_.bottom - imageHostRect_.top,
                 SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+            if (!prepared)
+            {
+                const DWORD error = GetLastError();
+                rebindResult = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+            }
         }
         if (prepared && compositionSharedWindowActive_)
         {
+            rebindStage = L"image-detach";
             ClearGenieStrips();
             compositionWindowImage_.Reset();
-            compositionVisual_->RemoveAllVisuals();
-            prepared = CreateSharedWindowImage();
+            rebindResult = compositionVisual_->RemoveAllVisuals();
+            prepared = SUCCEEDED(rebindResult);
+            if (prepared)
+            {
+                rebindStage = L"shared-image";
+                prepared = CreateSharedWindowImage();
+                rebindResult = imageResult_;
+            }
         }
         hasLastFrame_ = false;
         compositionTimelineActive_ = false;
-        if (prepared) prepared = ApplyFrame(0.0);
+        if (prepared)
+        {
+            rebindStage = L"first-frame";
+            prepared = ApplyFrame(0.0);
+            if (!prepared) rebindResult = E_FAIL;
+        }
         if (!prepared)
         {
-            if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=restore-rebind");
+            if (diagnosticCallback_)
+            {
+                wchar_t diagnostic[512]{};
+                swprintf_s(diagnostic,
+                    L"Dock animation aborted: stage=restore-rebind substage=%ls hr=0x%08X "
+                    L"window=[%ld,%ld,%ld,%ld] host=[%ld,%ld,%ld,%ld] image=%ldx%ld collapse=%.4f",
+                    rebindStage, static_cast<unsigned>(rebindResult),
+                    windowRect_.left, windowRect_.top, windowRect_.right, windowRect_.bottom,
+                    requestedHost.left, requestedHost.top, requestedHost.right, requestedHost.bottom,
+                    compositionImageSize_.cx, compositionImageSize_.cy, collapseFrom_);
+                diagnosticCallback_(diagnostic);
+            }
             CompleteRestoreAfterRenderFailure();
             Finish();
             return false;
@@ -1899,7 +2471,8 @@ void DockWindowTransition::ReleaseSourceCloak()
     if (!sourceCloaked_) return;
     if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
-        const HRESULT hr = snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
+        const HRESULT hr = sourceRelease_ ? sourceRelease_(sourceCloakWindow_, hwnd_) :
+            snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
         if (FAILED(hr))
         {
             if (diagnosticCallback_) diagnosticCallback_(L"Dock source uncloak failed");
@@ -1913,8 +2486,6 @@ void DockWindowTransition::ReleaseSourceCloak()
 void DockWindowTransition::Finish()
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
-    const bool presentationAlreadyRetired = restorePresentationAcknowledged_ &&
-        direction_ == DockWindowTransitionDirection::Restore && !sourceCloaked_;
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     presentationBarrierDeadlineMs_ = 0.0;
@@ -1929,22 +2500,11 @@ void DockWindowTransition::Finish()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
     HWND transitionWindow = hwnd_;
-    const bool hadCompositionImage = compositionImageActive_;
-    // Retire the visible scene before changing HWND visibility, Dock layers,
-    // strip transforms or its source. Restoring the full-size image while
-    // the previous scene is still being composed can flash the application.
-    if (hadCompositionImage && compositionDevice_)
-    {
-        if (compositionEffect_) compositionEffect_->SetOpacity(0.0f);
-        if (compositionVisual_)
-        {
-            compositionVisual_->RemoveAllVisuals();
-            compositionVisual_->SetContent(nullptr);
-        }
-        if (SUCCEEDED(compositionDevice_->Commit()) && !presentationAlreadyRetired)
-            compositionDevice_->WaitForCommitCompletion();
-    }
-    if (!presentationAlreadyRetired && (presenting_ || sourceCloaked_)) DwmFlush();
+    // Hide and detach without waiting for the compositor on the UI thread.
+    // The preallocated owner retains all old visuals and shared thumbnails.
+    if (compositionEffect_) compositionEffect_->SetOpacity(0.0f);
+    if (compositionTarget_) compositionTarget_->SetRoot(nullptr);
+    if (compositionImageActive_ && compositionDevice_) compositionDevice_->Commit();
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
@@ -1964,33 +2524,52 @@ void DockWindowTransition::Finish()
         presentationCallback_(nullptr);
     if (wasPresenting && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: after-dock-layer-restore");
-    if (compositionEffect_)
-        compositionEffect_->SetOpacity(0.0f);
-    ClearGenieStrips();
-    compositionWindowImage_.Reset();
-    retiredWindowImage_.Reset();
-    retiredGenieWindowImages_.clear();
-    compositionSharedWindowActive_ = false;
-    if (compositionScaleTransform_)
+    ReleaseSourceCloak();
+    if (sceneRetirement_)
     {
-        compositionScaleTransform_->SetScaleX(1.0f);
-        compositionScaleTransform_->SetScaleY(1.0f);
+        auto state = std::move(sceneRetirement_);
+        state->device = compositionDevice_;
+        state->target = std::move(compositionTarget_);
+        state->visual = std::move(compositionVisual_);
+        state->scale = std::move(compositionScaleTransform_);
+        state->effect = std::move(compositionEffect_);
+        state->clip = std::move(compositionClip_);
+        state->strips = std::move(genieStrips_);
+        state->triangles = std::move(attractionTriangles_);
+        state->image = std::move(compositionWindowImage_);
+        state->images = std::move(genieWindowImages_);
+        state->previousImage = std::move(retiredWindowImage_);
+        state->previousImages = std::move(retiredGenieWindowImages_);
+        state->window = transitionWindow;
+        state->token = transitionWindow ? GetPropW(transitionWindow,
+            snowdesktop::dock_source_cloak::HostTokenProperty) : nullptr;
+        if (sourceCloaked_)
+        {
+            state->source = sourceCloakWindow_;
+            state->owner = snowdesktop::dock_source_cloak::ReadOwner(state->source);
+            if (state->owner.window == transitionWindow)
+                SetPropW(state->source, snowdesktop::dock_source_cloak::RecoveryProperty, state->owner.token);
+        }
+        if (transitionWindow)
+        {
+            // Transfer the UI reference to this HWND before the worker starts.
+            // An early NCDESTROY releases only that reference.
+            state->references.fetch_add(1, std::memory_order_relaxed);
+            SetWindowLongPtrW(transitionWindow, 0, reinterpret_cast<LONG_PTR>(state.get()));
+            SetWindowLongPtrW(transitionWindow, GWLP_USERDATA, 0);
+        }
+        hwnd_ = nullptr;
+        sourceCloaked_ = false;
+        sourceCloakWindow_ = nullptr;
+        const PTP_WORK work = state->work;
+        state.release();
+        SubmitThreadpoolWork(work);
     }
-    if (compositionVisual_)
-        compositionVisual_->SetContent(nullptr);
+    compositionSharedWindowActive_ = false;
     compositionImageSize_ = {};
     compositionSourceRegion_ = {};
-    if (compositionImageActive_ && compositionDevice_)
-        compositionDevice_->Commit();
     compositionImageActive_ = false;
     compositionTimelineActive_ = false;
-    if (sourceCloaked_)
-    {
-        // Release the real window only after retiring the composition scene
-        // and acknowledging the minimized/restored frame.
-        DwmFlush();
-        ReleaseSourceCloak();
-    }
     sourceWindow_ = nullptr;
     fromRect_ = {};
     toRect_ = {};
@@ -2084,6 +2663,22 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
         SetWindowLongPtrW(
             window, GWLP_USERDATA,
             reinterpret_cast<LONG_PTR>(self));
+    }
+
+    auto* retired = reinterpret_cast<RetiredScene*>(GetWindowLongPtrW(window, 0));
+    if (message == kRetireSceneWindow && !self && retired &&
+        reinterpret_cast<LPARAM>(retired) == lParam &&
+        retired->completed.load(std::memory_order_acquire) &&
+        GetPropW(window, snowdesktop::dock_source_cloak::HostTokenProperty) == reinterpret_cast<HANDLE>(wParam))
+    {
+        DestroyWindow(window);
+        return 0;
+    }
+    if (message == WM_NCDESTROY && retired)
+    {
+        SetWindowLongPtrW(window, 0, 0);
+        retired->windowDestroyed.store(true, std::memory_order_release);
+        retired->Release();
     }
 
     switch (message)

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(SnowDesktopWallpaperHook32 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
 
 if (NOT MSVC)
     message(FATAL_ERROR "SnowDesktop 32-bit Wallpaper Engine Hook requires MSVC")
@@ -45,6 +46,8 @@ set_source_files_properties(${MINHOOK32_SOURCES} PROPERTIES
     COMPILE_OPTIONS "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
 
 add_executable(SnowDesktopWallpaperInjector32 injector32.cpp)
+snowdesktop_add_executable_version_resource(SnowDesktopWallpaperInjector32
+    "SnowDesktop 32-bit Wallpaper Engine capture injector")
 target_compile_features(SnowDesktopWallpaperInjector32 PRIVATE cxx_std_20)
 target_compile_definitions(SnowDesktopWallpaperInjector32 PRIVATE
     _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

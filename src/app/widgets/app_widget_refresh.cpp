@@ -1,6 +1,8 @@
 #include "app/app.h"
+#include "widgets/folder_member_order.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"
+#include "widgets/file_category_auto_collect_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
 
@@ -46,6 +48,12 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
             snowdesktop::folder_mapping_rules::ChildPath(
                 path, fd.cFileName);
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        entry.displayName = ReadFolderDisplayName(entry.fullPath, entry.name,
+            [](const std::wstring& itemPath, SHFILEINFOW& info) {
+                // No icon/image-list query and no Shell work on the UI thread.
+                return SHGetFileInfoW(itemPath.c_str(), 0, &info, sizeof(info),
+                    SHGFI_DISPLAYNAME) != 0;
+            }, entry.isDirectory);
         entry.lastWriteTime = fd.ftLastWriteTime;
         if (!entry.isDirectory)
         {
@@ -130,38 +138,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     for (const auto& oldEntry : previous)
         if (oldEntry.iconBitmap)
             EraseD2DIconCacheForBitmap(oldEntry.iconBitmap);
-    std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
-        [](const FolderEntry& a, const FolderEntry& b) {
-            if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
-            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
-        });
-    if (snowdesktop::folder_sort_rules::
-            NormalizeMode(widget.folderSortMode) !=
-        snowdesktop::folder_sort_rules::kManual)
-    {
-        snowdesktop::folder_sort_rules::StableSort(
-            widget.folderEntries,
-            widget.folderSortMode,
-            widget.folderSortAscending);
-    }
-    else if (!widget.itemKeys.empty())
-    {
-        std::unordered_map<std::wstring, size_t> order;
-        for (size_t i = 0; i < widget.itemKeys.size(); ++i)
-            order[ToUpperInvariant(widget.itemKeys[i])] = i;
-        std::stable_sort(widget.folderEntries.begin(), widget.folderEntries.end(),
-            [&](const FolderEntry& a, const FolderEntry& b) {
-                auto ia = order.find(ToUpperInvariant(a.fullPath));
-                auto ib = order.find(ToUpperInvariant(b.fullPath));
-                bool ha = ia != order.end();
-                bool hb = ib != order.end();
-                if (ha != hb) return ha;
-                if (ha && hb) return ia->second < ib->second;
-                return false;
-            });
-    }
-    snowdesktop::folder_sort_rules::RewriteOrderKeys(
-        widget.folderEntries, widget.itemKeys);
+    snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
 }
 
 
@@ -217,43 +194,38 @@ bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persist)
 }
 
 /**
- * @brief 确保只有一个文件分类组件开启自动收集模式。
+ * @brief 保证每个类别只由最后选择它的组件自动收纳。
  * @param activeWidgetIndex 当前激活的组件索引。
  */
-void DesktopApp::EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex)
+bool DesktopApp::EnforceAutoCollectFileCategorySelection(size_t activeWidgetIndex)
 {
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        if (i != activeWidgetIndex && widgets_[i].type == DesktopWidgetType::FileCategories)
-            widgets_[i].autoCollect = false;
-    }
+    return !snowdesktop::file_category_auto_collect_rules::EnforceExclusiveSelection(
+        widgets_, activeWidgetIndex, GetCategoryOrder(categorySettings_)).empty();
 }
 
 /**
  * @brief 应用所有开启了 autoCollect 的文件分类组件的自动收集。
  */
-void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
+bool DesktopApp::ApplyAutoCollectFileCategoryWidgets()
 {
-    size_t active = static_cast<size_t>(-1);
+    bool changed = false;
+    // Normalize persisted selections too, without switching off unrelated scopes.
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        changed = EnforceAutoCollectFileCategorySelection(i) || changed;
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         if (widgets_[i].type != DesktopWidgetType::FileCategories)
             continue;
 
         FileCategories collector(&widgets_[i], this);
-        collector.PruneUncollectableItems();
-
-        if (widgets_[i].autoCollect)
-        {
-            if (active == static_cast<size_t>(-1))
-                active = i;
-            else
-                widgets_[i].autoCollect = false;
-        }
+        changed = collector.PruneUncollectableItems() || changed;
     }
     RefreshCollectedKeysCache();
-    if (active != static_cast<size_t>(-1))
-        CollectFileCategoryWidget(active, false);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        if (widgets_[i].type == DesktopWidgetType::FileCategories &&
+            widgets_[i].autoCollect)
+            changed = CollectFileCategoryWidget(i, false) || changed;
+    return changed;
 }
 
 // ── 组件创建辅助函数 ──────────────────────────────────

@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <string>
 
+void RunLuaFileDeliveryMatrix(const std::filesystem::path& root);
+
 namespace
 {
 void Expect(bool condition, const char* message)
@@ -33,8 +35,18 @@ std::filesystem::path CreateProbeDirectory()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--file-drop-delivery-tests")
+    {
+        const auto root = CreateProbeDirectory();
+        int code = 0;
+        try { RunLuaFileDeliveryMatrix(root); }
+        catch (const std::exception& error) { std::cerr << "FAILED Lua file delivery: " << error.what() << '\n'; code = 1; }
+        std::error_code cleanup;
+        std::filesystem::remove_all(root, cleanup);
+        return code;
+    }
     using namespace snowdesktop::widget_runtime;
     const auto root = CreateProbeDirectory();
     const auto registry = root / L"handles.json";

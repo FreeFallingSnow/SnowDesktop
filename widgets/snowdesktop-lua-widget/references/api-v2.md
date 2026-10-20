@@ -165,6 +165,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 `preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
 最终事件为 `preview=false`。组件自身调用 `storage.set` 不触发该事件。组件应在该事件中
 调整订阅和描述符级视觉参数，不要在 `render` 或 `view` 热路径中创建订阅或修改描述符。
+设置页的未提交预览只覆盖读取结果，不写入实例存储。普通 `storage.set/remove` 和事务
+仍写入已提交数据；取消预览不会撤销这些正常写入。多个设置页的预览分别管理，提交或
+关闭一个页面不会覆盖另一个页面尚未提交的值。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
 宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
@@ -932,7 +935,9 @@ rowGap/columns/overscan`、返回的 `firstIndex` 和窗口 children 提交给�
 ```lua
 local itemExtent = 44
 local rowGap = 4
-local viewportExtent = math.max(1, context.logicalHeight - 8)
+local viewportExtent = math.max(1, context.layoutSize.height)
+local initialScrollIndex = #articles > 0
+    and math.min(#articles, math.max(1, model.initialArticleIndex or 1)) or nil
 local range = view.virtualRange({
     key = "feed-virtual",
     itemCount = #articles,
@@ -940,20 +945,22 @@ local range = view.virtualRange({
     viewportExtent = viewportExtent,
     rowGap = rowGap,
     overscan = 2,
-    initialScrollIndex = model.initialArticleIndex,
+    initialScrollIndex = initialScrollIndex,
 })
 local children = {}
-for index = range.firstIndex, range.lastIndex do
-    local article = articles[index]
-    children[#children + 1] = view.listItem({
-        key = "article:" .. article.id,
-        action = { id = "article.open", value = { index = index } },
-        accessibility = { label = article.title },
-        children = {
-            view.text({ key = "title:" .. article.id,
-                text = article.title }),
-        },
-    })
+if range.firstIndex > 0 then
+    for index = range.firstIndex, range.lastIndex do
+        local article = articles[index]
+        children[#children + 1] = view.listItem({
+            key = "article:" .. article.id,
+            action = { id = "article.open", value = { index = index } },
+            accessibility = { label = article.title },
+            children = {
+                view.text({ key = "title:" .. article.id,
+                    text = article.title }),
+            },
+        })
+    end
 end
 return view.virtualList({
     key = "feed-virtual",
@@ -963,7 +970,7 @@ return view.virtualList({
     firstIndex = range.firstIndex,
     rowGap = rowGap,
     overscan = 2,
-    initialScrollIndex = model.initialArticleIndex,
+    initialScrollIndex = initialScrollIndex,
     children = children,
 })
 ```
@@ -1685,7 +1692,8 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 不同 ID。宿主默认按约 16 ms 的更新间隔分发 `event.kind == "frame"`；动画更新上限、
 节能策略和调度延迟可能延后投递，不保证固定帧率。事件提供 `id`、单调时钟
 `now` 和相对同一 ID 上一帧的 `deltaMs`；首帧和隐藏后恢复的首帧为 0，过长间隔
-封顶为 1000 ms。一次请求只产生一次事件，组件必须在 frame 事件中再次调用
+封顶为 1000 ms。宿主只保留最近使用的 64 个 ID 的时间历史，淘汰后的 ID 再次使用时
+`deltaMs` 从 0 开始。一次请求只产生一次事件，组件必须在 frame 事件中再次调用
 `requestFrame` 才会继续，因而不会创建永久隐式 60 FPS 循环。
 
 `now/deltaMs` 保持真实经过时间及上述 1000 ms 封顶规则，不乘宿主动画速度倍率；组件应按
@@ -1755,6 +1763,10 @@ value 会逐样本更新；从可用态进入 `warmingUp`、不可用或错误�
 得到相同包络后才发布，单次异常采样继续返回上一份稳定 value 并刷新时间戳；恢复到
 可用态立即发布。桌面、日历、应用索引和文件监听等事件驱动 topic 直接发布权威事件，不人为延迟；
 权限撤销同样立即生效，不参与采样稳定。
+
+`system.network.status` 在操作系统网络变更通知可用时维护共享状态缓存，
+按请求周期发布快照并更新时间戳；发生通知时在下一次采样重新查询，并至少每 30 秒校验一次。
+通知不可用或查询失败时按请求周期重新查询，不缓存错误。连接状态变化仍使用两次采样确认。
 
 `process.summary` 受独立的 `process.summary.read` 保护。value 的 `processes` 固定最多
 12 项，按总机器 CPU 占比、private bytes 和 working set 排序；每项只含进程生命周期内
@@ -1890,6 +1902,7 @@ WMI/DDC 记录：优先选择可用端点，同样可用时优先内置屏 WMI�
 令牌仍可交给 `system.display.setBrightness`，按原端点执行并验证真实结果。失败或不支持
 仍报告错误，不借另一端点的数值声称成功。端点令牌不是可跨拔插持久化的物理显示器 ID；
 列表、数量和主记录 ID 可能随设备状态变化，组件应使用最新快照并处理目标消失。
+端点退出当前枚举后，其令牌失效；随后占用相同枚举位置的设备不会继承该令牌。
 早期宿主可能把同一物理屏幕的端点分别返回，组件应允许重复名称和可变列表数量，不能依赖
 去重后的固定项数。此修订不增加字段、feature，不提高 API v2 或主题原有最低宿主版本；
 不代表依赖旧重复记录行为的组件已经完成实机兼容验证。
@@ -1930,6 +1943,8 @@ Lua 不取得 PCM、无限历史或每进程音频。
 合并；调度延迟可能使实际投递频率低于请求值。取消命名动画或启用 reducedMotion
 不会取消已排队的数据刷新；隐藏会清理排队刷新，重新可见后重新接收更新。
 主动读取快照仍取得最新共享样本，`updateHz` 不限制组件因交互或其他动画而重绘。
+稳定静音且数据内容、设备和可用状态完全相同时，宿主可合并重复自动重绘；
+快照时间戳仍按采样推进。组件自身的动画应使用动画或定时 API，不依赖相同静音样本充当心跳。
 
 四个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
 `media.sessions` value 返回最多 32 个会话和当前会话的不透明 ID，`media.current`
@@ -1937,6 +1952,8 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
 逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
+会话 ID 绑定宿主当前识别的原生会话，不由应用名称或列表位置推导。列表重排保持现存
+会话的 ID；已退休会话的 ID 不会指向后来出现的会话，也不能跨宿主重启复用。
 `media.artwork` 只返回当前会话的 `sessionId`、临时 `image` resource handle 和不超过
 512×512 的 `width/height`。宿主在工作线程读取最多 4 MiB 的编码数据，拒绝边长超过
 16384 的源图，并解码为有界 PBGRA 像素；Lua 不取得编码原图、缓存路径或像素字节。
@@ -1949,6 +1966,8 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。
 `desktop.items` 返回最多 2048 项，`desktop.selection` 返回最多 512 项；每项只有
 稳定宿主引用 `id` 和 `title/source/type/selected` 展示字段，不向 v2 返回绝对路径。
+`title` 为显示标题，快捷方式隐藏末尾的 `.lnk`（包括映射文件夹中的项目）；
+隐藏后缀不改变宿主引用或实际文件名，组件应使用 `id` 识别项目。
 `desktop.changes` 返回单调 `revision` 与最长 64 字节的宿主 `reason`，用于判断何时
 重新读取列表。预览使用固定项目；取消最后订阅时没有后台 worker 或系统句柄残留。
 
@@ -1962,6 +1981,15 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
 成功读取但 ID 不存在时返回空 events；权限不足或 provider 不可用仍返回错误状态，不能解释为删除。
 此能力需要支持它的宿主；仅比较版本号不能识别同版本的早期构建。
+探测 `data.calendar.events.query` 后，还可在范围订阅中使用 `query`（忽略大小写的标题字面子串，
+最多 512 字节有效 UTF-8、无 NUL）、`offset`（非负整数，默认 0）和 `limit`
+（1–512，默认 512）。宿主先筛选完整日期范围的事件，再按既有稳定顺序分页；
+value 额外返回筛选后的 `total`、`hasMore` 和 `nextOffset`。没有下一页时
+`hasMore=false`、`nextOffset=total`；下一页使用返回的偏移，
+变更日期范围或标题后从 0 开始。`eventId` 与这些查询参数互斥；未传任何查询参数时，
+保持原有最多 512 项及 `truncated` 语义。权限不足、不可用或读取失败不能当作空结果。
+此能力不增加权限或 API 版本。组件必须先探测 feature；旧宿主和同版本早期构建只能
+使用原范围订阅，并如实显示截断限制，不能用本地标题过滤承诺找回未返回的事件。
 selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不由这些只读 topic
 执行；`calendar.selectDate(date)` 只改变 SnowDesktop 内部共享选中日期，不修改事件，
 因此不要求 `calendar.write`。纯 `calendar.dateInfo/addDays` 也不读取用户数据、不要求
@@ -2254,7 +2282,8 @@ local releaseTask = task.start("filesystem.release", {
 `{ handle,kind,name,size?,modifiedMs,readOnly,revision }`；`list` 只枚举一层，分页范围
 0–10000、每页 1–100，并把非 reparse 子项转换为同一实例的新 opaque handle；超过
 10000 个可枚举子项返回 `directoryTooLarge`。`read`/`write` 默认使用 `encoding=utf8`；
-UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。探测到
+UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。UTF-8 写入允许 `text=""`，
+表示将文件内容清空；省略 `text` 仍是无效请求。探测到
 `task.filesystem.binary` 后可显式使用 `encoding=binary`，读取结果改为 `data`，写入也必须
 传 `data`；Lua 字符串中的 NUL 和非 UTF-8 字节会被原样保留。两种模式的调用方上限与宿主
 硬上限都不超过 1 MiB，整文件读写不会因此开放路径或扩展句柄范围。
@@ -2326,6 +2355,8 @@ end
 当作完整目录状态。隐藏策略固定收敛为 pause；隐藏、退订、卸载、撤权与关闭都会立即取消
 监听并清空待发事件。`data.change` 会带 `topic="filesystem.watch"`、`subscriptionId`、
 `revision` 和 `overflow`，同一组件监听多个目录时应按 subscription ID 区分。
+事件中的子项授权还会核对生成事件时的目录身份；目录被替换、移动或改为链接后，旧事件
+不能取得替代目录的子项权限。收到失效结果时应重新选择目录并建立订阅。
 
 `filesystem.release` 在对应目录仍被订阅时返回 `handleBusy`。稳定监听错误包括
 `invalidReference`、`notFolder`、`permissionDenied`、`invalidDirectory`、
@@ -2552,7 +2583,21 @@ HTTPS 且不使用系统代理。组件依赖 HTTP、本地服务或代理时应
 - `body`：普通字符串字节或一个 secret descriptor，注入后不超过 64 KiB；
 - `timeoutMs`：1000–30000，默认 15000；
 - `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
-- `maxBytes`：4096–1048576，默认 524288。
+- `maxBytes`：4096–4194304，默认 524288。大于 1048576 的上限对应
+  `task.network.largeResponse`；组件须探测该 feature，旧宿主和同版本早期构建缺少时
+  将请求上限保持在 1048576 以内，或将该 feature 声明为 required。现有调用的默认值、
+  调用方较小上限及 `responseTooLarge` 行为不变，无需提升 `apiVersion`。组件仍须在
+  16 MiB Lua 内存和执行配额内处理响应，避免保存不需要的全文内容。官方社区组件应先
+  发布支持该 feature 的宿主，再发布使用更大上限的组件。
+- `retryDirect`：布尔值，默认 `false`；仅允许无请求体的 GET/HEAD。设为 `true` 时，首次按
+  Windows 代理设置请求；传输失败（含响应读取失败）或收到 HTTP 4xx/5xx 后，最多以无代理
+  WinHTTP 会话从原始 URL 重试一次。仍执行 TLS 证书校验、每跳域名/同源约束和响应大小限制；
+  取消、重定向被拒绝或响应超限不会触发重试。`timeoutMs` 应用于每次尝试，因此开启后可能
+  延长总等待时间。此选项绕过系统 HTTP 代理，不能绕过 TUN/VPN 路由；仅在用户接受直连时启用。
+  对应 feature 为 `task.network.retryDirect`。旧宿主拒绝未知参数；组件须探测该 feature，缺少时
+  省略 `retryDirect` 并沿用原请求方式，或将该 feature 声明为 required。无需提升 `apiVersion`。
+  官方社区组件应先发布支持该 feature 的宿主，再发布使用此选项的组件；同版本早期构建按
+  feature 探测降级。
 
 ```lua
 local requestId, err = task.start("network.request", {
@@ -2849,9 +2894,20 @@ API v2 还提供以下普通值设置控件：
 - `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
 - `date`：空值或严格 Gregorian `YYYY-MM-DD`；
 - `time`：空值或 24 小时制 `HH:MM`；
-- `range`：声明有限的 `min <= max` 和正 `step`，宿主对值钳制并吸附到步长；
+- `duration`：非负整数时长，`unit="seconds"|"minutes"|"hours"` 指定保存单位，省略时为秒。
+  `default/min/max/step` 均使用该单位；省略时 min 为 0、max 为不超过 99:59:59 的最大整单位、
+  step 为 1、default 为 min。上下限和步长必须为整数，值必须位于上下限内并相对 min 对齐步长。
+  设置页使用时、分、秒输入，精度由 unit 决定，不受一天 24 小时限制；合法输入停顿后自动保存。
+  沿用普通整数设置的十进制字符串存储，读取时使用 `tonumber(storage.get(key))`；从旧 range
+  升级时兼容已有带类型标记的数字，并在正常写入时转为普通整数存储，不更改键和数值单位。
+  这是 API v2 的新增 `settings.duration` feature。组件须声明该 requiredFeature 与
+  `minHostVersion="1.0.11.0"`；同版本早期构建可能不含该能力。官方社区组件必须在支持该能力的
+  宿主交付之后发布，旧宿主缺少 feature 时拒绝加载，不将时长回退成时刻；
+- `range`：声明有限的 `min <= max` 和正 `step`，省略 `step` 时默认为 `0.1`，宿主对值钳制并吸附到步长；需要整数步长时显式声明 `step = 1`；
 - `multiSelect`：声明 1-64 个唯一稳定 `options`，可配等长本地化 `optionLabels`，`default`
   与 preset 值均为这些选项组成的无重复数组。
+
+`float` 设置的宿主滑杆和数字输入同样在省略 `step` 时使用 `0.1`；`int` 设置仍按整数调节。
 
 `url/date/time` 通过 `storage.get` 返回 string，`range` 返回 number，`multiSelect` 返回
 string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、应用 preset、恢复默认以及用户修改
@@ -3021,10 +3077,17 @@ Lua 调用 `filesystem.release` 释放这种宿主管理 handle 会得到 `hostM
 所有用户可见文本都应使用清单 `locales` 中存在的字面量 key。宿主语言文件不是
 组件翻译目录。
 
+`l10n.tr` 最多接受 64 个替换参数。模板最多 64 KiB，参数转换后的总字节数最多
+64 KiB，最终输出最多 64 KiB；超限返回可由 `pcall` 捕获的错误。`{0}`、`{1}` 等
+占位符只在原模板中匹配一次；参数内容中的占位符保持原样，不继续展开。
+
 ### `module` 与 `resource`
 
 `module.require("modules/example.lua")` 只能在入口脚本求值期间加载包内 `.lua`
-模块；结果按实例缓存。禁止循环依赖、包外路径以及 `require/package/io/os/load`。
+文本模块；不接受 Lua 二进制字节码。结果按实例缓存。每个实例最多加载 64 个模块、
+模块内容合计不超过 4 MiB，单个文件不超过 1 MiB；嵌套加载也计入这些限额。
+加载失败的模块可重试，其已成功加载的子模块仍保留缓存并占用配额。
+禁止循环依赖、包外路径以及 `require/package/io/os/load`。
 
 资源必须在 `widget.json` 中声明，例如：
 

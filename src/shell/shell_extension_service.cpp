@@ -5,6 +5,9 @@
 #include "shell_extension_demand.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
+#include "shell_catalogue_workers.h"
+#include "diagnostics/performance_trace.h"
+#include "platform/foreground_fullscreen.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -20,6 +23,18 @@ namespace
 {
 using Key = settings_ipc::Bytes;
 constexpr ULONGLONG kInventoryWaitMs = 30000;
+bool BackgroundCatalogueFullscreen()
+{
+    // A fullscreen workload on another monitor also needs protection. Reuse
+    // the native visibility/client-area policy, excluding our own Shell UI.
+    bool found = false;
+    EnumWindows([](HWND window, LPARAM context) -> BOOL {
+        if (!snowdesktop::fullscreen::ObserveWindow(window)) return TRUE;
+        *reinterpret_cast<bool *>(context) = true;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&found));
+    return found;
+}
 Key SelectionKey(Request request)
 {
     request.catalogueOnly = false;
@@ -207,6 +222,13 @@ struct MenuService::Impl
     Request management;
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
+    bool foregroundScanRequested = false;
+    CatalogueForegroundDemand foregroundScanDemand{false, [wasPaused = false]() mutable {
+        const bool paused = BackgroundCatalogueFullscreen();
+        if (paused != wasPaused) MenuTrace("catalogue", paused ? "paused.fullscreen" : "resumed.fullscreen");
+        wasPaused = paused;
+        return paused;
+    }};
     std::uint64_t clock = 0;
     std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
     struct ScopeVerification { std::future<std::uint64_t> scan; std::uint64_t checked = 0, signature = 0, attempt = 0, scanRevision = 0; };
@@ -233,16 +255,27 @@ struct MenuService::Impl
         }; }
         if (!readCatalogue)
         {
-            readCatalogue = [] { return ReadCatalogue(); };
+            readCatalogue = [this] {
+                return ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, true, foregroundScanDemand);
+            };
             if (!verifyFolder) verifyFolder = [] { return ReadFolderCatalogueRevision(); };
             if (!verifyBackground) verifyBackground = [](Context context) { return ReadBackgroundCatalogueRevision(context); };
         }
         worker = std::thread([this] { Run(); });
     }
     ~Impl() { Stop(); if (wake) CloseHandle(wake); }
+    // Called with mutex held. A menu can promote an already running refresh;
+    // only an outstanding later scan retains demand for its own launch.
+    void RequestForegroundScan()
+    {
+        if (scanning) foregroundScanDemand.Promote();
+        if (scanRequested || catalogueStale || (!scanning && !catalogue.revision))
+            foregroundScanRequested = true;
+    }
     void Stop()
     {
         { std::lock_guard lock(mutex); stop = true; }
+        foregroundScanDemand.Cancel();
         SetEvent(wake);
         if (worker.joinable()) worker.join();
         // The registry scan runs separately from the scheduler. Drain it before
@@ -250,13 +283,19 @@ struct MenuService::Impl
         if (scan.valid()) scan.wait();
         for (auto &scope : scopedVerification) if (scope.scan.valid()) scope.scan.wait();
     }
+    ULONGLONG ActiveScanElapsed() const
+    {
+        const auto elapsed = GetTickCount64() - scanStarted;
+        const auto paused = foregroundScanDemand.PausedMilliseconds();
+        return elapsed > paused ? elapsed - paused : 0;
+    }
     // Called while mutex holds the same row and catalogue used for display.
     bool AttributionPending(const Request &request, const Preferences &fallback) const
     {
         if (request.startPinOnly || catalogue.revision || (!scanning && !scanRequested) ||
             // Inventory attribution enumerates the whole machine and can outlast a
             // single helper. Known rows remain visible throughout this bounded wait.
-            (scanning && GetTickCount64() - scanStarted >= kInventoryWaitMs)) return false;
+            (scanning && ActiveScanElapsed() >= kInventoryWaitMs)) return false;
         const auto it = rows.find(SelectionKey(request));
         const unsigned contexts = it != rows.end() && it->second.view.contexts ? it->second.view.contexts :
             request.context == Context::Desktop ? ContextBit(Context::Desktop) :
@@ -982,11 +1021,17 @@ struct MenuService::Impl
         bool requested = false;
         {
             std::lock_guard lock(mutex);
-            if (!scan.valid() && scanRequested)
+            if (!stop && !scan.valid() && scanRequested)
             {
                 scanRegistryRevision = registryRevision;
+                snowdesktop::performance::Value("shell.catalogue", "request.registry_revision", {},
+                    static_cast<double>(scanRegistryRevision));
+                snowdesktop::performance::Value("shell.catalogue", "request.foreground", {},
+                    foregroundScanRequested ? 1 : 0);
                 scanStarted = GetTickCount64();
                 failedRegistryRevision = 0;
+                foregroundScanDemand.Reset(foregroundScanRequested);
+                foregroundScanRequested = false;
                 scanRequested = catalogueStale = false; scanning = requested = true;
             }
         }
@@ -1329,7 +1374,7 @@ struct MenuService::Impl
                         !row.force && row.view.snapshot && row.snapshotTargetChecked &&
                         checkedRegistryRevision < registryRevision &&
                         failedRegistryRevision < registryRevision &&
-                        (!scanning || GetTickCount64() - scanStarted < kInventoryWaitMs))
+                        (!scanning || ActiveScanElapsed() < kInventoryWaitMs))
                     {
                         // Wait for the already-requested inventory rather than
                         // launching an extension process just to discard it.
@@ -1539,13 +1584,19 @@ MenuView MenuService::View(const Request &request)
 void MenuService::Query(const Request &request, QueryPriority priority, bool force)
 {
     std::lock_guard lock(impl_->mutex);
-    impl_->RememberView(request, impl_->Queue(request, priority, force));
+    const auto key = impl_->Queue(request, priority, force);
+    if (!key.empty() && priority != QueryPriority::Prewarm) impl_->RequestForegroundScan();
+    impl_->RememberView(request, key);
 }
 void MenuService::QueryFullMenu(const Request &request)
 {
     std::lock_guard lock(impl_->mutex);
     const auto key = impl_->Queue(request, QueryPriority::Menu, true);
-    if (!key.empty()) impl_->rows[key].fullMenuRequested = true;
+    if (!key.empty())
+    {
+        impl_->RequestForegroundScan();
+        impl_->rows[key].fullMenuRequested = true;
+    }
     impl_->RememberView(request, key);
 }
 bool MenuService::MenuEnabled(const Request &request, const Preferences &fallback)
@@ -1654,6 +1705,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
         impl_->discoverForce |= refresh;
         impl_->typesRequested = true; impl_->typesForce |= refresh;
     }
+    impl_->RequestForegroundScan();
     impl_->inspected = true;
     if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
     // Keep an explicit desktop inspection selected while its path is resolved
@@ -1692,6 +1744,7 @@ void MenuService::Execute(const Request &request, CommandReference reference, PO
         impl_->RememberView(request, key);
         if (!key.empty())
         {
+            impl_->RequestForegroundScan();
             impl_->rows[key].clicks.push_back({std::move(reference), point, std::move(completed), ShellInvocationOwner::Capture(owner)});
             queued = true;
         }
@@ -1714,5 +1767,6 @@ void MenuService::Invalidate(const Request &request)
     impl_->RebuildAvailable();
     if (!row.view.pending) impl_->RememberView(request, impl_->Queue(request, QueryPriority::Menu, true));
     else impl_->RememberView(request, SelectionKey(target));
+    impl_->RequestForegroundScan();
 }
 }

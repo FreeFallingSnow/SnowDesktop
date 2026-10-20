@@ -2,6 +2,7 @@
 
 #include "common/types.h"
 #include "shell/shortcut_application_rules.h"
+#include "shell/shell_item_display_name.h"
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,6 +20,19 @@ inline std::wstring LocalDesktopDisplayName(std::wstring_view path, bool directo
             shortcut_application_rules::HasExtension(name, L".url")))
         name.remove_suffix(4);
     return std::wstring(name);
+}
+
+// Ordinary display names depend on Explorer view options, not file timestamps.
+// Read them on every background snapshot; shortcut suffixes stay hidden.
+// The raw filename remains available for classification, search and file I/O.
+template<class Query>
+std::wstring ReadFolderDisplayName(const std::wstring& path,
+    const std::wstring& fileName, Query query, bool directory = false)
+{
+    SHFILEINFOW info{};
+    if (query(path, info) && info.szDisplayName[0])
+        return shell_item_display_name::ForPath(path, info.szDisplayName, directory);
+    return shell_item_display_name::ForPath(path, fileName, directory);
 }
 
 // Access time is deliberately excluded: reading metadata can change it.

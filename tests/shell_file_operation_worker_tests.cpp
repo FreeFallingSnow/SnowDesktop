@@ -1,12 +1,34 @@
 #include "platform/operation_feedback.h"
+#include "taskbar_hook/taskbar_failure_feedback.h"
 #include "shell/shell_file_operation_progress.h"
 #include "shell/shell_file_operation_worker.h"
+#include "shell/shell_file_operation_worker_boundary.h"
 #include "drag_drop/external_drop_resources.h"
 #include "layout/item_location.h"
 #include "../src/app/shell/shell_change_notification.h"
 #include "ui/input/low_level_mouse_hook.h"
 #include "shell_network_preflight.h"
 #include "shell_clipboard_cases.h"
+#include "drag_drop/file_backed_drop_request.h"
+#include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/external_desktop_cases.h"
+#include "drag_drop/async_slot_transfer_cases.h"
+#include "drag_drop/placement_cases.h"
+#include "drag_drop/member_order_cases.h"
+#include "drag_drop/right_drag_file_cases.h"
+#include "drag_drop/pipeline_decision_cases.h"
+#include "drag_drop/group_membership_cases.h"
+#include "drag_drop/group_release_cases.h"
+#include "drag_drop/widget_displacement_cases.h"
+#include "drag_drop/dock_model_cases.h"
+#include "drag_drop/dock_return_cases.h"
+#include "drag_drop/dock_file_action_cases.h"
+#include "drag_drop/page_mapping_cases.h"
+#include "drag_drop/internal_desktop_cases.h"
+#include "drag_drop/file_page_cases.h"
+#include "drag_drop/selected_desktop_cases.h"
+#include "drag_drop/desktop_request_cases.h"
+#include "drag_drop/desktop_preview_cache_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -58,7 +80,10 @@ std::filesystem::path CreateTemporaryDirectory()
 
 std::string ReadContents(const std::filesystem::path& path);
 
-// A failed first file must be reported even when a later file succeeds.
+#include "platform/recoverable_feedback_tests.inc"
+#include "shell/file_batch_cancel_cases.h"
+
+// A failed first file reports its own cause and stops the unstarted copy.
 void TestFileFailureFeedback()
 {
     const auto root = CreateTemporaryDirectory();
@@ -81,16 +106,17 @@ void TestFileFailureFeedback()
     snowdesktop::operation_feedback::SetReporter({});
     const bool reported = !succeeded && failures.size() == 1 &&
         failures.front().error == ERROR_FILE_NOT_FOUND &&
-        failures.front().detail.find(missing.wstring()) != std::wstring::npos;
+        failures.front().detail.find(missing.wstring()) != std::wstring::npos &&
+        failures.front().detail.find(source.wstring()) != std::wstring::npos;
     const bool preserved = ReadContents(source) == "source preserved" &&
-        ReadContents(copied) == "source preserved";
+        !std::filesystem::exists(copied);
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);
     // Expect exits on failure: remove isolated files before evaluating either
     // a positive run or the deliberate missing-notification negative control.
     Expect(reported, "a real file-copy failure reports its target and Win32 error once");
     Expect(skipIsCancellation, "the Shell user's Skip result is cancellation, not an unexplained copy failure");
-    Expect(preserved, "partial failure preserves the successful copy and original source");
+    Expect(preserved, "first-item failure stops the unstarted copy and preserves its original source");
     Expect(!cleanupError, "local feedback fixtures are removed");
 }
 
@@ -152,8 +178,9 @@ void TestTrackedDropResults()
         ShellFileOperationRequest operation; operation.result = outputs;
         ShellFileOperationStep step{action, {source.wstring()}, (root / L"target").wstring(),
             static_cast<FILEOP_FLAGS>(FOF_NO_UI | FOF_RENAMEONCOLLISION)};
-        if (missing) step.sources.push_back((root / L"absent.txt").wstring());
         operation.steps.push_back(step);
+        if (missing)
+            operation.steps.push_back({action, {(root / L"absent.txt").wstring()}, (root / L"target").wstring(), step.flags});
         const bool ok = ShellFileOperationWorker::Execute(operation);
         check(ok == !missing && outputs->outputs.size() == 1, "tracked copy/move reports each actual success even on partial failure");
         return outputs->outputs[0].destination;
@@ -627,12 +654,172 @@ void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& ro
     std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
 }
 
+int RunFileBackedDropRegression(bool links, bool effects)
+{
+    using namespace snowdesktop;
+    const auto root = CreateTemporaryDirectory();
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); } } cleanup{root};
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(initialized)) return 1;
+    struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
+    const auto require = [](bool passed, const char* message) {
+        if (!passed) throw std::runtime_error(message);
+    };
+    try
+    {
+        if (links)
+        {
+            const auto first = root / L"first" / L"same.txt";
+            const auto second = root / L"second" / L"same.txt";
+            const auto folder = root / L"links";
+            std::filesystem::create_directories(first.parent_path());
+            std::filesystem::create_directories(second.parent_path());
+            std::filesystem::create_directory(folder);
+            std::ofstream(first) << "first source";
+            std::ofstream(second) << "second source";
+            // Both host requests are accepted while the destination is still
+            // absent. Execute afterwards to reproduce a queued-request race.
+            const auto a = file_backed_drop::BuildRequest({first.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            const auto b = file_backed_drop::BuildRequest({second.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            require(a && b && a->shortcuts.size() == 1 && b->shortcuts.size() == 1 &&
+                a->shortcuts[0].destination == b->shortcuts[0].destination,
+                "both pending folder-link requests exercise the same initially free destination");
+            require(ShellFileOperationWorker::Execute(*a), "first upstream folder-link request creates a shortcut");
+            const bool collisionSucceeded = ShellFileOperationWorker::Execute(*b);
+            Microsoft::WRL::ComPtr<IShellLinkW> loaded;
+            require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&loaded))), "read materialized folder shortcut");
+            Microsoft::WRL::ComPtr<IPersistFile> persist;
+            require(SUCCEEDED(loaded.As(&persist)) && SUCCEEDED(persist->Load(
+                a->shortcuts[0].destination.c_str(), STGM_READ)), "reload the winning shortcut");
+            std::array<wchar_t, 32768> path{};
+            require(SUCCEEDED(loaded->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH)),
+                "read the winning shortcut target");
+            require(!collisionSucceeded && std::filesystem::path(path.data()) == first &&
+                ReadContents(first) == "first source" && ReadContents(second) == "second source",
+                "a second queued host link must report conflict and preserve the first link and both sources");
+            const auto raced = file_backed_drop::BuildRequest({first.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            require(raced && raced->shortcuts.size() == 1, "host allocates another link destination");
+            std::ofstream(std::filesystem::path(raced->shortcuts[0].destination)) << "competitor payload";
+            require(!ShellFileOperationWorker::Execute(*raced) &&
+                ReadContents(std::filesystem::path(raced->shortcuts[0].destination)) == "competitor payload",
+                "a file created after host planning is never overwritten by shortcut persistence");
+        }
+        if (effects)
+        {
+            external_desktop_cases::Run(root);
+            struct Case { DWORD allowed; DWORD keys; DWORD expected; DWORD preferred = DROPEFFECT_MOVE; };
+            constexpr DWORD all = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+            const Case cases[]{{DROPEFFECT_COPY, MK_SHIFT, DROPEFFECT_NONE},
+                {DROPEFFECT_NONE, 0, DROPEFFECT_NONE}, {DROPEFFECT_MOVE, MK_CONTROL, DROPEFFECT_NONE},
+                {DROPEFFECT_COPY, MK_CONTROL, DROPEFFECT_COPY}, {DROPEFFECT_MOVE, MK_SHIFT, DROPEFFECT_MOVE},
+                {DROPEFFECT_LINK, MK_ALT, DROPEFFECT_LINK},
+                {DROPEFFECT_COPY | DROPEFFECT_MOVE, 0, DROPEFFECT_MOVE},
+                {all, 0, DROPEFFECT_COPY, DROPEFFECT_COPY},
+                {all, MK_SHIFT, DROPEFFECT_MOVE, DROPEFFECT_COPY},
+                {all, MK_CONTROL, DROPEFFECT_COPY, DROPEFFECT_COPY},
+                {all, MK_ALT, DROPEFFECT_LINK, DROPEFFECT_COPY},
+                {all, MK_CONTROL | MK_SHIFT, DROPEFFECT_LINK, DROPEFFECT_COPY},
+                {DROPEFFECT_COPY | DROPEFFECT_MOVE, MK_CONTROL | MK_SHIFT, DROPEFFECT_NONE, DROPEFFECT_COPY}};
+            int serial = 0;
+            for (const auto& test : cases)
+            {
+                const auto source = root / (L"effect-source-" + std::to_wstring(serial) + L".txt");
+                const auto folder = root / (L"effect-target-" + std::to_wstring(serial++));
+                std::filesystem::create_directory(folder);
+                std::ofstream(source) << "source payload";
+                const DWORD effect = ole_drag_rules::ChooseDropEffect(test.keys, test.allowed, test.preferred);
+                auto outputs = std::make_shared<ShellFileOperationResult>();
+                const auto request = file_backed_drop::BuildRequest({source.wstring()}, folder.wstring(), effect, outputs);
+                const bool executed = request && ShellFileOperationWorker::Execute(*request);
+                if (test.expected == DROPEFFECT_NONE)
+                    require(!request && std::filesystem::is_empty(folder) && ReadContents(source) == "source payload",
+                        "a source-forbidden effect never creates a file request or removes the source");
+                else
+                {
+                    require(effect == test.expected && executed, "an allowed source effect reaches its real file operation");
+                    require(std::filesystem::exists(source) == (test.expected != DROPEFFECT_MOVE),
+                        "only an authorized move removes its source");
+                    if (test.expected != DROPEFFECT_LINK)
+                        require(request->steps.size() == 1 && request->steps[0].function ==
+                            static_cast<UINT>(test.expected == DROPEFFECT_MOVE ? FO_MOVE : FO_COPY) &&
+                            ReadContents(folder / source.filename()) == "source payload",
+                            "negotiated copy/move produces the matching request and destination contents");
+                    else
+                    {
+                        Microsoft::WRL::ComPtr<IShellLinkW> link;
+                        require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                            IID_PPV_ARGS(&link))), "create shortcut reader");
+                        Microsoft::WRL::ComPtr<IPersistFile> persist;
+                        require(request->shortcuts.size() == 1 && SUCCEEDED(link.As(&persist)) &&
+                            SUCCEEDED(persist->Load(request->shortcuts[0].destination.c_str(), STGM_READ)),
+                            "the negotiated link creates a readable shortcut");
+                        std::array<wchar_t, 32768> target{};
+                        require(SUCCEEDED(link->GetPath(target.data(), static_cast<int>(target.size()), nullptr, SLGP_RAWPATH)) &&
+                            std::filesystem::path(target.data()) == source && ReadContents(source) == "source payload",
+                            "Alt and Ctrl+Shift shortcuts preserve the source and point to its actual path");
+                    }
+                    require(outputs->outputs.size() == 1 &&
+                        std::filesystem::exists(outputs->outputs[0].destination),
+                        "each negotiated verb reports its exact output for desktop placement");
+                }
+            }
+            constexpr std::array<DWORD, 5> modifiers{0, MK_SHIFT, MK_CONTROL, MK_ALT, MK_CONTROL | MK_SHIFT};
+            for (DWORD mask = 0; mask < 8; ++mask)
+            for (DWORD keys : modifiers)
+                require((ole_drag_rules::ChooseDropEffect(keys, mask) & ~mask) == 0,
+                    "every modifier combination stays within the source allowed effects");
+        }
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "FAILED file-backed host request: " << error.what() << '\n';
+        return 1;
+    }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     using namespace shell_network_preflight;
-    if (argc == 2)
+    if (argc == 2 || (argc == 3 && (std::wstring_view(argv[1]) == L"--internal-desktop-tests" || std::wstring_view(argv[1]) == L"--file-page-tests" || std::wstring_view(argv[1]) == L"--selected-desktop-tests" || std::wstring_view(argv[1]) == L"--desktop-preview-cache-tests")))
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests" ||
+            mode == L"--member-order-tests" || mode == L"--right-drag-file-tests" || mode == L"--pipeline-decision-tests" ||
+            mode == L"--group-membership-tests" || mode == L"--group-release-tests" || mode == L"--widget-displacement-tests" || mode == L"--dock-model-tests" || mode == L"--dock-return-tests" || mode == L"--dock-file-action-tests" || mode == L"--page-mapping-tests" || mode == L"--internal-desktop-tests" || mode == L"--file-page-tests" || mode == L"--selected-desktop-tests" || mode == L"--desktop-request-tests" || mode == L"--desktop-preview-cache-tests")
+        {
+            const HRESULT initialized = OleInitialize(nullptr);
+            Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
+            const auto root = CreateTemporaryDirectory();
+            int result = 0;
+            try {
+                if (mode == L"--drop-placement-tests") drop_placement_cases::Run(root);
+                else if (mode == L"--member-order-tests") member_order_cases::Run(root);
+                else if (mode == L"--right-drag-file-tests") right_drag_file_cases::Run(root);
+                else if (mode == L"--pipeline-decision-tests") pipeline_decision_cases::Run(root);
+                else if (mode == L"--group-membership-tests") group_membership_cases::Run(root);
+                else if (mode == L"--group-release-tests") group_release_cases::Run(root);
+                else if (mode == L"--widget-displacement-tests") widget_displacement_cases::Run(root);
+                else if (mode == L"--dock-model-tests") dock_model_cases::Run(root);
+                else if (mode == L"--dock-return-tests") dock_return_cases::Run(root);
+                else if (mode == L"--dock-file-action-tests") dock_file_action_cases::Run(root);
+                else if (mode == L"--page-mapping-tests") page_mapping_cases::Run(root);
+                else if (mode == L"--internal-desktop-tests") internal_desktop_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
+                else if (mode == L"--file-page-tests") file_page_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
+                else if (mode == L"--selected-desktop-tests") selected_desktop_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
+                else if (mode == L"--desktop-request-tests") desktop_request_cases::Run(root);
+                else if (mode == L"--desktop-preview-cache-tests") desktop_preview_cache_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
+                else async_slot_transfer_cases::Run(root);
+            }
+            catch (const std::exception& error)
+            { std::cerr << "FAILED async slot transfer: " << error.what() << '\n'; result = 1; }
+            std::filesystem::remove_all(root);
+            OleUninitialize();
+            return result;
+        }
+        if (mode == L"--folder-link-request-tests") return RunFileBackedDropRegression(true, false);
+        if (mode == L"--allowed-effect-request-tests") return RunFileBackedDropRegression(false, true);
         if (mode == L"--tracked-path-alias-tests")
         {
             try { TestTrackedDropPathAliases(); }
@@ -644,7 +831,16 @@ int wmain(int argc, wchar_t** argv)
             // CopyFile and progress-result classification use only isolated
             // local files, so unavailable network providers are irrelevant.
             TestFileFailureFeedback();
+            TestRecoverableFailurePresentation();
+            try { file_batch_cancel_cases::Run(); }
+            catch (const std::exception& error) { std::cerr << "FAILED: " << error.what() << '\n'; return 1; }
             std::cout << "local file-operation feedback tests passed\n";
+            return 0;
+        }
+        if (mode == L"--batch-cancel-legacy-tests" || mode == L"--batch-cancel-tracked-tests")
+        {
+            try { file_batch_cancel_cases::Run(mode == L"--batch-cancel-legacy-tests", mode == L"--batch-cancel-tracked-tests"); }
+            catch (const std::exception& error) { std::cerr << "FAILED: " << error.what() << '\n'; return 1; }
             return 0;
         }
         if (mode == L"--query-network-connections") return QueryConnections();
@@ -683,6 +879,7 @@ int wmain(int argc, wchar_t** argv)
     if (argc != 1) return 1;
     const int environment = CheckEnvironment();
     if (environment != Ready) return environment;
+    if (RunFileBackedDropRegression(true, true) != 0) return 1;
 
     const HRESULT comResult =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

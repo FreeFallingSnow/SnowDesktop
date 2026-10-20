@@ -6,6 +6,7 @@
 
 #include "platform/deployment_context.h"
 #include "wallpaper_hook/wallpaper_hook_protocol.h"
+#include "wallpaper_hook/shared_frame_access.h"
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -27,6 +28,24 @@
 
 namespace snowdesktop::wallpaper_engine_capture
 {
+
+bool CanInjectCaptureHook(DWORD processId, std::wstring& error)
+{
+    wchar_t legacyName[128]{};
+    _snwprintf_s(legacyName, 128, _TRUNCATE,
+        L"Local\\SnowDesktop.WallpaperEngine.DxgiHook.v3.%lu",
+        static_cast<unsigned long>(processId));
+    HANDLE legacy = OpenFileMappingW(FILE_MAP_READ, FALSE, legacyName);
+    const DWORD openError = legacy ? ERROR_SUCCESS : GetLastError();
+    if (legacy)
+        CloseHandle(legacy);
+    if (!legacy && openError == ERROR_FILE_NOT_FOUND)
+        return true;
+    // A failed access check also cannot prove that the old hook has exited.
+    error = L"An older Wallpaper Engine hook may still be loaded; restart the "
+        L"Wallpaper Engine renderer before capturing again";
+    return false;
+}
 
 CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
@@ -685,6 +704,8 @@ public:
             return false;
         if (!OpenMapping())
         {
+            if (!CanInjectCaptureHook(processId_, error))
+                return false;
             ProcessArchitecture architecture{};
             if (!QueryProcessArchitecture(processId_, architecture, error))
                 return false;
@@ -712,7 +733,41 @@ public:
             error = L"Wallpaper Engine hook mapping was not published";
             return false;
         }
-        if (state_->status == static_cast<LONG>(Status::failed))
+        if (state_->shutdown_requested != 0 ||
+            state_->status == static_cast<LONG>(Status::failed) ||
+            state_->status == static_cast<LONG>(Status::stopping))
+        {
+            wchar_t controlName[128]{};
+            MakeControlEventName(processId_, controlName);
+            HANDLE control = OpenEventW(EVENT_MODIFY_STATE, FALSE, controlName);
+            if (!control)
+            {
+                error = FormatSystemError(L"Cannot restart Wallpaper Engine hook", GetLastError());
+                return false;
+            }
+            InterlockedExchange(&state_->shutdown_requested, kRestartRequested);
+            const BOOL signaled = SetEvent(control);
+            const DWORD signalError = signaled ? ERROR_SUCCESS : GetLastError();
+            CloseHandle(control);
+            if (!signaled)
+            {
+                error = FormatSystemError(L"Cannot restart Wallpaper Engine hook", signalError);
+                return false;
+            }
+        }
+        const ULONGLONG readyDeadline = GetTickCount64() + waitMs;
+        while (state_->shutdown_requested == kRestartRequested ||
+            state_->status == static_cast<LONG>(Status::starting))
+        {
+            if (IsCancelled(cancelled) || GetTickCount64() >= readyDeadline)
+            {
+                error = L"Wallpaper Engine hook did not become ready";
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (state_->status != static_cast<LONG>(Status::hooked) &&
+            state_->status != static_cast<LONG>(Status::sharing))
         {
             error = FormatHresult(L"Wallpaper Engine hook initialization failed",
                 static_cast<HRESULT>(state_->last_hresult));
@@ -830,6 +885,7 @@ private:
         bool remapToMonitor, Backdrop& backdrop, std::wstring& error)
     {
         SharedFrameSlot& published = state_->slots[index];
+        const LONG generation = published.generation;
         const DXGI_FORMAT format =
             static_cast<DXGI_FORMAT>(published.format);
         if (!IsSupportedFormat(format))
@@ -871,83 +927,80 @@ private:
         }
         ComPtr<IDXGIKeyedMutex> keyedMutex;
         source.As(&keyedMutex);
-        if (keyedMutex)
-        {
-            result = keyedMutex->AcquireSync(1, 50);
-            if (result == WAIT_TIMEOUT)
-                return false;
-            if (FAILED(result))
-            {
-                error = FormatHresult(
-                    L"Cannot acquire Wallpaper Engine frame", result);
-                return false;
-            }
-        }
-        const auto releaseMutex = [&] {
-            if (keyedMutex)
-                keyedMutex->ReleaseSync(0);
-        };
+        result = UseSharedFrame(
+            [&] { return keyedMutex ? keyedMutex->AcquireSync(1, 50) : S_OK; },
+            [&] { if (keyedMutex) keyedMutex->ReleaseSync(0); },
+            [&]() -> HRESULT {
+                if (published.generation != generation)
+                    return E_PENDING;
+                D3D11_TEXTURE2D_DESC description{};
+                source->GetDesc(&description);
+                D3D11_TEXTURE2D_DESC stagingDescription = description;
+                stagingDescription.BindFlags = 0;
+                stagingDescription.MiscFlags = 0;
+                stagingDescription.Usage = D3D11_USAGE_STAGING;
+                stagingDescription.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                ComPtr<ID3D11Texture2D> staging;
+                result = device->CreateTexture2D(
+                    &stagingDescription, nullptr, &staging);
+                if (FAILED(result))
+                {
+                    error = FormatHresult(
+                        L"Cannot create Wallpaper Engine staging texture", result);
+                    return result;
+                }
+                context->CopyResource(staging.Get(), source.Get());
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                result = context->Map(
+                    staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+                if (FAILED(result))
+                {
+                    error = FormatHresult(
+                        L"Cannot map Wallpaper Engine staging texture", result);
+                    return result;
+                }
 
-        D3D11_TEXTURE2D_DESC description{};
-        source->GetDesc(&description);
-        D3D11_TEXTURE2D_DESC stagingDescription = description;
-        stagingDescription.BindFlags = 0;
-        stagingDescription.MiscFlags = 0;
-        stagingDescription.Usage = D3D11_USAGE_STAGING;
-        stagingDescription.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        ComPtr<ID3D11Texture2D> staging;
-        result = device->CreateTexture2D(
-            &stagingDescription, nullptr, &staging);
-        if (FAILED(result))
-        {
-            releaseMutex();
-            error = FormatHresult(
-                L"Cannot create Wallpaper Engine staging texture", result);
-            return false;
-        }
-        context->CopyResource(staging.Get(), source.Get());
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        result = context->Map(
-            staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-        if (FAILED(result))
-        {
-            releaseMutex();
-            error = FormatHresult(
-                L"Cannot map Wallpaper Engine staging texture", result);
-            return false;
-        }
+                std::vector<std::uint32_t> pixels(
+                    static_cast<std::size_t>(description.Width) * description.Height);
+                for (UINT y = 0; y < description.Height; ++y)
+                {
+                    const auto* sourceRow =
+                        reinterpret_cast<const std::uint32_t*>(
+                            static_cast<const std::byte*>(mapped.pData) +
+                            static_cast<std::size_t>(y) * mapped.RowPitch);
+                    auto* destinationRow = pixels.data() +
+                        static_cast<std::size_t>(y) * description.Width;
+                    for (UINT x = 0; x < description.Width; ++x)
+                        destinationRow[x] = ConvertPixel(sourceRow[x], format);
+                }
+                context->Unmap(staging.Get(), 0);
+                if (published.generation != generation)
+                    return E_PENDING;
+                InterlockedExchange64(&published.consumed_frame_number,
+                    published.frame_number);
 
-        std::vector<std::uint32_t> pixels(
-            static_cast<std::size_t>(description.Width) * description.Height);
-        for (UINT y = 0; y < description.Height; ++y)
-        {
-            const auto* sourceRow =
-                reinterpret_cast<const std::uint32_t*>(
-                    static_cast<const std::byte*>(mapped.pData) +
-                    static_cast<std::size_t>(y) * mapped.RowPitch);
-            auto* destinationRow = pixels.data() +
-                static_cast<std::size_t>(y) * description.Width;
-            for (UINT x = 0; x < description.Width; ++x)
-                destinationRow[x] = ConvertPixel(sourceRow[x], format);
-        }
-        context->Unmap(staging.Get(), 0);
-        releaseMutex();
-        InterlockedExchange64(&published.consumed_frame_number,
-            published.frame_number);
-
-        const RECT sourceDesktopBounds = remapToMonitor
-            ? monitorBounds
-            : published.desktop_rect;
-        backdrop = CropFrameToDesktopRegion(pixels.data(),
-            static_cast<int>(description.Width),
-            static_cast<int>(description.Height),
-            sourceDesktopBounds, monitorBounds);
-        if (backdrop.Empty())
-        {
-            error = L"Wallpaper Engine frame does not cover the preview monitor";
-            return false;
-        }
-        return true;
+                const RECT sourceDesktopBounds = remapToMonitor
+                    ? monitorBounds
+                    : published.desktop_rect;
+                backdrop = CropFrameToDesktopRegion(pixels.data(),
+                    static_cast<int>(description.Width),
+                    static_cast<int>(description.Height),
+                    sourceDesktopBounds, monitorBounds);
+                if (backdrop.Empty())
+                {
+                    error = L"Wallpaper Engine frame does not cover the preview monitor";
+                    return E_FAIL;
+                }
+                return S_OK;
+            },
+            [&] {
+                InterlockedExchange(&published.recreate_requested, 1);
+                requestSerial_ = InterlockedIncrement(&state_->request_serial);
+            });
+        if (result != S_OK && result != static_cast<HRESULT>(WAIT_TIMEOUT) &&
+            result != static_cast<HRESULT>(WAIT_ABANDONED) && error.empty())
+            error = FormatHresult(L"Cannot acquire Wallpaper Engine frame", result);
+        return result == S_OK;
     }
 
     DWORD processId_ = 0;

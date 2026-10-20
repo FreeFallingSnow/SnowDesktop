@@ -2,7 +2,6 @@
 #include "status_bar.h"
 #include "ui/render/ui_animation_scheduler.h"
 #include <algorithm>
-#include <memory>
 #include <utility>
 
 namespace snowdesktop
@@ -43,14 +42,13 @@ struct StatusBarShellChord
 {
     WORD key = 0;
     bool alt = false;
-    UINT pointerQuietMilliseconds = 0;
     bool waitForPointerRelease = false;
 };
 inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bool windows11, bool classicTaskbar)
 {
-    // The caller shields repeated presses at the opening button before sending
-    // Win+Tab. Wait only for held input, not the full double-click interval.
-    if (action == StatusBarAction::TaskView) return {VK_TAB, false, 0, true};
+    // Task View's input handoff is installed before sending the chord.
+    if (action == StatusBarAction::TaskView) return {VK_TAB, false, true};
+    if (action == StatusBarAction::ShowDesktop) return {'D', false, true};
     if (action == StatusBarAction::SystemCalendar) return windows11 ? StatusBarShellChord{'N'} : StatusBarShellChord{'D', true};
     if (action == StatusBarAction::SystemControlCenter) return windows11 ? StatusBarShellChord{'A'} : StatusBarShellChord{};
     if (action == StatusBarAction::Notifications) return {static_cast<WORD>(classicTaskbar ? 'A' : 'N')};
@@ -68,7 +66,17 @@ class TaskViewTransitionGuard
 public:
     bool Busy(double now) const noexcept
     {
-        return now < settledAt_ || (awaitingShown_ && now < deadline_);
+        return Remaining(now) > 0;
+    }
+    double Remaining(double now) const noexcept
+    {
+        return (std::max)(0.0, (std::max)(settledAt_, awaitingShown_ ? deadline_ : 0.0) - now);
+    }
+    bool AllowsAction(StatusBarAction action, double now, bool currentlyVisible) const noexcept
+    {
+        // Any new popup, menu, dismissal or search can cancel the Shell's
+        // opening window before its input services have finished initializing.
+        return !Busy(now) && (action != StatusBarAction::TaskView || CanBegin(now, currentlyVisible));
     }
     bool CanBegin(double now, bool currentlyVisible) const noexcept
     {
@@ -103,12 +111,6 @@ private:
     bool visible_ = false;
 };
 
-inline bool IsTaskViewTransitionSensitiveAction(StatusBarAction action) noexcept
-{
-    return action == StatusBarAction::TaskView || action == StatusBarAction::Notifications ||
-        action == StatusBarAction::SystemCalendar || action == StatusBarAction::SystemControlCenter;
-}
-
 struct StatusBarShortcutCallbacks
 {
     std::function<bool(int)> keyDown;
@@ -125,12 +127,9 @@ struct StatusBarShortcutCallbacks
 inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& scheduler,
     StatusBarShellChord chord, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
 {
-    // DispatchDue copies callbacks so cancellation/reentrancy cannot invalidate
-    // the active call. Keep the mutable gesture deadline in request-owned state.
-    const auto notBefore = std::make_shared<double>(callbacks.nowMilliseconds() + chord.pointerQuietMilliseconds);
-    const double deadline = *notBefore + timeoutMilliseconds;
+    const double deadline = callbacks.nowMilliseconds() + timeoutMilliseconds;
     return scheduler.ScheduleInterval(16,
-        [&scheduler, chord, deadline, notBefore, callbacks = std::move(callbacks)](UiScheduleToken token) {
+        [&scheduler, chord, deadline, callbacks = std::move(callbacks)](UiScheduleToken token) {
             const auto finish = [&](StatusBarShortcutResult result) {
                 scheduler.Cancel(token);
                 callbacks.finished(token, result);
@@ -140,12 +139,11 @@ inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& sche
             const double now = callbacks.nowMilliseconds();
             if (now >= deadline)
             { finish(StatusBarShortcutResult::TimedOut); return; }
-            if (chord.waitForPointerRelease || chord.pointerQuietMilliseconds)
+            if (chord.waitForPointerRelease)
             {
                 for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
                     if (callbacks.keyDown(button))
-                    { *notBefore = now + chord.pointerQuietMilliseconds; return; }
-                if (now < *notBefore) return;
+                    { return; }
             }
             for (const int modifier : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN})
                 if (callbacks.keyDown(modifier)) return;

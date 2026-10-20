@@ -13,6 +13,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace input = snowdesktop::text_input;
+int RunTextInputClipboardTests();
 namespace
 {
 int failures=0,changes=0,ownerPaints=0;
@@ -366,7 +367,7 @@ int main(int argc,char** argv)
     if(!owner)Check(false,"create isolated hidden test owner");
     else if(argc>3&&std::string(argv[2])=="--border-preview")
     {RoundedBorder(owner,std::filesystem::path(argv[3]));DestroyWindow(owner);}
-    else{Ordinary(owner);StableEmbeddedPresentation();Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);RoundedBorder(owner);
+    else{failures += RunTextInputClipboardTests();Ordinary(owner);StableEmbeddedPresentation();Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);RoundedBorder(owner);
         Check(argc>1,"the bundled-font regression receives the repository root");
         if(argc>1)BundledFonts(owner,std::filesystem::path(argv[1]));DestroyWindow(owner);}
     if(SUCCEEDED(apartment))CoUninitialize();

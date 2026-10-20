@@ -7,11 +7,14 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <atomic>
 #include <iostream>
+#include <thread>
 
 namespace
 {
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
+constexpr wchar_t kUndoProperty[] = L"SnowDesktop.DockWindowPinUndo";
 constexpr wchar_t kFixtureClass[] = L"SnowDesktopDockPinFixture";
 
 struct ScopedDpiContext
@@ -85,6 +88,11 @@ bool IsAbove(HWND window, HWND target)
     return false;
 }
 
+bool IsNativeTopmost(HWND window)
+{
+    return (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
 HWND FindFixtureManager()
 {
     HWND manager = nullptr;
@@ -97,6 +105,102 @@ HWND FindFixtureManager()
     }
     return nullptr;
 }
+
+struct BlockedPinWindow
+{
+    static constexpr UINT Block = WM_APP + 101;
+    static constexpr UINT ResetAndBlock = WM_APP + 102;
+    static constexpr UINT Drain = WM_APP + 103;
+    HANDLE created = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE drained = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<HWND> window{nullptr};
+    std::atomic<bool> stop{false};
+    std::thread thread;
+    static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        auto* self = reinterpret_cast<BlockedPinWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (self && (message == Block || message == ResetAndBlock))
+        {
+            if (message == ResetAndBlock)
+                SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetEvent(self->entered);
+            WaitForSingleObject(self->release, 3000);
+            return 0;
+        }
+        if (self && message == Drain) { SetEvent(self->drained); return 0; }
+        if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
+        if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+    BlockedPinWindow()
+    {
+        if (!created || !entered || !release || !drained) return;
+        thread = std::thread([this] {
+            WNDCLASSW cls{};
+            cls.hInstance = GetModuleHandleW(nullptr);
+            cls.lpfnWndProc = Proc;
+            cls.lpszClassName = L"SnowDesktopBlockedPinFixture";
+            RegisterClassW(&cls);
+            window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                cls.lpszClassName, L"blocked-pin-fixture", WS_OVERLAPPEDWINDOW,
+                -12000, -12000, 200, 120, nullptr, nullptr, cls.hInstance, this);
+            SetEvent(created);
+            if (!window) return;
+            if (stop.load()) { DestroyWindow(window); return; }
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        });
+        if (WaitForSingleObject(created, 1000) != WAIT_OBJECT_0) stop = true;
+    }
+    ~BlockedPinWindow()
+    {
+        stop = true;
+        SetEvent(release);
+        PostMessageW(window, WM_CLOSE, 0, 0);
+        if (thread.joinable()) thread.join();
+        CloseHandle(created); CloseHandle(entered); CloseHandle(release); CloseHandle(drained);
+    }
+    template<class Action> bool WhileBlocked(Action action, bool resetTopmost = false, DWORD responseDeadline = 200)
+    {
+        ResetEvent(entered); ResetEvent(release);
+        PostMessageW(window, resetTopmost ? ResetAndBlock : Block, 0, 0);
+        if (WaitForSingleObject(entered, 1000) != WAIT_OBJECT_0) return false;
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::atomic<bool> responsive{false};
+        std::thread controller([&] {
+            responsive = WaitForSingleObject(returned, responseDeadline) == WAIT_OBJECT_0;
+            SetEvent(release);
+        });
+        action();
+        SetEvent(returned);
+        controller.join();
+        CloseHandle(returned);
+        // Do not accept an initially clear TOPMOST bit before the target has
+        // resumed its queue and handled the earlier asynchronous native calls.
+        ResetEvent(drained);
+        PostMessageW(window, Drain, 0, 0);
+        return responsive.load() && Until([&] {
+            return WaitForSingleObject(drained, 0) == WAIT_OBJECT_0;
+        });
+    }
+    template<class Predicate> bool Until(Predicate predicate)
+    {
+        const ULONGLONG deadline = GetTickCount64() + 1500;
+        while (!predicate() && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+        }
+        return predicate();
+    }
+};
 }
 
 int RunDockWindowPinTests()
@@ -110,6 +214,55 @@ int RunDockWindowPinTests()
             std::cerr << "FAIL: " << message << '\n';
         }
     };
+    // Real cross-input-queue calls: a controller always releases the fixture,
+    // so the old synchronous implementation fails an assertion, not a timeout.
+    {
+        BlockedPinWindow target;
+        auto pin = std::make_unique<DockWindowPin>();
+        bool accepted = false;
+        check(target.window && target.WhileBlocked([&] { accepted = pin->Toggle(target.window); }) && accepted,
+            "pin request returns while its target GUI thread is blocked");
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }),
+            "queued pin is confirmed after its target resumes");
+        check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); }) && accepted,
+            "unpin request returns while its target GUI thread is blocked");
+        check(target.Until([&] { pin->Refresh(); return !IsNativeTopmost(target.window) &&
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
+            "queued unpin releases both the tracked lease and native cancellation after confirmation");
+        pin->Toggle(target.window);
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "maintenance fixture is pinned");
+        check(target.WhileBlocked([&] { pin->Refresh(); }, true),
+            "repairing an application-reset pin does not wait on its blocked GUI thread");
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "asynchronous maintenance restores the pin");
+        check(target.WhileBlocked([&] { pin->Clear(); }), "clearing pins does not wait on a blocked GUI thread");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
+            "clear eventually withdraws its native topmost change");
+        bool expired = false;
+        check(target.WhileBlocked([&] {
+            accepted = pin->Toggle(target.window);
+            expired = target.Until([&] { pin->Refresh(); return !GetPropW(target.window, kPinProperty); });
+        }, false, 2000) && accepted && expired,
+            "an unconfirmed pin expires while its target is still blocked");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
+            "a pin delivered after its confirmation deadline is withdrawn by its queued inverse");
+        check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); pin.reset(); }) && accepted,
+            "destroying a pending pin queues its inverse without waiting on the target");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
+            "a late queued pin cannot survive destruction of its owner");
+        pin = std::make_unique<DockWindowPin>();
+        check(target.WhileBlocked([&] {
+            accepted = pin->Toggle(target.window);
+            const HWND visual = static_cast<HWND>(GetPropW(target.window, kPinProperty));
+            check(visual && DestroyWindow(visual), "the fixture destroys only its own pending pin border");
+        }) && accepted, "early visual destruction never waits for a pending native pin");
+        check(target.Until([&] { pin->Refresh(); return !IsNativeTopmost(target.window) &&
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
+            "the independent operation owner withdraws a late pin after its visual was destroyed");
+        pin->Clear();
+    }
     // A protected consent broker can reject process-path reads while exposing
     // a normal task window. The discovery identity must retain each such window
     // separately, and later metadata must refine it to a normal app identity.
@@ -171,6 +324,7 @@ int RunDockWindowPinTests()
     ShowWindow(target, SW_SHOWNOACTIVATE);
     const HWND foreground = GetForegroundWindow();
     DockWindowPin pins;
+    pins.SetAppearance(PersonalizationSettings{});
     check(!pins.Toggle(nullptr), "invalid handles cannot create a pin");
     {
         const ScopedDpiContext unawareCaller(DPI_AWARENESS_CONTEXT_UNAWARE);
@@ -244,11 +398,17 @@ int RunDockWindowPinTests()
         check(backlogCreated, "the native follow regression creates a real posted-message backlog");
         int samplesFollowed = 0;
         int samplesDelivered = 0;
+        int samplesRepinned = 0;
         unsigned slowestSampleMs = 0;
         std::vector<MSG> deferredWork;
         for (int sample = 1; sample <= 8; ++sample)
         {
             const unsigned locationsBefore = observedLocations;
+            // Model QQ resetting the native band during title-bar movement.
+            // Use the native flag as the oracle, independently of IsPinned's
+            // retained user-request state; the timer and posted work stay off.
+            SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             SetWindowPos(target, nullptr, -11000 + sample * 37, -11500 + sample * 19,
                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             RECT expected{};
@@ -273,10 +433,12 @@ int RunDockWindowPinTests()
                     }
                 }
                 GetWindowRect(border, &actual);
-                aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected);
+                aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected) &&
+                    IsNativeTopmost(target);
                 if (!aligned) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
             } while (!aligned && GetTickCount64() - started < 500);
             if (aligned) ++samplesFollowed;
+            if (IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border) ++samplesRepinned;
             if (observedLocations > locationsBefore) ++samplesDelivered;
             if (!aligned && sample == 1)
             {
@@ -296,6 +458,8 @@ int RunDockWindowPinTests()
             "each native motion sample aligns the ring before posted application work is dispatched");
         check(samplesDelivered == 8,
             "the posted-backlog fixture delivers native location events for every motion sample");
+        check(samplesRepinned == 8,
+            "each motion-induced TOPMOST reset is repaired without retiring the pin or waiting for the poll");
         std::cout << "Pin motion samples before posted dispatch: " << samplesFollowed
             << "/8; native event samples delivered: " << samplesDelivered
             << "/8; maximum native sample wait: " << slowestSampleMs << " ms\n";
@@ -313,13 +477,52 @@ int RunDockWindowPinTests()
         observedWindow = nullptr;
         if (manager) SetTimer(manager, 1, 100, nullptr);
 
+        PersonalizationSettings pinAppearance;
+        pinAppearance.windowPinBorderWidth = 12.0f;
+        pinAppearance.windowPinBorderR = 1.0f;
+        pinAppearance.windowPinBorderG = 0.2f;
+        pinAppearance.windowPinBorderB = 0.0f;
+        pinAppearance.windowPinBorderOpacity = 0.8f;
+        pins.SetAppearance(pinAppearance);
+        RECT styledBounds{}, styledFrame{};
+        GetWindowRect(border, &styledBounds);
+        DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &styledFrame, sizeof(styledFrame));
+        const int styledStroke = MulDiv(12, static_cast<int>(GetDpiForWindow(target)), 96);
+        check(styledBounds.left == styledFrame.left - styledStroke &&
+                styledBounds.top == styledFrame.top - styledStroke &&
+                styledBounds.right == styledFrame.right + styledStroke &&
+                styledBounds.bottom == styledFrame.bottom + styledStroke &&
+                GetPropW(target, kPinProperty) == border,
+            "changing global border thickness resizes the existing ring in physical pixels");
+        pinAppearance.windowPinBorderEnabled = false;
+        pins.SetAppearance(pinAppearance);
+        check(!IsWindowVisible(border) && IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border,
+            "disabling the indicator hides its ring without cancelling the pin or ownership");
+        SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        pins.Refresh();
+        check(IsNativeTopmost(target) && !IsWindowVisible(border),
+            "TOPMOST recovery stays active while the border is disabled");
+        pinAppearance.windowPinBorderEnabled = true;
+        pins.SetAppearance(pinAppearance);
+        check(IsWindowVisible(border) && GetPropW(target, kPinProperty) == border,
+            "enabling the indicator restores the existing ring without repinning");
+        pinAppearance.windowPinBorderOpacity = 0.0f;
+        pins.SetAppearance(pinAppearance);
+        check(!IsWindowVisible(border) && IsNativeTopmost(target),
+            "zero border opacity hides the ring while keeping the native pin");
+        pins.SetAppearance(PersonalizationSettings{});
+        check(IsWindowVisible(border), "restoring border defaults restores the indicator immediately");
+
         ShowWindow(target, SW_SHOWMINNOACTIVE);
+        SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         pins.Refresh();
         check(!IsWindowVisible(border), "minimization hides the ring while retaining the pin");
         ShowWindow(target, SW_SHOWNOACTIVATE);
         pins.Refresh();
-        check(DockWindowPin::IsPinned(target) && IsWindowVisible(border),
-            "restoring a minimized window restores its border");
+        check(IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border && IsWindowVisible(border),
+            "restoring a minimized window restores its lost native TOPMOST flag and original border");
         ShowWindow(target, SW_HIDE);
         pins.Refresh();
         check(!IsWindowVisible(border), "hidden windows do not leave a detached border");
@@ -330,13 +533,29 @@ int RunDockWindowPinTests()
 
     check(pins.Toggle(target) && pins.Toggle(other), "multiple windows can be pinned independently");
     border = static_cast<HWND>(GetPropW(target, kPinProperty));
-    // An app can cancel TOPMOST itself; the Dock must not fight that change.
+    // A native flag reset is not a user's request to cancel the Dock pin.
     SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    check(!IsNativeTopmost(target) && DockWindowPin::IsPinned(target),
+        "the pin indicator retains the user request while its native flag is temporarily lost");
     pins.Refresh();
-    check(!DockWindowPin::IsPinned(target) && !IsWindow(border) && DockWindowPin::IsPinned(other),
-        "external unpinning retires only the affected window's border");
-    check(pins.Toggle(target), "a window can be pinned again after external cancellation");
+    check(IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border &&
+            IsWindow(border) && IsNativeTopmost(other),
+        "refresh repairs the reset flag while retaining both independent pins");
+    SetWindowPos(other, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    pins.Refresh();
+    check(IsAbove(other, target), "refreshing a stable pin does not raise it over another topmost window");
+
+    SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    check(pins.Toggle(target) && !DockWindowPin::IsPinned(target) && !IsWindow(border) &&
+            !GetPropW(target, kPinProperty),
+        "explicit cancellation works even while the native flag is lost");
+    pins.Refresh();
+    check(!IsNativeTopmost(target) && IsNativeTopmost(other),
+        "later refresh does not revive a cancelled request or cancel another pin");
+    check(pins.Toggle(target), "a window can be pinned again after explicit cancellation");
     border = static_cast<HWND>(GetPropW(target, kPinProperty));
     RemovePropW(target, kPinProperty);
     pins.Refresh();
@@ -344,6 +563,8 @@ int RunDockWindowPinTests()
         "lost ownership must not demote an unrelated or reused target handle");
     SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    pins.Refresh();
+    check(!IsNativeTopmost(target), "lost ownership never repairs TOPMOST on an untracked target");
     pins.Clear();
     check(!DockWindowPin::IsPinned(other), "session teardown restores only pins it still owns");
     SetWindowPos(other, HWND_TOPMOST, 0, 0, 0, 0,

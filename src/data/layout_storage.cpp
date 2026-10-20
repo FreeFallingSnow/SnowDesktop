@@ -2,6 +2,10 @@
 
 #include "data/atomic_file.h"
 #include "common/json_value.h"
+#include "icons/icon_appearance_codec.h"
+#include <set>
+
+#include <windows.h>
 
 #include <cmath>
 #include <iomanip>
@@ -85,8 +89,10 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
     encoded.object = {
         {"position", NumberValue(static_cast<int>(settings.position))},
         {"edgeAttached", BooleanValue(settings.edgeAttached)},
+        {"edgeDistanceScale", NumberValue(settings.edgeDistanceScale)},
         {"monitorScope", NumberValue(static_cast<int>(settings.monitorScope))},
         {"showWindowsButton", BooleanValue(settings.showWindowsButton)},
+        {"showQuickSearchButton", BooleanValue(settings.showQuickSearchButton)},
         {"showFrequentItems", BooleanValue(settings.showFrequentItems)},
         {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
         {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
@@ -368,6 +374,35 @@ bool DecodeItems(const JsonValue& root, Document& document,
     return true;
 }
 
+bool DecodeMissingItems(const JsonValue& object, const std::string& path,
+    std::vector<MissingItemRecord>& output, std::string* error)
+{
+    const JsonValue* items = nullptr;
+    if (!ReadObjectArray(object, "missingItems", items, error)) return false;
+    if (!items) return true;
+    for (size_t index = 0; index < items->array.size(); ++index)
+    {
+        const auto& item = items->array[index];
+        const auto itemPath = path + ".missingItems[" + std::to_string(index) + "]";
+        MissingItemRecord record;
+        if (!ReadRequiredString(item, "key", itemPath + ".key", record.key, error) ||
+            !ReadRequiredInteger(item, "index", itemPath + ".index", record.index, error))
+            return false;
+        if (record.key.empty() || record.index < 0)
+            return Fail(error, itemPath, "requires a nonempty key and a nonnegative index");
+        const auto* stamp = item.Find("missingSince");
+        // JSON numbers must represent UTC seconds exactly, including after 2038.
+        constexpr double maxExactInteger = 9007199254740991.0;
+        if (!stamp || !stamp->IsNumber() || !std::isfinite(stamp->number) ||
+            std::trunc(stamp->number) != stamp->number || stamp->number <= 0 ||
+            stamp->number > maxExactInteger)
+            return Fail(error, itemPath + ".missingSince", "must be a positive exact integer");
+        record.missingSince = static_cast<std::int64_t>(stamp->number);
+        output.push_back(std::move(record));
+    }
+    return true;
+}
+
 bool DecodeWidgets(const JsonValue& root, Document& document,
     std::string* error)
 {
@@ -403,6 +438,7 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadString(object, "demoIconCategory",
                 path + ".demoIconCategory", record.demoIconCategory,
                 error) ||
+            !ReadString(object, "dockIconAssetId", path + ".dockIconAssetId", record.dockIconAssetId, error) ||
             !ReadString(object, "sourceFolderPath",
                 path + ".sourceFolderPath", record.sourceFolderPath,
                 error) ||
@@ -436,10 +472,15 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "autoCollect", path + ".autoCollect",
                 record.autoCollect, error) ||
+            !ReadStringArray(object, "autoCollectCategoryIds",
+                path + ".autoCollectCategoryIds",
+                record.autoCollectCategoryIds, error) ||
             !ReadBoolean(object, "dissolveWhenSingle", path + ".dissolveWhenSingle",
                 record.dissolveWhenSingle, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadInteger(object, "listColumns", path + ".listColumns",
+                record.listColumns, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",
                 record.fanPopup, error) ||
             !ReadBoolean(object, "showDetails", path + ".showDetails",
@@ -489,6 +530,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "privacyMode", path + ".privacyMode",
                 record.privacyMode, error) ||
+            !ReadBoolean(object, "singleCellIconMode", path + ".singleCellIconMode",
+                record.singleCellIconMode, error) ||
             !ReadBoolean(object, "scrollContainerMode",
                 path + ".scrollContainerMode", record.scrollContainerMode,
                 error) ||
@@ -514,11 +557,14 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.categoryTabOrder, error) ||
             !ReadStringArray(object, "items", path + ".items",
                 record.items, error) ||
+            !DecodeMissingItems(object, path, record.missingItems, error) ||
             !ReadStringArray(object, "childWidgets",
                 path + ".childWidgets", record.childWidgets, error))
         {
             return false;
         }
+        if (!record.dockIconAssetId.empty() && !IsIconAssetId(record.dockIconAssetId))
+            return Fail(error, path + ".dockIconAssetId", "invalid icon library identity");
         document.widgets.push_back(std::move(record));
     }
     return true;
@@ -552,9 +598,12 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 path + ".folderItems", record.folderItems, error) ||
             !ReadBoolean(object, "showSearchBox", path + ".showSearchBox", record.showSearchBox, error) ||
             !ReadBoolean(object, "showFileCategories", path + ".showFileCategories", record.showFileCategories, error) ||
+            !ReadBoolean(object, "dateHeaders", path + ".dateHeaders", record.dateHeaders, error) ||
             !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder", record.categoryTabOrder, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
+            !ReadInteger(object, "listColumns", path + ".listColumns",
+                record.listColumns, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",
                 record.fanPopup, error) ||
             !ReadBoolean(object, "detailShowModified",
@@ -594,14 +643,17 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     int position = static_cast<int>(decoded.position);
     int monitorScope = static_cast<int>(decoded.monitorScope);
     std::optional<float> thickness;
+    std::optional<float> edgeDistanceScale;
     std::optional<float> mergedIconScale;
     if (!ReadInteger(*value, "position", "dockLayout.position", position, error) ||
         !ReadInteger(*value, "monitorScope", "dockLayout.monitorScope", monitorScope, error) ||
         !ReadInteger(*value, "frequentItemCount", "dockLayout.frequentItemCount", decoded.frequentItemCount, error) ||
         !ReadOptionalFloat(*value, "thicknessScale", "dockLayout.thicknessScale", thickness, error) ||
+        !ReadOptionalFloat(*value, "edgeDistanceScale", "dockLayout.edgeDistanceScale", edgeDistanceScale, error) ||
         !ReadOptionalFloat(*value, "mergedIconScale", "dockLayout.mergedIconScale", mergedIconScale, error) ||
         !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
         !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
+        !ReadBoolean(*value, "showQuickSearchButton", "dockLayout.showQuickSearchButton", decoded.showQuickSearchButton, error) ||
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
         !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
         !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
@@ -617,11 +669,14 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
         return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
     decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    decoded.edgeDistanceScale = edgeDistanceScale.value_or(decoded.edgeDistanceScale);
     decoded.mergedIconScale = mergedIconScale.value_or(ClampMergedDockIconScale(decoded.thicknessScale));
     if (decoded.mergedBarHeight < 32 || decoded.mergedBarHeight > 96)
         return Fail(error, "dockLayout.mergedBarHeight", "must be between 32 and 96");
     if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
         return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
+    if (decoded.edgeDistanceScale < kDockMinimumEdgeDistanceScale || decoded.edgeDistanceScale > kDockMaximumEdgeDistanceScale)
+        return Fail(error, "dockLayout.edgeDistanceScale", "is outside the supported range");
     if (decoded.mergedIconScale < kDockMinimumScale || decoded.mergedIconScale > 1.f)
         return Fail(error, "dockLayout.mergedIconScale", "is outside the supported range");
     decoded.position = static_cast<DockPosition>(position);
@@ -637,6 +692,54 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         return Fail(error, "layout root", "must be an object");
 
     Document decoded;
+    const JsonValue* overrides = nullptr;
+    if (!ReadObjectArray(root, "iconOverrides", overrides, error)) return false;
+    if (overrides) for (const auto& object : overrides->array)
+    {
+        std::string target, asset;
+        if (!ReadRequiredString(object, "target", "iconOverrides.target", target, error) ||
+            !ReadRequiredString(object, "asset", "iconOverrides.asset", asset, error)) return false;
+        if (!IsIconAssetId(asset) || target.empty())
+            return Fail(error, "iconOverrides", "invalid target or asset");
+        decoded.iconOverrides.emplace_back(std::move(target), std::move(asset));
+    }
+    const JsonValue* appearances = nullptr;
+    if (!ReadObjectArray(root, "iconBeautifyOverrides", appearances, error)) return false;
+    std::set<std::string> appearanceTargets;
+    if (appearances) for (const auto& object : appearances->array)
+    {
+        std::string target, name, themeId;
+        IconAppearanceRecord record;
+        if (!ReadRequiredString(object, "target", "iconBeautifyOverrides.target", target, error) ||
+            !ReadRequiredString(object, "name", "iconBeautifyOverrides.name", name, error) ||
+            !ReadRequiredString(object, "themeId", "iconBeautifyOverrides.themeId", themeId, error)) return false;
+        std::optional<bool> followGlobalTheme;
+        if (!ReadOptionalBoolean(object, "followGlobalTheme", "iconBeautifyOverrides.followGlobalTheme", followGlobalTheme, error)) return false;
+        record.followGlobalTheme = followGlobalTheme.value_or(false);
+        if (record.followGlobalTheme && !themeId.empty()) return Fail(error, "iconBeautifyOverrides", "inherited theme cannot bind a library theme");
+        const auto* style = object.Find("style");
+        record.target = icon_appearance::ToWide(target); record.name = icon_appearance::ToWide(name); record.themeId = themeId;
+        if (!icon_appearance::ValidTarget(record.target) || !appearanceTargets.insert(target).second ||
+            !style || !icon_appearance::DecodeStyle(*style, record.settings))
+            return Fail(error, "iconBeautifyOverrides", "invalid or duplicate target/style");
+        decoded.iconBeautifyOverrides.push_back(std::move(record));
+    }
+    const JsonValue* missingIconTargets = nullptr;
+    if (!ReadObjectArray(root, "missingIconTargets", missingIconTargets, error)) return false;
+    std::set<std::string> missingTargets;
+    if (missingIconTargets) for (const auto& object : missingIconTargets->array)
+    {
+        MissingIconTargetRecord record;
+        if (!ReadRequiredString(object, "target", "missingIconTargets.target", record.target, error)) return false;
+        const auto* stamp = object.Find("missingSince");
+        if (!icon_appearance::ValidTarget(icon_appearance::ToWide(record.target)) ||
+            !missingTargets.insert(record.target).second || !stamp || !stamp->IsNumber() ||
+            !std::isfinite(stamp->number) || stamp->number <= 0 ||
+            stamp->number > 9007199254740991.0 || std::floor(stamp->number) != stamp->number)
+            return Fail(error, "missingIconTargets", "invalid or duplicate target/timestamp");
+        record.missingSince = static_cast<std::int64_t>(stamp->number);
+        decoded.missingIconTargets.push_back(std::move(record));
+    }
     std::optional<int> sourceSchemaVersion;
     if (!ReadOptionalInteger(root, "layoutSchemaVersion",
             "layoutSchemaVersion", sourceSchemaVersion, error))
@@ -681,6 +784,10 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalRootBoolean(root, "titleEllipsis", decoded.titleEllipsis, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
+        !ReadOptionalFloat(root, "scrollingIconSpacingY", "scrollingIconSpacingY",
+            decoded.scrollingIconSpacingY, error) ||
+        !ReadOptionalFloat(root, "listRowSpacing", "listRowSpacing",
+            decoded.listRowSpacing, error) ||
         !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",
             decoded.componentSpacing, error) ||
         !ReadOptionalFloat(root, "iconSizeScale", "iconSizeScale",
@@ -689,8 +796,12 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.collectionLargeFolderTitleless, error) ||
         !ReadOptionalInteger(root, "shortcutArrowMode", "shortcutArrowMode",
             decoded.shortcutArrowMode, error) ||
+        !ReadOptionalRootBoolean(root, "groupComponentBadges",
+            decoded.groupComponentBadges, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalRootBoolean(root, "beautifyFileThumbnails",
+            decoded.beautifyFileThumbnails, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
             decoded.iconBeautifyGlassEnabled, error) ||
         !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",
@@ -803,6 +914,17 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         if (!DecodeEdgeLight(*light, value)) return Fail(error, "iconBeautifyEdgeLight", "has invalid edge-light parameters");
         decoded.iconBeautifyEdgeLight = value;
     }
+    if (const auto* gradient = root.Find("iconBeautifyBackgroundGradient"))
+    {
+        PanelGradient value;
+        if (!DecodePanelGradient(*gradient, value)) return Fail(error, "iconBeautifyBackgroundGradient", "has invalid gradient parameters");
+        decoded.iconBeautifyBackgroundGradient = value;
+    }
+    if (!ReadOptionalInteger(root, "iconBeautifyBackgroundSource", "iconBeautifyBackgroundSource", decoded.iconBeautifyBackgroundSource, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyFilterMode", "iconBeautifyFilterMode", decoded.iconBeautifyFilterMode, error)) return false;
+    if ((decoded.iconBeautifyBackgroundSource && (*decoded.iconBeautifyBackgroundSource < 0 || *decoded.iconBeautifyBackgroundSource > 2)) ||
+        (decoded.iconBeautifyFilterMode && (*decoded.iconBeautifyFilterMode < 0 || *decoded.iconBeautifyFilterMode > 2)))
+        return Fail(error, "iconBeautify", "has an unsupported color source or filter mode");
 
     // Schema 0 used the same structural fields but had no explicit version.
     // Decoding it into the current in-memory model is its v0 -> v1 migration.
@@ -916,6 +1038,40 @@ std::string SerializeDockLayout(const DockLayoutSettings& settings)
     return output.str();
 }
 
+std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << '[';
+    for (size_t index = 0; index < items.size(); ++index)
+    {
+        if (index) output << ',';
+        const auto& item = items[index];
+        output << "{\"key\":";
+        WriteJsonString(output, item.key);
+        output << ",\"index\":" << item.index
+               << ",\"missingSince\":" << item.missingSince << '}';
+    }
+    output << ']';
+    return output.str();
+}
+
+std::string SerializeMissingIconTargets(const std::vector<MissingIconTargetRecord>& targets)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << '[';
+    for (size_t index = 0; index < targets.size(); ++index)
+    {
+        if (index) output << ',';
+        output << "{\"target\":";
+        WriteJsonString(output, targets[index].target);
+        output << ",\"missingSince\":" << targets[index].missingSince << '}';
+    }
+    output << ']';
+    return output.str();
+}
+
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error)
 {
@@ -1013,5 +1169,54 @@ bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
     if ((!primaryRestored || !recoveryRestored) && error)
         *error += "; layout rollback failed: " + rollbackError + filesystemError.message();
     return false;
+}
+
+bool DeleteBackupPair(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error)
+{
+    struct File
+    {
+        HANDLE value = INVALID_HANDLE_VALUE;
+        ~File() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } layout, storage;
+    const auto fail = [&](const char* operation, DWORD code) {
+        if (error) *error = std::string(operation) + ": Win32 error " + std::to_string(code);
+        return false;
+    };
+    const auto open = [](const std::filesystem::path& path) {
+        return CreateFileW(path.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    };
+    layout.value = open(layoutPath);
+    if (layout.value == INVALID_HANDLE_VALUE)
+        return fail("cannot open layout backup for deletion", GetLastError());
+    storage.value = open(storagePath);
+    if (storage.value == INVALID_HANDLE_VALUE)
+    {
+        const DWORD code = GetLastError();
+        if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND)
+            return fail("cannot open component storage backup for deletion", code);
+    }
+    // A shared reader that disallows delete is rejected by the two opens above.
+    // Keep both handles alive until both dispositions have been accepted.
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    if (storage.value != INVALID_HANDLE_VALUE &&
+        !SetFileInformationByHandle(storage.value, FileDispositionInfo,
+            &disposition, sizeof(disposition)))
+        return fail("cannot delete component storage backup", GetLastError());
+    if (!SetFileInformationByHandle(layout.value, FileDispositionInfo,
+            &disposition, sizeof(disposition)))
+    {
+        const DWORD code = GetLastError();
+        disposition.DeleteFile = FALSE;
+        if (storage.value != INVALID_HANDLE_VALUE &&
+            !SetFileInformationByHandle(storage.value, FileDispositionInfo,
+                &disposition, sizeof(disposition)))
+            return fail("cannot roll back component storage deletion", GetLastError());
+        return fail("cannot delete layout backup", code);
+    }
+    if (error) error->clear();
+    return true;
 }
 }

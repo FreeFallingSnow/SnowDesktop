@@ -627,8 +627,18 @@ void TestKeyboardFocusRules()
 }
 }
 
-int main()
+void RunLuaFileIngressMatrix();
+
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--file-ingress-tests")
+    {
+        try { RunLuaFileIngressMatrix(); }
+        catch (const std::exception& error)
+        { std::cerr << "FAIL Lua file ingress: " << error.what() << '\n'; return 1; }
+        return 0;
+    }
+    if (argc != 1) return 1;
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
     TestIngressPolicyMatrix();

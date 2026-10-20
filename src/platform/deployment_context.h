@@ -41,7 +41,8 @@ std::wstring GetRuntimeFilePath(const wchar_t* filename);
 /**
  * @brief 获取可供其他进程加载的运行时 DLL 路径。
  * @details 将随软件分发的 DLL 复制到 SnowDesktop 数据目录的 ShellHook
- * 按内容哈希保存的不可变共享目录后再返回，
+ * 可复用槽位后再返回。四个槽位为起始池；全部占用时按需扩展，同内容仍优先复用。
+ * 只有无宿主租约且未被目标进程加载的槽位才可更新。不退回安装或构建目录，
  * 避免目标进程无法加载受保护的 MSIX 安装目录文件，也避免已注入模块继续锁住
  * 构建、便携或安装目录。
  * @param filename 不包含目录的 DLL 文件名。
@@ -50,13 +51,19 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename);
 
 /**
  * @brief 获取可供 Explorer 加载的任务栏 Hook DLL 路径。
- * @details 兼容现有调用；内部复用通用的可注入运行时副本。
+ * @details 优先使用通用可注入副本；副本发布暂不可用时仅返回当前 Explorer 中仍在服务的
+ * 实例路径。调用方必须确认协议与新宿主应答，复用旧实例不表示新版 DLL 已加载。
  */
 std::wstring GetTaskbarHookPath();
 
 // Used only when the shared Explorer instance cannot acknowledge attachment.
-// One immutable per-host copy avoids reviving retired TAP callbacks.
+// Another reusable slot avoids reviving retired TAP callbacks; no per-host path.
 std::wstring GetIsolatedTaskbarHookPath();
+
+// Resolve only the active module already mapped from our reusable pool. The
+// caller must still require a fresh host/IPC acknowledgement before use.
+std::wstring GetResidentTaskbarHookPath(std::uint32_t explorerProcessId,
+    std::uintptr_t module);
 
 struct UnvirtualizedRegistryValue
 {

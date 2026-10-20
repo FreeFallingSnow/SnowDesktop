@@ -1222,8 +1222,9 @@ void CalendarService::CheckReminders(
     const long long todayStart =
         AbsoluteMinute(now.date, 0);
     if (lastCheckAbsoluteMinute_ == 0)
-        lastCheckAbsoluteMinute_ = absoluteNow - 1;
+        lastCheckAbsoluteMinute_ = startupCatchUp ? todayStart - 1 : absoluteNow - 1;
     const long long previousCheck = lastCheckAbsoluteMinute_;
+    bool saveFailed = false;
 
     std::vector<std::size_t> due;
     std::vector<CalendarEvent> previous = events_;
@@ -1266,9 +1267,9 @@ void CalendarService::CheckReminders(
         event.notifiedTrigger = triggerKey;
         due.push_back(index);
     }
-    lastCheckAbsoluteMinute_ = absoluteNow;
     if (!due.empty() && !Save())
     {
+        saveFailed = true;
         events_ = std::move(previous);
         due.clear();
     }
@@ -1277,9 +1278,17 @@ void CalendarService::CheckReminders(
         for (const std::size_t index : due)
             notificationCallback_(events_[index]);
     }
-    if (series_.empty()) return;
+    if (series_.empty())
+    {
+        if (!saveFailed) lastCheckAbsoluteMinute_ = absoluteNow;
+        return;
+    }
     const auto tomorrow = AddDays(now.date, 1);
-    if (!tomorrow) return;
+    if (!tomorrow)
+    {
+        if (!saveFailed) lastCheckAbsoluteMinute_ = absoluteNow;
+        return;
+    }
     const auto candidates = Events(now.date, *tomorrow);
     std::vector<CalendarEvent> seriesDue;
     const auto previousSeries = series_;
@@ -1311,9 +1320,12 @@ void CalendarService::CheckReminders(
         seriesDue.push_back(event);
     }
     if (changed && !SaveSeries())
-    { series_ = previousSeries; seriesDue.clear(); }
+    { saveFailed = true; series_ = previousSeries; seriesDue.clear(); }
     if (notificationCallback_)
         for (const auto& event : seriesDue) notificationCallback_(event);
+    // Successful stores already persist per-event deduplication. Keeping the
+    // shared watermark on either failure retries only the uncommitted side.
+    if (!saveFailed) lastCheckAbsoluteMinute_ = absoluteNow;
 }
 
 } // namespace snowdesktop::calendar

@@ -27,6 +27,10 @@ local fluent = {
 }
 
 local DEFAULT_URL = "https://www.ithome.com/rss/"
+local function responseLimit()
+    return widget.hasFeature("task.network.largeResponse") and
+        4 * 1024 * 1024 or 1024 * 1024
+end
 
 local settings = {
     fields = {
@@ -34,7 +38,7 @@ local settings = {
             type = "text", default = DEFAULT_URL },
         { key = "interval",
             label = l10n.tr("lua_widget.rss_reader.refresh_interval"),
-            type = "int", default = 1800, min = 60, max = 3600 },
+            type = "duration", default = 1800, min = 60, max = 3600 },
         { key = "maxItems",
             label = l10n.tr("lua_widget.rss_reader.max_items"),
             type = "int", default = 30, min = 10, max = 100 },
@@ -83,21 +87,36 @@ local function palette(context)
     }
 end
 
+local entities = { lt = "<", gt = ">", amp = "&", quot = "\"", apos = "'" }
 local function decodeText(value)
     return (value or ""):gsub("<!%[CDATA%[(.-)%]%]>", "%1")
         :gsub("<[^>]+>", "")
-        :gsub("&lt;", "<"):gsub("&gt;", ">")
-        :gsub("&amp;", "&"):gsub("&quot;", "\"")
-        :gsub("&#39;", "'")
+        :gsub("&([#%w]+);", function(entity)
+            if entities[entity] then return entities[entity] end
+            local decimal = entity:match("^#(%d+)$")
+            local hex = entity:match("^#[xX]([%da-fA-F]+)$")
+            local code = decimal and tonumber(decimal) or
+                (hex and tonumber(hex, 16))
+            if code and (code == 9 or code == 10 or code == 13 or
+                code >= 32) and code <= 0x10FFFF and
+                not (code >= 0xD800 and code <= 0xDFFF) then
+                return utf8.char(code)
+            end
+            return "&" .. entity .. ";"
+        end)
+end
+
+local function elementText(xml, name)
+    return xml:match("<" .. name .. "%s*>(.-)</" .. name .. "%s*>") or
+        xml:match("<" .. name .. "%s+[^>]*>(.-)</" .. name .. "%s*>")
 end
 
 local function parseRssItem(xml)
     return {
-        title = decodeText(xml:match("<title>(.-)</title>")),
-        link = decodeText(xml:match("<link>(.-)</link>")),
-        description = decodeText(xml:match("<description>(.-)</description>")),
-        date = decodeText(xml:match("<pubDate>(.-)</pubDate>") or
-            xml:match("<dc:date>(.-)</dc:date>")),
+        title = decodeText(elementText(xml, "title")),
+        link = decodeText(elementText(xml, "link")),
+        date = decodeText(elementText(xml, "pubDate") or
+            elementText(xml, "dc:date")),
     }
 end
 
@@ -107,15 +126,14 @@ local function parseAtomEntry(xml)
     return {
         title = decodeText(xml:match("<title[^>]*>(.-)</title>")),
         link = decodeText(link),
-        description = decodeText(xml:match("<summary[^>]*>(.-)</summary>") or
-            xml:match("<content[^>]*>(.-)</content>")),
-        date = decodeText(xml:match("<published>(.-)</published>") or
-            xml:match("<updated>(.-)</updated>")),
+        date = decodeText(elementText(xml, "published") or
+            elementText(xml, "updated")),
     }
 end
 
 local function parseFeed(body, maximum)
-    local title = decodeText(body:match("<channel>.-<title>(.-)</title>") or
+    local title = decodeText(body:match("<channel%s*>.-<title[^>]*>(.-)</title>") or
+        body:match("<channel%s+[^>]*>.-<title[^>]*>(.-)</title>") or
         body:match("<feed[^>]*>.-<title[^>]*>(.-)</title>"))
     local items = {}
     local atom = false
@@ -152,16 +170,31 @@ local function loadPreview(model)
     end
 end
 
-local function fetch(model, bypassCache)
+local function fetch(model, bypassCache, useBrowserAgent)
     if model.requestId then return end
     local cfg = config()
     if cfg.url == "" then return end
-    local requestId, requestError = task.start("network.request", {
+    local arguments = {
         url = cfg.url,
         timeoutMs = 15000,
         cacheSeconds = bypassCache and 0 or 120,
-        maxBytes = 1024 * 1024,
-    })
+        maxBytes = responseLimit(),
+    }
+    if widget.hasFeature("task.network.headers") then
+        arguments.headers = {
+            Accept = "application/rss+xml, application/atom+xml, " ..
+                "application/xml, text/xml, */*",
+        }
+        if useBrowserAgent then
+            arguments.headers["User-Agent"] =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " ..
+                "AppleWebKit/537.36 (KHTML, like Gecko) SnowDesktopRSS/1.0"
+        end
+    end
+    local requestId, requestError = task.start("network.request", arguments)
+    model.responseLimitMiB = arguments.maxBytes / (1024 * 1024)
+    model.errorStatus = nil
+    model.requestUsedBrowserAgent = useBrowserAgent == true
     if requestId then
         model.requestId = requestId
         model.loading = true
@@ -177,10 +210,40 @@ local function clear(model)
     model.articles = {}
     model.feedTitle = ""
     model.error = nil
+    model.errorStatus = nil
     interaction.setScrollOffset("rss.scroll", 0)
 end
 
-local function registerRegion(key, shape, events, label, enabled)
+local function errorText(model)
+    if model.error == "emptyResponse" then
+        return l10n.tr("lua_widget.rss_reader.empty_response")
+    elseif model.error == "parseFailed" then
+        return l10n.tr("lua_widget.rss_reader.no_articles_parsed")
+    elseif model.error == "responseTooLarge" then
+        return l10n.tr("lua_widget.rss_reader.response_too_large",
+            tostring(math.floor(model.responseLimitMiB or 1)))
+    elseif model.error == "httpStatus" and model.errorStatus then
+        return l10n.tr("lua_widget.rss_reader.http_error",
+            tostring(model.errorStatus))
+    elseif model.error == "permissionDenied" or
+        model.error == "permissionRevoked" then
+        return l10n.tr("lua_widget.rss_reader.network_permission_required")
+    elseif model.error == "redirectRejected" then
+        return l10n.tr("lua_widget.rss_reader.redirect_rejected")
+    end
+    return l10n.tr("lua_widget.rss_reader.request_failed")
+end
+
+local function registerRegion(key, shape, events, label, enabled, viewport)
+    if viewport then
+        local left, top = math.max(shape.x, viewport.x), math.max(shape.y, viewport.y)
+        local right = math.min(shape.x + shape.width, viewport.x + viewport.width)
+        local bottom = math.min(shape.y + shape.height, viewport.y + viewport.height)
+        if right <= left or bottom <= top then return end
+        if left ~= shape.x or top ~= shape.y or right ~= shape.x + shape.width or bottom ~= shape.y + shape.height then
+            shape = { type = "rect", x = left, y = top, width = right - left, height = bottom - top }
+        end
+    end
     interaction.region({
         key = key, shape = shape,
         cursor = enabled == false and "default" or "hand",
@@ -250,8 +313,15 @@ local function render(context, model)
     draw.line(pad, headerBottom, width - pad, headerBottom,
         metrics.strokeWidth, colors.divider, 0.10)
 
+    local errorHeight = model.error and #model.articles > 0 and
+        metrics.layoutRowHeight or 0
+    if errorHeight > 0 then
+        draw.text(pad, headerBottom + metrics.spacingXs,
+            errorText(model), smallFont, colors.error,
+            width - pad * 2, false, true)
+    end
     local listTop = math.min(height,
-        headerBottom + metrics.spacingXs)
+        headerBottom + metrics.spacingXs + errorHeight)
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
@@ -273,15 +343,13 @@ local function render(context, model)
         return
     end
     if model.error and #model.articles == 0 then
-        draw.text(pad, listTop + viewportHeight * 0.27,
-            l10n.tr("lua_widget.rss_reader.request_failed"),
+        local message = errorText(model)
+        local measured = draw.measureText(message, bodyFont, width - pad * 2)
+        draw.text(pad, listTop + math.max(0,
+                (viewportHeight - measured.height) / 2),
+            message,
             bodyFont, colors.error,
-            width - pad * 2, false, false)
-        draw.text(pad, listTop + viewportHeight * 0.27 +
-                bodyFont + metrics.spacingSm,
-            l10n.tr("lua_widget.rss_reader.settings_hint"),
-            smallFont, colors.status,
-            width - pad * 2, false, true)
+            width - pad * 2, false, false, viewportHeight)
         return
     end
     if #model.articles == 0 then
@@ -330,7 +398,7 @@ local function render(context, model)
             radius = metrics.controlRadius }, {
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
-        }, article.title, article.link ~= "")
+        }, article.title, article.link ~= "", scrollViewport)
         local titleY = y + rowPadding
         if hovered then
             draw.marqueeText({
@@ -405,19 +473,29 @@ local function event(_context, model, value)
         if value.taskId == model.requestId then
             model.requestId = nil
             model.loading = false
+            model.errorStatus = nil
             if value.ok and value.value then
-                if value.value.body == "" then
+                if not value.value.body or value.value.body == "" then
                     model.error = "emptyResponse"
                 else
                     local feedTitle, articles = parseFeed(
                         value.value.body, config().maxItems)
-                    model.feedTitle = feedTitle
-                    model.articles = articles
                     model.error = #articles == 0 and "parseFailed" or nil
-                    interaction.setScrollOffset("rss.scroll", 0)
+                    if #articles > 0 then
+                        model.feedTitle = feedTitle
+                        model.articles = articles
+                        interaction.setScrollOffset("rss.scroll", 0)
+                    end
                 end
             else
                 model.error = value.error or "networkError"
+                model.errorStatus = tonumber(value.status)
+                if model.error == "httpStatus" and
+                    (model.errorStatus == 403 or model.errorStatus == 406) and
+                    not model.requestUsedBrowserAgent and
+                    widget.hasFeature("task.network.headers") then
+                    fetch(model, true, true)
+                end
             end
         elseif value.taskId == model.openTaskId then
             model.openTaskId = nil

@@ -116,6 +116,17 @@ local function persistCounts(model)
     if storage.get("todayDate") ~= model.todayDate then
         storage.set("todayDate", model.todayDate)
     end
+    model.countsDirty = false
+end
+
+-- A replacement setup can precede the retiring VM's final flush. Only clean
+-- models adopt that flush; pending local strikes stay in their current model.
+local function refreshCounts(model)
+    if model.countsDirty then return end
+    model.count = normalizedCount(storage.get("count"))
+    model.todayDate = storage.get("todayDate")
+    model.todayCount = model.todayDate == todayKey() and
+        normalizedCount(storage.get("todayCount")) or 0
 end
 
 local function rollToday(model)
@@ -123,6 +134,7 @@ local function rollToday(model)
     if model.todayDate == current then return false end
     model.todayDate = current
     model.todayCount = 0
+    model.countsDirty = true
     return true
 end
 
@@ -137,6 +149,7 @@ local function setup()
         feedbackActive = false,
         feedbackAnimated = false,
         feedbackElapsedMs = 0,
+        countsDirty = false,
     }
     if storedDate ~= currentDate then persistCounts(model) end
     schedule.every(DAY_CHECK, 60000, { whenHidden = "continue" })
@@ -250,6 +263,7 @@ local function startFeedback(model)
 end
 
 local function render(_context, model)
+    refreshCounts(model)
     local colors = foregroundPalette()
     local width = layout.contentWidth()
     local height = layout.contentHeight()
@@ -311,6 +325,7 @@ local function render(_context, model)
 end
 
 local function event(_context, model, value)
+    refreshCounts(model)
     -- Hidden widgets lose queued frames, but retain their Lua model. Resume
     -- explicitly without resetting the progress saved before the page switch.
     if value.kind == "visibility" then
@@ -330,6 +345,7 @@ local function event(_context, model, value)
         if model.count < MAX_COUNT then
             model.count = model.count + 1
             model.todayCount = math.min(MAX_COUNT, model.todayCount + 1)
+            model.countsDirty = true
         end
         startFeedback(model)
         schedule.after("wooden-fish.persist", 350, {
@@ -343,6 +359,7 @@ local function event(_context, model, value)
         model.count = 0
         model.todayDate = todayKey()
         model.todayCount = 0
+        model.countsDirty = true
         model.feedbackActive = false
         model.feedbackAnimated = false
         model.feedbackElapsedMs = 0
@@ -396,6 +413,8 @@ end
 local function dispose(_context, model)
     animation.cancelFrame(FEEDBACK_FRAME)
     schedule.cancel(DAY_CHECK)
+    refreshCounts(model)
+    rollToday(model)
     persistCounts(model)
 end
 

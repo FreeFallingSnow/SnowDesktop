@@ -29,6 +29,102 @@ std::string ReadText(const std::filesystem::path& path)
     return text;
 }
 
+void TestExecutableVersionResources(const std::filesystem::path& root)
+{
+    namespace fs = std::filesystem;
+    const auto fixture = build_test::temporary("executable-version-resources");
+    build_test::copy(root, fixture, {
+        "cmake/SnowDesktop.VersionResources.cmake",
+        "src/resources/version.rc.in"});
+    build_test::write(fixture / "version.json", R"({"version":"1.2.3.0"})");
+    build_test::write(fixture / "main.cpp", "int main() { return 0; }\n");
+    build_test::write(fixture / "third_party/vendor/CMakeLists.txt",
+        "add_executable(VendorTool ../../main.cpp)\n");
+    const std::string project = R"cmake(
+cmake_minimum_required(VERSION 3.24)
+project(ExecutableVersionFixture LANGUAGES CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowDesktop.VersionResources.cmake")
+add_executable(VersionFixture main.cpp)
+set_property(TARGET VersionFixture PROPERTY OUTPUT_NAME VersionFixtureOutput)
+snowdesktop_add_executable_version_resource(VersionFixture "SnowDesktop version resource fixture")
+add_executable(TestOnly main.cpp)
+set_property(TARGET TestOnly PROPERTY RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+add_subdirectory(third_party/vendor)
+)cmake";
+    build_test::write(fixture / "CMakeLists.txt", project);
+    const auto configure = [&]() {
+        return build_test::run({L"cmake", L"-S", fixture.wstring(),
+            L"-B", (fixture / "build").wstring()}, fixture, 45);
+    };
+    const auto generated = fixture / "build/generated/version/VersionFixture.version.rc";
+    const auto initial = configure();
+    build_test::require(initial.code == 0,
+        "version resource fixture configures with third-party and test exemptions: " +
+        initial.out + initial.err);
+    const auto resource = ReadText(generated);
+    for (const char* value : {
+             "FILEVERSION 1,2,3,0", "PRODUCTVERSION 1,2,3,0",
+             "\"CompanyName\", \"FreeFallingSnow", "\"ProductName\", \"SnowDesktop",
+             "\"FileDescription\", \"SnowDesktop version resource fixture",
+             "\"FileVersion\", \"1.2.3.0", "\"ProductVersion\", \"1.2.3.0",
+             "\"OriginalFilename\", \"VersionFixtureOutput.exe",
+             "\"InternalName\", \"VersionFixtureOutput.exe"})
+    {
+        Check(resource.find(value) != std::string::npos,
+            "generated EXE metadata contains the shared version, publisher and target identity");
+    }
+    Check(resource.find("@SNOWDESKTOP_") == std::string::npos,
+        "generated EXE metadata has no unresolved template placeholders");
+
+    build_test::write(fixture / "version.json", R"({"version":"9.8.7.0"})");
+    const auto updated = configure();
+    build_test::require(updated.code == 0,
+        "version resource fixture reconfigures after a version update: " + updated.out + updated.err);
+    Check(ReadText(generated).find("FILEVERSION 9,8,7,0") != std::string::npos,
+        "standalone EXE metadata follows version.json instead of a copied version");
+
+    auto legacyResource = ReadText(generated);
+    build_test::write(fixture / "legacy.rc", legacyResource);
+    build_test::write(fixture / "CMakeLists.txt", project +
+        "add_executable(LegacyVersion main.cpp legacy.rc)\n");
+    const auto legacy = configure();
+    Check(legacy.code == 0, "complete existing version resources remain supported");
+    build_test::replace(legacyResource,
+        "\"FileDescription\", \"SnowDesktop version resource fixture\\0\"",
+        "\"FileDescription\", \"\"");
+    build_test::write(fixture / "legacy.rc", legacyResource);
+    const auto incomplete = configure();
+    Check(incomplete.code != 0 &&
+            (incomplete.out + incomplete.err).find("Shipping executable LegacyVersion") != std::string::npos,
+        "empty file descriptions do not count as complete EXE metadata");
+
+    // The deferred check must see targets added after the module is included,
+    // and an unrelated .rc file must not qualify as a version resource.
+    build_test::write(fixture / "icon-only.rc", "// No VERSIONINFO here.\n");
+    build_test::write(fixture / "CMakeLists.txt", project +
+        "add_executable(MissingVersion main.cpp icon-only.rc)\n");
+    const auto missing = configure();
+    Check(missing.code != 0 &&
+            (missing.out + missing.err).find("Shipping executable MissingVersion") != std::string::npos,
+        "a future shipping EXE with icon-only resources fails configuration");
+
+    build_test::write(fixture / "CMakeLists.txt", project + "add_subdirectory(owned)\n");
+    build_test::write(fixture / "owned/CMakeLists.txt",
+        "add_executable(NestedMissing ../main.cpp)\n");
+    const auto nested = configure();
+    Check(nested.code != 0 &&
+            (nested.out + nested.err).find("Shipping executable NestedMissing") != std::string::npos,
+        "future shipping EXEs in first-party subdirectories are also checked");
+
+    build_test::write(fixture / "CMakeLists.txt", project);
+    build_test::write(fixture / "version.json", R"({"version":"1.2.3.4"})");
+    const auto invalid = configure();
+    Check(invalid.code != 0 &&
+            (invalid.out + invalid.err).find("Store-compatible A.B.C.0") != std::string::npos,
+        "standalone helper metadata rejects versions outside the shared Store contract");
+    fs::remove_all(fixture);
+}
+
 void TestPinnedToolchain(const std::string& cmake,
     const std::string& shellViewProps)
 {
@@ -79,7 +175,7 @@ void TestBuildManifest(const std::string& props,
              "@(MicrosoftWindowsAppSDKFiles)",
              "@(MicrosoftWindowsAppSDKFilesRes)",
              "@(MicrosoftWindowsAppSDKAppxFragmentFiles)",
-             "App.xbf", "SettingsShell.xbf", "SnowDesktop.pri",
+             "App.xbf", "SettingsShell.xbf", "$(TargetName).pri",
              "SnowDesktop.winmd", "FluentSystemIcons-Regular.ttf",
              "fa-solid-900.ttf", "assets\\icon\\icon_small.png",
              "Assets\\App\\SnowDesktop.png",
@@ -411,7 +507,7 @@ foreach ($loop in $loops) { Invoke-Statement $loop }
         const auto output = fixture / packager;
         auto result = bridge.invoke(driver, {utf8(script.wstring()), utf8(output.wstring())});
         require(result.code == 0, result.out + result.err);
-        for (const auto* hook : {"SnowDesktopDockMinimizeHook.dll",
+        for (const auto* hook : {"SnowDesktopHookEntry.dll", "SnowDesktopHookEntry32.dll", "SnowDesktopDockMinimizeHook.dll",
                  "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe"})
         {
             const auto packaged = output / "output" / "SnowDesktop.Runtime" / hook;
@@ -546,6 +642,12 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             deploymentSource.find("~InjectableRuntimeDirectory") !=
                 std::string::npos,
         "cross-process hooks use a leased data directory with legacy, startup, and exit cleanup");
+    Check(deploymentSource.find("cache.Deploy(source, excludeImplementation)") != std::string::npos &&
+            deploymentSource.find("GetStableHookEntryRoot()") != std::string::npos &&
+            deploymentSource.find("hook_entry::Prepare") != std::string::npos &&
+            deploymentSource.find("shared.empty() ? source.wstring()") == std::string::npos &&
+            deploymentSource.find("DeployInjectableRuntimeCopy(kTaskbarHookFilename, previous)") != std::string::npos,
+        "ordinary and isolated hook deployment share the bounded pool without unbounded fallback paths");
     Check(wallpaperCapture.find("GetInjectableRuntimeFilePath") !=
             std::string::npos &&
             wallpaperCapture.find("GetRuntimeFilePath") !=
@@ -650,6 +752,11 @@ int main(int argc, char** argv)
     if (argc == 2)
     {
         const std::filesystem::path root(argv[1]);
+        try { TestExecutableVersionResources(root); }
+        catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            Check(false, "EXE version metadata generation and future-target enforcement");
+        }
         TestPinnedToolchain(
             ReadText(root / "CMakeLists.txt"),
             ReadText(root / "cmake/SnowDesktop.ShellView.props"));

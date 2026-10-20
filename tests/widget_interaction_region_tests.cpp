@@ -600,6 +600,64 @@ void TestCollectionSelectionResolution()
         "multiple selection must append a newly selected key");
 }
 
+void TestSelectKeyboardNavigationAndPageReplacement()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto parent = Rect("schedule/reminder", 0, 0, 120, 30);
+    parent.events["click"].id = "reminder.expand";
+    parent.hasExpandedProposal = true;
+    parent.expanded = true;
+    auto other = Rect("save", 130, 40, 80, 30);
+    other.events["click"].id = "save";
+    regions.BeginFrame();
+    Check(regions.Submit(parent, error) && regions.Submit(other, error),
+        "select keyboard fixture must submit its owner and unrelated button");
+    for (int index = 0; index < 4; ++index)
+    {
+        auto option = Rect(parent.key + "/" + std::to_string(index),
+            0, 30.0f + 30.0f * static_cast<float>(index), 120, 30);
+        option.controlKind = InteractionControlKind::Radio;
+        option.keyboardNavigationGroup = parent.key;
+        option.clip = snowdesktop::widget_runtime::InteractionClipRect{0, 30, 120, 60};
+        option.events["change"].id = "reminder.select";
+        option.proposedSelection = std::to_string(index);
+        option.checked = index == 2;
+        option.enabled = index != 1;
+        Check(regions.Submit(std::move(option), error), "select option must submit");
+    }
+    regions.CommitFrame();
+    Check(regions.ReconcileKeyboardFocus(parent.key) == "schedule/reminder/2",
+        "keyboard expansion must focus the selected option even outside the viewport");
+    Check(regions.SelectKeyboardTarget("schedule/reminder/0", 1) == "schedule/reminder/2" &&
+            regions.SelectKeyboardTarget("schedule/reminder/2", -1) == "schedule/reminder/0",
+        "select arrows must skip disabled options in both directions");
+    Check(regions.SelectKeyboardTarget("schedule/reminder/2", 1) == "schedule/reminder/3" &&
+            regions.SelectKeyboardTarget("schedule/reminder/3", 1) == "schedule/reminder/3" &&
+            regions.SelectKeyboardTarget("schedule/reminder/0", -1) == "schedule/reminder/0",
+        "select navigation must reach clipped options and remain in its own list at the edges");
+    Check(regions.SelectKeyboardTarget("schedule/reminder/2", -1, true) == "schedule/reminder/0" &&
+            regions.SelectKeyboardTarget("schedule/reminder/0", 1, true) == "schedule/reminder/3" &&
+            !regions.SelectKeyboardTarget("save", 1),
+        "select Home/End must respect enabled endpoints without capturing unrelated controls");
+    Check(regions.TargetAt(20, 125).empty(), "offscreen options must reject pointer input");
+    const auto selected = regions.ResolveAction("schedule/reminder/3", "click");
+    Check(selected && selected->eventName == "change" && selected->selection == "3",
+        "keyboard option activation must retain the controlled selection proposal");
+    regions.BeginFrame();
+    parent.expanded = false;
+    Check(regions.Submit(parent, error) && regions.Submit(other, error), "closed select frame must submit");
+    regions.CommitFrame();
+    Check(regions.ReconcileKeyboardFocus("schedule/reminder/3") == parent.key,
+        "closing the option list must restore its combobox rather than the page's first button");
+    regions.BeginFrame();
+    Check(regions.Submit(other, error), "replacement subpage must submit");
+    regions.CommitFrame();
+    Check(regions.ReconcileKeyboardFocus(parent.key) == "save" &&
+            regions.ReconcileKeyboardFocus("save") == "save",
+        "page replacement must recover a missing keyboard target while stable targets retain focus");
+}
+
 void TestKeyboardFocusableOrderAndFiltering()
 {
     WidgetInteractionRegions regions;
@@ -654,6 +712,10 @@ void TestKeyboardFocusableOrderAndFiltering()
             !regions.IsKeyboardFocusable("disabled") &&
             !regions.IsKeyboardFocusable("missing"),
         "focusability must remain independent from sequential tab inclusion");
+    const auto focusedKeys = regions.KeyboardFocusableKeys("query");
+    Check(focusedKeys.size() == 4 && focusedKeys.back() == "query" &&
+            regions.KeyboardFocusableKeys("disabled") == keys,
+        "a programmatically focused tabIndex=-1 control must retain keyboard actions without enabling disabled targets");
     const auto* pointer = regions.Find("pointer");
     Check(pointer && pointer->tooltip == "Pointer keyboard target" &&
             pointer->events.contains("keyDown") &&
@@ -709,6 +771,7 @@ int main()
     TestRadioAndSliderActionResolution();
     TestCollectionSelectionResolution();
     TestKeyboardFocusableOrderAndFiltering();
+    TestSelectKeyboardNavigationAndPageReplacement();
     std::cout << "widget interaction region tests passed\n";
     return 0;
 }

@@ -77,12 +77,12 @@ inline bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state
         state.acrylicEnabled == patch.acrylicEnabled && state.contentTheme == patch.contentTheme && state.panelGradient == patch.panelGradient;
 }
 inline Kind TargetKind(std::string_view target)
-{ return target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
+{ return target == "icon" ? Kind::Icon : target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
 inline unsigned TargetScope(std::string_view target)
 { return target == "dock" ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
-// Private settings source identities. Packages still contain only three kinds.
-inline constexpr std::array<std::string_view, 11> AppearanceTargets{
-    "global", "dock", "statusBar", "taskbar", "quickPanel", "popup",
+// Private settings source identities.
+inline constexpr std::array<std::string_view, 12> AppearanceTargets{
+    "global", "dock", "statusBar", "taskbar", "quickPanel", "popup", "icon",
     "statusBar/noWindow", "statusBar/maximizedWindow", "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow"};
 inline StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target)
 {
@@ -97,6 +97,12 @@ inline SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view tar
 }
 inline Theme CaptureTarget(std::string_view target, const SettingsValues& values)
 {
+    if (target == "icon")
+    {
+        Theme theme; theme.kind = Kind::Icon; theme.scopes = Components;
+        theme.icon = values.desktop.iconBeautify; theme.icon.mode = 0; theme.icon.preset = IconBeautifyPreset::Custom;
+        return theme;
+    }
     auto appearance = values.personalization;
     if (target == "dock") appearance = ResolveDockAppearance(values.dock, values.personalization);
     if (target == "taskbar") appearance = ResolveTaskbarAppearance(values.dock, values.personalization);
@@ -254,7 +260,7 @@ inline void ReconcileReferences(Library& library, const SettingsValues& values)
         if (found == library.references.end() || found->second.id.empty()) continue;
         const auto saved = Resolve(found->second.snapshot, found->second.id);
         auto current = CaptureTarget(target, values);
-        if (!saved || !AppliedAppearanceMatches(saved->appearance, current.appearance) ||
+        if (!saved || (current.kind == Kind::Icon ? !SameIconTheme(saved->icon, current.icon) : !AppliedAppearanceMatches(saved->appearance, current.appearance)) ||
             (current.kind == Kind::QuickPanel && (saved->layout != current.layout || saved->colors != current.colors)))
             Detach(library, target);
     }
@@ -317,7 +323,14 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
     if (!theme || theme->kind != TargetKind(target) || (theme->kind == Kind::Global &&
         (target != "global" && !(theme->scopes & TargetScope(target))))) { error = "invalidSelection"; return false; }
     const SurfaceTheme snapshot{4, true, Capture(theme->kind, theme->appearance).appearance};
-    if (target == "global")
+    if (target == "icon")
+    {
+        const int strategy = values.desktop.iconBeautify.mode;
+        values.desktop.iconBeautify = theme->icon;
+        values.desktop.iconBeautify.mode = strategy;
+        values.desktop.iconBeautify.preset = IconBeautifyPreset::Custom;
+    }
+    else if (target == "global")
     {
         if (!FullScope(theme->scopes))
         {

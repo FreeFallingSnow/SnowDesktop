@@ -28,22 +28,23 @@ local function button(key,s,r,enabled)
         style={foreground="textPrimary",cornerRadius=r*0.12},
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
-local function browse(m,date)
+local function browse(m,date,keepPage)
     local first,last=logic.monthRange(date)
-    if first~=m.first then
-        m.listRevision=(m.listRevision or 0)+1
-        m.page=1
-    end
+    if not keepPage or first~=m.first then m.page=1;m.offset=0 end
+    m.listRevision=(m.listRevision or 0)+1
     if m.browse then m.browse:unsubscribe() end
     m.first,m.last=first,last
-    m.browse=data.subscribe("calendar.events",{fromDate=m.first,toDate=m.last,whenHidden="pause",maxAgeMs=86400000})
+    local options={fromDate=m.first,toDate=m.last,whenHidden="pause",maxAgeMs=86400000}
+    if m.queryCap then options.query=m.filter;options.offset=m.offset or 0;options.limit=40 end
+    m.browse=data.subscribe("calendar.events",options)
 end
 local function leavePage(m)
     m.picker=nil
     if m.browse then m.browse:unsubscribe();m.browse=nil end
 end
 local function setup()
-    local m={mode="manage",title="",date=today(),filter="",today=today(),alive=true}
+    local m={mode="manage",title="",date=today(),filter="",today=today(),alive=true,
+        queryCap=widget.hasFeature("data.calendar.events.query")}
     m.navigation=navigation.new({
         changePage=function(page)
             leavePage(m);m.mode=page;m.error=nil
@@ -156,13 +157,15 @@ local function panel(context,m)
         else
             local matches={}
             for _,item in ipairs(s.value.events or {}) do
-                if m.filter=="" or item.title:lower():find(m.filter:lower(),1,true) then
+                if m.queryCap or m.filter=="" or item.title:lower():find(m.filter:lower(),1,true) then
                     matches[#matches+1]=item
                 end
             end
-            local pages=math.max(1,math.ceil(#matches/40))
-            m.page=math.max(1,math.min(m.page or 1,pages))
-            for i=(m.page-1)*40+1,math.min(m.page*40,#matches) do
+            local pages=math.max(1,math.ceil((m.queryCap and s.value.total or #matches)/40))
+            m.page=m.queryCap and math.floor((m.offset or 0)/40)+1 or math.max(1,math.min(m.page or 1,pages))
+            local first=m.queryCap and 1 or (m.page-1)*40+1
+            local last=m.queryCap and #matches or math.min(m.page*40,#matches)
+            for i=first,last do
                 local item=matches[i]
                 children[#children+1]=button("bind:"..item.id,item.date.."  "..item.title,r)
             end
@@ -171,7 +174,11 @@ local function panel(context,m)
                 button("page.previous",c.page_previous,r,m.page>1),
                 text("page.number",tostring(m.page).." / "..tostring(pages),r,true),
                 button("page.next",c.page_next,r,m.page<pages)}}) end
-            if s.value.truncated then children[#children+1]=text("truncated",c.truncated,r,true) end
+            if s.value.truncated and not m.queryCap then
+                local hint=text("truncated",c.truncated,r,true)
+                hint.height=r*3;hint.textWrap="wrap";hint.maxLines=3
+                children[#children+1]=hint
+            end
         end
     else
         local status,item=m.link:current()
@@ -228,6 +235,11 @@ local function event(context,m,e)
         if e.kind=="visibility" and e.visible then m.link:refresh() end
     elseif e.kind=="panel" and e.action=="closed" then
         m.navigation:closed()
+    elseif e.kind=="data.change" and m.queryCap and m.browse then
+        local s=m.browse:value()
+        if s and s.available and s.value and (m.offset or 0)>0 and m.offset>=s.value.total then
+            m.offset=math.max(0,math.floor((s.value.total-1)/40)*40);browse(m,m.first,true)
+        end
     elseif e.kind=="action" then
         local id=e.id
         if m.link.pending then return end
@@ -237,9 +249,19 @@ local function event(context,m,e)
         elseif id=="unlink" then m.link:bind("")
         elseif id=="title" then m.title=e.text or m.title
         elseif id=="date" then m.date=e.text or m.date
-        elseif id=="filter" then m.filter=e.text or m.filter;m.page=1;m.listRevision=(m.listRevision or 0)+1
-        elseif id=="page.previous" then m.page=math.max(1,(m.page or 1)-1);m.listRevision=(m.listRevision or 0)+1
-        elseif id=="page.next" then m.page=(m.page or 1)+1;m.listRevision=(m.listRevision or 0)+1
+        elseif id=="filter" then
+            m.filter=e.text or m.filter;m.page=1;m.listRevision=(m.listRevision or 0)+1
+            if m.queryCap then browse(m,m.first) end
+        elseif id=="page.previous" then
+            if m.queryCap then m.offset=math.max(0,(m.offset or 0)-40);browse(m,m.first,true)
+            else m.page=math.max(1,(m.page or 1)-1);m.listRevision=(m.listRevision or 0)+1 end
+        elseif id=="page.next" then
+            if m.queryCap then
+                local s=m.browse and m.browse:value()
+                if s and s.available and s.value and s.value.hasMore then
+                    m.offset=s.value.nextOffset;browse(m,m.first,true)
+                end
+            else m.page=(m.page or 1)+1;m.listRevision=(m.listRevision or 0)+1 end
         elseif id=="pick.create" or id=="pick.month" then
             m.pickerTarget=id=="pick.month" and "month" or "create"
             m.picker=ui.datePicker({key="countdown.date",value=m.pickerTarget=="month" and m.first or m.date,todayDate=today(),allowClear=false})

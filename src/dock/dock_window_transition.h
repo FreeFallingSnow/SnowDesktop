@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dock_minimize_completion.h"
+
 #include <d2d1.h>
 #include <d2d1_1.h>
 #include <dcomp.h>
@@ -113,7 +115,7 @@ public:
     using RestoreCallback = std::function<void(
         HWND, DockWindowRestoreTransitionPhase)>;
 
-    DockWindowTransition() = default;
+    DockWindowTransition();
     ~DockWindowTransition();
 
     DockWindowTransition(const DockWindowTransition&) = delete;
@@ -134,6 +136,13 @@ public:
     bool StartExternalMinimize(HWND sourceWindow, RECT dockRect, DWORD deadline,
         HWND keepBelowWindow = nullptr);
     void CancelExternalMinimize(HWND sourceWindow, DWORD deadline);
+    using MinimizeTarget = snowdesktop::dock_minimize_completion::Target;
+    using MinimizeTargetProvider = std::function<std::optional<MinimizeTarget>(HWND, std::optional<RECT>)>;
+    void SetMinimizeCompletionCallbacks(MinimizeTargetProvider target,
+        std::function<void(const MinimizeTarget&)> completed);
+    std::optional<MinimizeTarget> ResolveMinimizeTarget(HWND source, std::optional<RECT> anchor = {}) const;
+    void ObserveNativeMinimize(HWND source);
+    void ForgetNativeMinimize(HWND source);
     void SetPresentationCallback(std::function<void(HWND)> callback)
     {
         presentationCallback_ = std::move(callback);
@@ -166,6 +175,7 @@ public:
 private:
     friend struct DockWindowTransitionTestAccess;
     struct PresentationBarrier;
+    struct RetiredScene;
     enum class RestorePresentationPhase { None, PreparedImage, AlignedImage, ExposedSource, TransparentOverlay };
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
@@ -180,6 +190,7 @@ private:
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
     bool EnsureWindow();
+    bool RegisterWindowClass();
     bool Start(
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionDirection direction,
@@ -197,8 +208,13 @@ private:
         return compositionSharedWindowActive_;
     }
     bool CreateGenieStrips();
+    bool CreateAttractionMesh();
     bool ApplyGenieFrame(double progress, BYTE opacity);
+    bool ApplyAttractionFrame(double collapsed, BYTE opacity);
     void ClearGenieStrips();
+    bool StartGenieTimeline();
+    bool StartAttractionTimeline();
+    RECT ResolveImageHostRect() const;
     bool StartCompositionTimeline(bool opacityOnly = false);
     bool CommitCompositionTimeline(std::span<IDCompositionAnimation* const> animations);
     bool ScheduleAnimationWake();
@@ -212,11 +228,16 @@ private:
     bool BeginPresentationBarrier(RestorePresentationPhase phase);
     std::optional<HRESULT> PresentationBarrierResult(double nowMilliseconds) const;
     static void CALLBACK RunPresentationBarrier(PTP_CALLBACK_INSTANCE instance, void* context);
+    static void CALLBACK RunRetiredScene(PTP_CALLBACK_INSTANCE, void*, PTP_WORK);
+    bool ReserveSceneRetirement();
     bool RestoreGeometryReady(RECT& frame) const;
     void Finish();
     void CompleteRestoreAfterRenderFailure();
     void ActivateRestoredWindowForHandoff();
     void ReleaseSourceCloak();
+    void ObserveMinimize(HWND source, std::optional<RECT> anchor, bool explicitAction);
+    void ScheduleMinimizeObservation();
+    void PollMinimizeObservation();
 
     HINSTANCE instance_ = nullptr;
     snowdesktop::UiAnimationScheduler* animationScheduler_ = nullptr;
@@ -224,6 +245,11 @@ private:
     HWND hwnd_ = nullptr;
     bool presenting_ = false;
     std::function<void(HWND)> presentationCallback_;
+    MinimizeTargetProvider minimizeTargetProvider_;
+    std::function<void(const MinimizeTarget&)> minimizeCompletedCallback_;
+    snowdesktop::dock_minimize_completion::Pending pendingMinimizes_;
+    snowdesktop::UiScheduleToken minimizeObservationToken_ = 0;
+    bool pollingMinimizeObservation_ = false;
     std::function<std::vector<RECT>()> occlusionRectsProvider_;
     std::function<void(const wchar_t*)> diagnosticCallback_;
     RECT occlusionHostBounds_{};
@@ -250,6 +276,7 @@ private:
     bool compositionImageActive_ = false;
     bool compositionTimelineActive_ = false;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> attractionTriangles_;
     snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
     std::vector<snowdesktop::dock_thumbnail::SharedVisual> genieWindowImages_;
     snowdesktop::dock_thumbnail::SharedVisual retiredWindowImage_;
@@ -297,6 +324,10 @@ private:
     double presentationBarrierDeadlineMs_ = 0.0;
     bool restorePresentationAcknowledged_ = false;
     std::function<HRESULT(IDCompositionDesktopDevice*)> presentationWait_;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> cleanupWait_;
+    std::function<BOOL(HWND, UINT, WPARAM, LPARAM)> retirementPost_;
+    std::function<HRESULT(HWND, HWND)> sourceRelease_;
+    std::unique_ptr<RetiredScene> sceneRetirement_;
     double restoreGeometryStableTimeMs_ = 0.0;
     RECT restoreGeometryRect_{};
     bool sourceCloaked_ = false;

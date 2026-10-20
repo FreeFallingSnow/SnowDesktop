@@ -1,5 +1,6 @@
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
+#include "settings/icon_library_ipc_paging.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
 
@@ -376,7 +377,9 @@ struct BackendServer::Impl
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove) return engine->RuntimeCalendarSeriesRemove(series.id, series.revision);
             if (series.id.empty()) return engine->RuntimeCalendarSeriesCreate(std::move(series));
-            return engine->RuntimeCalendarSeriesUpdate(series.id, series.revision, std::move(series));
+            const auto id = series.id;
+            const auto revision = series.revision;
+            return engine->RuntimeCalendarSeriesUpdate(id, revision, std::move(series));
         });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
@@ -392,6 +395,12 @@ struct BackendServer::Impl
         });
         channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
+        });
+        channel.Bind<IconAppearanceSnapshot, IconAppearanceRequest>("iconAppearance.edit", [this](auto request) {
+            return options.iconAppearance ? options.iconAppearance(std::move(request)) : IconAppearanceSnapshot{};
+        });
+        BindIconLibraryPages(channel, [this](auto request) {
+            return options.iconLibrary ? options.iconLibrary(std::move(request)) : IconLibrarySnapshot{};
         });
         channel.Bind<PageGridChangeImpact, std::wstring, int, int>("pages.analyze", [this](std::wstring id, int columns, int rows) {
             return options.pageLayoutPage.analyzeGrid ? options.pageLayoutPage.analyzeGrid(id, columns, rows) : PageGridChangeImpact{};
@@ -545,6 +554,12 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
+    };
+    options.iconAppearance = [&channel](IconAppearanceRequest request) {
+        return channel.Call<IconAppearanceSnapshot>("iconAppearance.edit", request);
+    };
+    options.iconLibrary = [&channel](IconLibraryRequest request) {
+        return CallIconLibraryPages(channel, request);
     };
     options.pageLayoutPage.analyzeGrid = [&channel](std::wstring_view id, int columns, int rows) { return channel.Call<PageGridChangeImpact>("pages.analyze", std::wstring(id), columns, rows); };
     options.pageLayoutPage.applyOrder = [&channel](Token revision, const std::vector<std::wstring>& ids) { return channel.Call<PageLayoutOperationResult>("pages.order", revision, ids); };

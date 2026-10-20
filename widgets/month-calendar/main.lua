@@ -97,6 +97,8 @@ local function monthDate(year, month)
     return string.format("%04d-%02d-01", year, month)
 end
 
+local MIN_DATE, MAX_DATE = "0001-01-01", "9999-12-31"
+
 local function selectedDate()
     if selectedDateSubscription then
         local snapshot = selectedDateSubscription:value()
@@ -109,8 +111,8 @@ end
 
 local function refreshEventSubscription(model)
     local first = monthDate(model.viewYear, model.viewMonth)
-    local fromDate = calendar.addDays(first, -6)
-    local toDate = calendar.addDays(first, 47)
+    local fromDate = calendar.addDays(first, -6) or MIN_DATE
+    local toDate = calendar.addDays(first, 47) or MAX_DATE
     if not fromDate or not toDate then return end
     if eventSubscription then eventSubscription:unsubscribe() end
     eventSubscription = data.subscribe("calendar.events", {
@@ -142,15 +144,10 @@ local function returnToToday(model)
 end
 
 local function shiftMonth(model, delta)
-    model.viewMonth = model.viewMonth + delta
-    while model.viewMonth < 1 do
-        model.viewMonth = model.viewMonth + 12
-        model.viewYear = model.viewYear - 1
-    end
-    while model.viewMonth > 12 do
-        model.viewMonth = model.viewMonth - 12
-        model.viewYear = model.viewYear + 1
-    end
+    local monthIndex = (model.viewYear - 1) * 12 + model.viewMonth - 1 + delta
+    if monthIndex < 0 or monthIndex >= 9999 * 12 then return end
+    model.viewYear = math.floor(monthIndex / 12) + 1
+    model.viewMonth = monthIndex % 12 + 1
     refreshEventSubscription(model)
 end
 
@@ -214,18 +211,18 @@ end
 local function monthCells(model)
     local first = monthDate(model.viewYear, model.viewMonth)
     local firstInfo = calendar.dateInfo(first)
+    if not firstInfo then return {} end
     local leading = (firstInfo.weekday - effectiveWeekStart() + 7) % 7
-    local gridStart = calendar.addDays(first, -leading)
     local cells = {}
     for index = 0, 41 do
-        local date = calendar.addDays(gridStart, index)
-        local info = calendar.dateInfo(date)
-        cells[#cells + 1] = {
+        local date = calendar.addDays(first, index - leading)
+        local info = date and calendar.dateInfo(date)
+        cells[#cells + 1] = info and {
             date = date,
             info = info,
             currentMonth = info.year == model.viewYear and
                 info.month == model.viewMonth,
-        }
+        } or {}
     end
     return cells
 end
@@ -234,8 +231,8 @@ local function annotations(model)
     if not widget.hasFeature("calendar.annotations") then return {} end
     local preferences = calendar.preferences()
     if not preferences.enabled then return {} end
-    local first = calendar.addDays(monthDate(model.viewYear, model.viewMonth), -6)
-    local last = calendar.addDays(monthDate(model.viewYear, model.viewMonth), 47)
+    local first = calendar.addDays(monthDate(model.viewYear, model.viewMonth), -6) or MIN_DATE
+    local last = calendar.addDays(monthDate(model.viewYear, model.viewMonth), 47) or MAX_DATE
     local key = tostring(first) .. tostring(last) .. l10n.language() ..
         tostring(preferences.enabled) .. preferences.calendar
     if model.annotationKey ~= key then
@@ -471,12 +468,17 @@ local function render(context, model)
             contentHeight - weekTop - metrics.spacingXs)
         local anchor = selected or today
         local anchorInfo = calendar.dateInfo(anchor)
+        if not anchorInfo or anchorInfo.year ~= model.viewYear or anchorInfo.month ~= model.viewMonth then
+            anchor = monthDate(model.viewYear, model.viewMonth)
+            anchorInfo = calendar.dateInfo(anchor)
+        end
+        if not anchorInfo then return end
         local offset = (anchorInfo.weekday - weekStart + 7) % 7
-        local weekDate = calendar.addDays(anchor, -offset)
         local cellWidth = (width - padding * 2) / 7
         for column = 0, 6 do
-            local date = calendar.addDays(weekDate, column)
-            local info = calendar.dateInfo(date)
+            local date = calendar.addDays(anchor, column - offset)
+            local info = date and calendar.dateInfo(date)
+            if info then
             local x = padding + column * cellWidth
             local key = "calendar.date." .. date
             local isSelected = date == selected
@@ -525,6 +527,7 @@ local function render(context, model)
                 tooltip = annotationTooltip(date, extra[date]),
                 accessibility = { role = "button", label = dateDescription(date, extra[date]) },
             })
+            end
         end
         return
     end
@@ -542,7 +545,7 @@ local function render(context, model)
         local row = math.floor(zero / 7)
         local x = padding + column * cellWidth
         local y = gridTop + row * cellHeight
-        local visible = cell.currentMonth or showAdjacent()
+        local visible = cell.info and (cell.currentMonth or showAdjacent())
         if visible then
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected

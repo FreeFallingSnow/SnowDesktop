@@ -24,6 +24,7 @@ if ([string]::IsNullOrWhiteSpace($WidgetPath)) {
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $PSScriptRoot "development_output.psm1") -Force
 $sourceCandidate = if ([System.IO.Path]::IsPathRooted($WidgetPath)) {
     $WidgetPath
 }
@@ -40,7 +41,7 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     throw "widget.json is missing: $manifestPath"
 }
 
-$hostRoot = Join-Path $repositoryRoot ".build\$Configuration"
+$hostRoot = Get-SnowDesktopDevelopmentOutput -RepositoryRoot $repositoryRoot -Configuration $Configuration
 $hostExecutable = Join-Path $hostRoot "SnowDesktop.exe"
 $packageTool = Join-Path $hostRoot "snowwidget.exe"
 if (-not (Test-Path -LiteralPath $hostExecutable -PathType Leaf) -or
@@ -151,11 +152,10 @@ function Sync-WidgetPackage {
 
 Sync-WidgetPackage
 
-$hostProcesses = @(Get-Process -Name "SnowDesktop" -ErrorAction SilentlyContinue)
+$hostProcesses = @(Get-SnowDesktopDevelopmentProcesses -Executable $hostExecutable)
 if ($RestartHost) {
     Write-Host "Restarting SnowDesktop once to discover the development candidate..."
-    $hostProcesses | Stop-Process -Force
-    Start-Sleep -Milliseconds 500
+    Stop-SnowDesktopDevelopmentProcesses -Executable $hostExecutable -Owners $hostProcesses
     Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot -WindowStyle Hidden
 }
 elseif ($hostProcesses.Count -eq 0) {

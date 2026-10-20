@@ -364,7 +364,14 @@ void CheckControls(SystemPanelModel& model, const std::shared_ptr<PreviewState>&
     Require(model.View().cards.size() == (media ? 2u : 1u), "media presence did not determine the separate card layout");
     if (media)
     {
-        const auto& scene = model.View(); const auto card = scene.cards.back();
+        const auto& scene = model.View();
+        const bool mediaAbove=model.Settings().position==DockPosition::Bottom;
+        const auto card = mediaAbove?scene.cards.front():scene.cards.back();
+        const auto body = mediaAbove?scene.cards.back():scene.cards.front();
+        Require(mediaAbove?card.bottom<body.top:card.top>body.bottom,
+            "media card must stay on the outer side of the control center");
+        Require(model.ScrollViewport().top>=body.top&&model.ScrollViewport().bottom<=body.bottom,
+            "control-center scrolling escaped its body card after media placement");
         Require(card.bottom-card.top <= 64 && !scene.Find("media.details"), "media must remain a narrow single-row card");
         for (const auto id : {"media.artwork","media.title","media.previous","media.toggle","media.next"})
         {
@@ -644,7 +651,7 @@ void CheckLogicalFocus()
     input.Key(scene,VK_TAB,false);Require(input.Focused()=="first","complete logical Tab order did not wrap");
     input.Key(scene,VK_TAB,true);Require(input.Focused()=="offscreen-299","reverse logical Tab order lost its last node");
     auto removed=scene;removed.nodes.pop_back();input.Sync(removed);
-    Require(input.Focused().empty(),"a deleted logical target kept keyboard focus");
+    Require(input.Focused()=="first"&&input.VisibleFocus()=="first","a replaced page did not recover visible keyboard focus");
     Require(input.Focus(slider.id),"slider focus fixture failed");removed.nodes[2].enabled=false;input.Sync(removed);
     Require(input.Focused().empty()&&input.Key(removed,VK_UP,false).kind==ui::InputResult::Kind::None,
         "a disabled offscreen slider retained keyboard actions");
@@ -653,6 +660,38 @@ void CheckLogicalFocus()
     captured.nodes[0].bounds={8,-60,152,-32};input.Sync(captured);
     Require(input.Pressed().empty()&&input.Release(captured,{20,20}).kind==ui::InputResult::Kind::None,
         "scrolling a captured control out of view retained its pending pointer command");
+
+    ui::Scene grid;grid.width=180;grid.height=100;
+    for(unsigned i=0;i<4;++i)
+    {
+        auto node=first;node.id="grid-"+std::to_string(i);
+        const float x=8+80.f*static_cast<float>(i%2),y=8+40.f*static_cast<float>(i/2);
+        node.bounds={x,y,x+64,y+28};node.clip={0,0,180,100};grid.nodes.push_back(node);
+    }
+    ui::Input arrows;
+    Require(arrows.Key(grid,VK_DOWN,false).kind==ui::InputResult::Kind::None&&arrows.Focused()=="grid-0",
+        "first directional key must initialize focus without invoking a command");
+    arrows.Key(grid,VK_RIGHT,false);Require(arrows.Focused()=="grid-1","Right missed the adjacent native control");
+    arrows.Key(grid,VK_DOWN,false);Require(arrows.Focused()=="grid-3","Down missed the control in the same column");
+    arrows.Key(grid,VK_LEFT,false);Require(arrows.Focused()=="grid-2","Left missed the adjacent native control");
+    arrows.Key(grid,VK_UP,false);Require(arrows.Focused()=="grid-0","Up missed the control in the same column");
+    grid.nodes[1].enabled=false;arrows.Key(grid,VK_RIGHT,false);
+    Require(arrows.Focused()!="grid-1","arrows reached a disabled native control");
+
+    ui::Input pointer;Require(pointer.Focus("missing")==false,"unknown native target accepted focus");
+    Require(pointer.Press(grid,{20,20}),"pointer page replacement fixture failed");pointer.Release(grid,{20,20});
+    auto subpage=grid;for(auto& n:subpage.nodes)n.id="sub-"+n.id;
+    pointer.Sync(subpage);Require(pointer.Focused().empty()&&pointer.VisibleFocus().empty(),
+        "pointer page replacement must not start keyboard navigation");
+
+    auto modelState=std::make_shared<PreviewState>();modelState->emptyMedia=true;
+    SystemPanelModel page(FixtureSource(modelState),StatusBarSettings{},StatusBarAction::ControlCenter);
+    page.Refresh(480);ui::Input pageInput;pageInput.Sync(page.View());
+    Require(pageInput.Focus("audio.more"),"keyboard subpage fixture has no audio entry");
+    const auto open=page.HandleKey(pageInput,VK_RETURN,false);
+    Require(open.kind==ui::InputResult::Kind::Invoke&&page.Invoke(open.id),"keyboard audio entry did not open its subpage");
+    pageInput.Sync(page.View());Require(!pageInput.Focused().empty()&&!pageInput.VisibleFocus().empty()&&page.View().Find(pageInput.Focused()),
+        "entering a native subpage left no selected element");
 }
 
 void CheckModelScrolling()
@@ -2475,16 +2514,19 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
             std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","quick-manage",
-                "audio-many","wifi-many","bluetooth-many","media-empty"} :
+                "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
             std::vector<std::string>{"empty","agenda"};
         const auto trayFixture = trayPanel ? TrayFixture() : tray::Snapshot{};
-        for (const auto& preset : presets)
+        for (const auto& outputPreset : presets)
         {
-            if (request.theme && controls && preset != "overview") continue;
+            const bool bottom=controls&&outputPreset.ends_with("-bottom");
+            const auto preset=bottom?outputPreset.substr(0,outputPreset.size()-7):outputPreset;
+            if (request.theme && controls && outputPreset != "overview") continue;
             result.stage = "panel.model."+preset;
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
+            if(bottom)settings.position=DockPosition::Bottom;
             state->unavailable = controls && preset == "unavailable";
             state->bluetoothOn = preset != "bluetooth-off"; state->emptyMedia = preset == "media-empty";
             state->agenda = calendarPanel && preset == "agenda";
@@ -2593,10 +2635,10 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             const int left = (request.canvasWidth-width)/2, top = (request.canvasHeight-height)/2;
             result.stage = "panel.render."+preset;
             const auto pixels = Render(device,text,request,scene,appearance,background,stage,left,top,nullptr,{},renderedHover);
-            const auto path = request.outputDirectory/(request.component+"-"+preset+".png");
+            const auto path = request.outputDirectory/(request.component+"-"+outputPreset+".png");
             result.stage = "panel.png."+preset;
             if (!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error)) return result;
-            result.outputs.push_back({request.component,preset,path,false,false,false,false,false,false,
+            result.outputs.push_back({request.component,outputPreset,path,false,false,false,false,false,false,
                 static_cast<int>(std::lround(appearance.cornerRadius*scale)),width,height,left,top});
             result.stage = "panel.check."+preset;
             if (resources)
@@ -2605,7 +2647,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 Require(model.View().SameContent(unchanged), "unchanged resource data invalidated the visible scene");
             }
             if (controls && (preset == "overview" || preset == "audio")) CheckMute(model,state,preset == "overview");
-            if (controls && preset == "overview")
+            if (controls && preset == "overview" && !bottom)
             {
                 CheckQuickControls();
                 CheckClosedCallbacks();

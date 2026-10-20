@@ -2,24 +2,29 @@
 
 #include "desktop_page_presenter.h"
 #include "edge_light_editor.h"
+#include "panel_gradient_editor.h"
 #include "appearance_sections.h"
 #include "settings_presenter_controls.h"
+#include "theme_library_controls.h"
 
 #include "common/constants.h"
 #include "ui/render/font_weight_rules.h"
 #include "layout/layout_spacing_rules.h"
+#include "settings/category_rule_creation.h"
+#include "category_creation_acknowledgement.h"
 #include "icons/icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.Globalization.NumberFormatting.h>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -55,13 +60,19 @@ void InitializeCard(
     const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    card.root.Style(style);
+    // SettingsRow and Expander own their surfaces; the task group only
+    // supplies a heading, rather than adding another bordered card.
+    (void)style;
+    card.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(8.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
+    card.title.Margin({0, 0, 0, 0});
+    muxa::AutomationProperties::SetHeadingLevel(card.title,
+        muxa::Peers::AutomationHeadingLevel::Level2);
     card.content.Children().Append(card.title);
     card.root.Child(card.content);
     page.Children().Append(card.root);
@@ -79,14 +90,29 @@ void SetHeader(
 
 void InitializeCategoryTextRow(SettingRow& row, const mux::UIElement& control)
 {
-    row.Initialize(control, 600.0);
-    row.root.SizeChanged([](const auto& sender, const mux::SizeChangedEventArgs& args) {
-        const auto grid = sender.template try_as<muxc::Grid>();
-        const double width = args.NewSize().Width;
-        if (!grid || width < presenter_controls::kSettingRowStackThreshold) return;
-        grid.ColumnDefinitions().GetAt(1).Width(mux::GridLengthHelper::FromValueAndType(
-            std::min(600.0, width * .65), mux::GridUnitType::Pixel));
-    });
+    row.Initialize(control, presenter_controls::kSettingControlWidth);
+    presenter_controls::StyleSettingsCard(row.root);
+}
+
+void SetDependentVisibility(const mux::FrameworkElement& element, bool visible,
+    const mux::FrameworkElement& parent)
+{
+    if (!visible && element.XamlRoot())
+    {
+        auto focused = muxi::FocusManager::GetFocusedElement(element.XamlRoot())
+            .try_as<mux::DependencyObject>();
+        while (focused)
+        {
+            if (focused == element)
+            {
+                if (const auto control = parent.try_as<muxc::Control>())
+                    control.Focus(mux::FocusState::Programmatic);
+                break;
+            }
+            focused = mux::Media::VisualTreeHelper::GetParent(focused);
+        }
+    }
+    element.Visibility(visible ? mux::Visibility::Visible : mux::Visibility::Collapsed);
 }
 
 void SetComboItems(
@@ -242,7 +268,7 @@ struct NumericEditor
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         number.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        number.Width(92.0);
+        number.Width(presenter_controls::kSettingNumberWidth);
         if (fractionalDigits == 0)
             number.AcceptsExpression(false);
 
@@ -272,6 +298,7 @@ struct NumericEditor
             editors.Children().Append(reset);
         }
         settingRow.Initialize(editors);
+        presenter_controls::StyleSettingsCard(settingRow.root);
         root = settingRow.root;
         label = settingRow.label;
 
@@ -461,6 +488,7 @@ struct ColorEditor
     {
         editor.Initialize(std::move(callback));
         root = editor.row.root;
+        presenter_controls::StyleSettingsCard(root);
     }
 
     void CommitPending()
@@ -513,6 +541,7 @@ struct RuleRow
     muxc::StackPanel content{nullptr};
     muxc::Grid nameActions{nullptr};
     muxc::Expander section{nullptr};
+    muxc::TextBlock heading{nullptr};
     SettingRow labelRow;
     SettingRow extensionsRow;
     muxc::TextBox label{nullptr};
@@ -571,11 +600,14 @@ struct DesktopPagePresenter::Impl
     muxc::StackPanel categoryRoot{nullptr};
 
     SettingsCard displayCard;
+    SettingsCard titleCard;
     SettingsCard categoryLayoutCard;
     SettingsCard beautifyCard;
     SettingsCard categoryRulesCard;
 
     std::unique_ptr<NumericEditor> iconSpacing;
+    std::unique_ptr<NumericEditor> scrollingIconSpacingY;
+    std::unique_ptr<NumericEditor> listRowSpacing;
     std::unique_ptr<NumericEditor> iconSize;
     std::unique_ptr<NumericEditor> itemFontSize;
     std::unique_ptr<NumericEditor> listFontSize;
@@ -584,6 +616,8 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock shortcutArrowLabel{nullptr};
     muxc::ComboBox shortcutArrow{nullptr};
     SettingRow shortcutArrowRow;
+    muxc::ToggleSwitch groupComponentBadges{nullptr};
+    SettingRow groupComponentBadgesRow;
     std::array<muxc::ComboBox, 3> titleLineCombos;
     std::array<SettingRow, 3> titleLineRows;
     std::array<winrt::event_token, 3> titleLineTokens{};
@@ -599,25 +633,26 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
     SettingRow beautifyPresetRow;
+    std::unique_ptr<ThemeLibraryControls> iconThemes;
     muxc::StackPanel beautifyAdvanced{nullptr};
     muxc::TextBlock beautifyModeLabel{nullptr};
     muxc::ComboBox beautifyMode{nullptr};
     SettingRow beautifyModeRow;
+    muxc::ToggleSwitch beautifyFileThumbnails{nullptr};
+    SettingRow beautifyFileThumbnailsRow;
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
     AppearanceSections beautifySections;
+    muxc::StackPanel beautifyFinish{nullptr};
     muxc::TextBlock geometryTitle, finishTitle;
     muxc::ToggleSwitch glassEnabled{nullptr}, edgeReflection{nullptr};
     SettingRow glassEnabledRow, edgeReflectionRow;
     winrt::event_token glassEnabledToken{}, edgeReflectionToken{};
     std::unique_ptr<NumericEditor> glassBlurRadius, reflectionWidth, reflectionStrength;
-    muxc::ToggleSwitch gradientEnabled{nullptr};
-    SettingRow gradientEnabledRow;
-    std::unique_ptr<ColorEditor> backgroundEnd;
-    muxc::TextBlock gradientDirectionLabel{nullptr};
-    muxc::ComboBox gradientDirection{nullptr};
-    SettingRow gradientDirectionRow;
+    std::shared_ptr<PanelGradientEditor> gradientEditor;
+    muxc::ComboBox backgroundSource{nullptr}, filterMode{nullptr};
+    SettingRow backgroundSourceRow, filterModeRow;
     muxc::TextBlock shapeLabel{nullptr};
     muxc::ComboBox shape{nullptr};
     SettingRow shapeRow;
@@ -640,15 +675,18 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<NumericEditor> outlineOpacity;
     std::unique_ptr<ColorEditor> outlineColor;
 
-    muxc::TextBlock categoryHint{nullptr};
     muxc::TextBlock addCategoryHeading{nullptr};
     muxc::Expander addCategorySection{nullptr};
     muxc::StackPanel categoryRulePanel{nullptr};
     std::vector<std::unique_ptr<RuleRow>> ruleRows;
+    std::wstring pendingCategoryId;
+    std::wstring pendingCategoryLabel;
+    std::wstring pendingCategoryExtensions;
+    std::uint64_t pendingCategoryGeneration = 0;
     muxc::TextBox newCategoryLabel{nullptr};
     muxc::TextBox newCategoryExtensions{nullptr};
     muxc::Button addCategory{nullptr};
-    muxc::Button revealAddCategory{nullptr};
+    muxc::HyperlinkButton revealAddCategory{nullptr};
     muxc::Grid newCategoryNameActions{nullptr};
     SettingRow newCategoryLabelRow;
     SettingRow newCategoryExtensionsRow;
@@ -658,17 +696,21 @@ struct DesktopPagePresenter::Impl
     std::uint64_t categoryRevision = 0;
     std::uint64_t personalizationRevision = 0;
     bool hasSnapshot = false;
+    bool beautifyEnabled = false;
+    bool iconEditorMode = false, followGlobalIconTheme = false;
     bool updatingControls = false;
     bool active = false;
+    bool categoryPageActive = false;
     bool closed = false;
 
     winrt::event_token shortcutArrowToken{};
+    winrt::event_token groupComponentBadgesToken{};
     winrt::event_token showCountsToken{};
     winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
     winrt::event_token beautifyModeToken{};
-    winrt::event_token gradientEnabledToken{};
-    winrt::event_token gradientDirectionToken{};
+    winrt::event_token beautifyFileThumbnailsToken{};
+    winrt::event_token backgroundSourceToken{}, filterModeToken{};
     winrt::event_token shapeToken{};
     winrt::event_token filterEnabledToken{};
     winrt::event_token outlineEnabledToken{};
@@ -745,6 +787,7 @@ struct DesktopPagePresenter::Impl
         combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         combo.MaxWidth(560.0);
         row.Initialize(combo);
+        presenter_controls::StyleSettingsCard(row.root);
         card.content.Children().Append(row.root);
     }
 
@@ -756,17 +799,18 @@ struct DesktopPagePresenter::Impl
         combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         combo.MaxWidth(560.0);
         row.Initialize(combo);
+        presenter_controls::StyleSettingsCard(row.root);
         beautifyAdvanced.Children().Append(row.root);
     }
 
     void BuildControls()
     {
         desktopIconsRoot = muxc::StackPanel{};
-        desktopIconsRoot.Spacing(8.0);
+        desktopIconsRoot.Spacing(16.0);
         iconBeautificationRoot = muxc::StackPanel{};
-        iconBeautificationRoot.Spacing(8.0);
+        iconBeautificationRoot.Spacing(16.0);
         categoryRoot = muxc::StackPanel{};
-        categoryRoot.Spacing(8.0);
+        categoryRoot.Spacing(16.0);
         root = categoryRoot;
 
         InitializeCard(displayCard, cardStyle, desktopIconsRoot);
@@ -777,6 +821,20 @@ struct DesktopPagePresenter::Impl
                 settings.iconSpacingScale =
                     static_cast<float>(value / 100.0);
             }, kDefaultIconSpacingScale * 100.0);
+        scrollingIconSpacingY = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumRowSpacingScale * 100.0f, 1.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.scrollingIconSpacingYScale = static_cast<float>(value / 100.0);
+            }, 100.0);
+        scrollingIconSpacingY->SetUnit(L"%");
+        listRowSpacing = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumRowSpacingScale * 100.0f, 1.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.listRowSpacingScale = static_cast<float>(value / 100.0);
+            }, 100.0);
+        listRowSpacing->SetUnit(L"%");
         iconSize = MakeDesktopNumber(
             kMinimumItemIconSizeScale * 100.0,
             kMaximumItemIconSizeScale * 100.0, 1.0, 0,
@@ -815,25 +873,35 @@ struct DesktopPagePresenter::Impl
         listFontSize->SetUnit(L"cu");
         fanTitleFontSize->SetUnit(L"cu");
         itemFontWeight->SetUnit(L"%");
-        for (const auto* editor : {iconSize.get(),
+        displayCard.content.Children().Append(iconSize->root);
+        AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
+        groupComponentBadges = muxc::ToggleSwitch{};
+        groupComponentBadges.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        groupComponentBadgesRow.Initialize(groupComponentBadges);
+        presenter_controls::StyleSettingsCard(groupComponentBadgesRow.root);
+        groupComponentBadgesRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        displayCard.content.Children().Append(groupComponentBadgesRow.root);
+        InitializeCard(titleCard, cardStyle, desktopIconsRoot);
+        for (const auto* editor : {
                  itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get()})
         {
-            displayCard.content.Children().Append(editor->root);
+            titleCard.content.Children().Append(editor->root);
         }
-        AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
-        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) AppendCombo(displayCard, titleLineRows[i], titleLineCombos[i]);
-        AppendCombo(displayCard, titleOverflowRow, titleOverflow);
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) AppendCombo(titleCard, titleLineRows[i], titleLineCombos[i]);
+        AppendCombo(titleCard, titleOverflowRow, titleOverflow);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
         collectPrograms = muxc::ToggleSwitch{};
         collectPrograms.HorizontalAlignment(mux::HorizontalAlignment::Right);
         collectProgramsRow.Initialize(collectPrograms);
+        presenter_controls::StyleSettingsCard(collectProgramsRow.root);
         collectProgramsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(collectProgramsRow.root);
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
         showCategoryTabCountsRow.Initialize(showCategoryTabCounts);
+        presenter_controls::StyleSettingsCard(showCategoryTabCountsRow.root);
         showCategoryTabCountsRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(
@@ -841,12 +909,35 @@ struct DesktopPagePresenter::Impl
 
         InitializeCard(
             beautifyCard, cardStyle, iconBeautificationRoot);
+        beautifyCard.title.Visibility(mux::Visibility::Collapsed);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
+        AppendCombo(beautifyCard, beautifyModeRow, beautifyMode);
+        beautifyFileThumbnails = muxc::ToggleSwitch{};
+        // The native template reserves 10 DIPs above and below its 20-DIP
+        // track. Fit that internal layout to the adjacent 32-DIP editors too.
+        beautifyFileThumbnails.Resources().Insert(
+            winrt::box_value(L"ToggleSwitchPreContentMargin"), winrt::box_value(6.0));
+        beautifyFileThumbnails.Resources().Insert(
+            winrt::box_value(L"ToggleSwitchPostContentMargin"), winrt::box_value(6.0));
+        beautifyFileThumbnails.MinHeight(0.0);
+        beautifyFileThumbnails.Height(32.0);
+        beautifyFileThumbnails.VerticalAlignment(mux::VerticalAlignment::Center);
+        beautifyFileThumbnails.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        beautifyFileThumbnails.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        beautifyFileThumbnailsRow.Initialize(beautifyFileThumbnails);
+        presenter_controls::StyleSettingsCard(beautifyFileThumbnailsRow.root);
+        beautifyFileThumbnailsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        beautifyCard.content.Children().Append(beautifyFileThumbnailsRow.root);
+        iconThemes = std::make_unique<ThemeLibraryControls>(localize, "icon", false, beautifyPreset, 6, 5, cardStyle);
+        beautifyPresetRow.controlHost.Content(nullptr);
+        beautifyPresetRow.controlHost.Content(iconThemes->SelectionContent());
+        beautifyCard.content.Children().Append(iconThemes->Content());
         beautifyAdvanced = muxc::StackPanel{};
-        beautifyAdvanced.Spacing(12.0);
+        beautifyAdvanced.Spacing(8.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
+        beautifyCard.content.Children().Append(iconThemes->SaveContent());
+        iconThemes->SetCustomContent({beautifyAdvanced});
 
-        AppendAdvancedCombo(beautifyModeRow, beautifyMode);
         backgroundStart = MakeBeautifyColor(
             [](IconBeautifySettings& settings,
                const winrt::Windows::UI::Color& color) {
@@ -860,23 +951,16 @@ struct DesktopPagePresenter::Impl
                     static_cast<float>(value / 100.0);
             });
         backgroundOpacity->SetUnit(L"%");
-        gradientEnabled = muxc::ToggleSwitch{};
-        gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        gradientEnabledRow.Initialize(gradientEnabled);
-        gradientEnabledRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        backgroundEnd = MakeBeautifyColor(
-            [](IconBeautifySettings& settings,
-               const winrt::Windows::UI::Color& color) {
-                settings.backgroundEndR = ColorFloat(color.R);
-                settings.backgroundEndG = ColorFloat(color.G);
-                settings.backgroundEndB = ColorFloat(color.B);
+        AppendAdvancedCombo(backgroundSourceRow, backgroundSource);
+        gradientEditor = PanelGradientEditor::Create([this](auto key) { return L(key); },
+            [this](const PanelGradient& gradient, bool commit) {
+                UpdateBeautify(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [gradient](auto& settings) { settings.backgroundGradient = gradient; settings.gradientEnabled = false; });
+                UpdateConditionalStates();
             });
         beautifyAdvanced.Children().Append(backgroundStart->root);
         beautifyAdvanced.Children().Append(backgroundOpacity->root);
-        beautifyAdvanced.Children().Append(gradientEnabledRow.root);
-        beautifyAdvanced.Children().Append(backgroundEnd->root);
-        AppendAdvancedCombo(gradientDirectionRow, gradientDirection);
+        beautifyAdvanced.Children().Append(gradientEditor->Content());
         AppendAdvancedCombo(shapeRow, shape);
 
         glassEnabled = muxc::ToggleSwitch{};
@@ -995,6 +1079,9 @@ struct DesktopPagePresenter::Impl
                 settings.outlineB = ColorFloat(color.B);
             });
         beautifyAdvanced.Children().Append(filterEnabledRow.root);
+        filterMode = muxc::ComboBox{};
+        filterModeRow.Initialize(filterMode);
+        filterDetails.Children().Append(filterModeRow.root);
         filterDetails.Children().Append(filterTint->root);
         filterDetails.Children().Append(filterStrength->root);
         beautifyAdvanced.Children().Append(filterDetails);
@@ -1006,22 +1093,29 @@ struct DesktopPagePresenter::Impl
         beautifyAdvanced.Children().Append(outlineDetails);
 
         beautifyAdvanced.Children().Clear();
-        std::vector<muxc::Expander> geometryDisclosures;
-        auto geometry = AppearanceSections::Section(beautifyAdvanced, geometryTitle, &geometryDisclosures);
-        geometry.Children().Append(beautifyModeRow.root);
+        // The common custom controls remain directly visible. Only the
+        // longer material/finish sections need disclosure.
+        geometryTitle = muxc::TextBlock{};
+        geometryTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        geometryTitle.TextWrapping(mux::TextWrapping::Wrap);
+        geometryTitle.Margin({0, 8, 0, 0});
+        beautifyAdvanced.Children().Append(geometryTitle);
+        muxc::StackPanel geometry;
+        geometry.Spacing(8);
+        beautifyAdvanced.Children().Append(geometry);
         geometry.Children().Append(shapeRow.root);
         geometry.Children().Append(contentScale->root);
         beautifySections.Initialize(beautifyAdvanced, true, false, false);
-        beautifySections.disclosures.insert(beautifySections.disclosures.begin(), geometryDisclosures.begin(), geometryDisclosures.end());
-        for (auto const& control : {backgroundStart->root, backgroundOpacity->root, gradientEnabledRow.root, backgroundEnd->root, gradientDirectionRow.root})
+        for (auto const& control : std::array<mux::UIElement, 4>{backgroundSourceRow.root, backgroundStart->root, backgroundOpacity->root, gradientEditor->Content()})
             beautifySections.colors.Children().Append(control);
         beautifySections.material.Children().Append(glassEnabledRow.root); beautifySections.material.Children().Append(glassBlurRadius->root);
         beautifySections.border.Children().Append(outlineEnabledRow.root); beautifySections.border.Children().Append(outlineDetails);
         beautifySections.border.Children().Append(edgeReflectionRow.root); beautifySections.border.Children().Append(reflectionWidth->root);
         beautifySections.border.Children().Append(reflectionStrength->root); beautifySections.border.Children().Append(edgeLightEditor->Content());
-        auto finish = AppearanceSections::Section(beautifyAdvanced, finishTitle, &beautifySections.disclosures);
-        for (auto const* editor : {highlightStrength.get(), highlightSize.get(), highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(), shadowStrength.get()}) finish.Children().Append(editor->root);
-        finish.Children().Append(filterEnabledRow.root); finish.Children().Append(filterDetails);
+        beautifyFinish = AppearanceSections::Section(beautifyAdvanced, finishTitle, &beautifySections.disclosures);
+        for (auto const* editor : {highlightStrength.get(), highlightSize.get(), highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(), shadowStrength.get()}) beautifyFinish.Children().Append(editor->root);
+        beautifyFinish.Children().Append(filterEnabledRow.root); beautifyFinish.Children().Append(filterDetails);
+        presenter_controls::UpdateSettingsSubrows(beautifyFinish, 0);
 
         InitializeCard(categoryRulesCard, cardStyle, categoryRoot);
         muxc::Grid categoryHeader;
@@ -1035,12 +1129,8 @@ struct DesktopPagePresenter::Impl
         categoryRulesCard.content.Children().RemoveAt(0);
         categoryRulesCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
         categoryHeader.Children().Append(categoryRulesCard.title);
-        revealAddCategory = muxc::Button{};
-        muxc::FontIcon addIcon;
-        addIcon.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily{L"Segoe Fluent Icons"});
-        addIcon.Glyph(L"\uE710");
-        addIcon.FontSize(16);
-        revealAddCategory.Content(addIcon);
+        revealAddCategory = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(revealAddCategory);
         muxc::Grid::SetColumn(revealAddCategory, 1);
         categoryHeader.Children().Append(revealAddCategory);
         categoryRulesCard.content.Children().InsertAt(0, categoryHeader);
@@ -1052,16 +1142,18 @@ struct DesktopPagePresenter::Impl
             return heading;
         };
         addCategoryHeading = makeSubsectionHeading();
-        categoryHint = muxc::TextBlock{};
-        categoryHint.Opacity(0.72);
-        categoryHint.TextWrapping(mux::TextWrapping::Wrap);
         categoryRulePanel = muxc::StackPanel{};
-        categoryRulePanel.Spacing(10.0);
-        categoryRulesCard.content.Children().Append(categoryRulePanel);
+        categoryRulePanel.Spacing(0.0);
+        muxc::Border categorySurface;
+        presenter_controls::StyleSettingsCard(categorySurface);
+        categorySurface.Padding({0});
+        categorySurface.Child(categoryRulePanel);
+        categoryRulesCard.content.Children().Append(categorySurface);
         addCategorySection = muxc::Expander{};
         addCategorySection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         addCategorySection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         addCategorySection.IsExpanded(false);
+        addCategorySection.Visibility(mux::Visibility::Collapsed);
         addCategorySection.Header(addCategoryHeading);
         muxc::StackPanel addCategoryBody;
         addCategoryBody.Spacing(12);
@@ -1087,7 +1179,7 @@ struct DesktopPagePresenter::Impl
         addCategoryBody.Children().Append(newCategoryLabelRow.root);
         addCategoryBody.Children().Append(
             newCategoryExtensionsRow.root);
-        addCategoryBody.Children().Append(categoryHint);
+        presenter_controls::UpdateSettingsSubrows(addCategoryBody, 0);
     }
 
     template <typename Edit>
@@ -1163,6 +1255,14 @@ struct DesktopPagePresenter::Impl
                         settings.shortcutArrowMode = selection;
                     });
             });
+        groupComponentBadgesToken = groupComponentBadges.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = groupComponentBadges.IsOn();
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](DesktopDisplaySettings& settings) {
+                        settings.groupComponentBadges = enabled;
+                    });
+            });
         showCountsToken = showCategoryTabCounts.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = showCategoryTabCounts.IsOn();
@@ -1184,16 +1284,23 @@ struct DesktopPagePresenter::Impl
             });
         beautifyPresetToken = beautifyPreset.SelectionChanged(
             [this](const auto&, const auto&) {
+                if (updatingControls || !active || !hasSnapshot || iconThemes->Synchronizing()) return;
                 const int selection = beautifyPreset.SelectedIndex();
+                if (iconEditorMode && selection == 6)
+                {
+                    if (actions.iconThemeInheritanceChanged) actions.iconThemeInheritanceChanged(true);
+                    UpdateConditionalStates(); return;
+                }
+                if (iconEditorMode && actions.iconThemeInheritanceChanged) actions.iconThemeInheritanceChanged(false);
+                if (iconThemes->ApplySelection()) { UpdateConditionalStates(); return; }
                 if (selection < 0 ||
                     static_cast<std::size_t>(selection) >=
                         kBeautifyPresets.size())
                     return;
-                if (!updatingControls && active && hasSnapshot) edgeLightEditor->Cancel();
+                if (!updatingControls && active && hasSnapshot)
+                { edgeLightEditor->Cancel(); gradientEditor->Cancel(); }
                 const IconBeautifyPreset preset =
                     kBeautifyPresets[static_cast<std::size_t>(selection)];
-                if (!updatingControls && active && hasSnapshot && preset == IconBeautifyPreset::Custom)
-                    beautifySections.CollapseAll();
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                     [preset](DesktopDisplaySettings& desktop) {
                         if (preset == IconBeautifyPreset::Custom)
@@ -1203,8 +1310,9 @@ struct DesktopPagePresenter::Impl
                         }
                         else
                         {
-                            desktop.iconBeautify =
-                                icon_beautify::MakePreset(preset);
+                            const int strategy = desktop.iconBeautify.mode;
+                            desktop.iconBeautify = icon_beautify::MakePreset(preset);
+                            desktop.iconBeautify.mode = strategy;
                         }
                     });
                 UpdateConditionalStates();
@@ -1213,11 +1321,15 @@ struct DesktopPagePresenter::Impl
             [this](const auto&, const auto&) {
                 const int selection = beautifyMode.SelectedIndex();
                 if (selection < 0) return;
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [selection](IconBeautifySettings& settings) {
-                        settings.mode = selection;
-                    });
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](DesktopDisplaySettings& settings) { settings.iconBeautify.mode = selection; });
             });
+        beautifyFileThumbnailsToken = beautifyFileThumbnails.Toggled([this](auto const&, auto const&) {
+            if (iconEditorMode) return;
+            const bool enabled = beautifyFileThumbnails.IsOn();
+            UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                [enabled](DesktopDisplaySettings& settings) { settings.beautifyFileThumbnails = enabled; });
+        });
         glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
             const bool v = glassEnabled.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
@@ -1227,24 +1339,15 @@ struct DesktopPagePresenter::Impl
             const bool v = edgeReflection.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.edgeHighlightEnabled = v; });
         });
-        gradientEnabledToken = gradientEnabled.Toggled(
-            [this](const auto&, const auto&) {
-                const bool enabled = gradientEnabled.IsOn();
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [enabled](IconBeautifySettings& settings) {
-                        settings.gradientEnabled = enabled;
-                    });
-                UpdateConditionalStates();
-            });
-        gradientDirectionToken = gradientDirection.SelectionChanged(
-            [this](const auto&, const auto&) {
-                const int selection = gradientDirection.SelectedIndex();
-                if (selection < 0) return;
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [selection](IconBeautifySettings& settings) {
-                        settings.gradientDirection = selection;
-                    });
-            });
+        backgroundSourceToken = backgroundSource.SelectionChanged([this](auto const&, auto const&) {
+            const int source = backgroundSource.SelectedIndex(); if (source < 0) return;
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [source](auto& settings) { settings.backgroundSource = source; });
+            UpdateConditionalStates();
+        });
+        filterModeToken = filterMode.SelectionChanged([this](auto const&, auto const&) {
+            const int mode = filterMode.SelectedIndex(); if (mode < 0) return;
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [mode](auto& settings) { settings.filterMode = mode; });
+        });
         shapeToken = shape.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = shape.SelectedIndex();
@@ -1264,6 +1367,8 @@ struct DesktopPagePresenter::Impl
                 const bool enabled = filterEnabled.IsOn();
                 UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](IconBeautifySettings& settings) {
+                        if (enabled && !settings.filterEnabled && settings.filterMode == 0)
+                        { settings.filterMode = 1; settings.filterStrength = .35f; }
                         settings.filterEnabled = enabled;
                     });
                 UpdateConditionalStates();
@@ -1281,9 +1386,26 @@ struct DesktopPagePresenter::Impl
             [this](const auto&, const auto&) { AddCategoryRule(); });
         revealAddCategoryToken = revealAddCategory.Click([this](const auto&, const auto&) {
             if (closed || !active) return;
-            addCategorySection.IsExpanded(true);
+            RevealAddCategoryEditor();
             if (navigate) navigate(SettingsRoute::ForPage(SettingsPage::DesktopCategories, "desktop.category.add"));
         });
+    }
+
+    void RevealAddCategoryEditor() const noexcept
+    {
+        if (closed) return;
+        addCategorySection.Visibility(mux::Visibility::Visible);
+        addCategorySection.IsExpanded(true);
+    }
+
+    void SetCategoryPageActive(bool value) noexcept
+    {
+        if (closed || categoryPageActive == value) return;
+        categoryPageActive = value;
+        // A page visit controls disclosure only. Keep the unsaved form and
+        // pending host acknowledgement intact when leaving this page.
+        addCategorySection.IsExpanded(false);
+        addCategorySection.Visibility(mux::Visibility::Collapsed);
     }
 
     std::wstring RuleLabel(const CategoryRule& rule) const
@@ -1309,25 +1431,23 @@ struct DesktopPagePresenter::Impl
 
     void AddCategoryRule()
     {
+        if (closed || !active || !hasSnapshot || updatingControls || !actions.updateCategory)
+            return;
         std::wstring label = Trim(newCategoryLabel.Text().c_str());
         if (label.empty())
             label = L("app.settings.new_category", L"New category");
         const std::wstring extensions = newCategoryExtensions.Text().c_str();
-        static std::atomic<std::uint64_t> nextId{1};
-        const std::wstring id = L"custom-winui-" +
-            std::to_wstring(generation) + L"-" +
-            std::to_wstring(nextId.fetch_add(1));
+        pendingCategoryId.clear();
+        pendingCategoryLabel = newCategoryLabel.Text().c_str();
+        pendingCategoryExtensions = extensions;
+        pendingCategoryGeneration = generation;
+        // EditCategory applies this edit before publishing the updated snapshot.
         UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
-            [id, label = std::move(label), extensions](
+            [this, label = std::move(label), extensions](
                 CategorySettings& settings) mutable {
-                CategoryRule rule;
-                rule.id = std::move(id);
-                rule.customLabel = std::move(label);
-                rule.extensions = extensions;
-                settings.rules.push_back(std::move(rule));
+                if (auto id = AppendCustomCategoryRule(settings, std::move(label), extensions))
+                    pendingCategoryId = std::move(*id);
             });
-        newCategoryLabel.Text(L"");
-        newCategoryExtensions.Text(L"");
     }
 
     void RemoveCategoryRule(std::wstring id)
@@ -1401,6 +1521,9 @@ struct DesktopPagePresenter::Impl
 
     void BuildRuleRows(const CategorySettings& settings)
     {
+        std::unordered_map<std::wstring, bool> expanded;
+        for (const auto& row : ruleRows)
+            expanded.emplace(row->id, row->section.IsExpanded());
         CloseRuleRows();
         categoryRulePanel.Children().Clear();
         ruleRows.reserve(settings.rules.size());
@@ -1411,7 +1534,7 @@ struct DesktopPagePresenter::Impl
             row->customLabel = rule.customLabel;
             row->root = muxc::Border{};
             row->content = muxc::StackPanel{};
-            row->content.Spacing(8.0);
+            row->content.Spacing(2.0);
             row->label = muxc::TextBox{};
             row->extensions = muxc::TextBox{};
             row->remove = muxc::Button{};
@@ -1420,6 +1543,9 @@ struct DesktopPagePresenter::Impl
             row->restoreExtensions = muxc::Button{};
             row->enabledValue = rule.enabled;
             row->enabled.MinWidth(88.0);
+            row->remove.MinWidth(88.0);
+            row->remove.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            row->enabled.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
             row->enabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
             row->enabled.VerticalAlignment(mux::VerticalAlignment::Center);
             row->nameActions = muxc::Grid{};
@@ -1427,10 +1553,7 @@ struct DesktopPagePresenter::Impl
             muxc::ColumnDefinition labelColumn{};
             labelColumn.Width(mux::GridLengthHelper::FromValueAndType(
                 1.0, mux::GridUnitType::Star));
-            muxc::ColumnDefinition deleteColumn{};
-            deleteColumn.Width(mux::GridLengthHelper::Auto());
             row->nameActions.ColumnDefinitions().Append(labelColumn);
-            row->nameActions.ColumnDefinitions().Append(deleteColumn);
             muxc::ColumnDefinition restoreColumn{};
             restoreColumn.Width(mux::GridLengthHelper::Auto());
             row->nameActions.ColumnDefinitions().Append(restoreColumn);
@@ -1442,13 +1565,9 @@ struct DesktopPagePresenter::Impl
             }
             row->extensions.Text(rule.extensions);
             row->nameActions.Children().Append(row->label);
-            muxc::Grid::SetColumn(row->remove, 2);
-            row->nameActions.Children().Append(row->remove);
             if (IsBuiltinCategoryRuleId(rule.id))
             {
                 row->remove.Visibility(mux::Visibility::Collapsed);
-                muxc::Grid::SetColumn(row->enabled, 2);
-                row->nameActions.Children().Append(row->enabled);
                 muxc::Grid::SetColumn(row->restoreName, 1);
                 row->nameActions.Children().Append(row->restoreName);
             }
@@ -1470,12 +1589,34 @@ struct DesktopPagePresenter::Impl
             InitializeCategoryTextRow(row->extensionsRow, extensionActions);
             row->content.Children().Append(row->labelRow.root);
             row->content.Children().Append(row->extensionsRow.root);
+            presenter_controls::UpdateSettingsSubrows(row->content, 0);
             row->section = muxc::Expander{};
             row->section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             row->section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-            row->section.IsExpanded(false);
+            row->section.IsExpanded(expanded.contains(rule.id) && expanded.at(rule.id));
+            muxc::Grid ruleHeader;
+            ruleHeader.ColumnSpacing(12);
+            muxc::ColumnDefinition headingColumn, commandColumn;
+            headingColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+            commandColumn.Width(mux::GridLengthHelper::Auto());
+            ruleHeader.ColumnDefinitions().Append(headingColumn);
+            ruleHeader.ColumnDefinitions().Append(commandColumn);
+            row->heading = muxc::TextBlock{};
+            row->heading.TextWrapping(mux::TextWrapping::Wrap);
+            row->heading.VerticalAlignment(mux::VerticalAlignment::Center);
+            ruleHeader.Children().Append(row->heading);
+            const muxc::Button command = IsBuiltinCategoryRuleId(rule.id) ? row->enabled : row->remove;
+            muxc::Grid::SetColumn(command, 1);
+            ruleHeader.Children().Append(command);
+            row->section.Header(ruleHeader);
+            const auto weakHeader = winrt::make_weak(ruleHeader);
+            row->section.SizeChanged([weakHeader](const auto&, const mux::SizeChangedEventArgs& args) {
+                if (const auto header = weakHeader.get())
+                    header.Width(std::max(0.0, args.NewSize().Width - 80.0));
+            });
             row->section.Content(row->content);
-            row->root.Child(row->section);
+            row->section.Padding({0});
+            row->root = presenter_controls::SettingsDisclosureRow(row->section, ruleRows.empty());
             categoryRulePanel.Children().Append(row->root);
 
             RuleRow* const raw = row.get();
@@ -1499,7 +1640,7 @@ struct DesktopPagePresenter::Impl
                 [this, raw](const auto&, const auto&) {
                     if (updatingControls || raw->closed) return;
                     raw->customLabel = raw->label.Text().c_str();
-                    raw->section.Header(winrt::box_value(raw->label.Text()));
+                    raw->heading.Text(raw->label.Text());
                     EditCategoryLabel(raw->id, raw->label.Text().c_str());
                 });
             row->extensionsToken = row->extensions.TextChanged(
@@ -1558,6 +1699,18 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(row.enabled, action + L" " + row.label.Text());
     }
 
+    void SetCategoryExtensionHelp(const muxc::TextBox& extensions)
+    {
+        const auto help = L("app.settings.category_format_hint",
+            L"Separate extensions with spaces, commas or semicolons, for example .jpg .png.") +
+            L"\n" + L("app.settings.category_hint",
+                L"Standard extensions also match shortcut file targets; "
+                L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
+                L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links.");
+        muxc::ToolTipService::SetToolTip(extensions, winrt::box_value(help));
+        muxa::AutomationProperties::SetHelpText(extensions, help);
+    }
+
     void LocalizeRuleRows()
     {
         for (const auto& row : ruleRows)
@@ -1573,11 +1726,10 @@ struct DesktopPagePresenter::Impl
                 L("app.settings.category_name", L"Category name"));
             row->extensionsRow.SetText(
                 L("app.settings.category_extensions", L"Extensions"));
-            row->section.Header(winrt::box_value(row->label.Text()));
+            row->heading.Text(row->label.Text());
             muxa::AutomationProperties::SetName(row->section, row->label.Text());
             row->extensions.PlaceholderText(L".jpg .png");
-            muxa::AutomationProperties::SetHelpText(row->extensions,
-                L("app.settings.category_format_hint", L"Separate extensions with spaces, commas or semicolons, for example .jpg .png."));
+            SetCategoryExtensionHelp(row->extensions);
             row->remove.Content(winrt::box_value(
                 L("app.settings.delete", L"Delete")));
             const auto restore = L("app.settings.restore_default", L"Restore default");
@@ -1594,23 +1746,25 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        const bool custom = beautifyPreset.SelectedIndex() == IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
-        beautifyAdvanced.Visibility(
-            custom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        edgeLightEditor->Content().Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        glassBlurRadius->root.Visibility(glassEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        reflectionWidth->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        reflectionStrength->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        backgroundEnd->root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        gradientDirectionRow.root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        backgroundEnd->SetEnabled(gradientEnabled.IsOn());
-        gradientDirection.IsEnabled(gradientEnabled.IsOn());
-        filterDetails.Visibility(filterEnabled.IsOn()
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        outlineDetails.Visibility(outlineEnabled.IsOn()
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
+        SetDependentVisibility(beautifyModeRow.root, beautifyEnabled || iconEditorMode, beautifyPreset);
+        SetDependentVisibility(beautifyFileThumbnailsRow.root, beautifyEnabled && !iconEditorMode, beautifyPreset);
+        SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
+        SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
+        SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
+        SetDependentVisibility(reflectionStrength->root, edgeReflection.IsOn(), edgeReflection);
+        const bool customSolid = backgroundSource.SelectedIndex() == 0 && !gradientEditor->Value().enabled;
+        SetDependentVisibility(backgroundStart->root, customSolid, backgroundSource);
+        backgroundStart->SetEnabled(customSolid);
+        gradientEditor->SetAutomaticColors(backgroundSource.SelectedIndex() != 0);
+        SetDependentVisibility(filterDetails, filterEnabled.IsOn(), filterEnabled);
+        SetDependentVisibility(outlineDetails, outlineEnabled.IsOn(), outlineEnabled);
+        beautifySections.UpdateRows();
+        if (iconEditorMode && followGlobalIconTheme) beautifyAdvanced.Visibility(mux::Visibility::Collapsed);
+        presenter_controls::UpdateSettingsSubrows(beautifyFinish, 0);
+        presenter_controls::UpdateSettingsSubrows(filterDetails, 16);
+        presenter_controls::UpdateSettingsSubrows(outlineDetails, 16);
+        for (const auto& child : {glassBlurRadius->root, reflectionWidth->root, reflectionStrength->root})
+            presenter_controls::StyleSettingsSubrow(child, false, 16);
     }
 
     void PatchDesktop(const DesktopDisplaySettings& settings)
@@ -1619,6 +1773,8 @@ struct DesktopPagePresenter::Impl
         for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
         titleOverflow.SelectedIndex(settings.titleEllipsis ? 0 : 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
+        scrollingIconSpacingY->SetValue(settings.scrollingIconSpacingYScale * 100.0);
+        listRowSpacing->SetValue(settings.listRowSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
         listFontSize->SetValue(settings.listItemFontSizeCu);
@@ -1626,13 +1782,13 @@ struct DesktopPagePresenter::Impl
         itemFontWeight->SetValue(font_weight_rules::ToPercent(settings.itemFontWeight));
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
+        groupComponentBadges.IsOn(settings.groupComponentBadges);
+        beautifyFileThumbnails.IsOn(settings.beautifyFileThumbnails);
 
         const IconBeautifySettings& value = settings.iconBeautify;
-        if (value.preset == IconBeautifyPreset::Custom &&
-            beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
-            beautifySections.CollapseAll();
-        beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
-        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
+        beautifyEnabled = value.enabled;
+        beautifyPreset.SelectedIndex(iconEditorMode && followGlobalIconTheme ? 6 : IndexOf(kBeautifyPresets, value.preset));
+        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, iconEditorMode ? 2 : 1));
         backgroundStart->SetColor(MakeColor(
             value.backgroundStartR,
             value.backgroundStartG,
@@ -1643,13 +1799,9 @@ struct DesktopPagePresenter::Impl
         edgeLightEditor->SetValue(value.edgeLight);
         reflectionWidth->SetValue(value.edgeHighlightWidth);
         reflectionStrength->SetValue(value.edgeHighlightStrength * 100.0);
-        gradientEnabled.IsOn(value.gradientEnabled);
-        backgroundEnd->SetColor(MakeColor(
-            value.backgroundEndR,
-            value.backgroundEndG,
-            value.backgroundEndB));
-        gradientDirection.SelectedIndex(
-            std::clamp(value.gradientDirection, 0, 3));
+        backgroundSource.SelectedIndex(value.backgroundSource);
+        gradientEditor->SetValue(icon_beautify::BackgroundGradient(value));
+        gradientEditor->SetAutomaticColors(value.backgroundSource != 0);
         shape.SelectedIndex(IndexOf(kBeautifyShapes, value.shape));
         contentScale->SetValue(value.contentScale * 100.0);
         highlightStrength->SetValue(
@@ -1659,6 +1811,7 @@ struct DesktopPagePresenter::Impl
         shadeStrength->SetValue(value.textureShadeStrength * 100.0);
         edgeHighlight->SetValue(value.textureEdgeHighlight * 100.0);
         filterEnabled.IsOn(value.filterEnabled);
+        filterMode.SelectedIndex(value.filterMode);
         filterTint->SetColor(MakeColor(
             value.filterTintR, value.filterTintG, value.filterTintB));
         filterStrength->SetValue(value.filterStrength * 100.0);
@@ -1673,7 +1826,9 @@ struct DesktopPagePresenter::Impl
     [[nodiscard]] bool HasActiveDesktopEdit() const noexcept
     {
         for (const NumericEditor* editor : {
-                 iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+                 iconSpacing.get(),
+                 scrollingIconSpacingY.get(), listRowSpacing.get(),
+                 iconSize.get(), itemFontSize.get(),
                  listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
                  backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
                  highlightStrength.get(), highlightSize.get(),
@@ -1685,7 +1840,7 @@ struct DesktopPagePresenter::Impl
             if (editor->IsEditing()) return true;
         }
         for (const ColorEditor* editor : {
-                 backgroundStart.get(), backgroundEnd.get(),
+                 backgroundStart.get(),
                  filterTint.get(), outlineColor.get()})
         {
             if (editor->IsEditing()) return true;
@@ -1699,6 +1854,36 @@ struct DesktopPagePresenter::Impl
         PatchRuleRows(settings);
     }
 
+    void AcknowledgeCategoryCreation(const SettingsSnapshot& snapshot)
+    {
+        if (!CanAcknowledgeCategoryCreation(snapshot, pendingCategoryId, pendingCategoryGeneration))
+            return;
+        // A saved rule acknowledges the form only if the user has not changed
+        // that form while persistence was pending or waiting for a retry.
+        for (const auto& row : ruleRows)
+        {
+            if (pendingCategoryId.empty() || row->id != pendingCategoryId) continue;
+            pendingCategoryId.clear();
+            pendingCategoryGeneration = 0;
+            if (newCategoryLabel.Text() == pendingCategoryLabel &&
+                newCategoryExtensions.Text() == pendingCategoryExtensions)
+            {
+                newCategoryLabel.Text(L"");
+                newCategoryExtensions.Text(L"");
+            }
+            row->section.IsExpanded(true);
+            const auto weakLabel = winrt::make_weak(row->label);
+            row->label.DispatcherQueue().TryEnqueue([weakLabel] {
+                if (const auto label = weakLabel.get(); label && label.IsLoaded())
+                {
+                    label.StartBringIntoView();
+                    label.Focus(mux::FocusState::Programmatic);
+                }
+            });
+            break;
+        }
+    }
+
     void PatchPersonalization(const PersonalizationSettings& settings)
     {
         showCategoryTabCounts.IsOn(settings.showCategoryTabCounts);
@@ -1707,7 +1892,9 @@ struct DesktopPagePresenter::Impl
     std::vector<NumericEditor*> ContinuousNumbers() const
     {
         return {
-            iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+            iconSpacing.get(),
+            scrollingIconSpacingY.get(), listRowSpacing.get(),
+            iconSize.get(), itemFontSize.get(),
             listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
             backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
@@ -1720,7 +1907,7 @@ struct DesktopPagePresenter::Impl
     std::vector<ColorEditor*> ContinuousColors() const
     {
         return {
-            backgroundStart.get(), backgroundEnd.get(), filterTint.get(),
+            backgroundStart.get(), filterTint.get(),
             outlineColor.get(),
         };
     }
@@ -1728,6 +1915,7 @@ struct DesktopPagePresenter::Impl
     void CommitContinuousEdits()
     {
         if (edgeLightEditor) edgeLightEditor->Flush();
+        if (gradientEditor) gradientEditor->Flush();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CommitPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1737,6 +1925,7 @@ struct DesktopPagePresenter::Impl
     void CancelContinuousEdits() noexcept
     {
         if (edgeLightEditor) edgeLightEditor->Cancel();
+        if (gradientEditor) gradientEditor->Cancel();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CancelPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1766,6 +1955,8 @@ struct DesktopPagePresenter::Impl
             if (newGeneration || !desktopEditActive)
             {
                 PatchDesktop(snapshot.values.desktop);
+                iconThemes->SetGeneration(generation);
+                iconThemes->SyncSelection(iconEditorMode && followGlobalIconTheme ? 6 : IndexOf(kBeautifyPresets, snapshot.values.desktop.iconBeautify.preset), snapshot.values);
                 desktopRevision = snapshot.domainRevisions.desktop;
             }
         }
@@ -1775,6 +1966,9 @@ struct DesktopPagePresenter::Impl
             PatchCategory(snapshot.values.category);
             categoryRevision = snapshot.domainRevisions.category;
         }
+        // Saving clears pending/dirty flags without changing the category
+        // domain revision, so confirmation must observe every snapshot.
+        AcknowledgeCategoryCreation(snapshot);
         if (newGeneration ||
             snapshot.domainRevisions.personalization !=
                 personalizationRevision)
@@ -1806,6 +2000,7 @@ struct DesktopPagePresenter::Impl
 
         SetCardText(displayCard, "app.settings.desktop_icons",
             L"Desktop Icons");
+        SetCardText(titleCard, "settings.desktop.titleText", L"Title text");
         SetCardText(categoryLayoutCard, "settings.desktop.categoryLayout",
             L"Category tab layout");
         SetCardText(beautifyCard, "app.settings.icon_beautify",
@@ -1816,6 +2011,9 @@ struct DesktopPagePresenter::Impl
         iconSpacing->SetLabel(L(
             "app.settings.layout_spacing", L"Layout spacing"), L(
             "app.settings.layout_spacing_hint"));
+        scrollingIconSpacingY->SetLabel(L("app.settings.scrolling_icon_spacing_y",
+            L"Scrolling icon vertical spacing"));
+        listRowSpacing->SetLabel(L("app.settings.list_row_spacing", L"List row spacing"));
         iconSize->SetLabel(L("app.settings.icon_size", L"Icon size"), L(
             "app.settings.icon_size_hint"));
         itemFontSize->SetLabel(L(
@@ -1840,13 +2038,18 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(titleOverflow, titleOverflowRow.label.Text());
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
-        for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
+        for (NumericEditor* editor : {iconSpacing.get(),
+                 scrollingIconSpacingY.get(), listRowSpacing.get(), iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(),
                  itemFontWeight.get()})
         {
             editor->SetResetText(
                 L("app.settings.restore_default", L"Restore Default"));
         }
+        groupComponentBadgesRow.SetText(
+            L("app.settings.group_component_badges", L"Group component badges"));
+        muxa::AutomationProperties::SetName(groupComponentBadges, groupComponentBadgesRow.label.Text());
+        muxa::AutomationProperties::SetAutomationId(groupComponentBadges, L"GroupComponentBadges");
         shortcutArrowRow.SetText(
             L("app.settings.shortcut_arrow", L"Shortcut arrow"));
         muxa::AutomationProperties::SetName(
@@ -1866,46 +2069,55 @@ struct DesktopPagePresenter::Impl
             L("app.settings.icon_beautify", L"Icon beautification"));
         muxa::AutomationProperties::SetName(
             beautifyPreset, beautifyPresetRow.label.Text());
-        SetComboItems(beautifyPreset, {
-            L("app.settings.beautify_preset_none", L"None"),
-            L("app.settings.beautify_preset_default", L"Default"),
-            L("app.settings.transparent_glass", L"Transparent glass"),
-            L("app.settings.dark_glass", L"Dark glass"),
-            L("app.settings.light_glass", L"Light glass"),
-            L("app.settings.custom", L"Custom"),
-        }, std::max(0, beautifyPreset.SelectedIndex()));
+        if (iconEditorMode)
+        {
+            SetComboItems(beautifyPreset, {
+                L("app.settings.beautify_preset_none", L"None"),
+                L("app.settings.beautify_preset_default", L"Default"),
+                L("app.settings.transparent_glass", L"Transparent glass"),
+                L("app.settings.dark_glass", L"Dark glass"),
+                L("app.settings.light_glass", L"Light glass"),
+                L("app.settings.custom", L"Custom"),
+                L("iconAppearance.follow", L"Follow global"),
+            }, std::clamp(iconThemes->NativeSelection(), 0, 6));
+        }
+        else
+        {
+            SetComboItems(beautifyPreset, {
+                L("app.settings.beautify_preset_none", L"None"),
+                L("app.settings.beautify_preset_default", L"Default"),
+                L("app.settings.transparent_glass", L"Transparent glass"),
+                L("app.settings.dark_glass", L"Dark glass"),
+                L("app.settings.light_glass", L"Light glass"),
+                L("app.settings.custom", L"Custom"),
+            }, std::clamp(iconThemes->NativeSelection(), 0, 5));
+        }
+        iconThemes->LocalizeText();
+        beautifyFileThumbnailsRow.SetText(L("app.settings.beautify_file_thumbnails", L"Beautify file thumbnails"));
+        muxa::AutomationProperties::SetName(beautifyFileThumbnails, beautifyFileThumbnailsRow.label.Text());
         beautifyModeRow.SetText(
-            L("app.settings.beautify_mode", L"Beautification mode"));
+            L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
             beautifyMode, beautifyModeRow.label.Text());
-        SetComboItems(beautifyMode, {
-            L("app.settings.beautify_smart", L"Smart"),
-            L("app.settings.beautify_shrink_bg", L"Shrink background"),
-        }, std::max(0, beautifyMode.SelectedIndex()));
+        if (iconEditorMode)
+            SetComboItems(beautifyMode, {L("iconStyle.smart", L"Smart beautification"),
+                L("iconStyle.shrinkAll", L"Add theme background and shrink icon"),
+                L("iconStyle.noUpscale", L"Add theme background")}, std::clamp(beautifyMode.SelectedIndex(), 0, 2));
+        else
+            SetComboItems(beautifyMode, {L("iconStyle.smart", L"Smart beautification"),
+                L("iconStyle.shrinkAll", L"Add theme background and shrink icon")}, std::clamp(beautifyMode.SelectedIndex(), 0, 1));
         backgroundStart->SetLabel(
             L("app.settings.default_bg", L"Background color"),
             L("app.settings.cancel", L"Cancel"));
         backgroundOpacity->SetLabel(
             L("app.settings.bg_opacity_val", L"Background opacity"));
-        gradientEnabledRow.SetText(L(
-            "app.settings.enable_gradient_bg", L"Enable gradient"));
-        muxa::AutomationProperties::SetName(gradientEnabled,
-            gradientEnabledRow.label.Text());
-        backgroundEnd->SetLabel(L(
-            "app.settings.gradient_end_color", L"Gradient end color"),
-            L("app.settings.cancel", L"Cancel"));
-        gradientDirectionRow.SetText(
-            L("app.settings.beautify_gradient_dir", L"Gradient direction"));
-        muxa::AutomationProperties::SetName(
-            gradientDirection, gradientDirectionRow.label.Text());
-        SetComboItems(gradientDirection, {
-            L("app.settings.beautify_gradient_updown", L"Top to bottom"),
-            L("app.settings.beautify_gradient_leftright", L"Left to right"),
-            L("app.settings.beautify_gradient_topleft_bottomright",
-                L"Top-left to bottom-right"),
-            L("app.settings.beautify_gradient_bottomleft_topright",
-                L"Bottom-left to top-right"),
-        }, std::max(0, gradientDirection.SelectedIndex()));
+        backgroundSourceRow.SetText(L("iconStyle.backgroundSource"));
+        muxa::AutomationProperties::SetName(backgroundSource, backgroundSourceRow.label.Text());
+        SetComboItems(backgroundSource, {L("app.settings.custom"), L("iconStyle.iconBackground"), L("iconStyle.iconAccent")}, std::max(0, backgroundSource.SelectedIndex()));
+        filterModeRow.SetText(L("iconStyle.coloring"));
+        muxa::AutomationProperties::SetName(filterMode, filterModeRow.label.Text());
+        SetComboItems(filterMode, {L("iconStyle.legacyTint"), L("iconStyle.tonalTint"), L("iconStyle.duotone")}, std::max(0, filterMode.SelectedIndex()));
+        gradientEditor->RefreshLocalizedText();
         shapeRow.SetText(L("app.settings.beautify_shape", L"Shape"));
         muxa::AutomationProperties::SetName(shape, shapeRow.label.Text());
         SetComboItems(shape, {
@@ -1964,24 +2176,20 @@ struct DesktopPagePresenter::Impl
             "app.settings.beautify_outline_color", L"Outline color"),
             L("app.settings.cancel", L"Cancel"));
 
-        categoryHint.Text(L("app.settings.category_hint",
-            L"Standard extensions also match shortcut file targets; "
-            L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
-            L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links."));
         collectProgramsRow.SetText(
             L("app.settings.collect_programs", L"Collect programs"));
         muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
         addCategoryHeading.Text(
             L("app.settings.add_category", L"Add category type"));
         muxa::AutomationProperties::SetName(revealAddCategory, L("app.settings.add_category", L"Add category"));
+        revealAddCategory.Content(winrt::box_value(L("app.settings.add_category", L"Add category")));
         muxc::ToolTipService::SetToolTip(revealAddCategory, winrt::box_value(L("app.settings.add_category", L"Add category")));
         newCategoryLabelRow.SetText(
             L("app.settings.category_name", L"Category name"));
         newCategoryExtensionsRow.SetText(
             L("app.settings.category_extensions", L"Extensions"));
         newCategoryExtensions.PlaceholderText(L".jpg .png");
-        muxa::AutomationProperties::SetHelpText(newCategoryExtensions,
-            L("app.settings.category_format_hint", L"Separate extensions with spaces, commas or semicolons, for example .jpg .png."));
+        SetCategoryExtensionHelp(newCategoryExtensions);
         addCategory.Content(winrt::box_value(
             L("app.settings.add", L"Add")));
         muxa::AutomationProperties::SetName(addCategory,
@@ -1991,16 +2199,34 @@ struct DesktopPagePresenter::Impl
         updatingControls = wasUpdating;
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal,
+        SettingsFocusPrerequisite* prerequisite) const noexcept
     {
-        const auto appearanceTarget = [this](mux::FrameworkElement target) {
-            if (beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
-                return mux::FrameworkElement{beautifyPreset};
-            beautifySections.Reveal(target);
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
             return target;
+        };
+        const auto appearanceTarget = [this, reveal, &prerequisiteTarget](mux::FrameworkElement target) {
+            if (beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
+                return prerequisiteTarget(beautifyPreset, "customAppearance", beautifyPresetRow.label.Text().c_str());
+            if (reveal) beautifySections.Reveal(target);
+            return target;
+        };
+        const auto dependentTarget = [&](bool available, mux::FrameworkElement target,
+            mux::FrameworkElement parent) {
+            return appearanceTarget(available ? target : prerequisiteTarget(parent, "enable",
+                muxa::AutomationProperties::GetName(parent).c_str()));
         };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
+        if (id == "desktop.scrollingIconSpacingY") return scrollingIconSpacingY->slider;
+        if (id == "desktop.listRowSpacing") return listRowSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
         if (id == "desktop.itemFontSize") return itemFontSize->number;
         if (id == "desktop.listFontSize") return listFontSize->number;
@@ -2011,27 +2237,42 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.titleOverflow") return titleOverflow;
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
+        if (id == "desktop.groupComponentBadges") return groupComponentBadges;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
-        if (id == "desktop.iconBeautify.mode") return appearanceTarget(beautifyMode);
+        if (id == "desktop.iconBeautify.mode")
+        {
+            if (!beautifyEnabled)
+                return prerequisiteTarget(beautifyPreset, "enable", beautifyPresetRow.label.Text().c_str());
+            return beautifyMode;
+        }
+        if (id == "desktop.iconBeautify.fileThumbnails")
+        {
+            if (iconEditorMode) return nullptr;
+            if (!beautifyEnabled)
+                return prerequisiteTarget(beautifyPreset, "enable", beautifyPresetRow.label.Text().c_str());
+            return beautifyFileThumbnails;
+        }
+        if (id == "desktop.iconBeautify.backgroundSource") return appearanceTarget(backgroundSource);
+        if (id == "desktop.iconBeautify.filterMode") return dependentTarget(filterEnabled.IsOn(), filterMode, filterEnabled);
         if (id == "desktop.iconBeautify.backgroundColor")
+        {
+            if (backgroundSource.SelectedIndex() != 0) return appearanceTarget(backgroundSource);
+            if (gradientEditor->Value().enabled) return appearanceTarget(gradientEditor->FocusTarget());
             return appearanceTarget(backgroundStart->editor.button);
+        }
         if (id == "desktop.iconBeautify.glass") return appearanceTarget(glassEnabled);
-        if (id == "desktop.iconBeautify.blurRadius") return appearanceTarget(glassBlurRadius->slider);
+        if (id == "desktop.iconBeautify.blurRadius") return dependentTarget(glassEnabled.IsOn(), glassBlurRadius->slider, glassEnabled);
         if (id == "desktop.iconBeautify.edgeReflection") return appearanceTarget(edgeReflection);
-        if (id == "desktop.iconBeautify.reflectionWidth") return appearanceTarget(reflectionWidth->slider);
-        if (id == "desktop.iconBeautify.reflectionStrength") return appearanceTarget(reflectionStrength->slider);
+        if (id == "desktop.iconBeautify.reflectionWidth") return dependentTarget(edgeReflection.IsOn(), reflectionWidth->slider, edgeReflection);
+        if (id == "desktop.iconBeautify.reflectionStrength") return dependentTarget(edgeReflection.IsOn(), reflectionStrength->slider, edgeReflection);
         if (id == "desktop.iconBeautify.backgroundOpacity")
             return appearanceTarget(backgroundOpacity->slider);
-        if (id == "desktop.iconBeautify.gradient")
-            return appearanceTarget(gradientEnabled);
-        if (id == "desktop.iconBeautify.gradientEndColor")
-            return appearanceTarget(backgroundEnd->editor.button);
-        if (id == "desktop.iconBeautify.gradientDirection")
-            return appearanceTarget(gradientDirection);
+        if (id == "desktop.iconBeautify.gradient" || id == "desktop.iconBeautify.gradientEndColor" || id == "desktop.iconBeautify.gradientDirection")
+            return appearanceTarget(gradientEditor->FocusTarget());
         if (id == "desktop.iconBeautify.shape") return appearanceTarget(shape);
         if (id == "desktop.iconBeautify.contentScale")
             return appearanceTarget(contentScale->slider);
@@ -2047,28 +2288,36 @@ struct DesktopPagePresenter::Impl
             return appearanceTarget(edgeHighlight->slider);
         if (id == "desktop.iconBeautify.filter") return appearanceTarget(filterEnabled);
         if (id == "desktop.iconBeautify.filterColor")
-            return appearanceTarget(filterTint->editor.button);
+            return dependentTarget(filterEnabled.IsOn(), filterTint->editor.button, filterEnabled);
         if (id == "desktop.iconBeautify.filterStrength")
-            return appearanceTarget(filterStrength->slider);
+            return dependentTarget(filterEnabled.IsOn(), filterStrength->slider, filterEnabled);
         if (id == "desktop.iconBeautify.shadowStrength")
             return appearanceTarget(shadowStrength->slider);
         if (id == "desktop.iconBeautify.outline") return appearanceTarget(outlineEnabled);
         if (id == "desktop.iconBeautify.outlineWidth")
-            return appearanceTarget(outlineWidth->slider);
+            return dependentTarget(outlineEnabled.IsOn(), outlineWidth->slider, outlineEnabled);
         if (id == "desktop.iconBeautify.outlineOpacity")
-            return appearanceTarget(outlineOpacity->slider);
+            return dependentTarget(outlineEnabled.IsOn(), outlineOpacity->slider, outlineEnabled);
         if (id == "desktop.iconBeautify.outlineColor")
-            return appearanceTarget(outlineColor->editor.button);
+            return dependentTarget(outlineEnabled.IsOn(), outlineColor->editor.button, outlineEnabled);
         if (id == "desktop.categories" || id == "desktop.categoryRules")
-            return categoryRulesCard.root;
-        if (id == "desktop.category.add") return newCategoryLabel;
+            return ruleRows.empty() ? mux::FrameworkElement{revealAddCategory}
+                                    : mux::FrameworkElement{ruleRows.front()->section};
+        if (id == "desktop.category.add")
+        {
+            if (reveal) RevealAddCategoryEditor();
+            return newCategoryLabel;
+        }
         return nullptr;
     }
 
     void CloseEditors() noexcept
     {
         if (edgeLightEditor) edgeLightEditor->Close();
+        if (gradientEditor) gradientEditor->Close();
         iconSpacing->Close();
+        scrollingIconSpacingY->Close();
+        listRowSpacing->Close();
         iconSize->Close();
         itemFontSize->Close();
         listFontSize->Close();
@@ -2079,7 +2328,6 @@ struct DesktopPagePresenter::Impl
         backgroundStart->Close();
         backgroundOpacity->Close();
         glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();
-        backgroundEnd->Close();
         contentScale->Close();
         highlightStrength->Close();
         highlightSize->Close();
@@ -2097,7 +2345,6 @@ struct DesktopPagePresenter::Impl
     void CommitOpenColorEditors() noexcept
     {
         backgroundStart->Dismiss();
-        backgroundEnd->Dismiss();
         filterTint->Dismiss();
         outlineColor->Dismiss();
     }
@@ -2110,18 +2357,21 @@ struct DesktopPagePresenter::Impl
             CommitContinuousEdits();
         active = false;
         closed = true;
+        if (iconThemes) iconThemes->Close();
         CloseRuleRows();
         CloseEditors();
         try
         {
             shortcutArrow.SelectionChanged(shortcutArrowToken);
+            groupComponentBadges.Toggled(groupComponentBadgesToken);
             showCategoryTabCounts.Toggled(showCountsToken);
             collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
-            gradientEnabled.Toggled(gradientEnabledToken);
+            beautifyFileThumbnails.Toggled(beautifyFileThumbnailsToken);
+            backgroundSource.SelectionChanged(backgroundSourceToken);
+            filterMode.SelectionChanged(filterModeToken);
             glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);
-            gradientDirection.SelectionChanged(gradientDirectionToken);
             shape.SelectionChanged(shapeToken);
             filterEnabled.Toggled(filterEnabledToken);
             outlineEnabled.Toggled(outlineEnabledToken);
@@ -2150,10 +2400,40 @@ DesktopPagePresenter::~DesktopPagePresenter()
     Close();
 }
 
+void DesktopPagePresenter::SetIconEditorMode()
+{
+    if (impl_ && !impl_->closed)
+    {
+        if (!impl_->iconEditorMode)
+        {
+            impl_->iconEditorMode = true;
+            impl_->iconThemes->SetNativeChoiceCount(7);
+            impl_->RefreshLocalizedText();
+        }
+        impl_->iconThemes->SetAuthoringEnabled(false);
+        // The shared setting row keeps its label beside a compact dialog editor.
+        impl_->beautifyPresetRow.layout->controlWidth = 220;
+        impl_->beautifyModeRow.layout->controlWidth = 220;
+        impl_->UpdateConditionalStates();
+    }
+}
+
+void DesktopPagePresenter::SetIconThemeInheritance(bool followGlobalTheme)
+{
+    if (impl_ && !impl_->closed) impl_->followGlobalIconTheme = followGlobalTheme;
+}
+
 void DesktopPagePresenter::SetActions(DesktopPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->actions = std::move(actions);
+        impl_->iconThemes->SetActions(impl_->actions.themeLibrary, impl_->actions.themeAsync, [state = impl_.get()] {
+            if (state->closed || !state->active || !state->hasSnapshot) return false;
+            state->CommitContinuousEdits(); state->CommitOpenColorEditors(); return true;
+        });
+        impl_->iconThemes->SetChanged([state = impl_.get()] { state->UpdateConditionalStates(); });
+    }
 }
 
 mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
@@ -2161,10 +2441,12 @@ mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
     return impl_ ? impl_->categoryRoot : nullptr;
 }
 
-mux::FrameworkElement
-DesktopPagePresenter::LayoutSpacingContent() const noexcept
+std::vector<mux::UIElement>
+DesktopPagePresenter::LayoutSpacingContent() const
 {
-    return impl_ ? impl_->iconSpacing->root : nullptr;
+    if (!impl_) return {};
+    return {impl_->iconSpacing->root,
+        impl_->scrollingIconSpacingY->root, impl_->listRowSpacing->root};
 }
 
 mux::FrameworkElement
@@ -2196,9 +2478,10 @@ void DesktopPagePresenter::RefreshLocalizedText()
 }
 
 mux::FrameworkElement DesktopPagePresenter::FocusTarget(
-    std::string_view focusId) const noexcept
+    std::string_view focusId, bool reveal, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, reveal, prerequisite) : nullptr;
 }
 
 void DesktopPagePresenter::Activate() noexcept
@@ -2207,9 +2490,16 @@ void DesktopPagePresenter::Activate() noexcept
         impl_->active = true;
 }
 
+void DesktopPagePresenter::SetCategoryPageActive(bool active) noexcept
+{
+    if (impl_) impl_->SetCategoryPageActive(active);
+}
+
 void DesktopPagePresenter::Deactivate() noexcept
 {
-    if (!impl_ || impl_->closed || !impl_->active) return;
+    if (!impl_ || impl_->closed) return;
+    impl_->SetCategoryPageActive(false);
+    if (!impl_->active) return;
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;

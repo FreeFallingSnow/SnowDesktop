@@ -1,8 +1,11 @@
 #include "app/app.h"
+#include "layout/page_mapping.h"
 #include "desktop/desktop_drop_search.h"
+#include "layout/selected_desktop_move.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/windows_desktop_layout.h"
 #include "desktop/windows_desktop_layout_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Grid geometry, drag-group planning and cross-monitor migration.
 
@@ -224,18 +227,7 @@ void DesktopApp::ConfigureGridPage(GridPage& page) const
  */
 void DesktopApp::ApplySavedGridDimensions()
 {
-    for (auto& page : gridPages_)
-    {
-        auto colIt = savedPageColumns_.find(page.id);
-        auto rowIt = savedPageRows_.find(page.id);
-        if (colIt != savedPageColumns_.end() && rowIt != savedPageRows_.end() &&
-            colIt->second >= 1 && rowIt->second >= 1)
-        {
-            page.columns = colIt->second;
-            page.rows = rowIt->second;
-            ApplyIconSpacingToPage(page);
-        }
-    }
+    snowdesktop::page_mapping::Dimensions(PageMappingState(), PageMappingServices());
 }
 
 /**
@@ -294,19 +286,7 @@ extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCel
  */
 int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal)
 {
-    const int count = horizontal ? page.columns : page.rows;
-    if (count <= 1) return 0;
-    int bestIndex = 0;
-    int bestDistance = INT_MAX;
-    for (int i = 0; i < count; ++i)
-    {
-        const int left = (horizontal ? page.workArea.left : page.workArea.top) +
-            (horizontal ? page.marginX : page.marginY) + GetGridAxisOffset(page, i, horizontal);
-        const int center = left + (horizontal ? page.cellWidth : page.cellHeight) / 2;
-        const int distance = std::abs(coordinate - center);
-        if (distance < bestDistance) { bestDistance = distance; bestIndex = i; }
-    }
-    return bestIndex;
+    return GridPointAxisIndex(page, coordinate, horizontal);
 }
 
 /**
@@ -316,13 +296,7 @@ int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, 
  */
 GridCell DesktopApp::CellFromPoint(POINT point) const
 {
-    const GridPage* page = GridPageFromPoint(point);
-    GridCell cell;
-    if (!page) return cell;
-    cell.pageId = page->id;
-    cell.column = GetGridAxisIndexFromPoint(*page, point.x, true);
-    cell.row = GetGridAxisIndexFromPoint(*page, point.y, false);
-    return cell;
+    return GridCellFromPoint(gridPages_, point, GetFirstPageGridPage());
 }
 
 /**
@@ -371,37 +345,8 @@ GridCell DesktopApp::CellFromDragOrigin(POINT origin, POINT pointer) const
  */
 bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
 {
-    for (const auto& item : items_)
-    {
-        if (item.selected || item.name.empty()) continue;
-        if (item.gridCell.pageId != cell.pageId) continue;
-        const int right1 = cell.column + std::max(1, span.columns);
-        const int bottom1 = cell.row + std::max(1, span.rows);
-        const int right2 = item.gridCell.column + std::max(1, item.gridSpan.columns);
-        const int bottom2 = item.gridCell.row + std::max(1, item.gridSpan.rows);
-        if (cell.column < right2 && right1 > item.gridCell.column &&
-            cell.row < bottom2 && bottom1 > item.gridCell.row)
-        {
-            // Normalizing long layout keys is only needed for intersecting items.
-            if (!IsItemInAnyWidget(item)) return true;
-        }
-    }
-    for (const auto& w : widgets_)
-    {
-        if (!snowdesktop::collection_group_rules::
-                ShouldOccupyDesktopGrid(
-                    IsGroupedWidget(w)))
-            continue;
-        if (w.gridCell.pageId != cell.pageId) continue;
-        const int right1 = cell.column + std::max(1, span.columns);
-        const int bottom1 = cell.row + std::max(1, span.rows);
-        const int right2 = w.gridCell.column + std::max(1, w.gridSpan.columns);
-        const int bottom2 = w.gridCell.row + std::max(1, w.gridSpan.rows);
-        if (cell.column < right2 && right1 > w.gridCell.column &&
-            cell.row < bottom2 && bottom1 > w.gridCell.row)
-            return true;
-    }
-    return false;
+    return snowdesktop::selected_desktop_move::Occupied({items_, widgets_, gridPages_}, cell, span,
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }});
 }
 
 /**
@@ -409,82 +354,13 @@ bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan s
  * @param targetCell 目标单元格。
  * @return 移动计划列表，无法移动时返回空列表。
  */
-std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell) const
+std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell, const DragSourceList* sources) const
 {
-    std::vector<PendingGridMove> moves;
-    std::vector<size_t> selectedIndexes;
-    int minColumn = INT_MAX, minRow = INT_MAX;
-    int maxColumn = 0, maxRow = 0;
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        if (items_[i].selected)
-        {
-            selectedIndexes.push_back(i);
-            minColumn = std::min(minColumn, items_[i].gridCell.column);
-            minRow = std::min(minRow, items_[i].gridCell.row);
-            maxColumn = std::max(maxColumn, items_[i].gridCell.column + std::max(1, items_[i].gridSpan.columns));
-            maxRow = std::max(maxRow, items_[i].gridCell.row + std::max(1, items_[i].gridSpan.rows));
-        }
-    }
-    if (selectedIndexes.empty()) return moves;
-
-    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    if (!page) return moves;
-
-    const int groupColumns = std::max(1, maxColumn - minColumn);
-    const int groupRows = std::max(1, maxRow - minRow);
-    const bool stacked = (groupColumns == 1 && groupRows == 1 && selectedIndexes.size() > 1);
-    const int spreadCols = stacked ? std::min(static_cast<int>(selectedIndexes.size()), page->columns) : groupColumns;
-    const bool hasLargeIcon = std::any_of(selectedIndexes.begin(), selectedIndexes.end(),
-        [&](size_t index) { return items_[index].largeIcon.has_value(); });
-    if (hasLargeIcon && (targetCell.column < 0 || targetCell.row < 0 ||
-        targetCell.column + spreadCols > page->columns || targetCell.row + groupRows > page->rows)) return moves;
-    targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - spreadCols));
-    targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - groupRows));
-
-    int seqIndex = 0;
-    std::unordered_set<std::wstring> usedSlots;
-    for (size_t itemIndex : selectedIndexes)
-    {
-        GridCell movedCell = targetCell;
-        if (stacked)
-        {
-            for (int attempt = 0; attempt < page->columns * page->rows; ++attempt)
-            {
-                int col = seqIndex / page->rows;
-                int row = seqIndex % page->rows;
-                GridCell probe = targetCell;
-                probe.column += col;
-                probe.row += row;
-                ++seqIndex;
-                std::wstring slotKey = probe.pageId + L":" + std::to_wstring(SlotFromCell(gridPages_, probe));
-                if (probe.column <= page->columns - 1 && probe.row <= page->rows - 1 &&
-                    !usedSlots.contains(slotKey) &&
-                    !IsGridAreaOccupiedByUnselected(probe, items_[itemIndex].gridSpan))
-                {
-                    movedCell = probe;
-                    usedSlots.insert(slotKey);
-                    break;
-                }
-            }
-        }
-        else
-        {
-            movedCell.column += items_[itemIndex].gridCell.column - minColumn;
-            movedCell.row += items_[itemIndex].gridCell.row - minRow;
-        }
-
-        if (!IsGridAreaValid(movedCell, items_[itemIndex].gridSpan) ||
-            movedCell.column + items_[itemIndex].gridSpan.columns > page->columns ||
-            movedCell.row + items_[itemIndex].gridSpan.rows > page->rows ||
-            IsGridAreaOccupiedByUnselected(movedCell, items_[itemIndex].gridSpan))
-        {
-            moves.clear();
-            return moves;
-        }
-        moves.push_back({ itemIndex, movedCell });
-    }
-    return moves;
+    const auto planned = snowdesktop::selected_desktop_move::Build({items_, widgets_, gridPages_}, std::move(targetCell),
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }}, sources);
+    std::vector<PendingGridMove> result;
+    for (const auto& move : planned) result.push_back({move.index, move.cell, move.widget});
+    return result;
 }
 
 /**
@@ -494,32 +370,11 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  */
 GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const
 {
-    const bool exactPlacement = !containers_.empty() &&
-        sourceList.origin == containers_.front().get() &&
-        std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
-            [&](const DragSourceEntry& entry) {
-                return entry.kind == DropSourceKind::DesktopIcon && !entry.fromDock &&
-                    entry.desktopIndex < items_.size() &&
-                    items_[entry.desktopIndex].largeIcon.has_value();
-            });
-    const POINT current = dragSession_.CurrentPoint();
-    const POINT mouseDown = dragSession_.MouseDownPoint();
-    const auto direction =
-        snowdesktop::desktop_drop_cache::
-            ResolveSearchDirection(
-                static_cast<long long>(current.x) -
-                    mouseDown.x,
-                static_cast<long long>(current.y) -
-                    mouseDown.y);
-    const snowdesktop::desktop_drop_cache::BestCellKey cacheKey{
-        targetCell,
-        direction,
-        dragSession_.StaticSceneRevision() };
-    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    return snowdesktop::desktop_drop_cache::FindBestCell(
-        bestDropCellCache_, dragSession_.IsActive(), cacheKey,
-        exactPlacement, page ? page->columns : 0, page ? page->rows : 0,
-        [this](const GridCell& cell) { return !BuildSelectedMove(cell).empty(); });
+    return snowdesktop::selected_desktop_move::FindBest({items_, widgets_, gridPages_},
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }},
+        sourceList, std::move(targetCell), bestDropCellCache_,
+        {!containers_.empty() && sourceList.origin == containers_.front().get(), dragSession_.IsActive(),
+            dragSession_.CurrentPoint(), dragSession_.MouseDownPoint(), dragSession_.StaticSceneRevision()});
 }
 
 /**
@@ -532,6 +387,11 @@ void DesktopApp::MoveSelectedItemsToCell(GridCell targetCell)
     if (moves.empty()) return;
     for (const auto& move : moves)
     {
+        if (move.widget)
+        {
+            widgets_[move.index].gridCell = move.cell;
+            continue;
+        }
         items_[move.index].gridCell = move.cell;
         items_[move.index].slot = SlotFromCell(gridPages_, move.cell);
     }
@@ -555,6 +415,14 @@ void DesktopApp::UpdateDragGroupOrigin()
             minRow = std::min(minRow, item.gridCell.row);
         }
     }
+    for (const auto& widget : widgets_)
+        if (widget.selected && snowdesktop::single_cell_widget::IsIconMode(widget) &&
+            !IsGroupedWidget(widget))
+        {
+            if (anchorPageId.empty()) anchorPageId = widget.gridCell.pageId;
+            minCol = std::min(minCol, widget.gridCell.column);
+            minRow = std::min(minRow, widget.gridCell.row);
+        }
     GridCell groupOrigin;
     const GridPage* firstPage = GetFirstPageGridPage();
     groupOrigin.pageId = anchorPageId.empty()

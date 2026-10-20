@@ -237,7 +237,16 @@ struct InstalledPackage
     // management UI.
     bool selected = false;
     bool active = true;
+    // Files discovered under installed/ without a registry owner are inactive
+    // recovery candidates, not a locally installed source reservation.
+    bool unregistered = false;
 };
+
+// Private host registry metadata, independent of the public package manifest.
+using SteamLibrarySubscriptions =
+    std::unordered_map<std::string, std::vector<std::string>>;
+using SteamLibrarySubscriptionHistory =
+    std::unordered_map<std::string, SteamLibrarySubscriptions>;
 
 struct InvalidPackage
 {
@@ -327,10 +336,16 @@ public:
     bool ContainsPackage(const std::string& packageId) const;
     std::unordered_map<std::string, std::vector<std::string>>
         SteamSubscriptionHistory() const;
+    SteamLibrarySubscriptionHistory SteamLibraryHistory() const;
     bool UpdateSteamSubscriptionHistory(const std::string& accountId,
         const std::vector<std::string>& publishedFileIds,
-        std::string& error);
+        std::string& error,
+        const SteamLibrarySubscriptions* libraries = nullptr);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
+    // Selection and inspection do not grant execution of a disabled package.
+    std::optional<InstalledPackage> ResolveSelected(const std::string& packageId) const;
+    std::optional<std::filesystem::path> ResolveSelectedEntry(const std::string& packageId) const;
+    std::optional<InstalledPackage> ResolveSelectedEntryPath(const std::filesystem::path& entryPath) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
     std::optional<InstalledPackage> ResolveEntryPath(
@@ -412,7 +427,7 @@ private:
         std::vector<std::string> grantedNetworkDomains;
     };
 
-    bool Refresh(std::string& error);
+    bool Refresh(std::string& error, bool persistDiscovery = true);
     bool LoadRegistry(std::string& error);
     bool SaveRegistry(std::string& error) const;
     bool ExtractArchive(const std::filesystem::path& archive,
@@ -440,6 +455,7 @@ private:
     std::unordered_set<std::string> knownDevelopmentIds_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
         steamSubscriptionsByAccount_;
+    SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount_;
 };
 
 class BuiltinPackageSource final : public IWidgetPackageSource

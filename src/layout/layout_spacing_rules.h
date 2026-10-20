@@ -9,7 +9,19 @@ namespace snowdesktop::layout_spacing_rules
 
 inline constexpr float kMinimumScale = 0.10f;
 inline constexpr float kMaximumScale = 2.00f;
+inline constexpr float kMaximumRowSpacingScale = 5.00f;
 inline constexpr float kComponentGapBaseline = 12.0f;
+
+// Independent content axes; scalar callers retain the uniform fixed-grid rule.
+struct ContentSpacing
+{
+    float horizontal;
+    float vertical;
+    constexpr ContentSpacing(float uniform = 1.0f)
+        : horizontal(uniform), vertical(uniform) {}
+    constexpr ContentSpacing(float x, float y)
+        : horizontal(x), vertical(y) {}
+};
 
 enum class DeferredChangeAction
 {
@@ -34,6 +46,12 @@ inline float ClampScale(float value)
     return std::clamp(value, kMinimumScale, kMaximumScale);
 }
 
+inline float ClampRowSpacingScale(float value)
+{
+    if (!std::isfinite(value)) return 1.0f;
+    return std::clamp(value, kMinimumScale, kMaximumRowSpacingScale);
+}
+
 inline float ResolveStoredScale(
     const std::optional<float>& iconSpacing,
     const std::optional<float>& legacyComponentSpacing,
@@ -45,6 +63,14 @@ inline float ResolveStoredScale(
     if (legacyComponentSpacing)
         return ClampScale(*legacyComponentSpacing);
     return ClampScale(fallback);
+}
+
+// Legacy scrolling rows clamped their gap factor to 50%. Preserve that
+// appearance when the new field is absent; explicit new values support 10%.
+inline float ResolveStoredRowSpacing(
+    const std::optional<float>& value, float legacyScale)
+{
+    return ClampRowSpacingScale(value.value_or(std::max(0.5f, ClampScale(legacyScale))));
 }
 
 inline float ComponentGapResponseScale(float layoutSpacingScale)

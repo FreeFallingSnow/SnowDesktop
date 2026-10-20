@@ -438,6 +438,23 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         floatingDockExternalPointerDrag_.Reset();
         return;
     }
+    const ULONGLONG layerNow = GetTickCount64();
+    const HWND layerForeground = GetForegroundWindow();
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host && host->active && host->container &&
+            !desktopPassthroughActive_ && !HasActiveContextMenuSession() &&
+            host->hwnd && IsWindowVisible(host->hwnd) &&
+            !host->container->IsMergedWithStatusBar() &&
+            !systemShowDesktopDockLayerGuardActive_ &&
+            layerNow >= host->desktopLayerRestoreRetryTick &&
+            (host->desktopLayerRestorePending ||
+                (!IsPersistentDockHostEffectivelyFloating(*host) &&
+                 host->desktopLayerForegroundWindow != layerForeground)))
+        {
+            ApplyFloatingDockLayerPolicy(*host);
+        }
+    }
     // Poll only cheap, already-owned surface state. Hold release does not
     // require another physical button-down or a fullscreen/window scan.
     for (const auto& ownedHost : persistentDockHosts_)
@@ -767,7 +784,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             GetTickCount(), edgeBand,
             requiredTravel,
             snowdesktop::floating_dock_rules::kEdgeSwipeMaximumDurationMs,
-            dockSettings_.edgeRevealGesture == 1);
+            dockSettings_.edgeRevealGesture == 1,
+            static_cast<DWORD>(dockSettings_.edgeHoverDelayMs));
     PersistentDockHost* targetHost =
         FindPersistentDockHost(dock);
     if (triggered &&

@@ -71,6 +71,7 @@ int main(int argc, char** argv)
     const std::filesystem::path root(argv[1]);
     const auto utils = ReadSource(root, "src/common/utils.cpp");
     const auto lifecycle = ReadSource(root, "src/app/lifecycle/app_lifecycle.cpp");
+    const auto run = ReadSource(root, "src/app/lifecycle/app_run.cpp");
     const auto settings = ReadSource(root, "src/app/lifecycle/app_settings_apply.cpp");
     const auto startup = ReadSource(root, "src/app/lifecycle/startup_animation.cpp");
     const auto hook = ReadSource(root, "src/taskbar_hook/taskbar_hook.cpp");
@@ -82,6 +83,14 @@ int main(int argc, char** argv)
 
     const auto discovery = Section(utils, "DesktopWindows FindDesktopWindows()",
         "void RestoreExplorerIconLayerNow()");
+    // Startup and recovery share Explorer with wallpaper clients too. This
+    // source boundary supplements the opt-in native sequence probe; it cannot
+    // establish that a particular wallpaper plays without restarting.
+    Forbid(utils, "0x052C", "desktop utilities must not create wallpaper hosts");
+    Forbid(run, "0x052C", "application startup must reuse the desktop host");
+    Forbid(lifecycle, "0x052C", "desktop recovery must reuse the desktop host");
+    Forbid(run, "EnsureDesktopWorkerWindow(", "application startup");
+    Forbid(lifecycle, "EnsureDesktopWorkerWindow(", "desktop lifecycle");
     Forbid(discovery, "0x052C", "periodic desktop discovery");
     Forbid(discovery, "SendMessageTimeoutW", "periodic desktop discovery");
     const auto watcher = Section(lifecycle, "void DesktopApp::WatchDesktopHost()",

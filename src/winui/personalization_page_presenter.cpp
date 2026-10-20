@@ -65,6 +65,7 @@ struct ContinuousControl
     muxc::TextBlock unit{nullptr};
     muxc::Button reset{nullptr};
     float PersonalizationSettings::* member = nullptr;
+    float DockSettings::* dockMember = nullptr;
     double scale = 1.0;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool dirty = false;
@@ -98,16 +99,15 @@ void InitializeCard(
     const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    if (style)
-        card.root.Style(style);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(8.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    muxa::AutomationProperties::SetHeadingLevel(card.title,
+        muxa::Peers::AutomationHeadingLevel::Level2);
+    presenter_controls::InitializeSettingsGroup(card.root, card.title, card.content, style);
     page.Children().Append(card.root);
 }
 
@@ -153,13 +153,26 @@ struct PersonalizationPagePresenter::Impl
     muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
+    muxc::StackPanel pinBorderRoot;
+    muxc::StackPanel dockAttentionDotRoot;
+    SettingsCard dockAttentionDotCard;
+    ContinuousControl dockAttentionDotSize;
+    ContinuousControl dockAttentionDotOffset;
+    muxc::StackPanel quickThemeRoot;
+    muxc::StackPanel widgetCommonRoot;
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    SettingsCard pinBorderCard;
+    SettingRow pinBorderEnabledRow;
+    muxc::ToggleSwitch pinBorderEnabled{nullptr};
+    winrt::event_token pinBorderEnabledToken{};
+    ColorControl pinBorderColor;
+    ContinuousControl pinBorderWidth;
+    ContinuousControl pinBorderOpacity;
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
-    SettingsCard tooltipFontCard;
     SettingRow fontRow;
     SettingRow tooltipFontSizeRow;
     muxc::NumberBox tooltipFontSize;
@@ -194,17 +207,32 @@ struct PersonalizationPagePresenter::Impl
     winrt::event_token popupCopyComponentToken{};
     std::uint64_t navigationRevision = 0;
     muxc::ComboBox dockAppearanceCombo{nullptr};
-    muxc::Button taskbarLink{nullptr}, statusBarLink{nullptr}, dockLink{nullptr};
+    muxc::Button taskbarLink{nullptr}, statusBarLink{nullptr}, dockLink{nullptr}, quickLink{nullptr};
     muxc::TextBlock taskbarLinkTitle, taskbarLinkDescription, statusBarLinkTitle, statusBarLinkDescription;
     muxc::TextBlock dockLinkTitle, dockLinkDescription;
+    muxc::TextBlock quickLinkTitle, quickLinkDescription;
+    muxc::Button collectionFooterLink{nullptr}, collectionThemeLink{nullptr};
+    SettingRow collectionFooterRow, collectionThemeRow;
+    muxc::TextBlock collectionFooterLinkTitle, collectionFooterLinkDescription;
+    muxc::TextBlock collectionThemeLinkTitle, collectionThemeLinkDescription;
+    muxc::TextBlock collectionRelatedTitle;
     SettingRow dockAppearanceRow;
-    winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{}, dockLinkToken{};
+    muxc::Border dockCornerCard;
+    muxc::ToggleSwitch dockFollowCornerRadius;
+    SettingRow dockFollowCornerRadiusRow;
+    ContinuousControl dockCornerRadius;
+    winrt::event_token dockFollowCornerRadiusToken{};
+    winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{}, dockLinkToken{}, quickLinkToken{};
+    winrt::event_token collectionFooterLinkToken{}, collectionThemeLinkToken{};
     PersonalizationSettings currentGlobalAppearance;
     std::uint64_t dockRevision = 0;
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
     SettingsCard behaviorCard;
+    SettingsCard tabHoverCard;
+    SettingsCard collectionTitleCard;
+    SettingsCard widgetInteractionCard;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
@@ -245,6 +273,10 @@ struct PersonalizationPagePresenter::Impl
     SettingRow popupHoverOpenRow;
     winrt::event_token popupHoverOpenToken{};
     ContinuousControl popupHoverDelayMs;
+    muxc::ToggleSwitch groupTabHoverSwitch{nullptr}, categoryTabHoverSwitch{nullptr};
+    SettingRow groupTabHoverRow, categoryTabHoverRow;
+    winrt::event_token groupTabHoverToken{}, categoryTabHoverToken{};
+    ContinuousControl tabHoverDelayMs;
     muxc::ToggleSwitch popupCloseOnMouseLeave{nullptr};
     SettingRow popupCloseOnMouseLeaveRow;
     winrt::event_token popupCloseOnMouseLeaveToken{};
@@ -259,7 +291,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 12> continuousControls = {
+    std::array<ContinuousControl*, 18> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -268,14 +300,21 @@ struct PersonalizationPagePresenter::Impl
         &gradientEndAlpha,
         &blurRadius,
         &cornerRadius,
+        &dockCornerRadius,
+        &dockAttentionDotSize,
+        &dockAttentionDotOffset,
         &barHeight,
         &categorizedTabHeight,
         &luaWidgetContentRowHeight,
         &popupHoverDelayMs,
+        &tabHoverDelayMs,
+        &pinBorderWidth,
+        &pinBorderOpacity,
     };
-    std::array<ColorControl*, 2> colorControls = {
+    std::array<ColorControl*, 3> colorControls = {
         &backgroundColor,
         &borderColor,
+        &pinBorderColor,
     };
 
     std::uint64_t generation = 0;
@@ -347,21 +386,32 @@ struct PersonalizationPagePresenter::Impl
     void BuildControls()
     {
         themeRoot = muxc::StackPanel{};
-        themeRoot.Spacing(8.0);
+        themeRoot.Spacing(24.0);
         widgetLayoutRoot = muxc::StackPanel{};
-        widgetLayoutRoot.Spacing(8.0);
+        widgetLayoutRoot.Spacing(24.0);
+        quickThemeRoot.Spacing(24.0);
+        widgetCommonRoot.Spacing(24.0);
+        widgetBehaviorRoot.Spacing(24.0);
 
         InitializeCard(themeCard, cardStyle, themeRoot);
+        themeCard.content.Spacing(0);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
+        presenter_controls::StyleSettingsSubrow(presetRow.root, true, 0);
         themeCard.content.Children().Append(presetRow.root);
         globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global", false, presetCombo, 8, 7);
         presetRow.controlHost.Content(nullptr); presetRow.controlHost.Content(globalThemes->SelectionContent());
         themeCard.content.Children().Append(globalThemes->Content());
 
-        InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
+        // Keep conditional parameters inside the selector's single surface.
+        widgetAppearanceCard.root = muxc::Border{};
+        widgetAppearanceCard.content = muxc::StackPanel{};
+        widgetAppearanceCard.title = muxc::TextBlock{};
+        widgetAppearanceCard.root.Child(widgetAppearanceCard.content);
+        themeCard.content.Children().Append(widgetAppearanceCard.root);
+        widgetAppearanceCard.title.Visibility(mux::Visibility::Collapsed);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
         InitializeColorControl(backgroundColor,
             &PersonalizationSettings::widgetBgR,
@@ -455,6 +505,26 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
+        InitializeCard(pinBorderCard, cardStyle, pinBorderRoot);
+        pinBorderCard.content.Spacing(0);
+        pinBorderEnabled = muxc::ToggleSwitch{};
+        pinBorderEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        pinBorderEnabledRow.Initialize(pinBorderEnabled);
+        pinBorderEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        InitializeColorControl(pinBorderColor, &PersonalizationSettings::windowPinBorderR,
+            &PersonalizationSettings::windowPinBorderG, &PersonalizationSettings::windowPinBorderB);
+        InitializeContinuousControl(pinBorderWidth, &PersonalizationSettings::windowPinBorderWidth,
+            kMinimumWindowPinBorderWidth, kMaximumWindowPinBorderWidth, 1.0, 1.0);
+        InitializeContinuousControl(pinBorderOpacity, &PersonalizationSettings::windowPinBorderOpacity,
+            0.0, 100.0, 1.0, 0.01);
+        SetUnit(pinBorderWidth, L"px");
+        SetUnit(pinBorderOpacity, L"%");
+        pinBorderCard.content.Children().Append(pinBorderEnabledRow.root);
+        pinBorderCard.content.Children().Append(pinBorderColor.editor.row.root);
+        pinBorderCard.content.Children().Append(pinBorderWidth.row.root);
+        pinBorderCard.content.Children().Append(pinBorderOpacity.row.root);
+        presenter_controls::UpdateSettingsSubrows(pinBorderCard.content, 0.0);
+
         const auto reset = [this](SettingRow& row, auto action) {
             appearanceResets.emplace_back(&row, presenter_controls::AddRestoreDefaultAction(row,
                 L("app.settings.restore_default", L"Restore default"), [this, action] {
@@ -467,11 +537,13 @@ struct PersonalizationPagePresenter::Impl
                 value.*color->red = defaults.*color->red; value.*color->green = defaults.*color->green; value.*color->blue = defaults.*color->blue;
             });
         reset(glassRow, [](auto& value) { value.glassEnabled = PersonalizationSettings{}.glassEnabled; });
+        reset(pinBorderEnabledRow, [](auto& value) { value.windowPinBorderEnabled = true; });
         reset(acrylicRow, [](auto& value) { value.acrylicEnabled = PersonalizationSettings{}.acrylicEnabled; });
         reset(edgeHighlightRow, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
         reset(contentThemeRow, [](auto& value) { value.contentTheme = PersonalizationSettings{}.contentTheme; });
         reset(gradientToggleRow, [](auto& value) { value.gradientEndA = PersonalizationSettings{}.gradientEndA; });
         widgetAppearanceCard.content.Children().Append(globalThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(widgetAppearanceCard.content);
         InitializeCard(contextMenuCard, cardStyle, menuRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
@@ -480,7 +552,8 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.Initialize(contextMenuCombo);
         contextMenuCard.content.Children().Append(contextMenuRow.root);
 
-        InitializeCard(themeTargetsCard, cardStyle, themeRoot);
+        InitializeCard(themeTargetsCard, cardStyle, quickThemeRoot);
+        themeTargetsCard.content.Spacing(0);
         quickNavigationThemeCombo = muxc::ComboBox{};
         collectionPopupThemeCombo = muxc::ComboBox{};
         for (const auto& combo : {
@@ -491,6 +564,8 @@ struct PersonalizationPagePresenter::Impl
         }
         quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
         collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
+        presenter_controls::StyleSettingsSubrow(quickNavigationThemeRow.root, true, 0);
+        presenter_controls::StyleSettingsSubrow(collectionPopupThemeRow.root, true, 0);
         themeTargetsCard.content.Children().Append(
             quickNavigationThemeRow.root);
 
@@ -504,8 +579,8 @@ struct PersonalizationPagePresenter::Impl
                 const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, true, value, global); });
-            });
-        quickAppearanceContent.Spacing(8);
+            }, false, true);
+        quickAppearanceContent.Spacing(0);
         quickAppearanceContent.Children().Append(quickAppearanceEditor->Content());
         quickAppearanceOptions = std::make_unique<QuickNavigationOptions>(localize,
             [this](QuickNavigationOptions::Edit edit) {
@@ -515,8 +590,10 @@ struct PersonalizationPagePresenter::Impl
             }, cardStyle, true);
         quickAppearanceContent.Children().Append(quickAppearanceOptions->Content());
         quickAppearanceContent.Children().Append(quickThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(quickAppearanceContent);
         themeTargetsCard.content.Children().Append(quickAppearanceContent);
         InitializeCard(popupThemeCard, cardStyle, themeRoot);
+        popupThemeCard.content.Spacing(0);
         popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
         popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup", false, collectionPopupThemeCombo, 6, 5);
         collectionPopupThemeRow.controlHost.Content(nullptr); collectionPopupThemeRow.controlHost.Content(popupThemes->SelectionContent());
@@ -527,10 +604,11 @@ struct PersonalizationPagePresenter::Impl
                 const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, false, value, global); });
-            });
-        popupAppearanceContent.Spacing(8);
+            }, false, true);
+        popupAppearanceContent.Spacing(0);
         popupCopyComponentRow.Initialize(popupCopyComponent);
         popupCopyComponentRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(popupCopyComponentRow.root, false, 0);
         popupCopyComponentToken = popupCopyComponent.Click([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             popupAppearanceEditor->Flush();
@@ -543,17 +621,25 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceContent.Children().Append(popupCopyComponentRow.root);
         popupAppearanceContent.Children().Append(popupAppearanceEditor->Content());
         popupAppearanceContent.Children().Append(popupThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(popupAppearanceContent);
         popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
+        dockThemeRoot.Spacing(8.0);
         dockThemeCard.content = muxc::StackPanel{};
-        dockThemeCard.content.Spacing(12.0);
-        dockAppearanceHost.Content(dockThemeCard.content);
+        dockThemeCard.content.Spacing(0);
+        muxc::Border dockThemeSurface;
+        presenter_controls::StyleSettingsCard(dockThemeSurface);
+        dockThemeSurface.Padding({0});
+        dockThemeSurface.MinHeight(0);
+        dockThemeSurface.Child(dockThemeCard.content);
+        dockAppearanceHost.Content(dockThemeSurface);
         dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         dockThemeRoot.Children().Append(dockAppearanceHost);
         dockAppearanceCombo = muxc::ComboBox{};
         dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         dockAppearanceCombo.MaxWidth(520.0);
         dockAppearanceRow.Initialize(dockAppearanceCombo);
+        presenter_controls::StyleSettingsSubrow(dockAppearanceRow.root, true, 0);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
         dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
         dockAppearanceRow.controlHost.Content(nullptr); dockAppearanceRow.controlHost.Content(dockThemes->SelectionContent());
@@ -562,12 +648,38 @@ struct PersonalizationPagePresenter::Impl
             [this](const auto& value, bool commit) {
                 EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
-            });
+            }, false, true);
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
         dockThemeCard.content.Children().Append(dockThemes->SaveContent());
-        InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
-        InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
-        InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
+        presenter_controls::JoinSettingsSections(dockThemeCard.content);
+        muxc::StackPanel dockCornerRows;
+        presenter_controls::InitializeSettingsGroup(dockCornerCard, nullptr, dockCornerRows, cardStyle);
+        dockFollowCornerRadius.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dockFollowCornerRadiusRow.Initialize(dockFollowCornerRadius);
+        dockFollowCornerRadiusRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(dockFollowCornerRadiusRow.root, true, 0);
+        dockCornerRows.Children().Append(dockFollowCornerRadiusRow.root);
+        InitializeContinuousControl(dockCornerRadius, nullptr, 0.0, 28.0, 1.0, 1.0, DockSettings{}.cornerRadius);
+        dockCornerRadius.dockMember = &DockSettings::cornerRadius;
+        SetUnit(dockCornerRadius, L"cu");
+        presenter_controls::StyleSettingsSubrow(dockCornerRadius.row.root, false, 16.0);
+        dockCornerRows.Children().Append(dockCornerRadius.row.root);
+        dockThemeRoot.Children().Append(dockCornerCard);
+        InitializeCard(dockAttentionDotCard, cardStyle, dockAttentionDotRoot);
+        namespace dot = snowdesktop::dock_attention_dot;
+        InitializeContinuousControl(dockAttentionDotSize, nullptr,
+            dot::kMinimumSizeScale * 100.0, dot::kMaximumSizeScale * 100.0,
+            1.0, 0.01, dot::kDefaultSizeScale * 100.0);
+        dockAttentionDotSize.dockMember = &DockSettings::attentionDotSizeScale;
+        SetUnit(dockAttentionDotSize, L"%");
+        InitializeContinuousControl(dockAttentionDotOffset, nullptr,
+            dot::kMinimumOffset * 100.0, dot::kMaximumOffset * 100.0,
+            1.0, 0.01, dot::kDefaultOffset * 100.0);
+        dockAttentionDotOffset.dockMember = &DockSettings::attentionDotOffset;
+        SetUnit(dockAttentionDotOffset, L"%");
+        dockAttentionDotCard.content.Children().Append(dockAttentionDotSize.row.root);
+        dockAttentionDotCard.content.Children().Append(dockAttentionDotOffset.row.root);
+        presenter_controls::UpdateSettingsSubrows(dockAttentionDotCard.content, 0.0);
         InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -596,14 +708,14 @@ struct PersonalizationPagePresenter::Impl
         fontFlyout.Placement(muxc::Primitives::FlyoutPlacementMode::BottomEdgeAlignedLeft);
         fontPicker.Flyout(fontFlyout);
         fontRow.Initialize(fontPicker);
+        fontRow.SetCompactEditor(false);
         fontCard.content.Children().Append(fontRow.root);
-        InitializeCard(tooltipFontCard, cardStyle, widgetLayoutRoot);
         tooltipFontSize.Minimum(kMinimumTooltipFontSize);
         tooltipFontSize.Maximum(kMaximumTooltipFontSize);
         tooltipFontSize.SmallChange(1);
         tooltipFontSize.LargeChange(2);
         tooltipFontSize.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
-        tooltipFontSize.Width(92);
+        tooltipFontSize.Width(presenter_controls::kSettingNumberWidth);
         tooltipFontSizeSlider.Minimum(kMinimumTooltipFontSize);
         tooltipFontSizeSlider.Maximum(kMaximumTooltipFontSize);
         tooltipFontSizeSlider.StepFrequency(1);
@@ -625,9 +737,9 @@ struct PersonalizationPagePresenter::Impl
         muxc::Grid::SetColumn(tooltipFontSizeReset, 2);
         tooltipEditors.Children().Append(tooltipFontSizeReset);
         tooltipFontSizeRow.Initialize(tooltipEditors);
-        tooltipFontCard.content.Children().Append(tooltipFontSizeRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(fontRestart);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
         fontRestartButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         fontRestart.ActionButton(fontRestartButton);
@@ -635,6 +747,7 @@ struct PersonalizationPagePresenter::Impl
         fontError.TextWrapping(mux::TextWrapping::Wrap);
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
+        fontCard.content.Children().Append(tooltipFontSizeRow.root);
         managementRoot.Spacing(12);
         themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true, nullptr, 0, -1, cardStyle);
         managementRoot.Children().Append(themeTransfers->Content());
@@ -643,8 +756,12 @@ struct PersonalizationPagePresenter::Impl
         popupThemes->SetCustomContent({popupAppearanceContent});
         dockThemes->SetCustomContent({dockAppearanceEditor->Content()});
 
+        // These geometry preferences remain editable under every theme.
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
+        InitializeCard(collectionTitleCard, cardStyle, widgetBehaviorRoot);
+        InitializeCard(tabHoverCard, cardStyle, widgetBehaviorRoot);
         InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
+        InitializeCard(widgetInteractionCard, cardStyle, widgetCommonRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
             4.0, 28.0, 1.0, 1.0, 12.0);
@@ -659,28 +776,45 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
+        layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         topTitleBarToggle = muxc::ToggleSwitch{};
         topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         topTitleBarRow.Initialize(topTitleBarToggle);
         topTitleBarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        behaviorCard.content.Children().Append(topTitleBarRow.root);
-        layoutCard.content.Children().Append(categorizedTabHeight.row.root);
+        collectionTitleCard.content.Children().Append(topTitleBarRow.root);
         InitializeContinuousControl(luaWidgetContentRowHeight,
             &PersonalizationSettings::luaWidgetContentRowHeight,
             18.0, 48.0, 1.0, 1.0, 28.0);
         SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
         widgetTransformCursors = muxc::ToggleSwitch{};
         widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
         widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(widgetTransformCursorsRow.root);
+        widgetInteractionCard.content.Children().Append(widgetTransformCursorsRow.root);
+        presenter_controls::UpdateSettingsSubrows(fontCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(contextMenuCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(widgetInteractionCard.content, 0.0);
         showGroupTabCounts = muxc::ToggleSwitch{};
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
         showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        behaviorCard.content.Children().Append(showGroupTabCountsRow.root);
+        collectionTitleCard.content.Children().Append(showGroupTabCountsRow.root);
+        groupTabHoverSwitch = muxc::ToggleSwitch{};
+        categoryTabHoverSwitch = muxc::ToggleSwitch{};
+        groupTabHoverRow.Initialize(groupTabHoverSwitch);
+        categoryTabHoverRow.Initialize(categoryTabHoverSwitch);
+        tabHoverCard.content.Children().Append(groupTabHoverRow.root);
+        tabHoverCard.content.Children().Append(categoryTabHoverRow.root);
+        InitializeContinuousControl(tabHoverDelayMs,
+            &PersonalizationSettings::tabHoverDelayMs,
+            kMinimumTabHoverDelayMs, kMaximumTabHoverDelayMs,
+            50.0, 1.0, kDefaultTabHoverDelayMs);
+        SetUnit(tabHoverDelayMs, L"ms");
+        tabHoverCard.content.Children().Append(tabHoverDelayMs.row.root);
+        presenter_controls::UpdateSettingsSubrows(tabHoverCard.content, 0.0);
         popupHoverOpen = muxc::ToggleSwitch{};
         popupHoverOpen.HorizontalAlignment(mux::HorizontalAlignment::Right);
         popupHoverOpenRow.Initialize(popupHoverOpen);
@@ -689,7 +823,7 @@ struct PersonalizationPagePresenter::Impl
         InitializeContinuousControl(popupHoverDelayMs,
             &PersonalizationSettings::popupHoverDelayMs,
             kMinimumPopupHoverDelayMs, kMaximumPopupHoverDelayMs,
-            100.0, 1.0, kDefaultPopupHoverDelayMs);
+            50.0, 1.0, kDefaultPopupHoverDelayMs);
         SetUnit(popupHoverDelayMs, L"ms");
         behaviorCard.content.Children().Append(popupHoverDelayMs.row.root);
         popupCloseOnMouseLeave = muxc::ToggleSwitch{};
@@ -697,9 +831,34 @@ struct PersonalizationPagePresenter::Impl
         popupCloseOnMouseLeaveRow.Initialize(popupCloseOnMouseLeave);
         popupCloseOnMouseLeaveRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(popupCloseOnMouseLeaveRow.root);
+        presenter_controls::UpdateSettingsSubrows(collectionTitleCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(behaviorCard.content, 0.0);
+        presenter_controls::StyleSettingsSubrow(popupHoverDelayMs.row.root, false, 16.0);
+        muxc::Border collectionRelated;
+        muxc::StackPanel collectionRelatedRows;
+        collectionRelatedTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        collectionRelatedTitle.TextWrapping(mux::TextWrapping::Wrap);
+        muxa::AutomationProperties::SetHeadingLevel(collectionRelatedTitle,
+            muxa::Peers::AutomationHeadingLevel::Level2);
+        presenter_controls::InitializeSettingsGroup(collectionRelated, collectionRelatedTitle, collectionRelatedRows, cardStyle);
+        collectionFooterLink = muxc::Button{};
+        collectionThemeLink = muxc::Button{};
+        collectionFooterRow.Initialize(collectionFooterLink, 0.0);
+        collectionThemeRow.Initialize(collectionThemeLink, 0.0);
+        collectionFooterLinkTitle = collectionFooterRow.label;
+        collectionThemeLinkTitle = collectionThemeRow.label;
+        collectionRelatedRows.Children().Append(collectionFooterRow.root);
+        collectionRelatedRows.Children().Append(collectionThemeRow.root);
+        presenter_controls::UpdateSettingsSubrows(collectionRelatedRows, 0.0);
+        widgetBehaviorRoot.Children().Append(collectionRelated);
+        InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
+        InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
+        InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
+        InitializeNavigationCard(quickLink, quickLinkTitle, quickLinkDescription);
     }
 
-    void InitializeNavigationCard(muxc::Button& button, muxc::TextBlock& title, muxc::TextBlock& description)
+    void InitializeNavigationCard(muxc::Button& button, muxc::TextBlock& title,
+        muxc::TextBlock& description, const muxc::StackPanel& parent = nullptr)
     {
         button = muxc::Button{};
         if (navigationStyle) button.Style(navigationStyle);
@@ -725,7 +884,7 @@ struct PersonalizationPagePresenter::Impl
         muxc::Grid::SetColumn(chevron, 1);
         content.Children().Append(chevron);
         button.Content(content);
-        themeRoot.Children().Append(button);
+        if (parent) parent.Children().Append(button);
     }
 
     void InitializeColorControl(
@@ -787,7 +946,7 @@ struct PersonalizationPagePresenter::Impl
         control.number.LargeChange(step * 5.0);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
-        control.number.Width(92.0);
+        control.number.Width(presenter_controls::kSettingNumberWidth);
         control.unit = muxc::TextBlock{};
         control.unit.VerticalAlignment(mux::VerticalAlignment::Center);
         control.unit.Opacity(0.72);
@@ -877,6 +1036,13 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
+        pinBorderEnabledToken = pinBorderEnabled.Toggled([this](const auto&, const auto&) {
+            UpdateDependentStates();
+            const bool enabled = pinBorderEnabled.IsOn();
+            Emit(SettingsUpdateMode::PreviewAndCommit, [enabled](auto& settings) {
+                settings.windowPinBorderEnabled = enabled;
+            });
+        });
         fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             // Rescan newly installed fonts, but never commit a search query or
@@ -979,6 +1145,14 @@ struct PersonalizationPagePresenter::Impl
                     index > 0 ? kPresetIds[index - 1] : settings.appearancePreset, global);
             });
         });
+        dockFollowCornerRadiusToken = dockFollowCornerRadius.Toggled([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            const bool follow = dockFollowCornerRadius.IsOn();
+            Commit(dockCornerRadius);
+            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [follow](auto& settings) {
+                settings.followComponentCornerRadius = follow;
+            });
+        });
         dockLinkToken = dockLink.Click([this](const auto&, const auto&) {
             if (CanEmit() && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
         });
@@ -988,6 +1162,18 @@ struct PersonalizationPagePresenter::Impl
         });
         taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
             if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar, "taskbar.theme"));
+        });
+        quickLinkToken = quickLink.Click([this](auto const&, auto const&) {
+            if (!closed && active && actions.navigate)
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::QuickNavigation, "personalization.quickNavigationTheme"));
+        });
+        collectionFooterLinkToken = collectionFooterLink.Click([this](const auto&, const auto&) {
+            if (!closed && active && actions.navigate)
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons, "personalization.barHeight"));
+        });
+        collectionThemeLinkToken = collectionThemeLink.Click([this](const auto&, const auto&) {
+            if (!closed && active && actions.navigate)
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.collectionPopupTheme"));
         });
         gradientToken = gradientToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -1071,6 +1257,20 @@ struct PersonalizationPagePresenter::Impl
                     [enabled](PersonalizationSettings& settings) {
                         settings.popupHoverOpen = enabled;
                     });
+            });
+        groupTabHoverToken = groupTabHoverSwitch.Toggled(
+            [this](const auto&, const auto&) {
+                UpdateDependentStates();
+                const bool enabled = groupTabHoverSwitch.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) { settings.groupTabHoverSwitch = enabled; });
+            });
+        categoryTabHoverToken = categoryTabHoverSwitch.Toggled(
+            [this](const auto&, const auto&) {
+                UpdateDependentStates();
+                const bool enabled = categoryTabHoverSwitch.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) { settings.categoryTabHoverSwitch = enabled; });
             });
         popupCloseOnMouseLeaveToken = popupCloseOnMouseLeave.Toggled(
             [this](const auto&, const auto&) {
@@ -1164,11 +1364,7 @@ struct PersonalizationPagePresenter::Impl
                     control.dirty = false;
                     const float value = static_cast<float>(
                         control.defaultValue * control.scale);
-                    const auto member = control.member;
-                    Emit(SettingsUpdateMode::PreviewAndCommit,
-                        [member, value](PersonalizationSettings& settings) {
-                            settings.*member = value;
-                        });
+                    EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
                 });
         }
     }
@@ -1188,11 +1384,7 @@ struct PersonalizationPagePresenter::Impl
         if (!control.dirty || !CanEmit())
             return;
         const float value = static_cast<float>(uiValue * control.scale);
-        const auto member = control.member;
-        Emit(SettingsUpdateMode::Preview,
-            [member, value](PersonalizationSettings& settings) {
-                settings.*member = value;
-            });
+        EmitContinuous(control, SettingsUpdateMode::Preview, value);
     }
 
     void Commit(ContinuousControl& control)
@@ -1205,19 +1397,22 @@ struct PersonalizationPagePresenter::Impl
         control.dirty = false;
         const float value = static_cast<float>(
             control.slider.Value() * control.scale);
-        const auto member = control.member;
-        Emit(SettingsUpdateMode::PreviewAndCommit,
-            [member, value](PersonalizationSettings& settings) {
-                settings.*member = value;
-            });
+        EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
+    }
+
+    void EmitContinuous(ContinuousControl& control, SettingsUpdateMode mode, float value)
+    {
+        if (const auto dockMember = control.dockMember)
+            EmitDockAppearance(mode, [dockMember, value](auto& settings) { settings.*dockMember = value; });
+        else
+            Emit(mode, [member = control.member, value](auto& settings) { settings.*member = value; });
     }
 
     void PatchContinuous(
         ContinuousControl& control,
-        const PersonalizationSettings& settings)
+        double rawValue)
     {
-        const double value = static_cast<double>(settings.*control.member) /
-            control.scale;
+        const double value = rawValue / control.scale;
         const double clamped = QuantizeNumericValue(value,
             control.slider.Minimum(), control.slider.Maximum(),
             control.slider.StepFrequency());
@@ -1248,8 +1443,10 @@ struct PersonalizationPagePresenter::Impl
             : static_cast<int>(std::distance(kPresetIds.begin(), preset)));
         PatchColor(backgroundColor, settings);
         PatchColor(borderColor, settings);
+        PatchColor(pinBorderColor, settings);
+        pinBorderEnabled.IsOn(settings.windowPinBorderEnabled);
         for (ContinuousControl* control : continuousControls)
-            PatchContinuous(*control, settings);
+            if (control->member) PatchContinuous(*control, settings.*control->member);
         panelGradientEnabled = settings.panelGradient.enabled;
         panelGradientEditor->SetValue(settings.panelGradient);
         gradientToggle.IsOn(settings.gradientEndA > 0.001f);
@@ -1259,6 +1456,8 @@ struct PersonalizationPagePresenter::Impl
         edgeLightEditor->SetValue(settings.edgeLight);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         popupHoverOpen.IsOn(settings.popupHoverOpen);
+        groupTabHoverSwitch.IsOn(settings.groupTabHoverSwitch);
+        categoryTabHoverSwitch.IsOn(settings.categoryTabHoverSwitch);
         popupCloseOnMouseLeave.IsOn(settings.popupCloseOnMouseLeave);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
@@ -1431,6 +1630,10 @@ struct PersonalizationPagePresenter::Impl
         acrylicRow.SetEnabled(custom && glassToggle.IsOn());
         contentThemeRow.SetEnabled(custom);
         const auto visible = [](bool value) { return value ? mux::Visibility::Visible : mux::Visibility::Collapsed; };
+        pinBorderColor.editor.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        pinBorderWidth.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        pinBorderOpacity.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        presenter_controls::UpdateSettingsSubrows(pinBorderCard.content, 0.0);
         edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeLightEditor->Content().Visibility(visible(edgeHighlightToggle.IsOn()));
@@ -1438,6 +1641,12 @@ struct PersonalizationPagePresenter::Impl
         blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
         popupHoverDelayMs.row.root.Visibility(visible(popupHoverOpen.IsOn()));
+        tabHoverDelayMs.row.root.Visibility(visible(groupTabHoverSwitch.IsOn() || categoryTabHoverSwitch.IsOn()));
+        presenter_controls::UpdateSettingsSubrows(tabHoverCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(behaviorCard.content, 0.0);
+        if (popupHoverOpen.IsOn())
+            presenter_controls::StyleSettingsSubrow(popupHoverDelayMs.row.root, false, 16.0);
+        appearanceSections.UpdateRows();
     }
 
     void SetCardText(
@@ -1503,10 +1712,9 @@ struct PersonalizationPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        SetCardText(fontCard, "font.title", L"Interface font");
+        SetCardText(fontCard, "font.interfaceText", L"Interface text");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
-        SetCardText(tooltipFontCard, "font.tooltipSize", L"Tooltip font size");
-        tooltipFontSizeRow.SetText(L("font.size", L"Font size"), L("font.tooltipSizeHint"));
+        tooltipFontSizeRow.SetText(L("font.tooltipSize", L"Tooltip font size"), L("font.tooltipSizeHint"));
         const auto tooltipFontSizeLabel = L("font.tooltipSize", L"Tooltip font size");
         muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeLabel);
         muxa::AutomationProperties::SetName(tooltipFontSizeSlider, tooltipFontSizeLabel);
@@ -1524,6 +1732,13 @@ struct PersonalizationPagePresenter::Impl
         RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
+        SetCardText(pinBorderCard, "settings.personalization.windowPinBorder", L"Pinned window border");
+        pinBorderEnabledRow.SetText(L("settings.personalization.windowPinBorder.show", L"Show pinned window border"),
+            L("settings.personalization.windowPinBorder.hint", L"Hiding the border keeps the window pinned."));
+        muxa::AutomationProperties::SetName(pinBorderEnabled, pinBorderEnabledRow.label.Text());
+        SetColorText(pinBorderColor, "settings.personalization.windowPinBorder.color", L"Border color");
+        SetContinuousText(pinBorderWidth, "settings.personalization.windowPinBorder.width", L"Border thickness");
+        SetContinuousText(pinBorderOpacity, "settings.personalization.windowPinBorder.opacity", L"Border opacity");
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
         popupCopyComponent.Content(winrt::box_value(L("appearance.copyComponent", L"Copy current component appearance")));
@@ -1539,7 +1754,19 @@ struct PersonalizationPagePresenter::Impl
         taskbarLinkDescription.Text(L("appearance.openTaskbar", L"Open taskbar settings"));
         muxa::AutomationProperties::SetName(statusBarLink, statusBarLinkDescription.Text());
         muxa::AutomationProperties::SetName(taskbarLink, taskbarLinkDescription.Text());
+        quickLinkTitle.Text(L("quickNav.title", L"Quick navigation"));
+        quickLinkDescription.Text(L("appearance.openQuickNavigation", L"Open quick navigation appearance"));
+        muxa::AutomationProperties::SetName(quickLink, quickLinkDescription.Text());
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
+        dockFollowCornerRadiusRow.SetText(L("largeIcon.followComponentRadius", L"Follow component corner radius"));
+        muxa::AutomationProperties::SetName(dockFollowCornerRadius, dockFollowCornerRadiusRow.label.Text());
+        SetContinuousText(dockCornerRadius, "app.settings.corner_radius", L"Corner Radius");
+        SetCardText(dockAttentionDotCard, "settings.dock.attentionDot.title", L"Dock attention dot");
+        SetContinuousText(dockAttentionDotSize, "settings.dock.attentionDot.size", L"Dot size");
+        SetContinuousText(dockAttentionDotOffset, "settings.dock.attentionDot.position", L"Dot position");
+        dockAttentionDotOffset.row.SetText(
+            L("settings.dock.attentionDot.position", L"Dot position"),
+            L("settings.dock.attentionDot.positionHint", L"Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size."));
         ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
@@ -1553,9 +1780,22 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(contextMenuCard,
             "app.settings.context_menu_appearance", L"Context Menu");
         SetCardText(layoutCard,
-            "app.settings.widget_layout", L"Widget Layout");
+            "appearance.widgetDimensions", L"Layout and dimensions");
+        SetCardText(widgetInteractionCard,
+            "widgets.commonInteraction", L"Common interaction");
+        SetCardText(collectionTitleCard,
+            "settings.widgetBehavior.titlesAndTabs", L"Title bars and group tabs");
         SetCardText(behaviorCard,
-            "settings.widgetBehavior.title", L"Widget behavior");
+            "settings.widgetBehavior.expansion", L"Expansion behavior");
+        collectionRelatedTitle.Text(L("settings.common.relatedSettings", L"Related settings"));
+        collectionFooterRow.SetText(L("settings.widgetBehavior.footerHeight", L"Global component footer height"),
+            L("settings.related.footerHeight", L"Set the height of title bars, tabs and search boxes shared by widgets."));
+        collectionThemeRow.SetText(L("settings.widgetBehavior.popupTheme", L"Shared popup theme"),
+            L("settings.related.popupTheme", L"Change the theme shared by folder, collection and system panel popups."));
+        collectionFooterLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
+        collectionThemeLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
+        muxa::AutomationProperties::SetName(collectionFooterLink, collectionFooterLinkTitle.Text());
+        muxa::AutomationProperties::SetName(collectionThemeLink, collectionThemeLinkTitle.Text());
 
         presetRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(presetCombo, {
@@ -1651,7 +1891,7 @@ struct PersonalizationPagePresenter::Impl
             topTitleBarToggle, topTitleBarRow.label.Text());
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
-            L"Lua Widget Row Height");
+            L"Extension component content row height");
         widgetTransformCursorsRow.SetText(
             L("app.settings.widget_transform_cursors",
                 L"Show component move and resize cursors"));
@@ -1667,6 +1907,12 @@ struct PersonalizationPagePresenter::Impl
             L("app.settings.popup_hover_open", L"Open popups on hover"),
             L("app.settings.popup_hover_open_hint",
                 L"Applies to Dock folders, collections and desktop collection expand buttons."));
+        SetCardText(tabHoverCard, "settings.widgetBehavior.tabSwitching", L"Tab switching");
+        groupTabHoverRow.SetText(L("settings.widgetBehavior.groupTabHover", L"Switch group tabs on hover"));
+        categoryTabHoverRow.SetText(L("settings.widgetBehavior.categoryTabHover", L"Switch category tabs on hover"));
+        muxa::AutomationProperties::SetName(groupTabHoverSwitch, groupTabHoverRow.label.Text());
+        muxa::AutomationProperties::SetName(categoryTabHoverSwitch, categoryTabHoverRow.label.Text());
+        SetContinuousText(tabHoverDelayMs, "settings.widgetBehavior.tabHoverDelay", L"Tab hover delay");
         muxa::AutomationProperties::SetName(
             popupHoverOpen, popupHoverOpenRow.label.Text());
         SetContinuousText(popupHoverDelayMs,
@@ -1732,6 +1978,8 @@ struct PersonalizationPagePresenter::Impl
             }
         }
         dockAppearanceHost.IsEnabled(snapshot.values.general.dockEnabled);
+        dockFollowCornerRadiusRow.SetEnabled(snapshot.values.general.dockEnabled);
+        dockCornerRadius.row.SetEnabled(snapshot.values.general.dockEnabled);
         currentGlobalAppearance = snapshot.values.personalization;
         if (personalizationChanged)
         {
@@ -1746,7 +1994,7 @@ struct PersonalizationPagePresenter::Impl
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }
-        if (dockChanged)
+        if (dockChanged || personalizationChanged)
         {
             const auto& dock = snapshot.values.dock;
             const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), dock.appearancePreset);
@@ -1755,6 +2003,12 @@ struct PersonalizationPagePresenter::Impl
             dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
             dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             dockThemes->SaveContent().Visibility(dockAppearanceEditor->Content().Visibility());
+            dockFollowCornerRadius.IsOn(dock.followComponentCornerRadius);
+            PatchContinuous(dockCornerRadius, dock.cornerRadius);
+            PatchContinuous(dockAttentionDotSize, dock.attentionDotSizeScale);
+            PatchContinuous(dockAttentionDotOffset, dock.attentionDotOffset);
+            dockCornerRadius.row.root.Visibility(dock.followComponentCornerRadius
+                ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             dockRevision = snapshot.domainRevisions.dock;
         }
         if (navigationChanged || generalChanged || personalizationChanged)
@@ -1781,8 +2035,19 @@ struct PersonalizationPagePresenter::Impl
         }
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal,
+        SettingsFocusPrerequisite* prerequisite) const noexcept
     {
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
+            return target;
+        };
         if (id == "personalization.savedThemes")
         {
             return themeTransfers->Choice();
@@ -1790,24 +2055,55 @@ struct PersonalizationPagePresenter::Impl
         if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||
             id.starts_with("quickNav.color.") || id.starts_with("quickNav.colors."))
         {
-            if (quickAppearanceContent.Visibility() != mux::Visibility::Visible) return quickNavigationThemeCombo;
-            return quickAppearanceOptions->FocusTarget(id);
+            if (!quickAppearanceOptions->FocusTarget(id, false)) return nullptr;
+            if (quickAppearanceContent.Visibility() != mux::Visibility::Visible)
+                return prerequisiteTarget(quickNavigationThemeCombo, "customTheme",
+                    quickNavigationThemeRow.label.Text().c_str());
+            return quickAppearanceOptions->FocusTarget(id, reveal);
         }
-        const auto appearanceTarget = [this](mux::FrameworkElement target) {
-            if (currentBackgroundPreset != kAppearancePresetCustom) return mux::FrameworkElement{presetCombo};
-            appearanceSections.Reveal(target);
+        const auto appearanceTarget = [this, reveal, &prerequisiteTarget](mux::FrameworkElement target) {
+            if (currentBackgroundPreset != kAppearancePresetCustom || !globalThemes->CustomSelected() ||
+                widgetAppearanceCard.root.Visibility() != mux::Visibility::Visible)
+                return prerequisiteTarget(presetCombo, "customTheme", presetRow.label.Text().c_str());
+            if (reveal) appearanceSections.Reveal(target);
             return target;
+        };
+        const auto dependentTarget = [&](bool available, mux::FrameworkElement target,
+            mux::FrameworkElement parent, std::wstring_view parentName, std::string_view message = "enable") {
+            // The theme editor may be the earlier prerequisite. Resolve it last
+            // so feedback always describes the control that is actually focused.
+            return appearanceTarget(available ? target : prerequisiteTarget(parent, message, parentName));
         };
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
+        if (id == "dock.attentionDotSize") return dockAttentionDotSize.slider;
+        if (id == "dock.attentionDotOffset") return dockAttentionDotOffset.slider;
+        if (id == "personalization.windowPinBorder.show") return pinBorderEnabled;
+        if (id.starts_with("personalization.windowPinBorder."))
+        {
+            if (!pinBorderEnabled.IsOn())
+                return prerequisiteTarget(pinBorderEnabled, "enable", pinBorderEnabledRow.label.Text().c_str());
+            if (id == "personalization.windowPinBorder.color") return pinBorderColor.editor.button;
+            if (id == "personalization.windowPinBorder.width") return pinBorderWidth.slider;
+            if (id == "personalization.windowPinBorder.opacity") return pinBorderOpacity.slider;
+        }
         if (id == "personalization.tooltipFontSize") return tooltipFontSizeSlider;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
+        if (id == "dock.followComponentCornerRadius") return dockFollowCornerRadius;
+        if (id == "dock.cornerRadius")
+        {
+            if (dockFollowCornerRadius.IsOn())
+                return prerequisiteTarget(dockFollowCornerRadius, "disable", dockFollowCornerRadiusRow.label.Text().c_str());
+            return dockCornerRadius.slider;
+        }
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
-            return appearanceTarget(backgroundColor.editor.button);
+            return appearanceTarget(panelGradientEnabled
+                ? panelGradientEditor->Content().as<mux::FrameworkElement>()
+                : backgroundColor.editor.button.as<mux::FrameworkElement>());
         if (id == "personalization.borderColor")
             return appearanceTarget(borderColor.editor.button);
         if (id == "personalization.quickNavigationTheme" ||
@@ -1817,7 +2113,8 @@ struct PersonalizationPagePresenter::Impl
             return collectionPopupThemeCombo;
         if (id == "personalization.widgetAlpha" ||
             id == "personalization.backgroundOpacity")
-            return appearanceTarget(widgetAlpha.slider);
+            return dependentTarget(!panelGradientEnabled || gradientToggle.IsOn(), widgetAlpha.slider,
+                gradientToggle, gradientToggleRow.label.Text().c_str());
         if (id == "personalization.borderAlpha" ||
             id == "personalization.borderOpacity")
             return appearanceTarget(borderAlpha.slider);
@@ -1826,19 +2123,24 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.edgeHighlight")
             return appearanceTarget(edgeHighlightToggle);
         if (id == "personalization.edgeHighlightWidth")
-            return appearanceTarget(edgeHighlightWidth.slider);
+            return dependentTarget(edgeHighlightToggle.IsOn(), edgeHighlightWidth.slider,
+                edgeHighlightToggle, edgeHighlightRow.label.Text().c_str());
         if (id == "personalization.edgeHighlightStrength")
-            return appearanceTarget(edgeHighlightStrength.slider);
+            return dependentTarget(edgeHighlightToggle.IsOn(), edgeHighlightStrength.slider,
+                edgeHighlightToggle, edgeHighlightRow.label.Text().c_str());
         if (id == "personalization.gradientEndAlpha")
-            return appearanceTarget(gradientEndAlpha.slider);
+            return dependentTarget(gradientToggle.IsOn(), gradientEndAlpha.slider,
+                gradientToggle, gradientToggleRow.label.Text().c_str());
         if (id == "personalization.enableGradient")
             return appearanceTarget(gradientToggle);
         if (id == "personalization.glass")
             return appearanceTarget(glassToggle);
         if (id == "personalization.blurRadius")
-            return appearanceTarget(blurRadius.slider);
+            return dependentTarget(glassToggle.IsOn(), blurRadius.slider,
+                glassToggle, glassRow.label.Text().c_str());
         if (id == "personalization.acrylic")
-            return appearanceTarget(acrylicToggle);
+            return dependentTarget(glassToggle.IsOn(), acrylicToggle,
+                glassToggle, glassRow.label.Text().c_str());
         if (id == "personalization.contentTheme")
             return appearanceTarget(contentThemeCombo);
         if (id == "personalization.contextMenu")
@@ -1849,11 +2151,21 @@ struct PersonalizationPagePresenter::Impl
             return showGroupTabCounts;
         if (id == "personalization.popupHoverOpen")
             return popupHoverOpen;
+        if (id == "personalization.groupTabHoverSwitch") return groupTabHoverSwitch;
+        if (id == "personalization.categoryTabHoverSwitch") return categoryTabHoverSwitch;
+        if (id == "personalization.tabHoverDelayMs")
+        {
+            if (!groupTabHoverSwitch.IsOn() && !categoryTabHoverSwitch.IsOn())
+                return prerequisiteTarget(groupTabHoverSwitch, "enable", groupTabHoverRow.label.Text().c_str());
+            return tabHoverDelayMs.slider;
+        }
         if (id == "personalization.popupCloseOnMouseLeave")
             return popupCloseOnMouseLeave;
         if (id == "personalization.popupHoverDelayMs")
         {
-            if (!popupHoverOpen.IsOn()) return popupHoverOpen;
+            if (!popupHoverOpen.IsOn())
+                return prerequisiteTarget(popupHoverOpen, "enable",
+                    muxa::AutomationProperties::GetName(popupHoverOpen).c_str());
             return popupHoverDelayMs.slider;
         }
         if (id == "personalization.barHeight")
@@ -1942,7 +2254,10 @@ struct PersonalizationPagePresenter::Impl
         tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
         tooltipFontSizeReset.Click(tooltipFontSizeResetToken);
         popupCopyComponent.Click(popupCopyComponentToken);
-        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
+        dockFollowCornerRadius.Toggled(dockFollowCornerRadiusToken);
+        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken); quickLink.Click(quickLinkToken);
+        collectionFooterLink.Click(collectionFooterLinkToken);
+        collectionThemeLink.Click(collectionThemeLinkToken);
         try
         {
             fontFlyout.Hide();
@@ -1960,6 +2275,7 @@ struct PersonalizationPagePresenter::Impl
             collectionPopupThemeCombo.SelectionChanged(
                 collectionPopupThemeToken);
             gradientToggle.Toggled(gradientToken);
+            pinBorderEnabled.Toggled(pinBorderEnabledToken);
             edgeHighlightToggle.Toggled(edgeHighlightToken);
             glassToggle.Toggled(glassToken);
             acrylicToggle.Toggled(acrylicToken);
@@ -1967,6 +2283,8 @@ struct PersonalizationPagePresenter::Impl
             contextMenuCombo.SelectionChanged(contextMenuToken);
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
             popupHoverOpen.Toggled(popupHoverOpenToken);
+            groupTabHoverSwitch.Toggled(groupTabHoverToken);
+            categoryTabHoverSwitch.Toggled(categoryTabHoverToken);
             popupCloseOnMouseLeave.Toggled(popupCloseOnMouseLeaveToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
             widgetTransformCursors.Toggled(widgetTransformCursorsToken);
@@ -2010,13 +2328,18 @@ void PersonalizationPagePresenter::SetActions(
 }
 
 void PersonalizationPagePresenter::SetLayoutSpacingContent(
-    const mux::UIElement& content)
+    const std::vector<mux::UIElement>& content)
 {
-    if (!impl_ || !content) return;
-    uint32_t index = 0;
+    if (!impl_) return;
+    uint32_t position = 0;
     const auto children = impl_->layoutCard.content.Children();
-    // The card title remains first; spacing is the first setting below it.
-    if (!children.IndexOf(content, index)) children.InsertAt(1, content);
+    for (const auto& row : content)
+    {
+        uint32_t index = 0;
+        if (!children.IndexOf(row, index)) children.InsertAt(position, row);
+        ++position;
+    }
+    presenter_controls::UpdateSettingsSubrows(impl_->layoutCard.content, 0.0);
 }
 
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
@@ -2034,7 +2357,32 @@ mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 mux::UIElement PersonalizationPagePresenter::WidgetLayoutContent()
     const noexcept
 {
+    return TypographyContent();
+}
+
+mux::UIElement PersonalizationPagePresenter::TypographyContent() const noexcept
+{
     return impl_ ? impl_->widgetLayoutRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WindowPinBorderContent() const noexcept
+{
+    return impl_ ? impl_->pinBorderRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::DockAttentionDotContent() const noexcept
+{
+    return impl_ ? impl_->dockAttentionDotRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::QuickNavigationAppearanceContent() const noexcept
+{
+    return impl_ ? impl_->quickThemeRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WidgetCommonContent() const noexcept
+{
+    return impl_ ? impl_->widgetCommonRoot : nullptr;
 }
 
 mux::UIElement PersonalizationPagePresenter::WidgetBehaviorContent() const noexcept
@@ -2078,9 +2426,10 @@ void PersonalizationPagePresenter::Deactivate() noexcept
 }
 
 mux::FrameworkElement PersonalizationPagePresenter::FocusTarget(
-    std::string_view focusId) const noexcept
+    std::string_view focusId, bool reveal, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, reveal, prerequisite) : nullptr;
 }
 
 void PersonalizationPagePresenter::Close() noexcept

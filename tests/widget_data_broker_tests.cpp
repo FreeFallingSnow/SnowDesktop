@@ -365,6 +365,25 @@ void TestCalendarIdSubscription()
 
 int main()
 {
+    {
+        WidgetDataBroker broker;std::string error;
+        Check(broker.RegisterProvider({"calendar.events","calendar.read",100ms,1000ms,0ms,false,true},error),"query calendar provider registers");
+        Check(broker.RegisterProvider(CpuProvider(),error),"noncalendar provider registers for query rejection");
+        DataSubscriptionOptions options;options.permissionGranted=true;
+        options.calendarQuery=snowdesktop::widget_runtime::CalendarEventQueryOptions{"Needle",512,40};
+        const auto now=WidgetDataBroker::Clock::now();
+        Check(static_cast<bool>(broker.Subscribe("query","calendar.events",options,now)),"calendar query reaches real broker");
+        const auto snapshots=broker.SubscriptionSnapshots("calendar.events");
+        Check(snapshots.size()==1 && snapshots.front().options.calendarQuery &&
+            snapshots.front().options.calendarQuery->offset==512 && snapshots.front().options.calendarQuery->query=="Needle","provider snapshot retains complete query identity");
+        Check(!broker.Subscribe("query","system.cpu",options,now),"query options cannot leak to unrelated topics");
+        options.eventId="event-1";
+        Check(!broker.Subscribe("query","calendar.events",options,now),"ID and query are mutually exclusive in actual broker");
+        options.eventId.clear();options.calendarQuery->limit=513;
+        Check(!broker.Subscribe("query","calendar.events",options,now),"oversized page is rejected before subscription");
+        options.calendarQuery->limit=40;options.calendarQuery->query=std::string("bad\0query",9);
+        Check(!broker.Subscribe("query","calendar.events",options,now),"NUL query is rejected before subscription");
+    }
     TestCalendarIdSubscription();
     TestSnapshotFreshnessConfirmation();
     TestRegistrationAndSharedSampling();

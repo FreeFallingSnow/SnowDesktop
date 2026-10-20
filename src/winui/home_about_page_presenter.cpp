@@ -21,6 +21,7 @@ namespace
 struct Section
 {
     muxc::Border root{nullptr};
+    muxc::Border surface{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
 };
@@ -40,7 +41,6 @@ void InitializeSection(
     const muxc::StackPanel& page)
 {
     section.root = muxc::Border{};
-    section.root.Style(style);
     section.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     section.content = muxc::StackPanel{};
     section.content.Spacing(9.0);
@@ -49,8 +49,8 @@ void InitializeSection(
     section.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     section.title.TextWrapping(mux::TextWrapping::Wrap);
-    section.content.Children().Append(section.title);
-    section.root.Child(section.content);
+    section.surface = presenter_controls::InitializeSettingsGroup(
+        section.root, section.title, section.content, style, true);
     page.Children().Append(section.root);
 }
 
@@ -94,6 +94,7 @@ struct HomeAboutPagePresenter::Impl
     mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel aboutRoot{nullptr};
     muxc::StackPanel debugRoot{nullptr};
+    muxc::Expander credits{nullptr};
 
     Section introductionSection;
     Section authorSection;
@@ -103,6 +104,8 @@ struct HomeAboutPagePresenter::Impl
     Section communitySection;
     Section versionSection;
     Section thirdPartySection;
+    Section dataSection;
+    Section fontSection;
     Section referenceSection;
     muxc::TextBlock introductionText{nullptr};
     muxc::TextBlock authorText{nullptr};
@@ -127,6 +130,14 @@ struct HomeAboutPagePresenter::Impl
     std::wstring profileDirectory;
     std::wstring simulatedDesktop;
     winrt::event_token profileToken{}, chooseDesktopToken{}, clearProfileToken{};
+    Section forceRestartSection;
+    controls::SettingRow forceRestartToggleRow;
+    controls::SettingRow forceRestartChordRow;
+    muxc::ToggleSwitch forceRestartToggle{nullptr};
+    HotkeyRecorder forceRestartRecorder;
+    bool forceRestartEnabled = true;
+    HotkeyChord forceRestartChord{MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN, 'S'};
+    winrt::event_token forceRestartToken{};
     Section demoModeSection;
     Section initializationSection;
     Section animationSection;
@@ -137,7 +148,6 @@ struct HomeAboutPagePresenter::Impl
     controls::SettingRow initializationRow;
     muxc::ToggleSwitch initializationToggle{nullptr};
     controls::SettingRow animationRow;
-    muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
     muxc::TextBlock animationStatus{nullptr};
     controls::SettingRow resetUnlockRow;
@@ -208,6 +218,7 @@ struct HomeAboutPagePresenter::Impl
     }
 
     void AddAttribution(
+        const Section& section,
         HomeAboutLink target,
         std::wstring label,
         std::wstring license,
@@ -237,17 +248,14 @@ struct HomeAboutPagePresenter::Impl
                 mux::Thickness{12.0, 0.0, 0.0, 0.0});
             group.Children().Append(modificationBlock);
         }
-        const muxc::StackPanel& parent =
-            target == HomeAboutLink::TranslucentTb
-                ? referenceSection.content : thirdPartySection.content;
-        parent.Children().Append(group);
+        section.content.Children().Append(group);
     }
 
     void BuildControls()
     {
 
         aboutRoot = muxc::StackPanel{};
-        aboutRoot.Spacing(8.0);
+        aboutRoot.Spacing(24.0);
         InitializeSection(introductionSection, cardStyle, aboutRoot);
         introductionText = MakeBodyText(0.78);
         introductionSection.content.Children().Append(introductionText);
@@ -310,28 +318,68 @@ struct HomeAboutPagePresenter::Impl
         versionSection.content.Children().Append(versionRow.root);
 
         InitializeSection(thirdPartySection, cardStyle, aboutRoot);
+        InitializeSection(dataSection, cardStyle, aboutRoot);
+        InitializeSection(fontSection, cardStyle, aboutRoot);
         InitializeSection(referenceSection, cardStyle, aboutRoot);
-        AddAttribution(HomeAboutLink::EverythingSdk, L"Everything SDK",
+        AddAttribution(thirdPartySection, HomeAboutLink::EverythingSdk, L"Everything SDK",
             L"(MIT)", L"Copyright (C) 2016 David Carpenter");
-        AddAttribution(HomeAboutLink::DearImGui, L"Dear ImGui", L"(MIT)",
+        AddAttribution(thirdPartySection, HomeAboutLink::DearImGui, L"Dear ImGui", L"(MIT)",
             L"Copyright (c) 2014-2025 Omar Cornut");
-        AddAttribution(HomeAboutLink::Lua, L"Lua", L"(MIT)",
+        AddAttribution(thirdPartySection, HomeAboutLink::Lua, L"Lua", L"(MIT)",
             L"Copyright (C) 1994-2024 Lua.org, PUC-Rio");
-        AddAttribution(HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
+        AddAttribution(dataSection, HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
             L"Copyright (c) 2016 mozillazg");
-        AddAttribution(HomeAboutLink::MiSans, L"MiSans Regular · 4.009", L"(MiSans font license)",
+        AddAttribution(fontSection, HomeAboutLink::MiSans, L"MiSans Regular · 4.009", L"(MiSans font license)",
             L"Copyright © 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.", L"SnowDesktop uses MiSans as an optional interface font; original font file unchanged.");
-        AddAttribution(HomeAboutLink::HarmonyOsSans, L"HarmonyOS Sans SC · 1.0", L"(HarmonyOS Sans Fonts License Agreement)",
+        AddAttribution(fontSection, HomeAboutLink::HarmonyOsSans, L"HarmonyOS Sans SC · 1.0", L"(HarmonyOS Sans Fonts License Agreement)",
             L"Copyright 2021 Huawei Device Co., Ltd.", L"SnowDesktop uses HarmonyOS Sans as an optional interface font; original font files unchanged.");
-        AddAttribution(HomeAboutLink::Yasb, L"YASB · d6d1e6d553b0", L"(MIT)",
+        AddAttribution(referenceSection, HomeAboutLink::Yasb, L"YASB · d6d1e6d553b0", L"(MIT)",
             L"Copyright (c) 2024 amnweb · Copyright (c) 2021 denBot");
-        AddAttribution(HomeAboutLink::TranslucentTb,
+        AddAttribution(referenceSection, HomeAboutLink::TranslucentTb,
             L"TranslucentTB (modified portions)", L"(GPL-3.0-only)",
             L"Copyright (c) TranslucentTB contributors",
             L"Modified for SnowDesktop from upstream commit 322e2b7");
 
+        // Version/update and support are the frequent About-page tasks.
+        // Keep legal notices available in one explicitly named disclosure.
+        aboutRoot.Children().Clear();
+        for (const auto& section : {versionSection.root, introductionSection.root,
+                 projectSection.root, communitySection.root, authorSection.root,
+                 profileSection.root, copyrightSection.root})
+            aboutRoot.Children().Append(section);
+        muxc::StackPanel creditGroups;
+        creditGroups.Spacing(24);
+        for (const auto* section : {&thirdPartySection, &dataSection,
+                 &fontSection, &referenceSection})
+        {
+            section->surface.Padding({0, 0, 0, 0});
+            section->surface.BorderThickness({0, 0, 0, 0});
+            section->surface.Background(nullptr);
+            creditGroups.Children().Append(section->root);
+        }
+        credits = muxc::Expander{};
+        credits.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        credits.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        credits.IsExpanded(false);
+        credits.Content(creditGroups);
+        aboutRoot.Children().Append(credits);
+
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
+        InitializeSection(forceRestartSection, cardStyle, debugRoot);
+        forceRestartSection.title.Visibility(mux::Visibility::Collapsed);
+        forceRestartToggle = muxc::ToggleSwitch{};
+        forceRestartToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        forceRestartToggleRow.Initialize(forceRestartToggle);
+        forceRestartSection.content.Children().Append(forceRestartToggleRow.root);
+        forceRestartRecorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
+        forceRestartChordRow.Initialize(forceRestartRecorder.Root());
+        forceRestartChordRow.SetCompactEditor();
+        forceRestartChordRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        forceRestartSection.content.Children().Append(forceRestartChordRow.root);
+        forceRestartRecorder.SetDefaultValue(
+            {MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN, 'S'});
+
         InitializeSection(debugProfileSection, cardStyle, debugRoot);
         profileToggle = muxc::ToggleSwitch{};
         profileToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -368,16 +416,13 @@ struct HomeAboutPagePresenter::Impl
 
         InitializeSection(animationSection, cardStyle, debugRoot);
         animationSection.title.Visibility(mux::Visibility::Collapsed);
-        animationControls = muxc::StackPanel{};
-        animationControls.Spacing(6.0);
         animationToggle = muxc::ToggleSwitch{};
         animationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         animationToggle.UseSystemFocusVisuals(true);
         animationStatus = MakeBodyText(0.72);
         animationStatus.Visibility(mux::Visibility::Collapsed);
-        animationControls.Children().Append(animationToggle);
-        animationControls.Children().Append(animationStatus);
-        animationRow.Initialize(animationControls, 420.0);
+        animationRow.Initialize(animationToggle);
+        animationRow.text.Children().Append(animationStatus);
         animationSection.content.Children().Append(animationRow.root);
 
         InitializeSection(resetUnlockSection, cardStyle, debugRoot);
@@ -410,7 +455,7 @@ struct HomeAboutPagePresenter::Impl
         crashButton.UseSystemFocusVisuals(true);
         crashActionHost.Children().Append(crashButton);
         crashExpander.Content(crashActionHost);
-        crashSection.content.Children().Append(crashExpander);
+        crashSection.root.Child(crashExpander);
     }
 
     void HookEvents()
@@ -456,6 +501,31 @@ struct HomeAboutPagePresenter::Impl
         });
         clearProfileToken = clearProfileButton.Click([this](const auto&, const auto&) {
             if (CanInvokeDebug() && actions.clearDebugProfile) actions.clearDebugProfile(generation);
+        });
+        forceRestartToken = forceRestartToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+            const bool enabled = forceRestartToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [enabled](GeneralSettings& settings) { settings.forceRestartHotkeyEnabled = enabled; });
+        });
+        forceRestartRecorder.SetAvailabilityProbe([this](HotkeyChord chord,
+            std::uint64_t expectedGeneration, std::uint64_t requestId,
+            HotkeyRecorder::AvailabilityCompletion completion) {
+            if (closed || !hasSnapshot || expectedGeneration != generation || !actions.probeHotkey)
+            {
+                completion(false, L("app.settings.hotkey_conflict_system"));
+                return;
+            }
+            actions.probeHotkey(SettingsHostActions::HotkeyTarget::ForceRestart,
+                chord, expectedGeneration, requestId, std::move(completion));
+        });
+        forceRestartRecorder.SetCommittedCallback([this](HotkeyChord chord) {
+            if (!CanInvokeDebug() || !actions.updateGeneral) return;
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [chord](GeneralSettings& settings) {
+                    settings.forceRestartHotkeyModifiers = chord.modifiers;
+                    settings.forceRestartHotkeyVirtualKey = chord.virtualKey;
+                });
         });
         demoModeToken = demoModeToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -567,6 +637,7 @@ struct HomeAboutPagePresenter::Impl
         initializationToggle.IsEnabled(!profileEnabled);
         profileDataPath.Text(L("settings.debug.profile.data") + L"\n" + profileDirectory);
         desktopDirectoryRow.SetText(L("settings.debug.profile.desktop"), simulatedDesktop);
+        forceRestartToggle.IsOn(forceRestartEnabled);
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
         initializationToggle.IsOn(temporaryInitializationEnabled);
@@ -580,10 +651,40 @@ struct HomeAboutPagePresenter::Impl
 
     }
 
+    HotkeyRecorderText HotkeyText(std::wstring automationName) const
+    {
+        HotkeyRecorderText text;
+        text.automationName = std::move(automationName);
+        text.idleHint = L("app.settings.hotkey_capture_help");
+        text.captureHint = L("app.settings.hotkey_press");
+        text.checking = L("app.settings.hotkey_status_recording");
+        text.available = L("app.settings.hotkey_available");
+        text.conflict = L("app.settings.hotkey_status_conflict");
+        text.cleared = L("app.settings.hotkey_not_set");
+        text.none = L("app.settings.hotkey_not_set");
+        text.disabled = L("app.settings.hotkey_status_disabled");
+        text.captureActive = L("app.settings.hotkey_capture_active");
+        text.notSetWarning = L("app.settings.hotkey_not_set_warning");
+        text.availableStatus = L("app.settings.hotkey_status_available");
+        text.inUseStatus = L("app.settings.hotkey_status_in_use");
+        text.noModifierStatus =
+            L("app.settings.hotkey_status_no_modifier");
+        text.noModifierWarning =
+            L("app.settings.hotkey_no_modifier_warning");
+        text.systemConflict = L("app.settings.hotkey_conflict_system");
+        text.apply = L("app.settings.apply");
+        text.cancel = L("app.settings.cancel");
+        text.edit = L("app.settings.hotkey_edit");
+        text.clear = L("app.settings.widget.clear");
+        text.restoreDefault = L("app.settings.restore_default");
+        return text;
+    }
+
     void RefreshLocalizedText()
     {
         if (closed)
             return;
+        credits.Header(winrt::box_value(L("settings.about.licensesAndCredits", L"Third-party notices and credits")));
 
         SetSectionTitle(introductionSection,
             "app.settings.about_snowdesktop", L"About SnowDesktop");
@@ -604,10 +705,14 @@ struct HomeAboutPagePresenter::Impl
             "app.settings.version", L"Version");
         versionRow.SetText(L("app.settings.version", L"Version"));
         SetSectionTitle(thirdPartySection,
-            "app.settings.third_party_libs", L"Third-Party Libraries");
+            "app.settings.third_party_libs", L"Libraries and SDKs");
+        SetSectionTitle(dataSection,
+            "app.settings.third_party_data", L"Data");
+        SetSectionTitle(fontSection,
+            "app.settings.third_party_fonts", L"Interface Fonts");
         SetSectionTitle(referenceSection,
             "app.settings.reference_programs",
-            L"Upstream Code Attribution");
+            L"Referenced and Adapted Projects");
         for (LinkEntry& link : links)
         {
             const std::wstring text = L(link.labelKey, link.fallback);
@@ -615,6 +720,12 @@ struct HomeAboutPagePresenter::Impl
             SetAutomation(link.button, text, HomeAboutLinkUri(link.target));
         }
 
+        forceRestartToggleRow.SetText(L("settings.debug.forceRestartHotkey"),
+            L("settings.debug.forceRestartHotkey.description"));
+        SetAutomation(forceRestartToggle, forceRestartToggleRow.label.Text(),
+            forceRestartToggleRow.help.Text());
+        forceRestartChordRow.SetText(L("app.settings.hotkey"));
+        forceRestartRecorder.SetText(HotkeyText(L("settings.debug.forceRestartHotkey")));
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
         profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
         SetAutomation(profileToggle, profileRow.label.Text(), profileRow.help.Text());
@@ -691,13 +802,20 @@ struct HomeAboutPagePresenter::Impl
             generation = snapshot.generation;
             ResetStatusForGeneration();
         }
+        hasSnapshot = true;
         if (newGeneration || generalRevision !=
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
+            forceRestartEnabled = snapshot.values.general.forceRestartHotkeyEnabled;
+            forceRestartChord = {snapshot.values.general.forceRestartHotkeyModifiers,
+                snapshot.values.general.forceRestartHotkeyVirtualKey};
+            forceRestartRecorder.SetValidationContext(forceRestartEnabled, false);
+            forceRestartRecorder.Root().IsEnabled(forceRestartEnabled);
+            forceRestartChordRow.SetEnabled(forceRestartEnabled);
+            forceRestartRecorder.SetValue(forceRestartChord, generation);
         }
-        hasSnapshot = true;
         RenderStatus();
     }
 
@@ -736,15 +854,23 @@ struct HomeAboutPagePresenter::Impl
     {
         if (page == SettingsPage::About)
         {
-            if (focusId == "about.profile") return links[0].button;
-            if (focusId == "about.project") return links[4].button;
-            if (focusId == "about.website") return links[6].button;
-            if (focusId == "about.community") return links[7].button;
-            if (focusId == "about.thirdparty") return links[8].button;
+            const auto link = [&](HomeAboutLink target) -> mux::FrameworkElement {
+                for (const auto& entry : links)
+                    if (entry.target == target) return entry.button;
+                return versionButton;
+            };
+            if (focusId == "about.profile") return link(HomeAboutLink::Bilibili);
+            if (focusId == "about.project") return link(HomeAboutLink::SourceRepository);
+            if (focusId == "about.website") return link(HomeAboutLink::OfficialWebsite);
+            if (focusId == "about.community") return link(HomeAboutLink::QqGroup);
+            if (focusId == "about.thirdparty") return link(HomeAboutLink::EverythingSdk);
             return versionButton;
         }
         if (page == SettingsPage::Debug)
         {
+            if (focusId == "debug.forceRestartHotkey") return forceRestartToggle;
+            if (focusId == "debug.forceRestartHotkey.hotkey")
+                return forceRestartEnabled ? forceRestartRecorder.FocusTarget() : forceRestartToggle;
             if (focusId == "debug.profile") return profileToggle;
             if (focusId == "debug.desktop") return chooseDesktopButton;
             if (focusId == "debug.clearProfile") return clearProfileButton;
@@ -773,6 +899,7 @@ struct HomeAboutPagePresenter::Impl
             profileToggle.Toggled(profileToken);
             chooseDesktopButton.Click(chooseDesktopToken);
             clearProfileButton.Click(clearProfileToken);
+            forceRestartToggle.Toggled(forceRestartToken);
             demoModeToggle.Toggled(demoModeToken);
             initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);
@@ -782,6 +909,7 @@ struct HomeAboutPagePresenter::Impl
         catch (...)
         {
         }
+        forceRestartRecorder.Close();
         actions = {};
         localize = {};
     }
@@ -850,6 +978,7 @@ void HomeAboutPagePresenter::Deactivate() noexcept
 {
     if (impl_ && !impl_->closed)
     {
+        impl_->forceRestartRecorder.CancelCapture();
         impl_->active = false;
     }
 }
@@ -859,6 +988,18 @@ mux::FrameworkElement HomeAboutPagePresenter::FocusTarget(
     std::string_view focusId) const noexcept
 {
     return impl_ ? impl_->FocusTarget(page, focusId) : nullptr;
+}
+
+bool HomeAboutPagePresenter::IsHotkeyCaptureActive() const noexcept
+{
+    return impl_ && !impl_->closed && impl_->active &&
+        impl_->forceRestartRecorder.IsCapturing();
+}
+
+void HomeAboutPagePresenter::CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey)
+{
+    if (IsHotkeyCaptureActive())
+        impl_->forceRestartRecorder.CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 
 void HomeAboutPagePresenter::Close() noexcept

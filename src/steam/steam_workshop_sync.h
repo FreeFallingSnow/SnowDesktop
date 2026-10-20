@@ -32,6 +32,8 @@ struct SteamWorkshopSubscriptionSnapshot
     std::vector<std::string> confirmedUnsubscribedPublishedFileIds;
     std::string activeSteamAccountId;
     std::vector<std::string> subscribedPublishedFileIds;
+    SteamLibrarySubscriptions librarySubscriptions;
+    std::vector<std::string> locallyUnsubscribedPublishedFileIds;
     std::vector<std::string> explicitlyUnsubscribedPublishedFileIds;
     std::vector<PackageDetails> installable;
     // Query workers resolve and validate these paths off the UI thread. Before
@@ -44,6 +46,8 @@ struct SteamWorkshopSubscriptionSnapshot
     std::vector<SteamWorkshopInstallFailure> discoveryFailures;
     std::string warning;
     std::string error;
+    // Host-local correlation only; never persisted or sent to Steam.
+    std::uint64_t diagnosticQueryId = 0;
 
     bool CanSynchronize() const
     {
@@ -100,10 +104,15 @@ BuildSteamWorkshopPackageAssociations(
 void ResolveSteamWorkshopSubscriptionRemovals(
     SteamWorkshopSubscriptionSnapshot& snapshot,
     const SteamWorkshopSubscriptionHistory& history,
-    const std::vector<InstalledPackage>& installed = {});
+    const std::vector<InstalledPackage>& installed = {},
+    const SteamLibrarySubscriptionHistory& libraryHistory = {});
 std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
     const SteamWorkshopSubscriptionSnapshot& snapshot,
     const SteamWorkshopSubscriptionHistory& history);
+SteamLibrarySubscriptions BuildSteamWorkshopLibraryHistory(
+    const SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamLibrarySubscriptionHistory& history,
+    const std::vector<InstalledPackage>& remainingInstalled = {});
 SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     const std::vector<InstalledPackage>& installed,
     const SteamWorkshopSubscriptionSnapshot& snapshot);

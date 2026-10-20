@@ -226,6 +226,7 @@ void TestLaunchIntent()
             LaunchIntent::Interactive,
         "ordinary launches keep their settings activation behavior");
     for (const wchar_t* command : {
+            L"SnowDesktop.exe --snowdesktop-autostart",
             L"SnowDesktop.exe --snowdesktop-autostart-owner=portable",
             L"SnowDesktop.exe --snowdesktop-autostart-owner=packaged",
             L"\"C:\\Snow Desktop\\SnowDesktop.exe\" \"--snowdesktop-autostart-owner=steam\""})
@@ -235,6 +236,7 @@ void TestLaunchIntent()
     }
     for (const wchar_t* command : {
             L"SnowDesktop.exe --snowdesktop-application-recovery",
+            L"SnowDesktop.exe --snowdesktop-autostart --snowdesktop-application-recovery",
             L"SnowDesktop.exe --snowdesktop-autostart-owner=steam --snowdesktop-application-recovery",
             L"SnowDesktop.exe --snowdesktop-application-recovery --snowdesktop-autostart-owner=steam"})
     {
@@ -244,6 +246,7 @@ void TestLaunchIntent()
     for (const wchar_t* command : {
             L"\"C:\\--snowdesktop-application-recovery\\SnowDesktop.exe\"",
             L"SnowDesktop.exe --profile=--snowdesktop-application-recovery",
+            L"SnowDesktop.exe --profile=--snowdesktop-autostart",
             L"SnowDesktop.exe \"profile --snowdesktop-autostart-owner=steam\"",
             L"SnowDesktop.exe --snowdesktop-autostart-owner=unknown",
             L"SnowDesktop.exe --snowdesktop-application-recovery-extra"})
@@ -312,6 +315,8 @@ void TestStartupSettingsActivation()
     };
     launch(L"SnowDesktop.exe --snowdesktop-autostart-owner=steam",
         ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe --snowdesktop-autostart",
+        ExistingLaunchAction::ExitNewInstance, false);
     launch(L"SnowDesktop.exe --snowdesktop-application-recovery",
         ExistingLaunchAction::ExitNewInstance, false);
     launch(L"SnowDesktop.exe",
@@ -321,6 +326,10 @@ void TestStartupSettingsActivation()
     launch(L"SnowDesktop.exe --snowdesktop-application-recovery",
         ExistingLaunchAction::ExitNewInstance, false);
     launch(L"SnowDesktop.exe --snowdesktop-autostart-owner=portable",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe --snowdesktop-autostart-owner=packaged",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe --snowdesktop-autostart",
         ExistingLaunchAction::ExitNewInstance, false);
     launch(L"SnowDesktop.exe",
         ExistingLaunchAction::PromptVersionConflict, false);

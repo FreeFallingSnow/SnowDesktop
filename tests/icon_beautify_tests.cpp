@@ -1,4 +1,5 @@
 #include "icons/icon_beautify.h"
+#include "icons/icon_beautify_preview.h"
 
 #include <algorithm>
 #include <array>
@@ -6,7 +7,10 @@
 #include <cstdint>
 #include <iostream>
 #include <set>
+#include <utility>
 #include <vector>
+
+int RunIconAppearanceTests();
 
 namespace beautify = snowdesktop::icon_beautify;
 
@@ -142,13 +146,14 @@ int main()
         previous.mode = 1;
         previous.contentScale = .79f;
         const auto loaded = beautify::ResolvePersistedSettings(previous, true);
+        auto refreshed = beautify::MakePreset(preset); refreshed.mode = previous.mode;
         Check(beautify::Equal(loaded, preset == IconBeautifyPreset::Custom
-                ? previous : beautify::MakePreset(preset)),
+                ? previous : refreshed),
             "explicit built-in icon presets refresh while custom parameters survive loading");
         if (preset != IconBeautifyPreset::None && preset != IconBeautifyPreset::Custom)
         {
             previous.enabled = false;
-            auto expected = beautify::MakePreset(preset); expected.enabled = false;
+            auto expected = beautify::MakePreset(preset); expected.enabled = false; expected.mode = previous.mode;
             Check(beautify::Equal(beautify::ResolvePersistedSettings(previous, true), expected),
                 "refreshing an icon recipe does not re-enable disabled beautification");
         }
@@ -265,7 +270,7 @@ int main()
     invalid.filterStrength = 2.0f;
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
     Check(normalized.preset == IconBeautifyPreset::Custom &&
-        normalized.mode == 1 && normalized.contentScale == 0.50f &&
+        normalized.mode == 2 && normalized.contentScale == 0.50f &&
         normalized.outlineWidth == 4.0f && normalized.outlineOpacity == 0.0f &&
         normalized.shadowStrength == 1.0f &&
         normalized.shape == IconBeautifyShape::LegacyRounded &&
@@ -294,6 +299,58 @@ int main()
     const auto source = TestIcon(64);
     Check(beautify::Render(source, 64, 64, defaults) == source,
         "disabled beautification returns source pixels unchanged");
+
+    // Production upload and the independent editor both prepare the same
+    // canvas before rendering. A video thumbnail must not turn a selected
+    // circular/square outline into an ellipse/horizontal pill.
+    for (const auto dimensions : {std::pair{6, 1}, std::pair{1, 6}, std::pair{6, 6}})
+    {
+        auto pixels = std::vector<std::uint32_t>(static_cast<size_t>(dimensions.first) * dimensions.second, 0xfff9f9f9);
+        int width = dimensions.first, height = dimensions.second;
+        Check(beautify::PrepareCanvas(pixels, width, height, true) && width == 64 && height == 64,
+            "tiny image thumbnails use a full-resolution square theme canvas instead of magnifying a few background pixels");
+        const auto visible = std::count(pixels.begin(), pixels.end(), 0xfff9f9f9u);
+        const int expectedShortEdge = static_cast<int>(std::lround(64.0 / (dimensions.first == dimensions.second ? 1 : 6)));
+        Check(visible == 64 * expectedShortEdge,
+            "upscaling a tiny source preserves its aspect ratio and original opaque color");
+    }
+    for (const bool portrait : {false, true})
+    {
+        const int originalW = portrait ? 40 : 96, originalH = portrait ? 96 : 40;
+        const std::vector<std::uint32_t> thumbnail(static_cast<size_t>(originalW) * originalH, 0xffff0000);
+        auto unchanged = thumbnail; int rawW = originalW, rawH = originalH;
+        Check(beautify::PrepareCanvas(unchanged, rawW, rawH, false) && unchanged == thumbnail && rawW == originalW && rawH == originalH,
+            "turning beautification off preserves the original thumbnail dimensions and pixels");
+        for (int mode : {0, 1, 2}) for (const auto shape : shapes)
+        {
+            auto prepared = thumbnail; int width = originalW, height = originalH;
+            Check(beautify::PrepareCanvas(prepared, width, height, true) && width == 96 && height == 96,
+                "all processing modes and chosen shapes use a square canvas for non-square sources");
+            auto style = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+            style.mode = mode; style.shape = shape; style.backgroundSource = 0;
+            style.glassEnabled = false; style.outlineEnabled = false; style.shadowStrength = 0;
+            style.textureHighlightStrength = 0; style.textureShadeStrength = 0; style.textureEdgeHighlight = false;
+            style.backgroundStartR = style.backgroundEndR = 0;
+            style.backgroundStartG = style.backgroundEndG = 0;
+            style.backgroundStartB = style.backgroundEndB = 1;
+            style.backgroundOpacity = 1; style.gradientEnabled = false;
+            const auto rendered = beautify::Render(prepared, width, height, style);
+            int left = width, right = -1, top = height, bottom = -1;
+            int redLeft = width, redRight = -1, redTop = height, redBottom = -1;
+            for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
+            {
+                const auto pixel = rendered[static_cast<size_t>(y) * width + x];
+                if ((pixel >> 24) > 32) { left = std::min(left, x); right = std::max(right, x); top = std::min(top, y); bottom = std::max(bottom, y); }
+                if (((pixel >> 16) & 255) > 200 && (pixel & 255) < 30)
+                { redLeft = std::min(redLeft, x); redRight = std::max(redRight, x); redTop = std::min(redTop, y); redBottom = std::max(redBottom, y); }
+            }
+            Check(std::abs((right - left) - (bottom - top)) <= 2,
+                "the visible chosen outline keeps equal width and height for horizontal and vertical thumbnails");
+            const double redRatio = double(redRight - redLeft + 1) / std::max(1, redBottom - redTop + 1);
+            Check(redRight >= redLeft && std::abs(redRatio - double(originalW) / originalH) < .13,
+                "thumbnail content keeps its original aspect ratio inside the chosen outline");
+        }
+    }
 
     IconBeautifySettings settings = defaults;
     settings.enabled = true;
@@ -435,6 +492,37 @@ int main()
     Check(!beautify::Equal(glass, changedGlass) &&
         beautify::IdentifyPreset(changedGlass) == IconBeautifyPreset::Custom,
         "editing blur creates a custom preset rather than losing the change");
+    {
+        auto style = glass;
+        style.preset = IconBeautifyPreset::Custom; style.mode = 1;
+        style.backgroundOpacity = 0; style.shadowStrength = 0;
+        style.edgeHighlightWidth = 4; style.edgeHighlightStrength = 1;
+        style.edgeLight.outerGlow = 3;
+        const auto highSource = TestIcon(256);
+        const auto reference = beautify::RenderEdgeReflection(64, 64, style);
+        const auto supersampled = beautify::RenderPreview(highSource, 256, 256, style, {}, 4);
+        const auto unscaled = beautify::Render(highSource, 256, 256, style);
+        unsigned maximum = 0, scaledError = 0, unscaledError = 0;
+        const auto averageAlpha = [](const auto& pixels, int x, int y) {
+            unsigned sum = 0;
+            for (int dy = 0; dy < 4; ++dy) for (int dx = 0; dx < 4; ++dx)
+                sum += pixels[(y * 4 + dy) * 256 + x * 4 + dx] >> 24;
+            return static_cast<int>((sum + 8) / 16);
+        };
+        // This uncovered top band isolates the reflection. The ordinary 256px
+        // render is the reported negative control: its 3px support is unscaled.
+        for (int y = 1; y < 6; ++y) for (int x = 24; x < 40; ++x)
+        {
+            const int expected = static_cast<int>(reference[y * 64 + x] >> 24);
+            const auto error = static_cast<unsigned>(std::abs(averageAlpha(supersampled, x, y) - expected));
+            scaledError += error; maximum = std::max(maximum, error);
+            unscaledError += static_cast<unsigned>(std::abs(averageAlpha(unscaled, x, y) - expected));
+        }
+        std::cout << "Supersampled rim: maximum alpha difference=" << maximum << ", error=" << scaledError
+            << ", ordinary high-resolution error=" << unscaledError << '\n';
+        Check(maximum <= 12 && unscaledError > scaledError * 4 + 200,
+            "supersampling preserves the native rim profile and rejects unscaled fixed support");
+    }
     for (IconBeautifyShape shape : shapes)
     {
         auto style = glass; style.shape = shape;
@@ -466,6 +554,65 @@ int main()
         preservedPlate != unlitPlate,
         "smart glass preserves the opaque native plate color while adding its edge reflection");
 
+    {
+        IconBeautifySettings style;
+        style.enabled = true; style.preset = IconBeautifyPreset::Custom; style.mode = 1;
+        style.shape = IconBeautifyShape::ContinuousRounded;
+        style.backgroundOpacity = 1; style.shadowStrength = 0;
+        style.backgroundGradient = {true, 0, 0, 1, {{0, 0xff0000, 1}, {.5, 0x00ff00, 1}, {1, 0x0000ff, 1}}};
+        const auto icon = TestIcon(64);
+        const auto gradient = beautify::Render(icon, 64, 64, style);
+        const auto middle = gradient[8 * 64 + 32];
+        Check(((middle >> 8) & 255) > 245 && ((middle >> 16) & 255) < 10 && (middle & 255) < 10,
+            "multi-stop background reaches its middle color away from the foreground");
+        style.backgroundGradient.stops = {{0, 0xff0000, 0}, {1, 0x0000ff, 1}};
+        const auto fade = beautify::Render(icon, 64, 64, style)[8 * 64 + 32];
+        Check((fade >> 24) >= 125 && (fade >> 24) <= 132 && ((fade >> 16) & 255) == 0 &&
+            (fade & 255) == (fade >> 24), "transparent gradient endpoints do not introduce a dark or red fringe");
+        style.backgroundGradient.enabled = false;
+        Check(beautify::BackgroundGradient(style).stops == style.backgroundGradient.stops,
+            "turning a gradient off retains its edited stops for the next enable");
+        style.backgroundStartR = 1; style.backgroundStartG = style.backgroundStartB = 0;
+        const std::vector<std::uint32_t> green(64 * 64, 0xff00bb55);
+        const auto shrink = beautify::Render(green, 64, 64, style, beautify::EdgeColor{0, 187, 85});
+        Check(shrink[8 * 64 + 32] == 0xffff0000,
+            "shrink-all strategy honors the theme background even if a caller supplies a detected plate");
+        style.backgroundSource = 2;
+        auto redIcon = icon, blueIcon = icon;
+        for (auto& pixel : redIcon) if (pixel >> 24) pixel = 0xffe03020;
+        for (auto& pixel : blueIcon) if (pixel >> 24) pixel = 0xff2050e0;
+        const auto red = beautify::Render(redIcon, 64, 64, style)[8 * 64 + 32];
+        const auto blue = beautify::Render(blueIcon, 64, 64, style)[8 * 64 + 32];
+        Check(((red >> 16) & 255) > (red & 255) + 100 && (blue & 255) > ((blue >> 16) & 255) + 100,
+            "one accent-based theme resolves distinct colors for distinct source icons");
+        style.backgroundSource = 1;
+        const auto plate = beautify::Render(green, 64, 64, style)[8 * 64 + 32];
+        Check(plate == 0xff00bb55, "original-background source preserves an opaque source plate color");
+
+        style.mode = 0; style.filterEnabled = true; style.filterMode = 1; style.filterStrength = 1;
+        style.filterTintR = .1f; style.filterTintG = .45f; style.filterTintB = 1;
+        std::vector<std::uint32_t> tones(64 * 64);
+        for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x)
+            tones[static_cast<std::size_t>(y) * 64 + x] = x < 24 ? 0xff000000 : x < 40 ? 0xff808080 : 0xffffffff;
+        const auto colored = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
+        const auto gray = colored[32 * 64 + 32];
+        const double luminosity = ((gray >> 16) & 255) * .299 + ((gray >> 8) & 255) * .587 + (gray & 255) * .114;
+        Check(colored[32 * 64 + 16] == 0xff000000 && colored[32 * 64 + 48] == 0xffffffff &&
+            std::abs(luminosity - 128) < 1, "tonal coloring preserves black, white and midtone luminosity");
+        style.filterMode = 2;
+        const auto duotone = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
+        const auto dark = duotone[32 * 64 + 16], mid = duotone[32 * 64 + 32], light = duotone[32 * 64 + 48];
+        Check((dark & 255) < (mid & 255) && (mid & 255) < (light & 255) &&
+            ((dark >> 16) & 255) < ((mid >> 16) & 255) && ((mid >> 16) & 255) < ((light >> 16) & 255) &&
+            (dark & 255) > ((dark >> 16) & 255) && (light >> 24) == 255,
+            "duotone retains luminosity structure and opacity inside an opaque app-icon plate");
+        auto builtIn = beautify::MakePreset(IconBeautifyPreset::FrostedGlass); builtIn.mode = 1;
+        Check(beautify::ResolvePersistedSettings(builtIn, true).mode == 1 &&
+            beautify::IdentifyPreset(builtIn) == IconBeautifyPreset::FrostedGlass,
+            "built-in preset detection and layout reload preserve the separate processing strategy");
+    }
+
+    failures += RunIconAppearanceTests();
     if (failures != 0)
     {
         std::cerr << failures << " icon beautify test(s) failed\n";

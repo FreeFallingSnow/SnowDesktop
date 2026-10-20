@@ -1,3 +1,4 @@
+#include "json_string.h"
 /**
  * @file utils.cpp
  * @brief 杂项工具函数实现
@@ -12,6 +13,7 @@
 #include "resources/resource.h"
 #include "data/data_paths.h"
 #include "desktop/desktop_window_discovery_rules.h"
+#include "desktop/explorer_icon_visibility.h"
 #include "icons/icon_render_rules.h"
 #include "shell/shortcut_application_rules.h"
 #include "icons/shortcut_icon_resource.h"
@@ -365,22 +367,6 @@ IDWriteTextFormat* CreateFluentTextFormat(
 // ============================================================================
 
 /**
- * @brief 请求 Explorer 创建承载软件桌面的 WorkerW 窗口。
- *
- * 0x052C 是 Explorer 的未公开消息。重复发送可能重排 WorkerW，并让动态壁纸
- * 将桌面宿主变化误判为显示拓扑变化，因此只允许在启动或 Explorer 确认重建后调用。
- */
-bool EnsureDesktopWorkerWindow()
-{
-    const HWND progman = FindWindowW(L"Progman", nullptr);
-    if (!progman)
-        return true;
-    DWORD_PTR unused = 0;
-    return SendMessageTimeoutW(progman, 0x052C, 0, 0,
-        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1000, &unused) != 0;
-}
-
-/**
  * @brief 只读查找桌面窗口及其子窗口（Progman、DefView、ListView）。
  *
  * 如果在 Progman 下未找到 DefView，则通过 EnumWindows 全局查找。该函数不会
@@ -449,12 +435,9 @@ DesktopWindows FindDesktopWindows()
  */
 void RestoreExplorerIconLayerNow()
 {
-    DesktopWindows windows = FindDesktopWindows();
-    if (windows.listView != nullptr && IsWindow(windows.listView))
-    {
-        ShowWindow(windows.listView, SW_SHOW);
-        RemovePropW(windows.listView, kHiddenBySnowDesktopProp);
-    }
+    snowdesktop::ExplorerIconVisibility visibility;
+    visibility.RequestRestore(true);
+    visibility.RestoreWhenReady([] { return FindDesktopWindows().listView; });
 }
 
 // ============================================================================
@@ -1626,41 +1609,14 @@ std::wstring Utf8ToWide(const std::string& value)
 /**
  * @brief 对宽字符串进行 JSON 转义，输出 UTF-8 格式字符串。
  *
- * 转义特殊字符：反斜杠、双引号、换行符、回车符、制表符。
+ * 转义反斜杠、双引号及所有 JSON 控制字符。
  *
  * @param value 要转义的原始宽字符串。
  * @return JSON 安全转义后的 UTF-8 字符串。
  */
 std::string JsonEscapeUtf8(const std::wstring& value)
 {
-    std::string input = WideToUtf8(value);
-    std::string output;
-    output.reserve(input.size() + 16);
-    for (unsigned char ch : input)
-    {
-        switch (ch)
-        {
-        case '\\':
-            output += "\\\\";
-            break;
-        case '"':
-            output += "\\\"";
-            break;
-        case '\n':
-            output += "\\n";
-            break;
-        case '\r':
-            output += "\\r";
-            break;
-        case '\t':
-            output += "\\t";
-            break;
-        default:
-            output.push_back(static_cast<char>(ch));
-            break;
-        }
-    }
-    return output;
+    return snowdesktop::json::EscapeString(WideToUtf8(value));
 }
 
 /**

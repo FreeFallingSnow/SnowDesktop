@@ -81,6 +81,14 @@ DataSubscriptionResult WidgetDataBroker::Subscribe(
             options.eventId.find('\0') != std::string::npos ||
             !options.rangeStart.empty() || !options.rangeEnd.empty()))
         return { 0, "eventId requires calendar.events without a date range" };
+    if (options.calendarQuery)
+    {
+        std::string error;
+        if (topic != "calendar.events" || !options.eventId.empty())
+            return { 0, "query pagination requires calendar.events without eventId" };
+        if (!ValidateCalendarEventQuery(*options.calendarQuery, error))
+            return { 0, std::move(error) };
+    }
     if (topic == "audio.output.analysis" &&
         (!(options.audioWaveform || options.audioSpectrum ||
                 options.audioRms || options.audioPeak) ||

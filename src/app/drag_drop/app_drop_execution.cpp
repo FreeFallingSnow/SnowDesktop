@@ -1,6 +1,7 @@
 #include "app/app.h"
-#include "pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/widget_group_drop.h"
 #include "layout/folder_self_drop_rules.h"
 #include "layout/item_location.h"
 #include "layout/category_collection_rules.h"
@@ -8,6 +9,11 @@
 #include "drag_drop/empty_group_drop_rules.h"
 #include "shell/shortcut_category_target.h"
 #include "drag_drop/drop_staging.h"
+#include "drag_drop/file_backed_drop_request.h"
+#include "drag_drop/desktop_file_materialization.h"
+#include "drag_drop/file_drop_execution.h"
+#include "drag_drop/drop_pipeline.h"
+#include "drag_drop/internal_desktop_drop.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -15,33 +21,7 @@ bool DesktopApp::IsSelfContainedFolderDrop(
     const std::vector<std::wstring>& sourcePaths,
     const std::wstring& targetFolder) const
 {
-    if (sourcePaths.empty() || targetFolder.empty())
-        return false;
-
-    std::vector<std::wstring> candidates;
-    candidates.reserve(sourcePaths.size() * 2);
-    for (const auto& path : sourcePaths)
-    {
-        if (path.empty())
-            continue;
-        candidates.push_back(path);
-        // 仅对 .lnk 源做目标解析（普通目录直接用原路径比较），
-        // 避免每次拖拽悬停都创建 IShellLink COM 对象。
-        const wchar_t* extension =
-            PathFindExtensionW(path.c_str());
-        if (extension &&
-            _wcsicmp(extension, L".lnk") == 0)
-        {
-            const snowdesktop::item_location::FolderTarget resolved =
-                snowdesktop::item_location::
-                    ResolveFolderTarget(path);
-            if (!resolved.path.empty())
-                candidates.push_back(
-                    resolved.path);
-        }
-    }
-    return snowdesktop::folder_self_drop_rules::
-        IsSelfContainedFolderDrop(candidates, targetFolder);
+    return snowdesktop::desktop_file_materialization::IsSelfContainedFolderDrop(sourcePaths, targetFolder);
 }
 
 bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
@@ -50,56 +30,32 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
-    DropPreviewList preview = requestedPreview;
-    bool convertedGroup = false;
-    std::unique_ptr<Widget> convertedView;
-    const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
-        [](const DragSourceEntry& entry) { return entry.fromDock; });
-    if (sourceList.Empty()) return false;
-    auto runtimeContainerIsLive = [&](Container* candidate) {
+    snowdesktop::drop_pipeline::Services services;
+    services.runtimeLive = [this](Container* candidate) {
         if (!candidate || candidate == dockFolderPopupContainer_.get()) return true;
         for (const auto& container : containers_)
         {
             if (container.get() == candidate) return true;
-            if (auto* group = dynamic_cast<FileGroup*>(container.get());
-                group && group->GetActiveSourceContainer() == candidate) return true;
+            if (auto* group = dynamic_cast<FileGroup*>(container.get()))
+            {
+                // A direct drop on an inactive source tab is valid. Compare
+                // against current hosted owners without dereferencing a
+                // possibly retired candidate pointer.
+                if (const auto* data = group->GetWidgetData())
+                    for (const auto& id : data->childWidgetIds)
+                        if (group->GetSourceContainerById(id) == candidate) return true;
+            }
         }
         return false;
     };
-    auto containsPrograms = [&] {
-        const auto extensions = GetProgramCategoryExtensions(categorySettings_);
-        return std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) {
-                    const size_t index = FindItemIndexByKey(entry.desktopKey);
-                    if (index < items_.size() &&
-                        snowdesktop::category_collection_rules::IsDesktopNamespaceProgram(items_[index]))
-                        return true;
-                    const bool application = index < items_.size() && items_[index].isApplicationShortcut;
-                    const auto& path = entry.filePath.empty() ? entry.displayName : entry.filePath;
-                    const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
-                    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-                        return false;
-                    const auto target = index < items_.size() && items_[index].shortcutTarget.classified
-                        ? items_[index].shortcutTarget
-                        : snowdesktop::category_collection_rules::ReadShortcutTarget(path);
-                    if (index < items_.size() && target.classified)
-                    {
-                        items_[index].shortcutTarget = target;
-                        items_[index].isApplicationShortcut =
-                            snowdesktop::category_collection_rules::IsProgramItem(
-                                ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, target);
-                    }
-                    return snowdesktop::category_collection_rules::IsProgramItem(
-                        ToUpperInvariant(PathFindExtensionW(path.c_str())), application, extensions, target);
-                });
+    services.containsPrograms = [this](const DragSourceList& sources) {
+        return snowdesktop::drop_pipeline::ContainsPrograms(sources,
+            GetProgramCategoryExtensions(categorySettings_), [this](const auto& key) -> DesktopItem* {
+                const auto index = FindItemIndexByKey(key);
+                return index < items_.size() ? &items_[index] : nullptr;
+            }, ToUpperInvariant);
     };
-    if (!preview.Empty() && preview.targetWidget &&
-        !sourceList.hasWidgets && !sourceList.hasCollectionGroupEntries && !sourceList.hasFileGroupEntries &&
-        snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
-    {
-        const auto id = preview.targetWidget->id;
-        const auto oldType = preview.targetWidget->type;
-        const bool programs = containsPrograms();
+    services.confirmConversion = [this](bool programs) {
         const TASKDIALOG_BUTTON buttons[] = {
             {IDYES, _LW("widget.group.convert_continue")}, {IDCANCEL, _LW("app.settings.cancel")}};
         TASKDIALOGCONFIG dialog{};
@@ -114,151 +70,75 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         dialog.cButtons = static_cast<UINT>(std::size(buttons));
         dialog.nDefaultButton = IDCANCEL;
         int selected = IDCANCEL;
-        if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) || selected != IDYES)
-            return false;
-        const size_t index = FindWidgetIndexById(id);
-        if (exitRequested_ || index >= widgets_.size() || &widgets_[index] != preview.targetWidget ||
-            widgets_[index].type != oldType || !runtimeContainerIsLive(sourceList.origin) ||
-            !runtimeContainerIsLive(preview.targetContainer)) return false;
-        if (!snowdesktop::empty_group_drop_rules::Convert(widgets_[index], widgets_, programs,
-                programs ? _LW("widget.collection") : _LW("widget.desktop_files"))) return false;
-        convertedGroup = true;
-        convertedView = CreateWidget(preview.targetWidget, this);
-        preview.targetContainer = dynamic_cast<WidgetContainer*>(convertedView.get());
-        SaveLayoutSlots();
-    }
-    if (preview.targetWidget &&
-        preview.targetWidget->type == DesktopWidgetType::FileCategories &&
-        !categorySettings_.collectProgramsEnabled)
-    {
-        const bool needsPrograms = containsPrograms();
-        if (needsPrograms)
-        {
-            // Show the decision only at commit; hovering never changes settings.
-            const std::wstring targetId = preview.targetWidget->id;
-            const TASKDIALOG_BUTTON buttons[] = {
-                {IDYES, _LW("app.settings.widgets_enable")}, {IDCANCEL, _LW("app.settings.cancel")}};
-            TASKDIALOGCONFIG dialog{};
-            dialog.cbSize = sizeof(dialog);
-            dialog.hwndParent = controlHwnd_ ? controlHwnd_ : hwnd_;
-            dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
-            dialog.pszWindowTitle = L"SnowDesktop";
-            dialog.pszMainInstruction = _LW("app.settings.collect_programs_confirm_title");
-            dialog.pszContent = _LW("app.settings.collect_programs_confirm_message");
-            dialog.pButtons = buttons;
-            dialog.cButtons = static_cast<UINT>(std::size(buttons));
-            dialog.nDefaultButton = IDCANCEL;
-            int selected = IDCANCEL;
-            if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) ||
-                selected != IDYES) return false;
-            const size_t currentTarget = FindWidgetIndexById(targetId);
-            if (exitRequested_ || currentTarget >= widgets_.size() ||
-                &widgets_[currentTarget] != preview.targetWidget ||
-                !runtimeContainerIsLive(sourceList.origin) || !runtimeContainerIsLive(preview.targetContainer)) return false;
-            CategorySettings enabled = categorySettings_;
-            enabled.collectProgramsEnabled = true;
-            if (!SaveCategorySettings(GetCategorySettingsPath().c_str(), enabled)) return false;
-            categorySettings_ = enabled;
-            // Do not flush an unrelated category editor draft while enabling.
-            if (settingsController_)
-            {
-                const auto reloaded = settingsController_->Reload(
-                    snowdesktop::SettingsReloadPolicy::PreservePendingChanges);
-                if (!reloaded.Succeeded() && reloaded.status != snowdesktop::SettingsActionStatus::Busy)
-                {
-                    const std::wstring message = L"Program collection setting saved, but settings reload failed: " +
-                        reloaded.message;
-                    WriteDiagnosticLogEntry(message.c_str());
-                }
-                if (!reloaded.Succeeded())
-                    if (const auto snapshot = settingsController_->Snapshot();
-                        snapshot && !snapshot->values.category.collectProgramsEnabled)
-                    {
-                        auto draft = snapshot->values.category;
-                        draft.collectProgramsEnabled = true;
-                        settingsController_->UpdateCategory(std::move(draft), snowdesktop::SettingsUpdateMode::Draft);
-                    }
-            }
-            for (auto& container : containers_)
-            {
-                if (auto* categories = dynamic_cast<FileCategories*>(container.get()))
-                    categories->InvalidateCategoryCache();
-                else if (auto* group = dynamic_cast<FileGroup*>(container.get()))
-                    group->InvalidateHostedView();
-            }
-        }
-    }
-    // A completely full desktop produces no visible landing preview. File
-    // drops must still be materialized; ReloadItems will allocate virtual
-    // overflow pages for the newly created desktop entries.
-    if (preview.Empty() &&
-        !(preview.fileBacked && preview.targetKind == DropTargetKind::Desktop))
-        return false;
-    if (preview.targetKind == DropTargetKind::Desktop &&
-        preview.action == DropAction::Move &&
-        IsAutoCollectFileCategorySource(sourceList))
-        return false;
-    std::unordered_set<std::wstring> movedDockEntries;
-    if ((preview.action == DropAction::Move ||
-         preview.consumeDockSource) && sourceFromDock)
-    {
-        for (const auto& entry : sourceList.entries)
-            if (entry.fromDock && !entry.dockReference.empty())
-                movedDockEntries.insert(
-                    std::to_wstring(static_cast<int>(entry.dockEntryType)) +
-                    L":" + ToUpperInvariant(entry.dockReference));
-    }
-
-    auto finish = [this, convertedGroup,
-        movedDockEntries = std::move(movedDockEntries),
-        completion = std::move(completion)](bool succeeded) mutable {
-        if (succeeded && !movedDockEntries.empty())
-        {
-            const size_t previousSize = dockEntries_.size();
-            std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-                const std::wstring key =
-                    std::to_wstring(static_cast<int>(entry.type)) +
-                    L":" + ToUpperInvariant(entry.reference);
-                return movedDockEntries.contains(key);
-            });
-            RefreshCollectedKeysCache();
-            if (dockEntries_.size() != previousSize)
-            {
-                SaveLayoutSlots();
-                RebuildContainersAndItems();
-                LayoutItems();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            }
-        }
-        if (convertedGroup)
-        {
-            LayoutItems();
-            SaveLayoutSlots();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        if (completion)
-            completion(succeeded);
+        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
     };
-
-    if (preview.fileBacked)
-    {
-        const bool queued = ExecuteFileBackedDropPlan(
-            sourceList, preview, std::move(finish),
-            executeSynchronously, std::move(result));
-        // The asynchronous operation already captured IDs and values. Replace
-        // the empty group view now without retaining any temporary container.
-        if (convertedGroup && queued && !executeSynchronously)
+    services.confirmPrograms = [this] {
+        const TASKDIALOG_BUTTON buttons[] = {
+            {IDYES, _LW("app.settings.widgets_enable")}, {IDCANCEL, _LW("app.settings.cancel")}};
+        TASKDIALOGCONFIG dialog{};
+        dialog.cbSize = sizeof(dialog);
+        dialog.hwndParent = controlHwnd_ ? controlHwnd_ : hwnd_;
+        dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+        dialog.pszWindowTitle = L"SnowDesktop";
+        dialog.pszMainInstruction = _LW("app.settings.collect_programs_confirm_title");
+        dialog.pszContent = _LW("app.settings.collect_programs_confirm_message");
+        dialog.pButtons = buttons;
+        dialog.cButtons = static_cast<UINT>(std::size(buttons));
+        dialog.nDefaultButton = IDCANCEL;
+        int selected = IDCANCEL;
+        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+    };
+    services.exiting = [this] { return exitRequested_; };
+    services.createConvertedView = [this](DesktopWidget* widget) {
+        std::shared_ptr<Widget> view(CreateWidget(widget, this));
+        return snowdesktop::drop_pipeline::ConvertedView{view, dynamic_cast<WidgetContainer*>(view.get())};
+    };
+    services.saveLayout = [this] { SaveLayoutSlots(); };
+    services.convertedLayout = [this] { LayoutItems(); SaveLayoutSlots(); InvalidateRect(hwnd_, nullptr, FALSE); };
+    services.programsEnabled = [this] { return categorySettings_.collectProgramsEnabled; };
+    services.enablePrograms = [this] {
+        CategorySettings enabled = categorySettings_;
+        enabled.collectProgramsEnabled = true;
+        if (!SaveCategorySettings(GetCategorySettingsPath().c_str(), enabled)) return false;
+        categorySettings_ = enabled;
+        // Preserve an unrelated category editor draft while enabling collection.
+        if (settingsController_)
         {
-            LayoutItems();
-            SaveLayoutSlots();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            const auto reloaded = settingsController_->Reload(snowdesktop::SettingsReloadPolicy::PreservePendingChanges);
+            if (!reloaded.Succeeded() && reloaded.status != snowdesktop::SettingsActionStatus::Busy)
+            {
+                const std::wstring message = L"Program collection setting saved, but settings reload failed: " + reloaded.message;
+                WriteDiagnosticLogEntry(message.c_str());
+            }
+            if (!reloaded.Succeeded())
+                if (const auto snapshot = settingsController_->Snapshot(); snapshot && !snapshot->values.category.collectProgramsEnabled)
+                {
+                    auto draft = snapshot->values.category;
+                    draft.collectProgramsEnabled = true;
+                    settingsController_->UpdateCategory(std::move(draft), snowdesktop::SettingsUpdateMode::Draft);
+                }
         }
-        return queued;
-    }
-
-    const bool executed = ExecuteInternalDropPlan(sourceList, preview);
-    finish(executed);
-    return executed;
+        for (auto& container : containers_)
+        {
+            if (auto* categories = dynamic_cast<FileCategories*>(container.get())) categories->InvalidateCategoryCache();
+            else if (auto* group = dynamic_cast<FileGroup*>(container.get())) group->InvalidateHostedView();
+        }
+        return true;
+    };
+    services.autoCollectSource = [this](const auto& sources) { return IsAutoCollectFileCategorySource(sources); };
+    services.normalize = ToUpperInvariant;
+    services.refreshCollectedKeys = [this] { RefreshCollectedKeysCache(); };
+    services.dockChanged = [this] {
+        SaveLayoutSlots(); RebuildContainersAndItems(); LayoutItems(); InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+    services.files = [this](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
+        return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs));
+    };
+    services.internal = [this](const auto& sources, const auto& preview) { return ExecuteInternalDropPlan(sources, preview); };
+    services.collectionTitle = _LW("widget.collection");
+    services.filesTitle = _LW("widget.desktop_files");
+    return snowdesktop::drop_pipeline::Execute(sourceList, requestedPreview, widgets_, dockEntries_, services,
+        std::move(completion), executeSynchronously, std::move(result));
 }
 
 /**
@@ -285,49 +165,30 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (sourceList.hasCollectionGroupEntries ||
             sourceList.hasFileGroupEntries)
         {
-            bool changed = false;
-            for (const auto& landing : preview.landings)
-            {
-                auto it = std::find_if(sourceList.entries.begin(),
-                    sourceList.entries.end(),
-                    [&](const DragSourceEntry& entry) {
-                        return entry.sourceIndex == landing.sourceIndex;
-                    });
-                if (it == sourceList.entries.end() ||
-                    it->widgetId.empty())
-                    continue;
-                changed =
-                    (sourceList.hasCollectionGroupEntries
-                        ? ReleaseCollectionFromGroup(
-                            it->widgetId, landing.cell)
-                        : ReleaseWidgetFromFileGroup(
-                            it->widgetId, landing.cell)) ||
-                    changed;
-            }
-            return changed;
+            return snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
+                [this](const auto& id, GridCell cell, bool collection) {
+                    return collection ? ReleaseCollectionFromGroup(id, cell) : ReleaseWidgetFromFileGroup(id, cell);
+                });
         }
-        RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
-        bool changed = false;
-        for (const auto& landing : preview.landings)
-        {
-            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (it == sourceList.entries.end() || it->desktopIndex >= items_.size()) continue;
-            items_[it->desktopIndex].gridCell = landing.cell;
-            items_[it->desktopIndex].slot = SlotFromCell(gridPages_, landing.cell);
-            changed = true;
-        }
-        if (changed)
-        {
+        snowdesktop::internal_desktop_drop::Services services;
+        services.removeKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
+        services.findWidget = [this](const auto& id) { return FindWidgetIndexById(id); };
+        services.findItem = [this](const auto& key) { return FindItemIndexByKey(key); };
+        services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
+        services.prepareLayout = [this] {
             // Releasing existing items changes widget membership without a
             // Shell file event, so auto-collection must run at this boundary.
             ApplyAutoCollectFileCategoryWidgets();
             RefreshCollectedKeysCache();
+        };
+        services.mapPages = [this] { ApplyPageMapping(); };
+        services.committed = [this] {
             LayoutItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
-        }
-        return changed;
+        };
+        return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_,
+            {savedPageIds_, savedPageColumns_, savedPageRows_}, services);
     }
 
     if (preview.targetKind == DropTargetKind::KeyedWidget && preview.targetWidget)
@@ -376,68 +237,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
              preview.targetWidget->type ==
                 DesktopWidgetType::FileGroup))
         {
-            std::vector<std::wstring> movingIds;
-            for (const auto& entry : sourceList.entries)
-            {
-                const bool matchingEntry =
-                    sourceList.hasCollectionGroupEntries
-                        ? entry.kind ==
-                            DropSourceKind::CollectionGroupEntry
-                        : entry.kind ==
-                            DropSourceKind::FileGroupEntry;
-                if (matchingEntry &&
-                    !entry.widgetId.empty())
-                    movingIds.push_back(entry.widgetId);
-            }
-            if (movingIds.empty()) return false;
-
-            DesktopWidget& targetGroup =
-                *preview.targetWidget;
-            const std::wstring previousTargetActive =
-                targetGroup.activeCategoryId;
-            size_t removedBefore = 0;
-            for (const auto& id : movingIds)
-            {
-                auto it = std::find(
-                    targetGroup.childWidgetIds.begin(),
-                    targetGroup.childWidgetIds.end(), id);
-                if (it != targetGroup.childWidgetIds.end() &&
-                    static_cast<size_t>(std::distance(
-                        targetGroup.childWidgetIds.begin(), it)) <
-                        preview.insertIndex)
-                    ++removedBefore;
-            }
-
-            for (auto& widget : widgets_)
-            {
-                if (widget.type !=
-                    preview.targetWidget->type)
-                    continue;
-                for (const auto& id : movingIds)
-                {
-                    std::erase(widget.childWidgetIds, id);
-                    if (widget.activeCategoryId == id)
-                        widget.activeCategoryId =
-                            widget.childWidgetIds.empty()
-                                ? L""
-                                : widget.childWidgetIds.front();
-                }
-            }
-            size_t insertAt =
-                preview.insertIndex > removedBefore
-                    ? preview.insertIndex - removedBefore
-                    : 0;
-            insertAt = std::min(
-                insertAt, targetGroup.childWidgetIds.size());
-            targetGroup.childWidgetIds.insert(
-                targetGroup.childWidgetIds.begin() +
-                    static_cast<std::ptrdiff_t>(insertAt),
-                movingIds.begin(), movingIds.end());
-            targetGroup.activeCategoryId =
-                snowdesktop::collection_group_rules::
-                    ResolveActiveItem(
-                        targetGroup.childWidgetIds,
-                        previousTargetActive);
+            if (!snowdesktop::widget_group_drop::ApplyPlan(widgets_, dockEntries_, sourceList, preview)) return false;
             for (auto& container : containers_)
             {
                 if (auto* group =
@@ -449,6 +249,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                                  container.get()))
                     fileGroup->InvalidateHostedView();
             }
+            NormalizeDockRecycleBinPosition();
+            RefreshCollectedKeysCache();
             EnsureNavTabOrder();
             LayoutItems();
             SaveLayoutSlots();
@@ -462,7 +264,21 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 preview.targetWidget &&
             collectionGroupProxy->GetActiveCollectionId() ==
                 preview.targetWidget->id;
-        if (sourceList.origin == targetWidget &&
+        // A group exposes its active collection through a proxy, while the
+        // target can resolve to that child's own runtime container. Ownership
+        // still identifies a reorder; treating it as an incoming transfer
+        // loses the removal-before-insertion adjustment for middle drops.
+        const bool reorderActiveCollection =
+            sourceList.hasOriginWidget &&
+            sourceList.originWidgetType == DesktopWidgetType::CollectionGroup &&
+            preview.targetWidget->type == DesktopWidgetType::Collection &&
+            !sourceList.entries.empty() &&
+            std::all_of(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) {
+                    return entry.kind == DropSourceKind::DesktopIcon &&
+                        entry.widgetId == preview.targetWidget->id && !entry.desktopKey.empty();
+                });
+        if ((sourceList.origin == targetWidget || reorderActiveCollection) &&
             preview.action == DropAction::Move &&
             (!collectionGroupProxy ||
                 reorderInsideCollectionGroup))
@@ -565,7 +381,21 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 return true;
             }
 
-            std::vector<size_t> indices = sourceMemberIndices();
+            std::vector<size_t> indices;
+            if (reorderActiveCollection)
+            {
+                // Bind captured identities to current membership; a refresh
+                // may have changed indices since the drag began.
+                const auto& keys = preview.targetWidget->itemKeys;
+                std::unordered_set<std::wstring> movingKeys;
+                movingKeys.reserve(sourceList.entries.size());
+                for (const auto& entry : sourceList.entries)
+                    movingKeys.insert(ToUpperInvariant(entry.desktopKey));
+                for (size_t i = 0; i < keys.size(); ++i)
+                    if (movingKeys.contains(ToUpperInvariant(keys[i]))) indices.push_back(i);
+                if (indices.empty()) return false;
+            }
+            else indices = sourceMemberIndices();
             if (indices.empty())
                 indices = targetWidget->GetSelectedMemberIndices();
             targetWidget->ReorderMembers(indices, preview.insertIndex);
@@ -573,6 +403,9 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 dockFolderPopupContainer_.get())
                 CommitDockFolderPopupStateToSource();
             targetWidget->InvalidateSlots();
+            if (reorderActiveCollection)
+                if (auto* group = dynamic_cast<CollectionGroup*>(sourceList.origin))
+                    group->InvalidateFilterCache();
             return true;
         }
 
@@ -654,243 +487,25 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
-    std::vector<std::wstring> paths = sourceList.FilePaths();
-    if (paths.empty()) return false;
-    // A Dock link cannot point to an OLE scratch file that is about to expire.
-    if (action == DropAction::Link && std::any_of(paths.begin(), paths.end(),
-            snowdesktop::drop_staging::Contains)) action = DropAction::Copy;
-    if (createdPathsBySource)
-        createdPathsBySource->clear();
-
-    wchar_t desktopPathRaw[MAX_PATH]{};
-    if (!snowdesktop::desktop_source::CopyDirectory(desktopPathRaw))
-        return false;
-    std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
-
-    auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
-        return PathsEqualInsensitive(
-            std::filesystem::path(path).parent_path().wstring(), desktopPath);
+    wchar_t desktopPath[MAX_PATH]{};
+    if (!snowdesktop::desktop_source::CopyDirectory(desktopPath)) return false;
+    snowdesktop::desktop_file_materialization::Services services;
+    services.isStaging = snowdesktop::drop_staging::Contains;
+    services.pathsEqual = PathsEqualInsensitive;
+    services.normalize = ToUpperInvariant;
+    services.copyName = [](const std::wstring& stem, const std::wstring& ext, int index) {
+        return stem + (index <= 1 ? std::wstring(_LW("app.grid.copy_suffix")) :
+            index == 1000 ? std::wstring(_LW("app.grid.copy_suffix_1000")) :
+                _LFW("app.grid.copy_suffix_num", std::to_wstring(index))) + ext;
     };
-
-    std::unordered_set<std::wstring> reservedDestinations;
-    auto materializedPathReservations =
-        std::make_shared<std::vector<std::wstring>>();
-    auto makeUniqueCopyPath = [&](const std::wstring& path) {
-        const wchar_t* fileName = PathFindFileNameW(path.c_str());
-        DWORD attrs = GetFileAttributesW(path.c_str());
-        bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
-
-        std::wstring stem = fileName ? fileName : L"";
-        std::wstring ext;
-        if (!isDir)
-        {
-            wchar_t stemBuf[MAX_PATH]{};
-            wcscpy_s(stemBuf, stem.c_str());
-            PathRemoveExtensionW(stemBuf);
-            stem = stemBuf;
-            const wchar_t* extPtr = PathFindExtensionW(fileName);
-            ext = extPtr ? extPtr : L"";
-        }
-
-        for (int i = 1; i < 1000; ++i)
-        {
-            std::wstring name = i <= 1
-                    ? stem + _LW("app.grid.copy_suffix") + ext
-                : stem + _LFW("app.grid.copy_suffix_num", std::to_wstring(i)) + ext;
-            wchar_t dst[MAX_PATH]{};
-            PathCombineW(dst, desktopPath.c_str(), name.c_str());
-            const std::wstring candidate = dst;
-            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES &&
-                !reservedDestinations.contains(
-                    ToUpperInvariant(candidate)))
-            {
-                reservedDestinations.insert(
-                    ToUpperInvariant(candidate));
-                return std::wstring(dst);
-            }
-        }
-        wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath.c_str(), (stem + _LW("app.grid.copy_suffix_1000") + ext).c_str());
-        return std::wstring(fallback);
+    services.shortcutName = _LW("widget.shortcut");
+    services.enqueue = [this](auto request, auto done) {
+        return QueueShellFileOperation(std::move(request), std::move(done));
     };
-
-    auto makeUniqueShortcutPath = [&](const std::wstring& path) {
-        const wchar_t* fileName = PathFindFileNameW(path.c_str());
-        wchar_t stemBuf[MAX_PATH]{};
-        wcscpy_s(stemBuf, fileName ? fileName : L"");
-        PathRemoveExtensionW(stemBuf);
-        std::wstring stem = stemBuf[0] != L'\0' ? stemBuf : _LW("widget.shortcut");
-
-        for (int i = 1; i <= 10000; ++i)
-        {
-            std::wstring name = i <= 1
-                ? stem + L".lnk"
-                : stem + L" (" + std::to_wstring(i) + L").lnk";
-            wchar_t dst[MAX_PATH]{};
-            PathCombineW(dst, desktopPath.c_str(), name.c_str());
-            const std::wstring candidate = dst;
-            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES &&
-                !reservedDestinations.contains(
-                    ToUpperInvariant(candidate)) &&
-                pendingDesktopMaterializedPaths_.TryReserve(candidate))
-            {
-                reservedDestinations.insert(
-                    ToUpperInvariant(candidate));
-                materializedPathReservations->push_back(candidate);
-                return candidate;
-            }
-        }
-        return std::wstring{};
-    };
-
-    bool operated = false;
-    if (action == DropAction::Link)
-    {
-        snowdesktop::ShellFileOperationRequest request;
-    request.result = result;
-        for (const auto& source : sourceList.entries)
-        {
-            const auto& path = source.filePath;
-            if (path.empty()) continue;
-
-            std::wstring dst = makeUniqueShortcutPath(path);
-            if (dst.empty())
-                continue;
-            const auto folderTarget =
-                snowdesktop::item_location::
-                    ResolveFolderTarget(path);
-            if (folderTarget.kind ==
-                snowdesktop::item_location::
-                    FolderTargetKind::Shortcut)
-            {
-                // Preserve a folder shortcut as a shortcut file. Creating a
-                // new link whose target is the source .lnk produces a nested
-                // link that no longer classifies as a Dock folder.
-                request.exactFileCopies.push_back({ path, dst });
-            }
-            else
-            {
-                request.shortcuts.push_back({
-                    path, dst, desktopPath, true });
-            }
-            if (createdPathsBySource)
-                (*createdPathsBySource)[source.sourceIndex] = dst;
-        }
-        if (request.steps.empty() && request.exactFileCopies.empty() &&
-            request.shortcuts.empty())
-        {
-            pendingDesktopMaterializedPaths_.Release(
-                *materializedPathReservations);
-            return false;
-        }
-        if (executeSynchronously)
-        {
-            operated = snowdesktop::ShellFileOperationWorker::
-                Execute(request);
-            pendingDesktopMaterializedPaths_.Release(
-                *materializedPathReservations);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            auto reservationCompletion = [this,
-                materializedPathReservations,
-                completion = std::move(completion)](
-                    bool succeeded) mutable {
-                pendingDesktopMaterializedPaths_.Release(
-                    *materializedPathReservations);
-                if (completion)
-                    completion(succeeded);
-            };
-            operated = QueueShellFileOperation(
-                std::move(request),
-                std::move(reservationCompletion));
-            if (!operated)
-                pendingDesktopMaterializedPaths_.Release(
-                    *materializedPathReservations);
-        }
-    }
-    else if (action == DropAction::Copy)
-    {
-        std::vector<snowdesktop::ShellFileOperationStep> steps;
-        std::vector<std::wstring> normalCopies;
-        for (const auto& path : paths)
-        {
-            if (duplicateDesktopCopyNames && sameParentAsDesktop(path))
-            {
-                steps.push_back({
-                    FO_COPY,
-                    { path },
-                    makeUniqueCopyPath(path),
-                    static_cast<FILEOP_FLAGS>(
-                        FOF_NOCONFIRMATION |
-                        FOF_NOCONFIRMMKDIR |
-                        FOF_NOERRORUI |
-                        FOF_RENAMEONCOLLISION) });
-            }
-            else
-                normalCopies.push_back(path);
-        }
-        if (!normalCopies.empty())
-        {
-            steps.push_back({
-                FO_COPY,
-                std::move(normalCopies),
-                desktopPath,
-                static_cast<FILEOP_FLAGS>(
-                    FOF_NOCONFIRMATION |
-                    FOF_NOCONFIRMMKDIR |
-                    FOF_NOERRORUI |
-                    FOF_RENAMEONCOLLISION) });
-        }
-        if (executeSynchronously)
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.result = result;
-            request.steps = std::move(steps);
-            operated = snowdesktop::ShellFileOperationWorker::Execute(request);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.steps = std::move(steps);
-            request.result = result;
-            operated = QueueShellFileOperation(std::move(request), std::move(completion));
-        }
-    }
-    else
-    {
-        std::vector<snowdesktop::ShellFileOperationStep> steps;
-        steps.push_back({
-            FO_MOVE,
-            std::move(paths),
-            desktopPath,
-            static_cast<FILEOP_FLAGS>(
-                FOF_NOCONFIRMATION |
-                FOF_NOCONFIRMMKDIR |
-                FOF_NOERRORUI |
-                FOF_RENAMEONCOLLISION) });
-        if (executeSynchronously)
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.result = result;
-            request.steps = std::move(steps);
-            operated = snowdesktop::ShellFileOperationWorker::Execute(request);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.steps = std::move(steps);
-            request.result = result;
-            operated = QueueShellFileOperation(std::move(request), std::move(completion));
-        }
-    }
-    return operated;
+    return snowdesktop::desktop_file_materialization::Materialize(sourceList, action,
+        duplicateDesktopCopyNames, TrimTrailingPathSeparators(desktopPath),
+        pendingDesktopMaterializedPaths_, services, createdPathsBySource,
+        std::move(completion), executeSynchronously, std::move(result));
 }
 
 /**
@@ -906,89 +521,12 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
-    std::vector<std::wstring> paths = sourceList.FilePaths();
-    if (paths.empty() || folderPath.empty()) return false;
-    // 文件夹不能拖进它自身或其子目录：SHFileOperation 会成功地把
-    // 文件夹递归复制进自己（如 foo 拖入自身弹窗产生 foo\foo），
-    // 而 Explorer 会直接拒绝。这里统一拦截所有落地入口。
-    if (IsSelfContainedFolderDrop(paths, folderPath))
-        return false;
-
-    std::wstring folder = folderPath;
-    if (!folder.empty() && folder.back() != L'\\') folder += L'\\';
-
-    if (action == DropAction::Link)
-    {
-        std::unordered_set<std::wstring> reservedDestinations;
-        snowdesktop::ShellFileOperationRequest request;
-    request.result = result;
-        for (const auto& path : paths)
-        {
-            std::wstring name = PathFindFileNameW(path.c_str());
-            std::wstring stem = name;
-            if (stem.size() > 4 && _wcsicmp(stem.c_str() + stem.size() - 4, L".lnk") == 0)
-                stem = stem.substr(0, stem.size() - 4);
-
-            std::wstring linkPath;
-            bool reserved = false;
-            for (int i = 1; i <= 10000; ++i)
-            {
-                linkPath = folder + stem + (i == 1 ? L".lnk" : L" (" + std::to_wstring(i) + L").lnk");
-                const std::wstring key =
-                    ToUpperInvariant(linkPath);
-                if (GetFileAttributesW(linkPath.c_str()) ==
-                        INVALID_FILE_ATTRIBUTES &&
-                    !reservedDestinations.contains(key))
-                {
-                    reservedDestinations.insert(key);
-                    reserved = true;
-                    break;
-                }
-            }
-            if (!reserved)
-                continue;
-            request.shortcuts.push_back({
-                path, linkPath, folder });
-        }
-        if (request.shortcuts.empty())
-            return false;
-        if (!executeSynchronously)
-        {
-            return QueueShellFileOperation(
-                std::move(request), std::move(completion));
-        }
-        const bool succeeded =
-            snowdesktop::ShellFileOperationWorker::Execute(request);
-        if (completion)
-            completion(succeeded);
-        return succeeded;
-    }
-
-    std::vector<snowdesktop::ShellFileOperationStep> steps;
-    steps.push_back({
-        static_cast<UINT>(
-            action == DropAction::Move ? FO_MOVE : FO_COPY),
-        std::move(paths),
-        folder,
-        static_cast<FILEOP_FLAGS>(
-            FOF_NOCONFIRMATION |
-            FOF_NOERRORUI |
-            FOF_RENAMEONCOLLISION) });
-    if (!executeSynchronously)
-    {
-        snowdesktop::ShellFileOperationRequest request;
-        request.steps = std::move(steps);
-        request.result = result;
-        return QueueShellFileOperation(std::move(request), std::move(completion));
-    }
-    snowdesktop::ShellFileOperationRequest request;
-    request.result = result;
-    request.steps = std::move(steps);
-    const bool succeeded =
-        snowdesktop::ShellFileOperationWorker::Execute(request);
-    if (completion)
-        completion(succeeded);
-    return succeeded;
+    snowdesktop::desktop_file_materialization::Services services;
+    services.enqueue = [this](auto request, auto done) {
+        return QueueShellFileOperation(std::move(request), std::move(done));
+    };
+    return snowdesktop::desktop_file_materialization::MaterializeFolder(sourceList, folderPath,
+        action, services, std::move(completion), executeSynchronously, std::move(result));
 }
 
 /**
@@ -1002,39 +540,8 @@ PendingLandingCache DesktopApp::BuildPendingLandingCache(const DragSourceList& s
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
-    PendingLandingCache cache;
-    cache.existingDesktopKeys = existingKeys;
-    cache.tick = GetTickCount();
-
-    for (const auto& landing : preview.landings)
-    {
-        if (landing.kind != DropLandingKind::DesktopCell &&
-            landing.kind != DropLandingKind::WidgetIndex)
-            continue;
-        auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-            [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-        if (it == sourceList.entries.end()) continue;
-
-        PendingLandingEntry entry;
-        entry.sourceIndex = it->sourceIndex;
-        entry.action = preview.action;
-        entry.kind = landing.kind;
-        entry.sourcePath = it->filePath;
-        entry.sourceName = !it->filePath.empty() ? FileNameFromPath(it->filePath) : it->displayName;
-        if (createdPathsBySource)
-        {
-            auto created = createdPathsBySource->find(it->sourceIndex);
-            if (created != createdPathsBySource->end())
-                entry.createdPath = created->second;
-        }
-        entry.cell = landing.kind == DropLandingKind::DesktopCell ? landing.cell : landing.cell;
-        entry.insertIndex = landing.insertIndex;
-        entry.widget = nullptr; // No UI pointers survive asynchronous completion.
-        entry.widgetId = landing.widgetId;
-        cache.entries.push_back(entry);
-    }
-    cache.active = !cache.entries.empty();
-    return cache;
+    return snowdesktop::pending_drop::BuildLanding(sourceList, preview, existingKeys,
+        GetTickCount(), FileNameFromPath, createdPathsBySource);
 }
 
 void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
@@ -1050,39 +557,10 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     size_t insertIndex,
     const DragSourceList* sourceList) const
 {
-    PendingFolderPlacement placement;
-    placement.sourceFolderPath = targetWidget.sourceFolderPath;
-    placement.insertIndex = insertIndex;
-    for (const auto& entry : targetWidget.folderEntries)
-    {
-        if (!entry.fullPath.empty())
-            placement.existingPaths.insert(
-                ToUpperInvariant(entry.fullPath));
-    }
-
-    if (targetWidget.id == kDockFolderPopupWidgetId)
-    {
-        placement.widgetId = dockFolderPopupMappingWidgetId_;
-        placement.popupSourceId = dockFolderPopupSourceId_;
-    }
-    else
-    {
-        placement.widgetId = targetWidget.id;
-    }
-
-    if (sourceList)
-    {
-        placement.sourceNames.reserve(sourceList->entries.size());
-        for (const auto& entry : sourceList->entries)
-        {
-            std::wstring name = !entry.filePath.empty()
-                ? FileNameFromPath(entry.filePath)
-                : entry.displayName;
-            if (!name.empty())
-                placement.sourceNames.push_back(std::move(name));
-        }
-    }
-    return placement;
+    const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
+    return snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
+        popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
+        popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
 }
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)
@@ -1103,54 +581,25 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
-    if (!result) result = std::make_shared<snowdesktop::ShellFileOperationResult>();
-    const bool folderTarget = preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget;
-    PendingLandingCache cache = folderTarget ? PendingLandingCache{} :
-        BuildPendingLandingCache(sourceList, preview, SnapshotDesktopKeys());
-    if (folderTarget)
-        cache.folderPlacements.push_back(BuildPendingFolderPlacement(
-            *preview.targetWidget, preview.insertIndex, &sourceList));
-
-    // Capture values before scheduling; neither later requests nor refresh can
-    // take ownership of this operation's placement snapshot.
-    auto operationCompletion = [this, result, cache = std::move(cache),
-        sources = sourceList.entries, action = preview.action,
-        pinToDock = preview.pinMaterializedItemsToDock,
-        dockInsertIndex = preview.dockInsertIndex,
-        completion = std::move(completion)](bool succeeded) mutable {
-        if (!result->outputs.empty())
-        {
-            if (pinToDock)
-            {
-                std::vector<std::wstring> paths;
-                for (const auto& source : sources)
-                    for (const auto& output : result->outputs)
-                        if (PathsEqualInsensitive(source.filePath, output.source))
-                            paths.push_back(output.destination);
-                if (AddMaterializedItemsToDock(paths, dockInsertIndex)) SaveLayoutSlots();
-            }
-            else
-                snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(cache), *result);
-            if (action == DropAction::Move)
-            {
-                std::vector<std::wstring> movedKeys;
-                for (const auto& source : sources)
-                    for (const auto& output : result->outputs)
-                        if (PathsEqualInsensitive(source.filePath, output.source) && !source.desktopKey.empty())
-                            movedKeys.push_back(source.desktopKey);
-                RemoveDesktopKeysFromWidgets(movedKeys);
-            }
-            RequestShellRefresh();
-        }
-        if (completion) completion(succeeded);
+    snowdesktop::file_drop_execution::Services services;
+    services.snapshotDesktopKeys = [this] { return SnapshotDesktopKeys(); };
+    services.folderPlacement = [this](const auto& widget, size_t index, const DragSourceList* sources) {
+        return BuildPendingFolderPlacement(widget, index, sources);
     };
-    const bool duplicateCopyNames = preview.action == DropAction::Copy &&
-        sourceList.hasDesktopIcons && !sourceList.hasExternalFiles;
-    const bool queued = folderTarget
-        ? MaterializeFilesToFolder(sourceList, preview.targetWidget->sourceFolderPath,
-            preview.action, operationCompletion, executeSynchronously, result)
-        : MaterializeFilesToDesktop(sourceList, preview.action, duplicateCopyNames,
-            nullptr, operationCompletion, executeSynchronously, result);
-    if (!queued && !executeSynchronously) operationCompletion(false);
-    return queued;
+    services.fileName = FileNameFromPath;
+    services.pathsEqual = PathsEqualInsensitive;
+    services.desktop = [this](const auto& sources, DropAction action, bool duplicate,
+        auto done, bool sync, auto outputs) {
+        return MaterializeFilesToDesktop(sources, action, duplicate, nullptr, std::move(done), sync, std::move(outputs));
+    };
+    services.folder = [this](const auto& sources, const auto& path, DropAction action,
+        auto done, bool sync, auto outputs) {
+        return MaterializeFilesToFolder(sources, path, action, std::move(done), sync, std::move(outputs));
+    };
+    services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
+    services.savePins = [this] { SaveLayoutSlots(); };
+    services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
+    services.refresh = [this] { RequestShellRefresh(); };
+    return snowdesktop::file_drop_execution::Execute(sourceList, preview, pendingLandingCaches_,
+        std::move(services), std::move(completion), executeSynchronously, std::move(result));
 }

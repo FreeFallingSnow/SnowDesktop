@@ -88,7 +88,7 @@ void DesktopApp::ApplyPendingRenames()
         const auto changes = snowdesktop::rename_model_update::Apply(
             *result, ToUpperInvariant(result->path), items_, widgets_, dockEntries_,
             dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr);
-        if (changes.needsReload) RequestShellRefresh();
+        if (changes.needsReload || changes.folderRootsChanged) RequestShellRefresh();
         changed = changed || !result->path.empty();
         categoryChanged = categoryChanged ||
             (!changes.desktopItems.empty() &&
@@ -198,7 +198,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
         widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
         memberIndex < widgets_[widgetIndex].folderEntries.size())
         entry = &widgets_[widgetIndex].folderEntries[memberIndex];
-    if (cancel || !entry || newName.empty() || newName == entry->name)
+    if (cancel || !entry || newName.empty() || newName == entry->DisplayName())
         return;
     if (!QueueRename({ entry->fullPath, newName, {} }))
         MessageBeep(MB_ICONWARNING);

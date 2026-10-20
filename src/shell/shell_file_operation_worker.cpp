@@ -615,7 +615,15 @@ void ShellFileOperationWorker::Stop()
 
     cv_.notify_all();
     if (thread_.joinable())
+    {
+        // An unread marshaled source can be released as the last task leaves
+        // Run(). Its proxy may call back into this STA during unmarshal/release.
+        // A plain join would prevent that COM call from completing shutdown.
+        HANDLE finished = thread_.native_handle();
+        DWORD index = 0;
+        CoWaitForMultipleHandles(COWAIT_DEFAULT, INFINITE, 1, &finished, &index);
         thread_.join();
+    }
 }
 
 bool ShellFileOperationWorker::Enqueue(
@@ -801,17 +809,48 @@ bool ShellFileOperationWorker::Execute(
 {
     bool attempted = false;
     std::optional<operation_feedback::Failure> failure;
-    const auto record = [&](const std::wstring& path, DWORD code) {
-        const bool cancelled = code == ERROR_CANCELLED || code == static_cast<DWORD>(E_ABORT) ||
+    const auto isCancellation = [](DWORD code) {
+        return code == ERROR_CANCELLED || code == static_cast<DWORD>(E_ABORT) ||
             code == static_cast<DWORD>(COPYENGINE_E_USER_CANCELLED) ||
             code == static_cast<DWORD>(HRESULT_FROM_WIN32(ERROR_CANCELLED));
-        if (!failure && !cancelled)
-            failure = operation_feedback::Failure{"app.operation.fileFailed", path, code};
+    };
+    const auto record = [&](const std::wstring& path, DWORD code) {
+        if (!failure)
+        {
+            // Cancellation is a batch outcome, not a new system error. The
+            // existing partial-operation message still has to identify work
+            // left incomplete; raw cancellation errors are globally silent.
+            const bool cancelled = isCancellation(code);
+            failure = operation_feedback::Failure{"app.operation.fileFailed", path,
+                cancelled ? ERROR_SUCCESS : code, cancelled};
+        }
+    };
+    const auto incompleteStep = [&](const ShellFileOperationStep& step) {
+        std::wstring detail;
+        for (const auto& source : step.sources)
+        {
+            const bool completed = request.result && std::any_of(
+                request.result->outputs.begin(), request.result->outputs.end(),
+                [&](const auto& output) { return _wcsicmp(output.source.c_str(), source.c_str()) == 0; });
+            if (!completed)
+            {
+                if (!detail.empty()) detail += L"\n";
+                detail += source;
+            }
+        }
+        if (!step.destination.empty()) detail += L"\n" + step.destination;
+        return detail;
     };
     bool allSucceeded = true;
+    std::vector<std::wstring> unstarted;
     if (request.result) request.result->outputs.clear();
     for (const auto& step : request.steps)
     {
+        if (!allSucceeded)
+        {
+            unstarted.insert(unstarted.end(), step.sources.begin(), step.sources.end());
+            continue;
+        }
         if (step.function == 0 || step.sources.empty())
             continue;
         attempted = true;
@@ -823,8 +862,8 @@ bool ShellFileOperationWorker::Execute(
             if (!ExecuteTrackedDropStep(step, request.result, status, shellHandledErrors))
             {
                 allSucceeded = false;
-                if (!shellHandledErrors)
-                    record(step.sources.front() + L"\n" + step.destination, static_cast<DWORD>(status));
+                if (!shellHandledErrors || isCancellation(static_cast<DWORD>(status)))
+                    record(incompleteStep(step), static_cast<DWORD>(status));
             }
             continue;
         }
@@ -846,7 +885,9 @@ bool ShellFileOperationWorker::Execute(
             allSucceeded = false;
             // SHFileOperation has its own legacy error values. Keep their raw
             // number instead of incorrectly translating them as Win32 codes.
-            if (result != 0 && result != 0x75 && result != ERROR_CANCELLED &&
+            if (operation.fAnyOperationsAborted || result == 0x75 || result == ERROR_CANCELLED)
+                record(incompleteStep(step), ERROR_CANCELLED);
+            else if (result != 0 &&
                 (step.flags & FOF_NOERRORUI))
                 record(step.sources.front() + L"\n" + step.destination +
                     L"\nSHFileOperation: " + std::to_wstring(result), 0);
@@ -854,6 +895,11 @@ bool ShellFileOperationWorker::Execute(
     }
     for (const auto& copy : request.exactFileCopies)
     {
+        if (!allSucceeded)
+        {
+            if (!copy.source.empty()) unstarted.push_back(copy.source);
+            continue;
+        }
         if (copy.source.empty() || copy.destination.empty())
             continue;
         attempted = true;
@@ -870,6 +916,11 @@ bool ShellFileOperationWorker::Execute(
     }
     for (const auto& shortcut : request.shortcuts)
     {
+        if (!allSucceeded)
+        {
+            if (!shortcut.source.empty()) unstarted.push_back(shortcut.source);
+            continue;
+        }
         if (shortcut.source.empty() || shortcut.destination.empty())
             continue;
         attempted = true;
@@ -934,7 +985,12 @@ bool ShellFileOperationWorker::Execute(
         else if (request.result)
             request.result->outputs.push_back({shortcut.source, shortcut.destination, true});
     }
-    if (failure) operation_feedback::Report(std::move(*failure));
+    if (failure)
+    {
+        for (const auto& path : unstarted)
+            failure->detail += L"\n" + path;
+        operation_feedback::Report(std::move(*failure));
+    }
     return attempted && allSucceeded;
 }
 

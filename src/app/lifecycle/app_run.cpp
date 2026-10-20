@@ -1,3 +1,4 @@
+#include "platform/force_restart_hotkey.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
@@ -478,12 +479,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
     LoadGeneralSettingsAndApply();
 
-    // Creating WorkerW mutates Explorer's desktop window tree. Do this once
-    // before the overlay is created; periodic discovery remains read-only.
-    EnsureDesktopWorkerWindow();
-
     // Discover Explorer now, but retain its icons until our first complete
     // composition frame has been prepared. Bootstrap can take several seconds.
+    // The overlay belongs above DefView in its existing parent. Requesting a
+    // separate wallpaper WorkerW is unnecessary and can disturb Wallpaper
+    // Engine's host before tray re-registration (issue #29).
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))
         GetWindowThreadProcessId(desktopWindows_.host,
@@ -536,6 +536,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::DesktopDisplaySettings desktopSettings;
         desktopSettings.dockEnabled = generalSettings_.dockEnabled;
         desktopSettings.iconSpacingScale = iconSpacingScale_;
+        desktopSettings.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
+        desktopSettings.listRowSpacingScale = listRowSpacingScale_;
         desktopSettings.itemIconSizeScale = itemIconSizeScale_;
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
@@ -546,6 +548,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.scrollingTitleLines = scrollingTitleLines_;
         desktopSettings.titleEllipsis = titleEllipsis_;
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
+        desktopSettings.groupComponentBadges = groupComponentBadges_;
+        desktopSettings.beautifyFileThumbnails = beautifyFileThumbnails_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
             std::move(desktopSettings));
@@ -644,6 +648,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
+    if (dockWindowPreview_)
+        dockWindowPreview_->SetPinBorderAppearance(CurrentPersonalization());
     if (!CreateDesktopInputWindow(parent))
     {
         WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");
@@ -701,6 +707,21 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartDemoIconLoader();
     logStartupStage(L"graphics ready");
 
+    // Register the complete strip before Shell items/widgets are placed. The
+    // bar stays hidden until the same handoff as the desktop and Dock, but its
+    // approved work area and merged geometry must already be authoritative.
+    systemDataProvider_ = std::make_shared<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+    SyncStatusBar();
+    if (!UpdateLayoutWorkArea())
+    {
+        WriteDiagnosticLogEntry(L"Startup AppBar work area unavailable",
+            DiagnosticLogLevel::Error);
+        return static_cast<int>(ERROR_GEN_FAILURE);
+    }
+    displayTopologySignature_ = CaptureDisplayTopologySignature();
+    logStartupStage(L"bar work area ready");
+
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
@@ -734,6 +755,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartRecycleBinWatcher();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    snowdesktop::EmergencyRestartHotkey().Apply(generalSettings_.forceRestartHotkeyEnabled,
+        generalSettings_.forceRestartHotkeyModifiers, generalSettings_.forceRestartHotkeyVirtualKey);
     snowdesktop::SoftwareDesktopHotkey().Apply(controlHwnd_, generalSettings_);
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
@@ -758,6 +781,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
     settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
+    settingsHostOptions.iconAppearance = [this](auto request) { return EditIconAppearance(std::move(request)); };
+    settingsHostOptions.iconLibrary = [this](auto request) { return EditIconLibrary(std::move(request)); };
     settingsHostOptions.windowTitle = _LW("app.settings.title");
     settingsHostOptions.localize = [](std::string_view key) {
         const std::string ownedKey(key);
@@ -888,6 +913,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::DesktopDisplaySettings desktop;
         desktop.dockEnabled = generalSettings_.dockEnabled;
         desktop.iconSpacingScale = iconSpacingScale_;
+        desktop.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
+        desktop.listRowSpacingScale = listRowSpacingScale_;
         desktop.itemIconSizeScale = itemIconSizeScale_;
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;
@@ -898,6 +925,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.scrollingTitleLines = scrollingTitleLines_;
         desktop.titleEllipsis = titleEllipsis_;
         desktop.shortcutArrowMode = shortcutArrowMode_;
+        desktop.groupComponentBadges = groupComponentBadges_;
+        desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
         SyncSystemTaskbarSettingsFromWindows();
@@ -1251,11 +1280,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     StartSteamEntitlementRegistration(true);
 
-    systemDataProvider_ = std::make_shared<
-        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     widgetEngine_ = std::make_unique<WidgetEngine>();
     widgetEngine_->SetSystemDataProvider(systemDataProvider_);
-    SyncStatusBar();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
         widgetEngine_->SetDesktopSnapshotProvider([this]() {
@@ -1657,6 +1683,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         LogDesktopWidgetBackdropState(L"prepared");
     }
     desktopStartupPresentationPending_ = false;
+    if (statusBar_) statusBar_->SetPresentationEnabled(true);
     AddTrayIcon();
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)

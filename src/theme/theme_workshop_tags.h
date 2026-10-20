@@ -8,16 +8,18 @@ namespace snowdesktop::themes::tags
 // are presentation only; never send translated labels to SetItemTags.
 inline constexpr std::string_view Content = "Theme";
 struct Category { std::string_view value, label; };
-inline constexpr std::array<Category, 6> Categories{{
+inline constexpr std::array<Category, 7> Categories{{
     {"Global Theme", "themeLibrary.global"}, {"Dock Theme", "themeLibrary.dock"},
     {"Status Bar Theme", "themeLibrary.statusBar"}, {"Taskbar Theme", "themeLibrary.taskbar"},
-    {"Quick Panel Theme", "themeLibrary.quickPanel"}, {"Popup Theme", "themeLibrary.popup"}
+    {"Quick Panel Theme", "themeLibrary.quickPanel"}, {"Popup Theme", "themeLibrary.popup"},
+    {"Icon Theme", "themeLibrary.icon"}
 }};
 inline std::vector<std::string> Applicable(const Theme& theme)
 {
     std::vector<std::string> result;
     const auto add = [&](std::size_t index) { result.emplace_back(Categories[index].value); };
-    if (theme.kind == Kind::QuickPanel) add(4);
+    if (theme.kind == Kind::Icon) add(6);
+    else if (theme.kind == Kind::QuickPanel) add(4);
     else if (theme.kind == Kind::Popup) add(5);
     else
     {

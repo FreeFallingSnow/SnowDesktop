@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget/settings/widget_settings_service.h"
+#include "settings_focus_feedback.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -20,6 +21,8 @@ namespace snowdesktop::winui
 struct WidgetSettingsPresenterCallbacks
 {
     std::function<void()> nameChanged;
+    /** Opens the existing package permission editor; permissions are not per instance. */
+    std::function<void(std::wstring packageId)> openPackagePermissions;
     std::function<void(
         std::string settingKey,
         widget_runtime::WidgetSettingMutationResult result)>
@@ -101,8 +104,14 @@ public:
     [[nodiscard]] widget_runtime::WidgetSettingMutationResult
         FlushPendingEdits();
 
+    /**
+     * Resolves a field or its currently blocking condition controller without
+     * changing values. Only reveal=true may expand the resolved authored group.
+     * Missing/cyclic dependencies fall back to a visible row or container.
+     */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view settingKey) const noexcept;
+        FocusTarget(std::string_view settingKey, bool reveal = false,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
 
     [[nodiscard]] std::wstring_view WidgetId() const noexcept;
     [[nodiscard]] std::string_view WidgetName() const noexcept;

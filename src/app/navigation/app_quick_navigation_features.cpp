@@ -60,8 +60,33 @@ std::wstring DesktopApp::QuickNavigationTypeLabel() const
 }
 std::wstring DesktopApp::QuickNavigationViewLabel() const
 {
-    constexpr const char* keys[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
-    return _LW(keys[static_cast<size_t>(navigationSettings_.desktopViewMode)]);
+    constexpr const char* keys[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial", "app.nav.view_frequency"};
+    return _LW(keys[static_cast<size_t>(GetQuickNavigationViewMode())]);
+}
+QuickNavigationDesktopViewMode DesktopApp::GetQuickNavigationViewMode() const
+{
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        return navigationSettings_.desktopViewMode;
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        return navigationSettings_.mappingViewMode;
+    if (quickNavigationActiveWidgetIndex_ < widgets_.size())
+    {
+        const auto it = navigationSettings_.widgetSortByInitial.find(
+            WideToUtf8(widgets_[quickNavigationActiveWidgetIndex_].id));
+        if (it != navigationSettings_.widgetSortByInitial.end() && it->second)
+            return QuickNavigationDesktopViewMode::Initial;
+    }
+    return QuickNavigationDesktopViewMode::Tile;
+}
+std::vector<QuickNavigationDesktopViewMode> DesktopApp::GetQuickNavigationViewModeOptions() const
+{
+    if (quickNavigationActiveWidgetIndex_ < widgets_.size())
+        return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Initial};
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
+            QuickNavigationDesktopViewMode::Initial, QuickNavigationDesktopViewMode::Frequency};
+    return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
+        QuickNavigationDesktopViewMode::Initial};
 }
 void DesktopApp::ToggleQuickNavigationCollapsed()
 {
@@ -94,8 +119,26 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
             row.kind == QuickNavigationListRow::Kind::App ? QuickNavigationKeyboardTargetKind::App :
             row.kind == QuickNavigationListRow::Kind::Everything ? QuickNavigationKeyboardTargetKind::Everything : QuickNavigationKeyboardTargetKind::None;
     }
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    quickNavigationAnimation_.Advance(now);
+    StopQuickNavigationAnimationTimeline();
+    // A Dock warp's source crops belong to its opening geometry. Finish that
+    // opening before beginning an independently interactive size transition.
+    if (quickNavigationAnimation_.IsOpening())
+        quickNavigationAnimation_.ShowImmediately();
     quickNavigationFixedTop_ = false;
+    const RECT target = GetQuickNavigationRect();
+    quickNavigationAnchorTop_ = target.top;
+    quickNavigationFixedTop_ = true;
+    quickNavigationAnimation_.Resize().Start(
+        {quickNavigationRect_.left, quickNavigationRect_.top,
+            quickNavigationRect_.right, quickNavigationRect_.bottom},
+        {target.left, target.top, target.right, target.bottom}, now,
+        snowdesktop::animation::RuntimeAnimationsEnabled(),
+        snowdesktop::animation::RuntimeDurationScale());
     PositionQuickNavigationWindow();
+    EnsureUiAnimationFrame();
     if (UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
         EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(static_cast<size_t>(quickNavigationListSelection_)));
     InvalidateQuickNavigationWindow();
@@ -308,7 +351,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
         else if (row.kind == Kind::Item && row.index < model.entries.size() && model.entries[row.index].itemIndex < items_.size())
         {
             const auto& item = items_[model.entries[row.index].itemIndex];
-            if (item.iconBitmap) DrawIconBitmap(context, GetOrCreateD2DBitmap(context, item.iconBitmap, ShouldBeautifyIconBitmap(false)), icon);
+            if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail), icon);
             else DrawQuickNavSysIcon(context, item.sysIconIndex, icon);
         }
         else if (row.kind == Kind::Item && row.index < model.entries.size())
@@ -317,7 +360,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             if (entry.widgetIndex < widgets_.size() && entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
             {
                 const auto& item = widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
-                if (item.iconBitmap) DrawIconBitmap(context, GetOrCreateD2DBitmap(context,item.iconBitmap,ShouldBeautifyIconBitmap(false)),icon);
+                if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.fullPath, item.iconIsMediaThumbnail), icon);
                 else DrawQuickNavSysIcon(context,item.sysIconIndex,icon);
             }
         }
@@ -507,12 +550,13 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         }
         return;
     }
-    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? static_cast<int>(kQuickNavigationSearchTypes.size()) : 3;
+    const auto viewModes = GetQuickNavigationViewModeOptions();
+    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? kQuickNavigationSearchTypes.size() : viewModes.size();
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
     context->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (quickNavigationMenu_ == QuickNavigationMenu::Views)
     {
-        RECT popup = GetQuickNavigationListRowRect(0); popup.bottom = GetQuickNavigationListRowRect(2).bottom;
+        RECT popup = GetQuickNavigationListRowRect(0); popup.bottom = GetQuickNavigationListRowRect(count - 1).bottom;
         InflateRect(&popup, QuickNavScale(4), QuickNavScale(4));
         // The menu overlays already-painted items on the same surface. An
         // opaque backing keeps their icons and labels out of the menu rows.
@@ -536,8 +580,8 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         RECT label = bounds;
         label.left = quickNavigationMenu_ == QuickNavigationMenu::Types ? icon.right + QuickNavScale(8) : bounds.left + QuickNavScale(10);
         label.right -= QuickNavScale(quickNavigationMenu_ == QuickNavigationMenu::Types ? 90 : 10);
-        constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
-        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(type) : _LW(views[i]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
+        constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial", "app.nav.view_frequency"};
+        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(type) : _LW(views[static_cast<size_t>(viewModes[i])]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
         if (quickNavigationMenu_ == QuickNavigationMenu::Types && i > 0)
         {
             RECT prefix = bounds; prefix.left = prefix.right - QuickNavScale(80); prefix.right -= QuickNavScale(12);
@@ -570,7 +614,7 @@ bool DesktopApp::HandleQuickNavigationToolbarClick(POINT point)
 bool DesktopApp::DismissQuickNavigationMenuAtPoint(POINT point)
 {
     if (quickNavigationMenu_ == QuickNavigationMenu::None) return false;
-    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Views ? 3 : kQuickNavigationSearchTypes.size();
+    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Views ? GetQuickNavigationViewModeOptions().size() : kQuickNavigationSearchTypes.size();
     RECT popup = GetQuickNavigationListRowRect(0);
     popup.bottom = GetQuickNavigationListRowRect(count - 1).bottom;
     if (quickNavigationMenu_ == QuickNavigationMenu::Views) InflateRect(&popup, QuickNavScale(4), QuickNavScale(4));
@@ -588,7 +632,8 @@ bool DesktopApp::HandleQuickNavigationListClick(POINT point, bool contextMenu, P
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
     if (!PtInRect(&content, point)) return true;
     const auto rows = BuildQuickNavigationListRows();
-    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? kQuickNavigationSearchTypes.size() : quickNavigationMenu_ == QuickNavigationMenu::Views ? 3 : rows.size();
+    const auto viewModes = GetQuickNavigationViewModeOptions();
+    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? kQuickNavigationSearchTypes.size() : quickNavigationMenu_ == QuickNavigationMenu::Views ? viewModes.size() : rows.size();
     for (size_t i = 0; i < count; ++i)
     {
         const RECT bounds = GetQuickNavigationListRowRect(i);
@@ -599,7 +644,7 @@ bool DesktopApp::HandleQuickNavigationListClick(POINT point, bool contextMenu, P
             else
             {
                 quickNavigationMenu_ = QuickNavigationMenu::None;
-                SetQuickNavigationDesktopViewMode(static_cast<QuickNavigationDesktopViewMode>(i));
+                SetQuickNavigationViewMode(viewModes[i]);
                 PositionQuickNavigationWindow();
                 InvalidateQuickNavigationWindow();
             }
@@ -655,7 +700,14 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
         if (row.index >= model.entries.size()) return false;
         const auto entry = model.entries[row.index];
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem)
-            CloseQuickNavigationThen([this, index = entry.itemIndex]() { LaunchDesktopItem(index, true); });
+        {
+            if (entry.itemIndex >= items_.size()) return false;
+            const auto key = items_[entry.itemIndex].layoutKey;
+            CloseQuickNavigationThen([this, key]() {
+                const auto currentIndex = FindItemIndexByKey(key);
+                if (currentIndex < items_.size()) LaunchDesktopItem(currentIndex, true);
+            });
+        }
         else CloseQuickNavigationThen([this, path = entry.path]() { LaunchPathWithShortcutPolicy(nullptr, path); });
     }
     else if (row.kind == Kind::ExpandApps) { quickNavigationAppsExpanded_ = true; PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
@@ -707,11 +759,13 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
     if (key != VK_UP && key != VK_DOWN && key != VK_RETURN) return false;
     if (quickNavigationMenu_ != QuickNavigationMenu::None)
     {
-        const int count = quickNavigationMenu_ == QuickNavigationMenu::Types ? static_cast<int>(kQuickNavigationSearchTypes.size()) : 3;
+        const auto viewModes = GetQuickNavigationViewModeOptions();
+        const int count = quickNavigationMenu_ == QuickNavigationMenu::Types ? static_cast<int>(kQuickNavigationSearchTypes.size()) : static_cast<int>(viewModes.size());
+        quickNavigationMenuSelection_ = std::clamp(quickNavigationMenuSelection_, 0, count - 1);
         if (key == VK_RETURN)
         {
             if (quickNavigationMenu_ == QuickNavigationMenu::Types) SetQuickNavigationSearchScope(kQuickNavigationSearchTypes[static_cast<size_t>(quickNavigationMenuSelection_)]);
-            else { quickNavigationMenu_ = QuickNavigationMenu::None; SetQuickNavigationDesktopViewMode(static_cast<QuickNavigationDesktopViewMode>(quickNavigationMenuSelection_)); PositionQuickNavigationWindow(); }
+            else { quickNavigationMenu_ = QuickNavigationMenu::None; SetQuickNavigationViewMode(viewModes[static_cast<size_t>(quickNavigationMenuSelection_)]); PositionQuickNavigationWindow(); }
         }
         else quickNavigationMenuSelection_ = (quickNavigationMenuSelection_ + (key == VK_DOWN ? 1 : count - 1)) % count;
         InvalidateQuickNavigationWindow(); return true;

@@ -1,7 +1,9 @@
 #include "app/app.h"
 #include "desktop/folder_mapping_visibility_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "icons/large_icon_backup.h"
+#include "icons/icon_appearance_codec.h"
 #include "platform/operation_recovery_dialog.h"
 #include <set>
 #include "layout/collection_titleless_rules.h"
@@ -9,6 +11,9 @@
 #include "widgets/collection_group_rules.h"
 
 #include "data/layout_storage.h"
+#include "data/widget_layout_codec.h"
+#include "data/layout_geometry_codec.h"
+#include "data/dock_layout_codec.h"
 #include "data/full_data_backup.h"
 
 // ── 布局持久化 ──────────────────────────────────────────────
@@ -147,6 +152,22 @@ void DesktopApp::LoadLayoutSlots()
     if (document.lastPageMonitor)
         lastPageMonitorId_ = Utf8ToWide(*document.lastPageMonitor);
 
+    iconAppearancePreview_.Clear(); iconAppearanceTarget_.clear(); ++iconAppearanceSession_;
+    iconAppearanceOverrides_.clear();
+    for (const auto& record : document.iconBeautifyOverrides)
+        iconAppearanceOverrides_[record.target] = record;
+    ++iconAppearanceRevision_;
+    iconOverrides_.clear();
+    for (const auto& [target, asset] : document.iconOverrides)
+        iconOverrides_[Utf8ToWide(target)] = asset;
+    missingIconTargets_.clear();
+    for (const auto& record : document.missingIconTargets)
+        missingIconTargets_[Utf8ToWide(record.target)] = record.missingSince;
+    ++iconCustomizationRevision_;
+    shellModelWork_.Cancel(L"icon-customization-cleanup");
+    nextIconCustomizationProbe_ = 0;
+    iconAppearanceReferencesDirty_ = true;
+
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
     if (document.dockLayout)
@@ -180,6 +201,12 @@ void DesktopApp::LoadLayoutSlots()
     iconSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredScale(
         document.iconSpacing, document.componentSpacing,
         iconSpacingScale_);
+    // Only row gaps inherit legacy global spacing; scrolling columns retain
+    // their fixed baseline geometry.
+    scrollingIconSpacingYScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
+        document.scrollingIconSpacingY, iconSpacingScale_);
+    listRowSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
+        document.listRowSpacing, iconSpacingScale_);
     itemIconSizeScale_ = std::clamp(
         document.iconSizeScale.value_or(kDefaultItemIconSizeScale),
         kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
@@ -187,6 +214,8 @@ void DesktopApp::LoadLayoutSlots()
     if (document.shortcutArrowMode)
         shortcutArrowMode_ = std::clamp(
             *document.shortcutArrowMode, 0, 2);
+    groupComponentBadges_ = document.groupComponentBadges.value_or(true);
+    beautifyFileThumbnails_ = document.beautifyFileThumbnails.value_or(false);
 
     // Missing beautification fields are the compatibility path for old layouts.
     iconBeautifySettings_ = document.iconBeautifyPreset
@@ -291,8 +320,12 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyShadowStrength)
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
     if (document.iconBeautifyEdgeLight) iconBeautifySettings_.edgeLight = *document.iconBeautifyEdgeLight;
+    if (document.iconBeautifyBackgroundGradient) iconBeautifySettings_.backgroundGradient = *document.iconBeautifyBackgroundGradient;
+    if (document.iconBeautifyBackgroundSource) iconBeautifySettings_.backgroundSource = *document.iconBeautifyBackgroundSource;
+    if (document.iconBeautifyFilterMode) iconBeautifySettings_.filterMode = *document.iconBeautifyFilterMode;
     iconBeautifySettings_ = snowdesktop::icon_beautify::ResolvePersistedSettings(
         iconBeautifySettings_, document.iconBeautifyPreset.has_value());
+    iconBeautifySettings_ = snowdesktop::icon_beautify::NormalizeGlobal(iconBeautifySettings_);
 
     for (const auto& page : document.pages)
     {
@@ -317,19 +350,9 @@ void DesktopApp::LoadLayoutSlots()
             std::filesystem::path(Utf8ToWide(item.key)).is_absolute() &&
             (!item.page || Utf8ToWide(*item.page) != kDockPageId)) continue;
 
-        LayoutRecord record;
-        record.largeIcon = item.largeIcon;
-        if (item.page && item.column && item.row)
-        {
-            record.cell.pageId = Utf8ToWide(*item.page);
-            record.cell.column = *item.column;
-            record.cell.row = *item.row;
-            RememberSavedPageId(record.cell.pageId);
-            record.span.columns = std::max(1, item.width);
-            record.span.rows = std::max(1, item.height);
-            record.hasGrid = true;
-            record.legacySlot = SlotFromCell(gridPages_, record.cell);
-        }
+        const auto record = snowdesktop::layout_geometry_codec::RestoreItem(item, Utf8ToWide,
+            [&](const GridCell& cell) { return SlotFromCell(gridPages_, cell); });
+        if (record.hasGrid) RememberSavedPageId(record.cell.pageId);
         layoutRecords_[ToUpperInvariant(Utf8ToWide(item.key))] = record;
     }
 
@@ -349,6 +372,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
         widget.demoIconCategory = Utf8ToWide(
             saved.demoIconCategory);
+        widget.dockIconAssetId = saved.dockIconAssetId;
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
         widget.sourceDesktopItemKey = Utf8ToWide(saved.sourceDesktopItemKey);
         widget.packageId = Utf8ToWide(saved.packageId);
@@ -387,14 +411,13 @@ void DesktopApp::LoadLayoutSlots()
             widget.title = Utf8ToWide(titleUtf8);
         }
 
-        widget.gridCell.pageId = Utf8ToWide(saved.page);
-        widget.gridCell.column = saved.column;
-        widget.gridCell.row = saved.row;
-        widget.gridSpan.columns = std::max(1, saved.width);
-        widget.gridSpan.rows = std::max(1, saved.height);
+        snowdesktop::widget_layout_codec::RestorePlacement(saved, widget, Utf8ToWide);
         widget.autoCollect = saved.autoCollect;
+        for (const auto& category : saved.autoCollectCategoryIds)
+            widget.autoCollectCategoryIds.push_back(Utf8ToWide(category));
         widget.dissolveWhenSingle = saved.dissolveWhenSingle;
         widget.listMode = saved.listMode;
+        widget.listColumns = std::clamp(saved.listColumns, 1, 4);
         widget.fanPopup = saved.fanPopup;
         if (hasTrustedDetailColumns)
         {
@@ -440,6 +463,7 @@ void DesktopApp::LoadLayoutSlots()
                 widget.detailShowModified,
                 widget.detailShowType,
                 widget.detailShowSize);
+        widget.listColumns = snowdesktop::list_detail_rules::ListColumns(widget);
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
@@ -460,6 +484,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.singleCellIconMode = saved.singleCellIconMode;
         widget.titleBarCollapsed = saved.titleBarCollapsed;
         widget.titleBarExpandOnHover = saved.titleBarExpandOnHover;
         widget.largeFolderTitleless =
@@ -546,32 +571,10 @@ void DesktopApp::LoadLayoutSlots()
         }
         widget.scrollOffset = std::max(0, saved.scrollOffset);
         widget.tabScrollOffset = std::max(0, saved.tabScrollOffset);
-        widget.folderSortMode = snowdesktop::folder_sort_rules::NormalizeMode(
-            saved.folderSortMode);
-        widget.folderSortAscending = saved.folderSortAscending;
-        widget.contentSortColumn =
-            snowdesktop::list_detail_rules::FromString(
-                saved.contentSortColumn);
-        widget.contentSortAscending = saved.contentSortAscending;
-        if (widget.contentSortColumn ==
-                snowdesktop::list_detail_rules::Column::None &&
-            widget.type == DesktopWidgetType::FolderMapping &&
-            widget.folderSortMode >=
-                snowdesktop::folder_sort_rules::kName)
-        {
-            widget.contentSortColumn = snowdesktop::list_detail_rules::
-                FromLegacyFolderSortMode(widget.folderSortMode);
-            widget.contentSortAscending = widget.folderSortAscending;
-        }
-        widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
+        snowdesktop::widget_layout_codec::RestoreSort(saved, widget);
         for (const auto& id : saved.categoryTabOrder)
             widget.categoryTabOrder.push_back(Utf8ToWide(id));
-        widget.itemKeys.reserve(saved.items.size());
-        for (const auto& key : saved.items)
-            widget.itemKeys.push_back(Utf8ToWide(key));
-        widget.childWidgetIds.reserve(saved.childWidgets.size());
-        for (const auto& child : saved.childWidgets)
-            widget.childWidgetIds.push_back(Utf8ToWide(child));
+        snowdesktop::widget_layout_codec::RestoreMembers(saved, widget, Utf8ToWide, ToUpperInvariant);
         ConfigureWidgetGridLimits(widget);
         {
             std::unordered_set<std::wstring> seen;
@@ -677,60 +680,7 @@ void DesktopApp::LoadLayoutSlots()
     // "key" in the serialized document.
     for (const auto& saved : document.dockEntries)
     {
-        DockEntry entry;
-        if (saved.type == "collection")
-            entry.type = DockEntryType::Collection;
-        else if (saved.type == "folderMapping")
-            entry.type = DockEntryType::FolderMapping;
-        else
-            entry.type = DockEntryType::DesktopItem;
-        entry.reference = Utf8ToWide(saved.reference);
-        // Preserve the existing on-disk "collection" reference token. The
-        // referenced widget supplies its precise runtime type, including groups.
-        if (entry.type == DockEntryType::Collection)
-        {
-            const size_t index = FindWidgetIndexById(entry.reference);
-            if (index < widgets_.size() &&
-                DockEntryTypeForWidget(widgets_[index].type) != DockEntryType::DesktopItem)
-                entry.type = DockEntryTypeForWidget(widgets_[index].type);
-        }
-        if (entry.type == DockEntryType::DesktopItem)
-            entry.reference = ToUpperInvariant(entry.reference);
-        entry.keepOnDesktop = saved.keepOnDesktop;
-        entry.folderSortMode =
-            snowdesktop::folder_sort_rules::NormalizeMode(
-                saved.folderSortMode);
-        entry.folderSortAscending = saved.folderSortAscending;
-        entry.folderItemKeys.reserve(saved.folderItems.size());
-        for (const auto& key : saved.folderItems)
-            entry.folderItemKeys.push_back(Utf8ToWide(key));
-        entry.listMode = saved.listMode;
-        entry.fanPopup = saved.fanPopup;
-        entry.showSearchBox = saved.showSearchBox;
-        entry.showFileCategories = saved.showFileCategories;
-        for (const auto& id : saved.categoryTabOrder) entry.categoryTabOrder.push_back(Utf8ToWide(id));
-        entry.detailShowModified = saved.detailShowModified;
-        entry.detailShowType = saved.detailShowType;
-        entry.detailShowSize = saved.detailShowSize;
-        const auto positions = snowdesktop::list_detail_rules::
-            NormalizePositions(
-                entry.detailShowModified,
-                entry.detailShowType,
-                entry.detailShowSize,
-                {
-                    saved.detailModifiedPosition.value_or(
-                        snowdesktop::list_detail_rules::
-                            kDefaultModifiedPosition),
-                    saved.detailTypePosition.value_or(
-                        snowdesktop::list_detail_rules::
-                            kDefaultTypePosition),
-                    saved.detailSizePosition.value_or(
-                        snowdesktop::list_detail_rules::
-                            kDefaultSizePosition),
-                });
-        entry.detailModifiedPosition = positions.modified;
-        entry.detailTypePosition = positions.type;
-        entry.detailSizePosition = positions.size;
+        DockEntry entry = snowdesktop::dock_layout_codec::Restore(saved, widgets_, Utf8ToWide, ToUpperInvariant);
         if (!entry.reference.empty() &&
             !(entry.type == DockEntryType::DesktopItem &&
                 snowdesktop::shell_item_visibility::IsAlwaysHidden(
@@ -898,6 +848,17 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
 
+    snowdesktop::desktop_membership_recovery::PruneExpired(
+        widgets_, snowdesktop::desktop_membership_recovery::NowSeconds());
+    // Fence background observations made before this layout transaction.
+    ++iconCustomizationRevision_;
+    shellModelWork_.Cancel(L"icon-customization-cleanup");
+    nextIconCustomizationProbe_ = 0;
+    const auto previousAppearanceCount = iconAppearanceOverrides_.size();
+    snowdesktop::icon_customization::PruneExpired(iconOverrides_, iconAppearanceOverrides_,
+        missingIconTargets_, snowdesktop::icon_customization::NowSeconds());
+    iconAppearanceReferencesDirty_ |= previousAppearanceCount != iconAppearanceOverrides_.size();
+
     if (dockFolderPopupOpen_)
     {
         const auto source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
@@ -922,14 +883,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         return false;
     };
     // Container membership is committed before this persistence boundary.
-    // Rendering a temporary drag target or sending files to an application never
-    // changes membership and therefore never reaches this conversion.
+    // Storage uses ordinary geometry while retaining the desktop appearance.
+    // Rendering a temporary drag target never changes this membership.
     RefreshCollectedKeysCache();
     for (auto& item : items_)
         if (item.largeIcon && (snowdesktop::folder_mapping_visibility::HasExplicitOwner(
                 item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
-            item.largeIcon.reset();
             item.gridSpan = {1, 1};
             if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
         }
@@ -1022,6 +982,33 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         if (firstPage) pagesToWrite.push_back(firstPage->id);
     }
 
+    std::ostringstream overrides;
+    overrides << "[";
+    bool firstOverride = true;
+    for (const auto& [target, asset] : iconOverrides_)
+    {
+        if (!firstOverride) overrides << ",";
+        firstOverride = false;
+        overrides << "{\"target\":\"" << JsonEscapeUtf8(target)
+            << "\",\"asset\":\"" << asset << "\"}";
+    }
+    overrides << "]";
+    std::ostringstream appearances; appearances << "[";
+    bool firstAppearance = true;
+    for (const auto& [target, record] : iconAppearanceOverrides_)
+    {
+        if (!firstAppearance) appearances << ",";
+        firstAppearance = false;
+        appearances << "{\"target\":\"" << JsonEscapeUtf8(target)
+            << "\",\"name\":\"" << JsonEscapeUtf8(record.name)
+            << "\",\"themeId\":\"" << JsonEscapeUtf8(Utf8ToWide(record.themeId))
+            << "\",\"followGlobalTheme\":" << (record.followGlobalTheme ? "true" : "false")
+            << ",\"style\":" << snowdesktop::icon_appearance::EncodeStyle(record.settings) << "}";
+    }
+    appearances << "]";
+    std::vector<snowdesktop::layout_storage::MissingIconTargetRecord> missingIcons;
+    for (const auto& [target, since] : missingIconTargets_)
+        missingIcons.push_back({WideToUtf8(target), since});
     std::ostringstream file;
 
     file << "{\n  \"layoutSchemaVersion\": 1"
@@ -1031,6 +1018,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
+         << ",\n  \"iconOverrides\": " << overrides.str()
+         << ",\n  \"iconBeautifyOverrides\": " << appearances.str()
+         << ",\n  \"missingIconTargets\": " << snowdesktop::layout_storage::SerializeMissingIconTargets(missingIcons)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_
@@ -1040,9 +1030,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"scrollingTitleLines\": " << scrollingTitleLines_
          << ",\n  \"titleEllipsis\": " << (titleEllipsis_ ? "true" : "false")
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
+         << ",\n  \"scrollingIconSpacingY\": " << scrollingIconSpacingYScale_
+         << ",\n  \"listRowSpacing\": " << listRowSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
+         << ",\n  \"groupComponentBadges\": " << (groupComponentBadges_ ? "true" : "false")
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
+         << ",\n  \"beautifyFileThumbnails\": " << (beautifyFileThumbnails_ ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius
@@ -1051,6 +1045,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"iconBeautifyEdgeHighlightStrength\": " << iconBeautifySettings_.edgeHighlightStrength
          << ",\n  \"iconBeautifyEdgeLight\": " << snowdesktop::EncodeEdgeLight(iconBeautifySettings_.edgeLight)
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
+         << ",\n  \"iconBeautifyBackgroundSource\": " << iconBeautifySettings_.backgroundSource
+         << ",\n  \"iconBeautifyBackgroundGradient\": " << snowdesktop::EncodePanelGradient(iconBeautifySettings_.backgroundGradient)
+         << ",\n  \"iconBeautifyFilterMode\": " << iconBeautifySettings_.filterMode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifySettings_.gradientDirection
@@ -1083,8 +1080,6 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);
-        file << "    { \"id\": \"" << JsonEscapeUtf8(pagesToWrite[i]) << "\", \"monitor\": \"";
-        file << JsonEscapeUtf8(page != nullptr ? page->monitorId : L"");
         int columns = page != nullptr ? page->columns : 0;
         int rows = page != nullptr ? page->rows : 0;
         if (page == nullptr)
@@ -1094,16 +1089,15 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             if (colIt != savedPageColumns_.end()) columns = colIt->second;
             if (rowIt != savedPageRows_.end()) rows = rowIt->second;
         }
-        file << "\"";
-        if (const auto name = savedPageNames_.find(pagesToWrite[i]); name != savedPageNames_.end())
-            file << ", \"name\": \"" << JsonEscapeUtf8(name->second) << "\"";
-        file << ", \"columns\": " << std::max(1, columns) <<
-            ", \"rows\": " << std::max(1, rows) << " }";
+        const auto name = savedPageNames_.find(pagesToWrite[i]);
+        snowdesktop::layout_geometry_codec::WritePage(file, pagesToWrite[i], page ? page->monitorId : L"",
+            columns, rows, name == savedPageNames_.end() ? nullptr : &name->second, JsonEscapeUtf8);
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"items\": [\n";
-    // Collect widget-owned keys — items in widgets should not be saved
-    // to the desktop items array (they belong to their widget's items list)
+    // Widget lists own membership. Keep an item record when it also carries
+    // desktop appearance intent, so a stored member survives disk reload with
+    // its complete large-icon configuration and return geometry.
     std::unordered_set<std::wstring> widgetOwnedKeys;
     for (auto& w : widgets_)
     {
@@ -1117,19 +1111,10 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     for (size_t i = 0; i < sorted.size(); ++i)
     {
         const auto* it = sorted[i];
-        if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey))) continue;
+        if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey)) && !it->largeIcon) continue;
         if (!firstItem) file << ",\n";
         firstItem = false;
-        file << "    { \"key\": \"" << JsonEscapeUtf8(it->layoutKey)
-             << "\", \"page\": \"" << JsonEscapeUtf8(it->gridCell.pageId)
-             << "\", \"x\": " << it->gridCell.column
-             << ", \"y\": " << it->gridCell.row
-             << ", \"w\": " << std::max(1, it->gridSpan.columns)
-             << ", \"h\": " << std::max(1, it->gridSpan.rows)
-             << ", \"slot\": " << it->slot;
-        if (it->largeIcon)
-            file << ", \"largeIcon\": " << snowdesktop::EncodeLargeIconConfig(*it->largeIcon);
-        file << " }";
+        snowdesktop::layout_geometry_codec::WriteItem(file, *it, JsonEscapeUtf8);
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
@@ -1138,155 +1123,17 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
-        const bool hasCustomTitle = !w.customTitle.empty();
-        file << "    { \"id\": \"" << JsonEscapeUtf8(w.id)
-             << "\", \"type\": \"" << JsonEscapeUtf8(WidgetTypeToJson(w.type))
-             << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
-             << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
-             << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
-             << "\", \"demoIconCategory\": \""
-             << JsonEscapeUtf8(w.demoIconCategory)
-             << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
-             << "\", \"sourceDesktopItemKey\": \"" << JsonEscapeUtf8(w.sourceDesktopItemKey)
-             << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
-             << "\", \"packageSourceProvider\": \""
-             << JsonEscapeUtf8(w.packageSourceProvider)
-             << "\", \"packageSourceExternalItemId\": \""
-             << JsonEscapeUtf8(w.packageSourceExternalItemId)
-             << "\", \"packageSourceUrl\": \""
-             << JsonEscapeUtf8(w.packageSourceUrl)
-             << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
-             << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)
-             << "\", \"x\": " << w.gridCell.column
-             << ", \"y\": " << w.gridCell.row
-             << ", \"w\": " << std::max(1, w.gridSpan.columns)
-             << ", \"h\": " << std::max(1, w.gridSpan.rows)
-             << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
-             << ", \"dissolveWhenSingle\": " << (w.dissolveWhenSingle ? "true" : "false")
-             << ", \"listMode\": " << (w.listMode ? "true" : "false")
-             << ", \"fanPopup\": " << (w.fanPopup ? "true" : "false")
-             << ", \"showDetails\": "
-             << (snowdesktop::list_detail_rules::HasMetadataColumns(
-                    w.detailShowModified,
-                    w.detailShowType,
-                    w.detailShowSize)
-                    ? "true" : "false")
-             << ", \"detailShowModified\": "
-             << (w.detailShowModified ? "true" : "false")
-             << ", \"detailShowType\": "
-             << (w.detailShowType ? "true" : "false")
-             << ", \"detailShowSize\": "
-             << (w.detailShowSize ? "true" : "false")
-             << ", \"detailModifiedPosition\": "
-             << w.detailModifiedPosition
-             << ", \"detailTypePosition\": "
-             << w.detailTypePosition
-             << ", \"detailSizePosition\": "
-             << w.detailSizePosition
-             << ", \"contentSortColumn\": \""
-             << snowdesktop::list_detail_rules::ToString(
-                    w.contentSortColumn)
-             << "\", \"contentSortAscending\": "
-             << (w.contentSortAscending ? "true" : "false")
-             << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
-             << ", \"showFileCategories\": " << (w.showFileCategories ? "true" : "false")
-             << ", \"showSearchBox\": " << (w.showSearchBox ? "true" : "false")
-             << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
-             << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
-             << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
-             << ", \"titleBarCollapsed\": " << (w.titleBarCollapsed ? "true" : "false")
-             << ", \"titleBarExpandOnHover\": " << (w.titleBarExpandOnHover ? "true" : "false")
-             << ", \"largeFolderTitleless\": "
-             << (w.largeFolderTitleless ? "true" : "false")
-             << ", \"keepWhenDesktopHidden\": "
-             << (w.keepWhenDesktopHidden ? "true" : "false")
-             << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
-             << ", \"bottomBarHover\": " << (w.bottomBarHover ? "true" : "false")
-             << ", \"userRenamed\": " << (hasCustomTitle ? "true" : "false")
-             << ", \"scrollOffset\": " << std::max(0, w.scrollOffset)
-             << ", \"tabScrollOffset\": " << std::max(0, w.tabScrollOffset)
-             << ", \"folderSortMode\": "
-             << snowdesktop::folder_sort_rules::
-                    NormalizeMode(w.folderSortMode)
-             << ", \"folderSortAscending\": "
-             << (w.folderSortAscending ? "true" : "false")
-             << ", \"categoryTabOrder\": [";
-        for (size_t j = 0; j < w.categoryTabOrder.size(); ++j)
-        {
-            if (j) file << ",";
-            file << "\"" << JsonEscapeUtf8(w.categoryTabOrder[j]) << "\"";
-        }
-        file << "], \"items\": [";
-        for (size_t j = 0; j < w.itemKeys.size(); ++j)
-        {
-            file << "\"" << JsonEscapeUtf8(w.itemKeys[j]) << "\"";
-            if (j + 1 != w.itemKeys.size()) file << ", ";
-        }
-        file << "], \"childWidgets\": [";
-        for (size_t j = 0; j < w.childWidgetIds.size(); ++j)
-        {
-            file << "\"" << JsonEscapeUtf8(w.childWidgetIds[j]) << "\"";
-            if (j + 1 != w.childWidgetIds.size()) file << ", ";
-        }
-        file << "] }";
+        snowdesktop::widget_layout_codec::Write(file, w, JsonEscapeUtf8, WideToUtf8);
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"dockEntries\": [\n";
-    for (size_t i = 0; i < dockEntries_.size(); ++i)
+    const auto orderedDockEntries =
+        snowdesktop::dock_folder_rules::EntriesInUserOrder(dockEntries_);
+    for (size_t i = 0; i < orderedDockEntries.size(); ++i)
     {
-        const DockEntry& entry = dockEntries_[i];
-        file << "    { \"type\": \""
-             << (IsLogicalDockEntryType(entry.type)
-                    ? "collection"
-                    : (entry.type == DockEntryType::FolderMapping
-                        ? "folderMapping" : "item"))
-             << "\", \"ref\": \"" << JsonEscapeUtf8(entry.reference)
-             << "\", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
-             << ", \"folderSortMode\": "
-             << snowdesktop::folder_sort_rules::
-                    NormalizeMode(
-                        entry.folderSortMode)
-             << ", \"folderSortAscending\": "
-             << (entry.folderSortAscending
-                    ? "true" : "false")
-             << ", \"listMode\": "
-             << (entry.listMode ? "true" : "false")
-             << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
-             << ", \"showSearchBox\": " << (entry.showSearchBox ? "true" : "false")
-             << ", \"showFileCategories\": " << (entry.showFileCategories ? "true" : "false")
-             << ", \"detailShowModified\": "
-             << (entry.detailShowModified ? "true" : "false")
-             << ", \"detailShowType\": "
-             << (entry.detailShowType ? "true" : "false")
-             << ", \"detailShowSize\": "
-             << (entry.detailShowSize ? "true" : "false")
-             << ", \"detailModifiedPosition\": "
-             << entry.detailModifiedPosition
-             << ", \"detailTypePosition\": "
-             << entry.detailTypePosition
-             << ", \"detailSizePosition\": "
-             << entry.detailSizePosition
-             << ", \"categoryTabOrder\": [";
-        for (size_t j = 0; j < entry.categoryTabOrder.size(); ++j)
-        {
-            if (j) file << ", ";
-            file << "\"" << JsonEscapeUtf8(entry.categoryTabOrder[j]) << "\"";
-        }
-        file << "], \"folderItems\": [";
-        for (size_t j = 0;
-            j < entry.folderItemKeys.size(); ++j)
-        {
-            file << "\""
-                 << JsonEscapeUtf8(
-                        entry.folderItemKeys[j])
-                 << "\"";
-            if (j + 1 !=
-                entry.folderItemKeys.size())
-                file << ", ";
-        }
-        file << "] }"
-             << (i + 1 == dockEntries_.size()
-                    ? "\n" : ",\n");
+        const DockEntry& entry = *orderedDockEntries[i];
+        snowdesktop::dock_layout_codec::Write(file, entry, JsonEscapeUtf8);
+        file << (i + 1 == orderedDockEntries.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
     for (size_t i = 0; i < navTabOrder_.size(); ++i)
@@ -1323,15 +1170,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
  */
 DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type) const
 {
-    std::wstring n = ToUpperInvariant(type);
-    if (n == L"FILECATEGORIES" || n == L"FILE_CATEGORIES") return DesktopWidgetType::FileCategories;
-    if (n == L"FOLDERMAPPING" || n == L"FOLDER_MAPPING") return DesktopWidgetType::FolderMapping;
-    if (n == L"COLLECTIONGROUP" || n == L"COLLECTION_GROUP") return DesktopWidgetType::CollectionGroup;
-    if (n == L"FILEGROUP" || n == L"FILE_GROUP") return DesktopWidgetType::FileGroup;
-    if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
-    if (n == L"GUIDE") return DesktopWidgetType::Guide;
-    if (n == L"COLLECTION") return DesktopWidgetType::Collection;
-    return DesktopWidgetType::Collection;
+    return snowdesktop::widget_layout_codec::TypeFromName(type, ToUpperInvariant);
 }
 
 /**
@@ -1341,15 +1180,5 @@ DesktopWidgetType DesktopApp::WidgetTypeFromJson(const std::wstring& type) const
  */
 std::wstring DesktopApp::WidgetTypeToJson(DesktopWidgetType type) const
 {
-    switch (type)
-    {
-    case DesktopWidgetType::CollectionGroup: return L"collectionGroup";
-    case DesktopWidgetType::FileGroup:       return L"fileGroup";
-    case DesktopWidgetType::FileCategories: return L"fileCategories";
-    case DesktopWidgetType::FolderMapping:  return L"folderMapping";
-    case DesktopWidgetType::LuaScript:      return L"lua";
-    case DesktopWidgetType::Guide:          return L"guide";
-    case DesktopWidgetType::Collection:
-    default:                                return L"collection";
-    }
+    return snowdesktop::widget_layout_codec::TypeName(type);
 }

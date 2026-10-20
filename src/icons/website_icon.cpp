@@ -498,14 +498,11 @@ std::size_t CollectUnused(const std::filesystem::path& directory,
         if (shortcutAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE)) return 0;
         std::string contents;
         if (!atomic_file::ReadAll(shortcut, contents)) return 0;
-        if (_wcsicmp(extension.c_str(), L".website") == 0)
-        {
-            if (const auto resource = shortcut_icon_resource::ReadInternetShortcutIconResource(shortcut.wstring()))
-                retained.push_back(std::filesystem::path(resource->path).lexically_normal());
-        }
-        else
-            for (const auto& resource : shortcut_icon_resource::ReadLocalIconResources(shortcut.wstring()))
-                retained.push_back(std::filesystem::path(resource.path).lexically_normal());
+        std::vector<shortcut_icon_resource::IconResourceLocation> declarations;
+        if (!shortcut_icon_resource::ReadDeclaredIconResources(shortcut.wstring(), declarations))
+            return 0;
+        for (const auto& resource : declarations)
+            retained.push_back(std::filesystem::path(resource.path).lexically_normal());
     }
     std::error_code error;
     std::vector<std::filesystem::path> candidates;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
 #include "theme_library_actions.h"
+#include "icons/icon_library.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -17,6 +19,8 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Dock and taskbar settings presenter. */
 struct DockPageActions
 {
+    IconLibraryAction iconLibrary;
+    std::function<void(std::wstring)> editIconAppearance;
     ThemeLibraryAction themeLibrary;
     ThemeLibraryAsyncAction themeAsync;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
@@ -79,9 +83,12 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
-    /** Combined appearance/animation card, placed after the Dock enable row. */
+    /** Separate appearance and animation groups, placed after Dock behavior. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        DockAppearanceContent() const noexcept;
+        DockAppearanceContent() const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockThemeContent() const;
+    /** Reparents the shared taskbar appearance group, including scenario rules. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TaskbarAppearanceContent() const;
     void SetSupplementalContent(
         const winrt::Microsoft::UI::Xaml::UIElement& appearance,
         const winrt::Microsoft::UI::Xaml::UIElement& animation,
@@ -94,7 +101,7 @@ public:
         DockContent() const noexcept;
     /** Taskbar behavior, default appearance, scenario overrides and shell UI. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        TaskbarContent() const noexcept;
+        TaskbarContent() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 
@@ -103,7 +110,8 @@ public:
     void ActivateTaskbar() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId) const noexcept;
+        FocusTarget(std::string_view focusId,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
     void Close() noexcept;
 
 private:

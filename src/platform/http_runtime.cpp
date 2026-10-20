@@ -19,8 +19,6 @@
 
 namespace
 {
-constexpr DWORD kMaxResponseBytes = 1024 * 1024;
-
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -744,7 +742,8 @@ int AsyncHttpService::Submit(HttpRequestOptions options)
     const bool cacheable = options.cacheSeconds > 0 && Lower(options.method) == L"get";
     const std::wstring cacheKey = options.widgetId + L"\n" + options.method + L"\n" +
         options.url + L"\n" + options.headers + L"\n" +
-        std::to_wstring(options.maximumResponseBytes);
+        std::to_wstring(options.maximumResponseBytes) + L"\n" +
+        (options.retryDirect ? L"retry-direct" : L"system-proxy");
     auto cached = cache_.find(cacheKey);
     if (cacheable && cached != cache_.end() &&
         std::chrono::steady_clock::now() < cached->second.expires)
@@ -840,12 +839,32 @@ std::vector<HttpResponse> AsyncHttpService::Drain()
 HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options,
     std::stop_token token)
 {
+    bool transportFailure = false;
+    auto response = ExecuteAttempt(id, options, token, false, transportFailure);
+    // Opt in only for bodyless read requests. Start from the original URL so
+    // the direct attempt rechecks every redirect and all existing restrictions.
+    if (options.retryDirect && options.body.empty() &&
+        (options.method == L"GET" || options.method == L"HEAD") &&
+        !token.stop_requested() &&
+        (transportFailure || (response.error.empty() &&
+            response.status >= 400 && response.status <= 599)))
+    {
+        response = ExecuteAttempt(id, options, token, true, transportFailure);
+    }
+    return response;
+}
+
+HttpResponse AsyncHttpService::ExecuteAttempt(int id, const HttpRequestOptions& options,
+    std::stop_token token, bool direct, bool& transportFailure)
+{
+    transportFailure = false;
     HttpResponse response;
     response.id = id;
     response.widgetId = options.widgetId;
 
     HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+        direct ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
     WinHttpSetTimeouts(session, options.timeoutMs, options.timeoutMs,
@@ -946,6 +965,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         if (!sent || !WinHttpReceiveResponse(request, nullptr))
         {
             response.error = "HTTP request failed";
+            transportFailure = true;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -1013,19 +1033,32 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         }
 
         const DWORD maximumResponseBytes = std::clamp<DWORD>(
-            options.maximumResponseBytes, 4096, kMaxResponseBytes);
+            options.maximumResponseBytes, 4096,
+            HttpRequestOptions::MaximumResponseBytes);
         while (!token.stop_requested() &&
             response.body.size() <= maximumResponseBytes)
         {
             DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+            if (!WinHttpQueryDataAvailable(request, &available))
+            {
+                response.error = "HTTP response read failed";
+                transportFailure = true;
+                break;
+            }
+            if (available == 0) break;
             DWORD remaining = maximumResponseBytes + 1 -
                 static_cast<DWORD>(response.body.size());
             available = std::min(available, remaining);
             std::string chunk(available, '\0');
             DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+            if (!WinHttpReadData(request, chunk.data(), available, &read))
+            {
+                response.error = "HTTP response read failed";
+                transportFailure = true;
+                break;
+            }
             response.body.append(chunk.data(), read);
+            if (read == 0) break;
         }
         if (token.stop_requested()) response.error = "Cancelled";
         else if (response.body.size() > maximumResponseBytes)
@@ -1033,6 +1066,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.body.resize(maximumResponseBytes);
             response.error = "Response too large";
         }
+        if (transportFailure) response.body.clear();
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
         break;

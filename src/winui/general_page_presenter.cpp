@@ -47,18 +47,17 @@ struct SettingsCard
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page, bool withHeading = true)
 {
     card.root = muxc::Border{};
-    card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    presenter_controls::InitializeSettingsGroup(card.root,
+        withHeading ? card.title.as<mux::FrameworkElement>() : nullptr, card.content, style, !withHeading);
     page.Children().Append(card.root);
 }
 
@@ -130,6 +129,7 @@ struct HotkeySettingRow
     {
         recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
         row.Initialize(recorder.Root());
+        row.SetCompactEditor();
         row.SetControlAlignment(mux::HorizontalAlignment::Right);
     }
 };
@@ -270,17 +270,26 @@ struct GeneralPagePresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8.0);
         desktopRoot = muxc::StackPanel{};
-        desktopRoot.Spacing(8.0);
+        desktopRoot.Spacing(24.0);
         pageNavigationRoot = muxc::StackPanel{};
-        pageNavigationRoot.Spacing(8.0);
+        pageNavigationRoot.Spacing(24.0);
         dockShortcutRoot = muxc::StackPanel{};
-        dockShortcutRoot.Spacing(8.0);
+        dockShortcutRoot.Spacing(0.0);
 
         onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle, navigationCardStyle);
         root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         if (const auto guide = onboarding->Content().try_as<muxc::Expander>())
-            guide.CornerRadius(startupCard.root.CornerRadius());
+        {
+            guide.CornerRadius({4, 4, 4, 4});
+            guide.MinHeight(68.0);
+            guide.Style(mux::Markup::XamlReader::Load(LR"(<Style
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Expander">
+ <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+ </Style>)").as<mux::Style>());
+            if (const auto title = guide.Header().try_as<muxc::TextBlock>())
+                title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
+        }
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -292,9 +301,10 @@ struct GeneralPagePresenter::Impl
             muxc::InfoBarSeverity::Informational);
         startupOwnershipNotice.IsClosable(false);
         startupOwnershipNotice.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(startupOwnershipNotice);
         startupCard.content.Children().Append(startupOwnershipNotice);
 
-        InitializeCard(advancedFeaturesCard, cardStyle, root);
+        InitializeCard(advancedFeaturesCard, cardStyle, root, false);
         advancedFeaturesCard.content.Children().Clear();
         advancedFeatureExpander = muxc::Expander{};
         advancedFeatureExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -368,8 +378,10 @@ struct GeneralPagePresenter::Impl
         advancedFeatureRow.Initialize(advancedFeatureControls, 0.0);
         advancedFeatureRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        // The shared surface supplies 16 DIP padding and a 1 DIP border.
+        advancedFeatureRow.root.MinHeight(34.0);
         advancedFeaturesCard.title = advancedFeatureRow.label;
-        advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
         advancedFeatureExpander.Header(advancedFeatureRow.root);
         muxc::StackPanel featureBody;
         featureBody.Spacing(4.0);
@@ -414,6 +426,7 @@ struct GeneralPagePresenter::Impl
         advancedFeatureNotice = muxc::InfoBar{};
         advancedFeatureNotice.IsClosable(false);
         advancedFeatureNotice.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(advancedFeatureNotice);
         retryAdvancedFeaturesButton = muxc::Button{};
         advancedFeatureNotice.ActionButton(retryAdvancedFeaturesButton);
         advancedFeatureUpdateButton = muxc::Button{};
@@ -530,11 +543,33 @@ struct GeneralPagePresenter::Impl
         floatingDockToggleRow.Initialize(floatingDockToggle);
         floatingDockToggleRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(floatingDockToggleRow.root, false, 0.0);
         dockShortcutRoot.Children().Append(floatingDockToggleRow.root);
         floatingDockHotkeyLabel = muxc::TextBlock{};
         floatingDockHotkeyRow.Initialize(floatingDockHotkey);
         dockShortcutRoot.Children().Append(
             floatingDockHotkeyRow.row.root);
+        // Indent only the dependent label; editor trailing edges remain shared
+        // with each parent switch, including the two page-navigation shortcuts.
+        for (const auto& row : {softwareDesktopHotkeyRow.row.root,
+                 quickNavigationHotkeyRow.row.root,
+                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root,
+                 desktopPassthroughHotkeyRow.row.root,
+                 floatingDockHotkeyRow.row.root})
+        {
+            row.Margin({0.0, 0.0, 0.0, 0.0});
+            presenter_controls::StyleSettingsSubrow(row, false, 16.0);
+        }
+        for (const auto* card : {&startupCard, &desktopBehaviorCard, &languageCard,
+                 &quickNavigationCard, &pageNavigationCard, &desktopPassthroughCard})
+            presenter_controls::UpdateSettingsSubrows(card->content, 0.0);
+        for (const auto& row : {softwareDesktopHotkeyRow.row.root, quickNavigationHotkeyRow.row.root,
+                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root, desktopPassthroughHotkeyRow.row.root})
+            presenter_controls::StyleSettingsSubrow(row, false, 16.0);
+        // Match the native disclosure's 68 DIP header, including the card border.
+        autoStartRow.root.MinHeight(66.0);
+        languageRow.root.MinHeight(66.0);
+        startupOwnershipNotice.Margin({16, 0, 16, 8});
     }
 
     template <typename Edit>
@@ -915,6 +950,7 @@ struct GeneralPagePresenter::Impl
         text.systemConflict = L("app.settings.hotkey_conflict_system");
         text.apply = L("app.settings.apply");
         text.cancel = L("app.settings.cancel");
+        text.edit = L("app.settings.hotkey_edit");
         text.clear = L("app.settings.widget.clear");
         text.restoreDefault = L("app.settings.restore_default");
         return text;
@@ -960,10 +996,12 @@ struct GeneralPagePresenter::Impl
         onboarding->RefreshLocalizedText();
         quickOptions->RefreshText();
         SetCardText(startupCard, "settings.general.startup");
+        startupCard.title.Visibility(mux::Visibility::Collapsed);
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
         SetCardText(desktopBehaviorCard, "settings.desktop.behavior");
         SetCardText(languageCard, "app.settings.language");
+        languageCard.title.Visibility(mux::Visibility::Collapsed);
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
             "settings.general.pageNavigation");
@@ -1459,6 +1497,51 @@ void GeneralPagePresenter::RegisterFocusTargets(
             "general.floatingDock.hotkey"});
     registerAliases(impl_->doubleClickHideToggle,
         {"desktop.doubleClickHide", "general.doubleClickHide"});
+}
+
+mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId,
+    SettingsFocusPrerequisite* prerequisite, bool reveal) const noexcept
+{
+    if (prerequisite) *prerequisite = {};
+    if (!impl_ || impl_->closed) return nullptr;
+    const auto hotkeyTarget = [prerequisite](const HotkeyRecorder& recorder,
+        const muxc::ToggleSwitch& parent, std::wstring_view parentName)
+        -> mux::FrameworkElement {
+        if (recorder.Root().IsEnabled()) return recorder.FocusTarget();
+        if (!parent.IsEnabled()) return nullptr;
+        if (prerequisite)
+            *prerequisite = {"settings.search.prerequisite.enable", std::wstring(parentName)};
+        return parent;
+    };
+    if (focusId == "desktop.softwareDesktopHotkey.hotkey")
+        return hotkeyTarget(impl_->softwareDesktopHotkey, impl_->softwareDesktopHotkeyToggle,
+            impl_->softwareDesktopHotkeyToggleRow.label.Text().c_str());
+    if (focusId == "general.quickNavigation.hotkey")
+        return hotkeyTarget(impl_->quickNavigationHotkey, impl_->quickNavigationToggle,
+            impl_->quickNavigationToggleRow.label.Text().c_str());
+    if (focusId == "general.pageNavigation.previous")
+        return hotkeyTarget(impl_->previousPageHotkey, impl_->pageNavigationToggle,
+            impl_->pageNavigationToggleRow.label.Text().c_str());
+    if (focusId == "general.pageNavigation.next")
+        return hotkeyTarget(impl_->nextPageHotkey, impl_->pageNavigationToggle,
+            impl_->pageNavigationToggleRow.label.Text().c_str());
+    if (focusId == "desktop.passthrough.hotkey" ||
+        focusId == "general.desktopPassthrough.hotkey")
+        return hotkeyTarget(impl_->desktopPassthroughHotkey, impl_->desktopPassthroughToggle,
+            impl_->desktopPassthroughToggleRow.label.Text().c_str());
+    if (focusId == "dock.floatingShortcutMode.hotkey" ||
+        focusId == "general.floatingDock.hotkey")
+    {
+        // The Dock presenter owns its main switch. Let the shell resolve that
+        // earlier prerequisite instead of returning our disabled mode switch.
+        if (!impl_->dockEnabled) return nullptr;
+        return hotkeyTarget(impl_->floatingDockHotkey, impl_->floatingDockToggle,
+            impl_->floatingDockToggleRow.label.Text().c_str());
+    }
+    if (focusId == "dock.floatingShortcutMode" || focusId == "general.floatingDock" ||
+        focusId == "general.floatingDock.enabled")
+        return impl_->dockEnabled ? impl_->floatingDockToggle.as<mux::FrameworkElement>() : nullptr;
+    return impl_->quickOptions ? impl_->quickOptions->FocusTarget(focusId, reveal) : nullptr;
 }
 
 void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)

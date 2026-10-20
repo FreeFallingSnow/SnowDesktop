@@ -2,6 +2,8 @@
 
 #include "settings/settings_controller.h"
 #include "hotkey_recorder.h"
+#include "settings_focus_feedback.h"
+#include "general_advanced_feature_status.h"
 #include "start_page_presenter.h"
 #include "../../steam_bridge/src/steam_connection_feedback.h"
 
@@ -36,40 +38,6 @@ struct GeneralStartupConflict
 {
     GeneralStartupConflictKind kind = GeneralStartupConflictKind::None;
     std::wstring ownerCommand;
-};
-
-enum class GeneralAdvancedFeatureState : std::uint8_t
-{
-    BridgeUnavailable,
-    Unregistered,
-    Checking,
-    Registered,
-    RegistrationFailed,
-};
-
-enum class GeneralAdvancedFeatureFailure : std::uint8_t
-{
-    None,
-    SteamUnavailable,
-    NotOwned,
-    BridgeError,
-    StorageError,
-};
-
-struct GeneralAdvancedFeatureStatus
-{
-    GeneralAdvancedFeatureState state =
-        GeneralAdvancedFeatureState::BridgeUnavailable;
-    GeneralAdvancedFeatureFailure failure =
-        GeneralAdvancedFeatureFailure::None;
-    steam_bridge::SteamConnectionProblem connectionProblem =
-        steam_bridge::SteamConnectionProblem::None;
-    std::wstring errorDetail;
-    bool bridgeAvailable = false;
-    bool registered = false;
-    std::int64_t validUntil = 0;
-    bool cardVisible = false;
-    bool offerSteamStore = false;
 };
 
 /** Commands emitted by the cached General settings presenter. */
@@ -151,6 +119,10 @@ public:
     /** Re-query runtime-only state that is not persisted in SettingsSnapshot. */
     void RefreshRuntimeState() noexcept;
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        FocusTarget(std::string_view focusId,
+            SettingsFocusPrerequisite* prerequisite = nullptr,
+            bool reveal = true) const noexcept;
 
     void ApplyOnboardingStatus(const HomeAboutStatusPatch& patch);
     void Activate(std::string_view focusId = {}) noexcept;

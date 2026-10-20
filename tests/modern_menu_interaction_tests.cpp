@@ -1,5 +1,6 @@
 #include "ui/menu/modern_menu.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/tray_context_menu_placement.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_label.h"
@@ -835,6 +836,112 @@ void CheckLazySubmenuPreparation(HWND owner)
     }
 }
 
+void CheckTrayFlyoutMenuHeight(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    MONITORINFO monitor{sizeof(monitor)};
+    Expect(GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor),
+        "tray placement has a monitor work area");
+    const RECT work = monitor.rcWork;
+    const std::vector<Item> rows{
+        {9200, L"Desktop icon settings", L"", true, false, false,
+            {{9210, L"This PC", L"", true}}},
+        {9201, L"Desktop mode", L"", true},
+        {9202, L"Settings", L"", true},
+        {9203, L"Restart Explorer", L"", true},
+        {9204, L"Restart application", L"", true},
+        {9205, L"Exit", L"", true},
+    };
+    // Only the Shell flyout geometry/work-area reservation is a fixture.
+    // The same placement policy as ShowTrayMenu feeds the real popup layout,
+    // viewport, HWND and keyboard dispatch on the isolated test desktop.
+    const auto capture = [&](const Options& options) {
+        RECT bounds{};
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            Expect(GetWindowRect(root, &bounds), "tray menu bounds are observable");
+            SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(rows, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == 9205,
+            "all tray actions remain keyboard accessible");
+        gMenuScript = {};
+        return bounds;
+    };
+    for (const UINT dpi : {96U, 144U, 192U})
+    {
+        Options options;
+        options.owner = owner;
+        options.topmost = true;
+        options.dpi = dpi;
+        options.appearance = Appearance::SystemLightBlur;
+        options.anchor = {(work.left + work.right) / 2, (work.top + work.bottom) / 2};
+        const RECT baseline = capture(options);
+        for (const bool bottomInset : {false, true})
+        {
+            MONITORINFO shellGeometry = monitor;
+            shellGeometry.rcMonitor = work;
+            if (bottomInset) shellGeometry.rcMonitor.bottom += 48;
+            for (const bool nearTop : {true, false})
+            {
+                const LONG top = nearTop ? work.top + 8 : work.bottom - 168;
+                const RECT flyout{work.right - 328, top, work.right - 8, top + 160};
+                const POINT click{flyout.left + 40, flyout.top + 40};
+                const int gap = MulDiv(8, static_cast<int>(dpi), 96);
+                options.anchor = click;
+                snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+                    options, click, flyout, shellGeometry, gap);
+                const RECT bounds = capture(options);
+                if (bounds.bottom - bounds.top != baseline.bottom - baseline.top)
+                    std::cerr << "tray flyout height: dpi=" << dpi
+                              << " nearTop=" << nearTop << " bottomInset=" << bottomInset
+                              << " expected=" << baseline.bottom - baseline.top
+                              << " observed=" << bounds.bottom - bounds.top << '\n';
+                Expect(bounds.bottom - bounds.top == baseline.bottom - baseline.top,
+                    "a tray flyout near either screen edge preserves the complete menu height");
+                Expect(bounds.left >= work.left && bounds.right <= work.right &&
+                    bounds.top >= work.top && bounds.bottom <= work.bottom,
+                    "the tray menu stays inside its monitor work area");
+                Expect(nearTop ? bounds.top >= flyout.bottom + gap
+                               : bounds.bottom <= flyout.top - gap,
+                    "the tray menu opens on the spacious side without covering the flyout");
+            }
+        }
+    }
+    struct EdgeCase
+    {
+        RECT surface;
+        RECT work;
+        RootPlacement expected;
+    };
+    const EdgeCase edgeCases[]{
+        {{-1920, -1080, 0, -1032}, {-1920, -1032, 0, 0}, RootPlacement::BelowAnchorRect},
+        {{-1920, -48, 0, 0}, {-1920, -1080, 0, -48}, RootPlacement::AboveAnchorRect},
+        {{-1920, -1080, -1872, 0}, {-1872, -1080, 0, 0}, RootPlacement::RightOfAnchorRect},
+        {{-48, -1080, 0, 0}, {-1920, -1080, -48, 0}, RootPlacement::LeftOfAnchorRect},
+        {{-1864, -800, -1544, -640}, {-1872, -1080, 0, 0}, RootPlacement::RightOfAnchorRect},
+        {{-376, -800, -56, -640}, {-1920, -1080, -48, 0}, RootPlacement::LeftOfAnchorRect},
+    };
+    for (const auto& edgeCase : edgeCases)
+    {
+        MONITORINFO shellGeometry{sizeof(shellGeometry)};
+        shellGeometry.rcMonitor = {-1920, -1080, 0, 0};
+        shellGeometry.rcWork = edgeCase.work;
+        Options options;
+        const POINT click{edgeCase.surface.left + 8, edgeCase.surface.top + 8};
+        snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+            options, click, edgeCase.surface, shellGeometry, 8);
+        Expect(options.rootPlacement == edgeCase.expected,
+            "normal taskbars and side flyouts open inward on monitors with negative coordinates");
+    }
+}
+
 void CheckCascadeWorkArea(HWND owner)
 {
     using namespace snowdesktop::modern_menu;
@@ -1001,6 +1108,84 @@ void CheckPreviewCompanionOrder(HWND owner)
     gMenuScript = {};
 }
 
+struct CompanionClicks
+{
+    int downs = 0, ups = 0, pages = 0, options = 0, applications = 0;
+    bool pressed = false, activeOnEveryMessage = true;
+    static void PostPair(HWND window, int action)
+    {
+        PostMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(action, 2));
+        PostMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(action, 2));
+    }
+    static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        auto* self = reinterpret_cast<CompanionClicks*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+        if (self && (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP))
+        {
+            self->activeOnEveryMessage &= snowdesktop::modern_menu::IsActive();
+            if (message == WM_LBUTTONDOWN) { ++self->downs; self->pressed = true; }
+            else
+            {
+                ++self->ups;
+                if (std::exchange(self->pressed, false))
+                {
+                    const int action = GET_X_LPARAM(lp);
+                    if (action == 0) ++self->pages;
+                    else if (action == 1) ++self->options;
+                    else { ++self->applications; snowdesktop::modern_menu::DismissActive(); }
+                    if (action < 2) PostPair(window, action + 1);
+                }
+            }
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+};
+
+void CheckPreviewCompanionClicks(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    WNDCLASSW type{};
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpfnWndProc = CompanionClicks::Procedure;
+    type.lpszClassName = L"SnowDesktop.MenuCompanionClicks";
+    RegisterClassW(&type);
+    for (const bool childTarget : {false, true})
+    {
+        CompanionClicks clicks;
+        HWND companion = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, type.lpszClassName,
+            L"preview", WS_POPUP | WS_VISIBLE, 20, 20, 80, 60, owner, nullptr, type.hInstance, &clicks);
+        HWND target = companion;
+        if (childTarget) target = CreateWindowExW(0, type.lpszClassName, L"preview button",
+            WS_CHILD | WS_VISIBLE, 0, 0, 60, 30, companion, nullptr, type.hInstance, &clicks);
+        Expect(companion && target, "a live preview companion and optional child are created");
+        HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+        Options options;
+        options.owner = owner; options.anchor = {80, 80};
+        options.zOrderCompanion = [&] { return companion; };
+        options.eventPump.scheduledWorkHandle = wake;
+        options.eventPump.dispatchScheduledWork = [&] { CompanionClicks::PostPair(target, 0); };
+        gWatchdogFired = false;
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show({{9103, L"Menu stays open", L"", true}}, options);
+        KillTimer(owner, kWatchdogTimer);
+        // Match the host: the preview is closed immediately after Show returns.
+        // Do not dispatch a stray UP after the session has already cancelled.
+        MSG pending{};
+        while (PeekMessageW(&pending, target, WM_LBUTTONDOWN, WM_LBUTTONUP, PM_REMOVE)) {}
+        DestroyWindow(companion);
+        CloseHandle(wake);
+        Expect(!gWatchdogFired && clicks.activeOnEveryMessage && clicks.downs == 3 && clicks.ups == 3 &&
+            clicks.pages == 1 && clicks.options == 1 && clicks.applications == 1 &&
+            result.command == 0 && !IsActive(),
+            "queued DOWN/UP on the registered companion or child reaches paging, options and one explicit apply dismissal");
+    }
+}
+
 } // namespace
 
 // Exercise the same rows and layout metadata as the host, on an isolated desktop.
@@ -1095,6 +1280,7 @@ void CheckSortRows(HWND owner, bool negativeControl)
 }
 
 void RunTrayFocusWindowTests();
+void RunNativeTrayMenuLayerTests();
 
 int wmain(int argc, wchar_t** argv)
 {
@@ -1116,17 +1302,31 @@ int wmain(int argc, wchar_t** argv)
                    items[4].children.front().command == 4 && items[5].command == 2,
                "Shell entries and More form the bottom group after every host action");
         items = {open, separator, more, separator, after};
-        snowdesktop::shell_extensions::AddMoreManagementAction(items, 2, 5, L"管理");
-        snowdesktop::shell_extensions::MoveMoreToBottom(items, 2);
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", false);
         snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
         Expect(items.size() == 7 && items[4].label == L"7-Zip" && items[5].command == 2 &&
                    items[6].command == 5 && items[5].inlineGroup == items[6].inlineGroup,
                "management stays beside More after the real attachment and insertion sequence");
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", true);
+        Expect(items.size() == 5 && items.back().label == L"7-Zip" &&
+                   items.back().children.front().command == 4,
+               "hiding the footer removes both actions and preserves Shell commands");
+        items = {separator, open, separator, more, separator};
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", true);
+        Expect(items.size() == 1 && items.front().command == 1,
+               "a hidden footer leaves no leading, duplicate or trailing divider");
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 3 && items[1].separator && items.back().children.front().command == 4 &&
+                   std::none_of(items.begin(), items.end(), [](const Item &item) {
+                       return item.command == 2 || item.command == 5;
+                   }),
+               "late Shell entries remain available without recreating the hidden footer");
     }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;
     RunTrayFocusWindowTests();
+    RunNativeTrayMenuLayerTests();
     CheckStatusBarKeyboardMessages();
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
@@ -1180,11 +1380,20 @@ int wmain(int argc, wchar_t** argv)
     SetForegroundWindow(owner);
     SetFocus(owner);
 
+    CheckTrayFlyoutMenuHeight(owner);
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--tray-placement-only")
+    {
+        DestroyWindow(owner);
+        UnregisterClassW(kOwnerClass, GetModuleHandleW(nullptr));
+        std::cout << "tray flyout menu height checks passed\n";
+        return 0;
+    }
     const bool sortNegativeControl = argc == 2 && std::wstring_view(argv[1]) == L"--sort-layout-negative-control";
     CheckSortRows(owner, sortNegativeControl);
     if (sortNegativeControl) return 2; // Expected to fail the same geometry assertion above.
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
+    CheckPreviewCompanionClicks(owner);
     CheckDockRunningMenuTransition(owner);
     CheckLazySubmenuPreparation(owner);
     gDriveMode = DriveMode::Cascade;
@@ -1349,6 +1558,37 @@ int wmain(int argc, wchar_t** argv)
             "missing input proxy must never fall back to the Explorer-owned child");
         Expect(ResolveMenuOwner(render, render, owner, nullptr, true) == owner,
             "missing floating proxy falls back to the desktop input proxy");
+        // The panel may stay visible during its fade-out. A desktop press must
+        // cancel it before focusing the input proxy; passive refresh must not.
+        {
+            using snowdesktop::desktop_input_activation::RestoreInteractionFocus;
+            SetActiveWindow(owner);
+            SetFocus(owner);
+            bool closeRequested = false;
+            int restoreCount = 0;
+            const auto dismissPanel = [&] { closeRequested = true; };
+            const auto restoreHost = [&] {
+                Expect(closeRequested,
+                    "outside press must cancel the panel before transferring focus");
+                ++restoreCount;
+                SetActiveWindow(floatingInput);
+                SetFocus(floatingInput);
+            };
+            RestoreInteractionFocus(true, false, dismissPanel, restoreHost);
+            Expect(!closeRequested && restoreCount == 0 && GetFocus() == owner,
+                "passive refresh must preserve the open panel and its keyboard focus");
+            RestoreInteractionFocus(true, true, dismissPanel, restoreHost);
+            Expect(closeRequested && restoreCount == 1 && GetFocus() == floatingInput &&
+                    IsWindowVisible(owner),
+                "desktop press must restore input even while the panel is fading out");
+            closeRequested = false;
+            RestoreInteractionFocus(false, true, dismissPanel, [&] { ++restoreCount; });
+            Expect(!closeRequested && restoreCount == 2,
+                "desktop press with no panel must retain normal host focus routing");
+            RestoreInteractionFocus(false, false, dismissPanel, [&] { ++restoreCount; });
+            Expect(!closeRequested && restoreCount == 3,
+                "passive refresh with no panel must retain normal host focus routing");
+        }
         for (const bool floatingSession : { false, true })
         {
             for (const bool outsideClick : { false, true })

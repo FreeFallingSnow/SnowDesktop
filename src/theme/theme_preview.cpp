@@ -3,10 +3,17 @@
 #include "common/json_value.h"
 #include "steam/steam_child_environment.h"
 #include "resources/resource.h"
+#include "icons/icon_beautify_preview.h"
+#include "theme/flat_glass_rim.h"
 #include <fstream>
 #include <thread>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <d3d11.h>
+#include <d2d1_3.h>
+#include <d2d1svg.h>
+#include <d2d1effects.h>
+#include <cstring>
 #include "../../steam_bridge/src/theme_workshop_publish.h"
 
 namespace snowdesktop::themes::preview
@@ -82,11 +89,21 @@ bool SaveCover(const std::filesystem::path& path, widget_preview::Wallpaper imag
 {
     if (image.width != kCoverSize || image.height != kCoverSize || image.pixels.size() != kCoverSize * kCoverSize)
         return Fail(error, "previewFailed");
-    for (unsigned bits : {8u, 6u, 5u, 4u, 3u, 2u})
+    for (unsigned bits : {8u, 7u, 6u, 5u, 4u, 3u, 2u})
     {
         auto pixels = image.pixels;
         if (bits < 8)
-            for (auto& p : pixels) { const auto mask = (0xffu << (8 - bits)) & 0xffu; p = 0xff000000u | (p & (mask | mask << 8 | mask << 16)); }
+            for (auto& p : pixels)
+            {
+                const unsigned levels = (1u << bits) - 1;
+                std::uint32_t rounded = 0xff000000;
+                for (unsigned shift : {0u, 8u, 16u})
+                {
+                    const unsigned quantized = (((p >> shift) & 255u) * levels + 127u) / 255u;
+                    rounded |= ((quantized * 255u + levels / 2) / levels) << shift;
+                }
+                p = rounded;
+            }
         if (!preview_png::Save(path, kCoverSize, kCoverSize, pixels, error)) return false;
         std::error_code ec; const auto size = std::filesystem::file_size(path, ec);
         if (!ec && size > 0 && size < kCoverMaximumBytes) return true;
@@ -165,10 +182,142 @@ static bool SaveFramedCover(const std::filesystem::path& raw, const std::filesys
             side, frame.data() + static_cast<std::size_t>(row) * side);
     return preview_png::Save(raw, side, side, frame, error) && NormalizeCover(raw, destination, error);
 }
+static bool BlurIconBackdrop(const widget_preview::Wallpaper& source, float radius, int rasterScale,
+    widget_preview::Wallpaper& output, std::string& error)
+{
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Device> graphics;
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory;
+    ComPtr<ID2D1Device> device;
+    ComPtr<ID2D1DeviceContext> context;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr)) || FAILED(graphics.As(&dxgi)) ||
+        FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) ||
+        FAILED(factory->CreateDevice(dxgi.Get(), &device)) ||
+        FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context))) return Fail(error, "previewFailed");
+    const auto size = D2D1::SizeU(static_cast<UINT32>(source.width), static_cast<UINT32>(source.height));
+    const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    const auto targetProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96);
+    ComPtr<ID2D1Bitmap1> target, readback;
+    if (FAILED(context->CreateBitmap(size, nullptr, 0, &targetProperties, &target))) return Fail(error, "previewFailed");
+    ComPtr<ID2D1Bitmap1> sourceBitmap; ComPtr<ID2D1Effect> blur;
+    const auto sourceProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE, format, 96, 96);
+    if (FAILED(context->CreateBitmap(size, source.pixels.data(), source.width * 4, &sourceProperties, &sourceBitmap)) ||
+        FAILED(context->CreateEffect(CLSID_D2D1GaussianBlur, &blur))) return Fail(error, "previewFailed");
+    blur->SetInput(0, sourceBitmap.Get());
+    if (FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, std::clamp(radius, 0.f, 48.f) * rasterScale)) ||
+        FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_BALANCED)) ||
+        FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD))) return Fail(error, "previewFailed");
+    context->SetTarget(target.Get()); context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+    context->DrawImage(blur.Get());
+    const auto rendered = context->EndDraw(); context->SetTarget(nullptr);
+    const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
+    if (FAILED(rendered) || FAILED(context->CreateBitmap(size, nullptr, 0, &readProperties, &readback)) ||
+        FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr))) return Fail(error, "previewFailed");
+    output = source;
+    D2D1_MAPPED_RECT mapped{};
+    if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return Fail(error, "previewFailed");
+    for (int y = 0; y < source.height; ++y)
+        std::memcpy(output.pixels.data() + static_cast<std::size_t>(y) * source.width,
+            mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(source.width) * 4);
+    return SUCCEEDED(readback->Unmap()) || Fail(error, "previewFailed");
+}
+static bool IconSample(const std::filesystem::path& host, int resourceId, int side,
+    std::vector<std::uint32_t>& pixels, std::string& error)
+{
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    const auto module = LoadLibraryExW(host.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!module) return Fail(error, "previewFailed");
+    struct ModuleCleanup { HMODULE value; ~ModuleCleanup() { FreeLibrary(value); } } moduleCleanup{module};
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+    const auto bytes = resource ? SizeofResource(module, resource) : 0;
+    const auto loaded = resource ? LoadResource(module, resource) : nullptr;
+    const auto data = loaded ? LockResource(loaded) : nullptr;
+    if (!data || !bytes) return Fail(error, "previewFailed");
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IStream> stream;
+    ULONG written = 0;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) || FAILED(stream->Write(data, bytes, &written)) || written != bytes ||
+        FAILED(stream->Seek({}, STREAM_SEEK_SET, nullptr))) return Fail(error, "previewFailed");
+    ComPtr<ID3D11Device> graphics; ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device;
+    ComPtr<ID2D1DeviceContext> context; ComPtr<ID2D1DeviceContext5> svgContext;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr)) || FAILED(graphics.As(&dxgi)) ||
+        FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) ||
+        FAILED(factory->CreateDevice(dxgi.Get(), &device)) || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) ||
+        FAILED(context.As(&svgContext))) return Fail(error, "previewFailed");
+    ComPtr<ID2D1SvgDocument> svg; ComPtr<ID2D1SvgElement> root;
+    if (FAILED(svgContext->CreateSvgDocument(stream.Get(), D2D1::SizeF(static_cast<float>(side), static_cast<float>(side)), &svg)))
+        return Fail(error, "previewFailed");
+    svg->GetRoot(&root);
+    const D2D1_SVG_LENGTH length{static_cast<float>(side), D2D1_SVG_LENGTH_UNITS_NUMBER};
+    if (!root || FAILED(root->SetAttributeValue(L"width", length)) || FAILED(root->SetAttributeValue(L"height", length)))
+        return Fail(error, "previewFailed");
+    const auto size = D2D1::SizeU(static_cast<UINT32>(side), static_cast<UINT32>(side));
+    const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96);
+    ComPtr<ID2D1Bitmap1> target, readback;
+    if (FAILED(context->CreateBitmap(size, nullptr, 0, &properties, &target))) return Fail(error, "previewFailed");
+    context->SetTarget(target.Get()); context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+    svgContext->DrawSvgDocument(svg.Get());
+    const auto result = context->EndDraw(); context->SetTarget(nullptr);
+    const auto cpu = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
+    if (FAILED(result) || FAILED(context->CreateBitmap(size, nullptr, 0, &cpu, &readback)) ||
+        FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr))) return Fail(error, "previewFailed");
+    D2D1_MAPPED_RECT mapped{};
+    if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return Fail(error, "previewFailed");
+    pixels.resize(static_cast<std::size_t>(side) * side);
+    for (int y = 0; y < side; ++y) std::memcpy(pixels.data() + static_cast<std::size_t>(y) * side,
+        mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(side) * 4);
+    return SUCCEEDED(readback->Unmap()) || Fail(error, "previewFailed");
+}
+static bool ResizeIconScene(const widget_preview::Wallpaper& source, int side,
+    widget_preview::Wallpaper& output, std::string& error)
+{
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory; ComPtr<IWICBitmap> bitmap; ComPtr<IWICBitmapScaler> scaler;
+    if (source.width <= 0 || source.height <= 0 ||
+        source.pixels.size() != static_cast<std::size_t>(source.width) * source.height ||
+        FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateBitmapFromMemory(source.width, source.height, GUID_WICPixelFormat32bppPBGRA,
+            source.width * 4, static_cast<UINT>(source.pixels.size() * 4),
+            reinterpret_cast<BYTE*>(const_cast<std::uint32_t*>(source.pixels.data())), &bitmap)) ||
+        FAILED(factory->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(bitmap.Get(), side, side, side > source.width
+            ? WICBitmapInterpolationModeHighQualityCubic : WICBitmapInterpolationModeFant)))
+        return Fail(error, "previewFailed");
+    output.width = output.height = side; output.pixels.resize(static_cast<std::size_t>(side) * side);
+    return SUCCEEDED(scaler->CopyPixels(nullptr, side * 4, static_cast<UINT>(output.pixels.size() * 4),
+        reinterpret_cast<BYTE*>(output.pixels.data()))) || Fail(error, "previewFailed");
+}
+static float IconBorderSupport(const IconBeautifySettings& value)
+{
+    const auto style = icon_beautify::Normalize(value);
+    float support = 2.f; // Native contour coverage and reconstruction footprint.
+    if (style.outlineEnabled && style.outlineOpacity > 0.f)
+        support = std::max(support, style.outlineWidth * (style.glassEnabled ? 64.f / 52.f : 1.f));
+    if (style.edgeHighlightEnabled && style.edgeHighlightStrength > 0.f)
+    {
+        const flat_glass_rim::Evaluator material(style.edgeLight);
+        const float depth = style.edgeHighlightWidth * 64.f / 52.f;
+        const float inner = material.settings.shadowStrength > 0.f
+            ? std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true))
+            : material.InnerSupport(depth, false);
+        support = std::max(support, depth * .5f + inner);
+    }
+    return support + 1.f;
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
-    const std::filesystem::path& background)
+    const std::filesystem::path& background, int iconProcessingMode)
 {
     if (images) images->clear();
     cover.clear(); const auto parts = Parts(package, root, scope, error); if (parts.empty()) return false;
@@ -197,6 +346,114 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         if (backdrop.pixels.size() != kCoverSize * kCoverSize) return Fail(error, "previewFailed");
     }
     auto canvas = backdrop;
+    const auto rootTheme = Resolve(package, root);
+    if (rootTheme && rootTheme->kind == Kind::Icon)
+    {
+        // Render nine 64px samples, with only one original app backplate.
+        // The finished native contour is authoritative: recomputing coverage
+        // at 4x changes the combined fill/texture/stroke/reflection cross-section.
+        // Preserve that complete composite around the perimeter, while keeping
+        // the vector artwork and surrounding wallpaper at cover resolution.
+        // No desktop shortcuts, application paths or user icons are enumerated.
+        constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL,
+            IDR_ICON_PREVIEW_MEDIA, IDR_ICON_PREVIEW_TERMINAL, IDR_ICON_PREVIEW_TRASH,
+            IDR_ICON_PREVIEW_SETTINGS, IDR_ICON_PREVIEW_CALENDAR, IDR_ICON_PREVIEW_APPS};
+        const bool glass = rootTheme->icon.enabled && rootTheme->icon.glassEnabled;
+        const auto coverPath = directory / L"cover.png";
+        widget_preview::Wallpaper nativeScene;
+        for (int rasterScale : {1, 4})
+        {
+            const int side = 64 * rasterScale, stageSide = 256 * rasterScale;
+            widget_preview::Wallpaper sceneBackdrop;
+            if (rasterScale == 1)
+            {
+                if (!ResizeIconScene(backdrop, stageSide, sceneBackdrop, error)) return false;
+            }
+            else sceneBackdrop = backdrop;
+            canvas = sceneBackdrop;
+            widget_preview::Wallpaper blurred;
+            if (glass && !BlurIconBackdrop(sceneBackdrop, rootTheme->icon.glassBlurRadius, rasterScale, blurred, error)) return false;
+            for (int sample = 0; sample < 9; ++sample)
+            {
+                if (cancel && cancel->load()) return Fail(error, "cancelled");
+                std::vector<std::uint32_t> source;
+                if (!IconSample(host, resources[sample], side, source, error)) return false;
+                // Theme packages own appearance, not the local processing strategy.
+                // The settings caller freezes its local strategy separately from the
+                // shared package. Offline callers default to showing every background.
+                auto style = rootTheme->icon; style.mode = std::clamp(iconProcessingMode, 0, 2);
+                const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
+                const auto rendered = icon_beautify::RenderPreview(source, side, side, style, edge, rasterScale);
+                const int left = (16 + sample % 3 * 80) * rasterScale, top = (16 + sample / 3 * 80) * rasterScale;
+                for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+                {
+                    const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
+                    const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
+                    auto& destination = canvas.pixels[offset];
+                    if (glass && !edge)
+                    {
+                        const unsigned coverage = icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape, x, y, side, side);
+                        std::uint32_t backgroundPixel = 0xff000000u;
+                        for (unsigned shift : {0u, 8u, 16u}) backgroundPixel |=
+                            ((((blurred.pixels[offset] >> shift) & 255u) * coverage +
+                                ((destination >> shift) & 255u) * (255u - coverage) + 127u) / 255u) << shift;
+                        destination = backgroundPixel;
+                    }
+                    const unsigned alpha = pixel >> 24;
+                    std::uint32_t blended = 0xff000000u;
+                    for (unsigned shift : {0u, 8u, 16u}) blended |= std::min(255u,
+                        ((pixel >> shift) & 255u) + (((destination >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+                    destination = blended;
+                }
+            }
+            // Retain the native-size frame for pixel-level evidence. Only the
+            // generated cover/gallery filenames participate in Workshop images.
+            if (rasterScale == 1)
+            {
+                if (!preview_png::Save(directory / L"icon-scene.png", stageSide, stageSide, canvas.pixels, error)) return false;
+                nativeScene = canvas;
+            }
+            else
+            {
+                if (rootTheme->icon.enabled)
+                {
+                    widget_preview::Wallpaper nativeCover;
+                    if (!ResizeIconScene(nativeScene, stageSide, nativeCover, error)) return false;
+                    const float support = IconBorderSupport(rootTheme->icon);
+                    // Two native pixels feather the interior transition. Blending
+                    // completed opaque scenes avoids resampling independent alpha
+                    // layers, whose subsequent composition changes the edge again.
+                    for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+                    {
+                        unsigned inner = 0;
+                        for (int step = 0; step <= 8; ++step)
+                            inner += icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape,
+                                x, y, side, side, (support + step * .25f) * rasterScale);
+                        inner /= 9u;
+                        for (int sample = 0; sample < 9; ++sample)
+                        {
+                            const int left = (16 + sample % 3 * 80) * rasterScale, top = (16 + sample / 3 * 80) * rasterScale;
+                            const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
+                            std::uint32_t blended = 0xff000000u;
+                            for (unsigned shift : {0u, 8u, 16u}) blended |=
+                                ((((canvas.pixels[offset] >> shift) & 255u) * inner +
+                                    ((nativeCover.pixels[offset] >> shift) & 255u) * (255u - inner) + 127u) / 255u) << shift;
+                            canvas.pixels[offset] = blended;
+                        }
+                    }
+                }
+                if (!SaveCover(coverPath, std::move(canvas), error)) return false;
+            }
+        }
+        if (images)
+        {
+            const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), "icon");
+            std::filesystem::copy_file(coverPath, imagePath, std::filesystem::copy_options::none, ec);
+            if (ec) return Fail(error, "writeFailed");
+            images->push_back({"icon", imagePath});
+        }
+        cover = coverPath; cleanup.keep = true; return true;
+    }
     const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)
     {
@@ -253,12 +510,12 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
 bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel)
-{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr, {}); }
+{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr, {}, 1); }
 bool RenderGallery(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::vector<Image>& images,
     std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel,
-    const std::filesystem::path& background)
+    const std::filesystem::path& background, int iconProcessingMode)
 {
-    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images, background)) return true;
+    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images, background, iconProcessingMode)) return true;
     images.clear(); cover.clear(); return false;
 }}

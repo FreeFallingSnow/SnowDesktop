@@ -34,4 +34,9 @@ std::vector<IconResourceLocation> ReadShortcutIconResources(
 // the caller must schedule its Shell fallback outside the local worker pool.
 std::vector<IconResourceLocation> ReadLocalIconResources(
     std::wstring_view path);
+
+// Garbage collection reads declarations even when icon targets are removable,
+// offline or behind directory junctions. False means absence is not proven.
+bool ReadDeclaredIconResources(std::wstring_view shortcutPath,
+    std::vector<IconResourceLocation>& resources);
 } // namespace snowdesktop::shortcut_icon_resource

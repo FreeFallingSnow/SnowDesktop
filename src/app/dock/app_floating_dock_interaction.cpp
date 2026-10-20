@@ -66,6 +66,7 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    floatingDockHost_->windowActionPromotion.Retain();
     floatingDockHost_->mergedCloseAfterInteraction = false;
     floatingDockHost_->passivelyRevealed = false;
     floatingDockHost_->passiveRevealTick = 0;
@@ -174,24 +175,49 @@ EnsureFloatingDockVisibleForAssociatedSurface(
             *floatingDockHost_);
 }
 
-// Window/search animations own their target, while the Dock keeps its own
-// promotion until the existing outside-pointer dismissal ends this session.
-HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen)
+// Search, restore and opted-in minimization retain promotion. Other minimize
+// animations borrow it only until the presentation retires.
+HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainPromotion)
 {
     if (!generalSettings_.dockEnabled || desktopPassthroughActive_ ||
         IsRectEmpty(&anchorScreen)) return nullptr;
+    if (!retainPromotion && (!dockWindowTransition_ ||
+        !dockWindowTransition_->GetPresentationWindow())) return nullptr;
     const HMONITOR monitor = MonitorFromRect(&anchorScreen, MONITOR_DEFAULTTONEAREST);
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (!ownedHost || !ownedHost->active || ownedHost->monitor != monitor ||
-            !ownedHost->hwnd || !IsWindowVisible(ownedHost->hwnd)) continue;
-        auto& host = *ownedHost;
-        // The native minimize button belongs to the action that opened this
-        // session. Consume that press before the outside-click timer samples it.
+            !ownedHost->hwnd) continue;
+        // Consume the native minimize-button press for hidden and visible
+        // Hosts alike, before an outside-pointer timer can sample it.
         floatingDockPointerButtonsDown_ |=
             ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
             ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
             ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+        if (!IsWindowVisible(ownedHost->hwnd))
+        {
+            const bool alreadyPromoted = ownedHost->promoted;
+            ShowFloatingDock(monitor);
+            // Synchronization may rebuild the host collection. Reacquire the
+            // actual revealed host before assigning animation ownership.
+            for (const auto& revealed : persistentDockHosts_)
+            {
+                if (revealed && revealed->active && revealed->monitor == monitor && revealed->promoted &&
+                    IsWindowVisible(revealed->hwnd))
+                {
+                    revealed->windowActionPromotion.Begin(alreadyPromoted, retainPromotion);
+                    if (!retainPromotion && !dockWindowTransition_->GetPresentationWindow())
+                    {
+                        ReleaseTemporaryDockActionPromotion();
+                        return nullptr;
+                    }
+                    return revealed->hwnd;
+                }
+            }
+            return nullptr;
+        }
+        auto& host = *ownedHost;
+        host.windowActionPromotion.Begin(host.promoted, retainPromotion);
         if (!host.promoted)
         {
             host.promoted = true;
@@ -205,6 +231,15 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen)
         return host.hwnd;
     }
     return nullptr;
+}
+
+void DesktopApp::ReleaseTemporaryDockActionPromotion()
+{
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (ownedHost && ownedHost->windowActionPromotion.Release(dockSettings_.summonOnAppMinimize))
+            CloseFloatingDock(*ownedHost, FloatingDockCloseFocusPolicy::PreserveCurrent);
+    }
 }
 
 void DesktopApp::CloseFloatingDock(
@@ -259,6 +294,7 @@ void DesktopApp::CloseFloatingDock(
     }
 
     host.promoted = false;
+    host.windowActionPromotion.Retain();
     host.passivelyRevealed = false;
     host.passiveRevealTick = 0;
     host.passiveLeaveStartTick = 0;
@@ -316,6 +352,7 @@ void DesktopApp::CloseAllFloatingDocks(
         if (host)
         {
             host->promoted = false;
+            host->windowActionPromotion.Retain();
             host->passivelyRevealed = false;
             host->passiveRevealTick = 0;
             host->passiveLeaveStartTick = 0;

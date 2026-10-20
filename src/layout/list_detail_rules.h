@@ -115,6 +115,35 @@ inline constexpr bool HasMetadataColumns(
     return showModified || showType || showSize;
 }
 
+// Metadata uses a single full-width row. Older files omit listColumns.
+template<class View>
+inline int ListColumns(const View& view)
+{
+    return HasMetadataColumns(view.detailShowModified, view.detailShowType,
+        view.detailShowSize) ? 1 : std::clamp(view.listColumns, 1, 4);
+}
+
+template<class View>
+inline void SetListColumns(View& view, int columns)
+{
+    view.listColumns = std::clamp(columns, 1, 4);
+    if (view.listColumns > 1)
+    {
+        view.detailShowModified = false;
+        view.detailShowType = false;
+        view.detailShowSize = false;
+    }
+}
+
+// Match RSS titles: start immediately and repeat with a gap at 24 CU/second.
+inline float HoverTitleOffset(double elapsedMs, float textWidth, float width, float scale)
+{
+    if (textWidth <= width + 0.5f) return 0.0f;
+    const float gap = std::max(1.0f, 24.0f * scale);
+    return static_cast<float>(std::fmod(std::max(0.0, elapsedMs) * gap / 1000.0,
+        textWidth + gap));
+}
+
 inline Columns BuildColumns(
     int availableWidth,
     bool showModified,

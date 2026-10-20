@@ -228,15 +228,7 @@ bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
  */
 DWORD DesktopApp::ChooseDropEffect(DWORD keyState, DWORD allowed) const
 {
-    if ((keyState & MK_ALT)) return DROPEFFECT_LINK;
-    if ((keyState & MK_SHIFT)) return DROPEFFECT_MOVE;
-    if ((keyState & MK_CONTROL)) return DROPEFFECT_COPY;
-
-    DWORD available = allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
-    if (!available) available = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-    if (available & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
-    if (available & DROPEFFECT_COPY) return DROPEFFECT_COPY;
-    return DROPEFFECT_LINK;
+    return snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, allowed);
 }
 
 // ── OLE drag-drop ───────────────────────────────────────────

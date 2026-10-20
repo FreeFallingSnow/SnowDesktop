@@ -1062,12 +1062,12 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     OpticallyCenterTextBounds(dc, alignmentSample, textBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &textBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_HIDEPREFIX);
+            DT_END_ELLIPSIS | DT_NOPREFIX);
     if (!shortcut.empty())
     {
         DrawTextW(dc, shortcut.c_str(), static_cast<int>(shortcut.size()),
             &textBounds, DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
-                DT_END_ELLIPSIS | DT_HIDEPREFIX);
+                DT_END_ELLIPSIS | DT_NOPREFIX);
     }
     if (oldFont)
         SelectObject(dc, oldFont);
@@ -1146,7 +1146,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     OpticallyCenterTextBounds(dc, primary, labelBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &labelBounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_HIDEPREFIX);
+            DT_END_ELLIPSIS | DT_NOPREFIX);
     if (oldFont)
         SelectObject(dc, oldFont);
     SetTextColor(dc, oldTextColor);
@@ -1158,6 +1158,14 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
     const Palette& palette, const Metrics& metrics, InlineActionStyle style)
 {
+    // The flexible action keeps the ordinary menu's right-aligned status;
+    // companion actions beside it retain their compact button presentation.
+    if (style == InlineActionStyle::Plain && item.label && std::wcschr(item.label, L'\t'))
+    {
+        auto inlineItem = item;
+        inlineItem.hasSubmenu = false; // Inline buttons open their submenu without an arrow.
+        return DrawItem(dc, textFont, iconFont, inlineItem, bounds, itemState, palette, metrics);
+    }
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 

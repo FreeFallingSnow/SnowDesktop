@@ -12,6 +12,9 @@ public:
     ~StatusBarPagePresenter();
     void SetActions(DockPageActions actions);
     winrt::Microsoft::UI::Xaml::UIElement Content() const;
+    // Mount the same default theme and collapsed scenario rules on the
+    // centralized page; merged-bar guidance stays within the default theme row.
+    winrt::Microsoft::UI::Xaml::UIElement AppearanceContent() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
     void Activate(std::string_view focusId = {});
@@ -19,6 +22,8 @@ public:
     void Close();
     void RegisterFocusTargets(const std::function<void(std::string,
         const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registerTarget) const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(
+        std::string_view focusId, SettingsFocusPrerequisite* prerequisite = nullptr) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

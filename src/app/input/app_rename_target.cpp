@@ -60,6 +60,13 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
             if (!wc || wc->GetWidgetData() != &widget) continue;
             const auto hit = wc->HitTestWidget(point);
             if (hit == WidgetHit::None) break;
+            if (widget.singleCellIconMode && wc->IsSingleCellDesktopPoint(point))
+            {
+                if (hit == WidgetHit::ResizeHandle) return {};
+                return {{RenameTargetKind::Widget, widget.id,
+                    L"desktop:" + widget.gridCell.pageId},
+                    GetItemTextRect(widget.bounds, true), widget.selected};
+            }
             if (hit != WidgetHit::Content) return {};
             const RECT body = wc->GetBodyRect();
             if (!PtInRect(&body, point)) return {};

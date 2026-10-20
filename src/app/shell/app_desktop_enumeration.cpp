@@ -251,6 +251,10 @@ static bool ReadDesktopSource(
                                       SHGDN_NORMAL);
                               },
                               item.parsingName);
+        if (item.desktopIconClsid.empty())
+            item.name = snowdesktop::shell_item_display_name::ForPath(
+                item.parsingName, item.name,
+                hasAttributes && (fileAttributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY));
         item.typeName = info.szTypeName;
         if (hasAttributes)
         {

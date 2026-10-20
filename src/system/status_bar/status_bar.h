@@ -25,7 +25,7 @@ struct TrayDragFeedback
     std::function<void()> end;
 };
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
-    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel };
+    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel, ShowDesktop };
 inline bool IsStatusBarContextMenuAction(StatusBarAction action)
 {
     return action == StatusBarAction::Menu ||
@@ -41,6 +41,7 @@ struct StatusBarMonitor
 struct StatusBarDockState
 {
     bool promoted = false;
+    bool quickSearch = false; // Dock's own search entry, independent of the bar setting.
     HWND window = nullptr; // Visible merged content window, never owned by bar.
     RECT inputBounds{}; // Screen pixels, only for a visible merged Dock.
     bool interacting = false; // This monitor's bar-owned activation/menu/panel.
@@ -55,7 +56,8 @@ public:
     using DrawBackground = std::function<void(ID2D1DeviceContext*, RECT,
         const PersonalizationSettings&, float)>;
     StatusBar(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
-        Activate activate, Hidden hidden, Error error, DrawBackground drawBackground);
+        Activate activate, Hidden hidden, Error error, DrawBackground drawBackground,
+        std::shared_ptr<tray::Service> sharedTray = {});
     ~StatusBar();
     StatusBar(const StatusBar&) = delete;
     StatusBar& operator=(const StatusBar&) = delete;
@@ -66,6 +68,9 @@ public:
         const PersonalizationSettings* tooltipAppearance = nullptr,
         DrawBackground drawTooltipBackground = {});
     void Close();
+    // Host startup gate: reserve and prepare geometry while the desktop's
+    // first frame is hidden. Merged strips still follow Dock presentation.
+    void SetPresentationEnabled(bool enabled);
     // Release a lost device without unregistering the AppBar or sampling demands.
     void ReleaseGraphicsResources();
     bool IsFullscreen(HMONITOR monitor) const;
@@ -96,6 +101,9 @@ public:
     bool ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const;
     void CancelTrayMenuSession(HMONITOR monitor = nullptr);
     bool ContainsPoint(POINT screen) const;
+    // UI-thread snapshot for the short Task View input handoff. The hook uses
+    // immutable screen rectangles and never queries application windows.
+    std::vector<RECT> InputBounds() const;
     RECT AvailableWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     // Icon/bar sizing excludes this merged strip's own reservation. Actual
     // desktop placement still uses the Shell-constrained work area above.

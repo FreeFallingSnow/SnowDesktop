@@ -1,6 +1,7 @@
 #include "full_data_backup.h"
 
 #include "common/json_value.h"
+#include "atomic_file.h"
 #include "portable_data_migration.h"
 
 #include <windows.h>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -241,6 +243,19 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop.entitlement.bin") == 0)
         return true;
+    if (_wcsicmp(first.c_str(), L"IconPackWorkshop") == 0)
+    {
+        const auto next=std::next(part);
+        return next!=relative.end()&&_wcsicmp(next->wstring().c_str(),L"publications")!=0;
+    }
+    if (_wcsicmp(first.c_str(), L"icon-library") == 0)
+    {
+        const auto next = std::next(part);
+        // Thumbnails are rebuilt from retained originals. Omitting them also
+        // keeps large icon packs within the ZIP32 backup entry budget.
+        if (next != relative.end() && _wcsicmp(next->wstring().c_str(), L"previews") == 0)
+            return true;
+    }
     if (_wcsicmp(first.c_str(), L"widgets") == 0)
     {
         ++part;
@@ -495,14 +510,7 @@ std::string ManifestJson(const BackupManifest& manifest)
 bool WriteTextFile(const std::filesystem::path& path,
     const std::string& text, std::string& error)
 {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!output)
-    {
-        error = "cannot write backup manifest";
-        return false;
-    }
-    return true;
+    return atomic_file::WriteAll(path, text, {}, &error);
 }
 
 bool ReadTextFile(const std::filesystem::path& path,
@@ -970,7 +978,7 @@ bool WriteStoreZip(const std::filesystem::path& root,
     if (StopRequested(cancellation, cancelled, error))
         return false;
     std::vector<ZipItem> items;
-    std::uint64_t archivePayload = 0;
+    std::uint64_t archiveBytes = 22;
     std::error_code filesystemError;
     const auto extendedRoot =
         ExtendedLengthPath(root, filesystemError);
@@ -1002,17 +1010,14 @@ bool WriteStoreZip(const std::filesystem::path& root,
             std::filesystem::file_size(entry->path(), filesystemError);
         if (filesystemError || !IsSafeArchivePath(item.path) ||
             item.size > (std::numeric_limits<std::uint32_t>::max)() ||
-            archivePayload > kMaxArchiveBytes - item.size ||
-            !CalculateCrc(item.source, item.crc, error,
-                cancellation, cancelled))
+            !detail::AppendStoreZipSize(archiveBytes, item.size, item.path.size()))
         {
             if (error.empty())
                 error = "backup archive exceeds ZIP32 limits";
             return false;
         }
-        archivePayload += item.size;
         items.push_back(std::move(item));
-        if (items.size() > kMaxFiles)
+        if (items.size() > kMaxFiles || items.size() > 65535)
         {
             error = "backup archive contains too many files";
             return false;
@@ -1030,6 +1035,12 @@ bool WriteStoreZip(const std::filesystem::path& root,
         [](const ZipItem& left, const ZipItem& right) {
             return left.path < right.path;
         });
+
+    // Reject impossible archives before reading gigabytes only to discover
+    // that the final output cannot be imported by this same application.
+    for (auto& item : items)
+        if (!CalculateCrc(item.source, item.crc, error, cancellation, cancelled))
+            return false;
 
     const auto extendedOutput =
         ExtendedLengthPath(output, filesystemError);
@@ -1175,6 +1186,14 @@ bool WriteStoreZip(const std::filesystem::path& root,
         return false;
     }
     archive.close();
+    const auto completedSize = std::filesystem::file_size(temporary, filesystemError);
+    if (!archive || filesystemError || completedSize != archiveBytes ||
+        completedSize > kMaxArchiveBytes)
+    {
+        error = "backup archive size or final close is invalid";
+        std::filesystem::remove(temporary, filesystemError);
+        return false;
+    }
     if (!BeginNonInterruptible(cancellation, cancelled, error))
     {
         std::filesystem::remove(temporary, filesystemError);

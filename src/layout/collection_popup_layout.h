@@ -1,8 +1,10 @@
 #pragma once
 
 #include "common/constants.h"
+#include "layout_spacing_rules.h"
 #include "ui/render/font_cu_rules.h"
 #include "list_detail_rules.h"
+#include "widgets/collection_group_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +18,22 @@ inline constexpr int kMaximumColumns = 5;
 inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
 inline constexpr int kMinimumListRows = 5;
+
+// Popup chrome must remain readable even on a very dense desktop grid.
+inline float ResolveChromeScale(float pageScale)
+{
+    return std::isfinite(pageScale) ? std::clamp(pageScale, 0.75f, 8.0f) : 1.0f;
+}
+
+inline float ResolveTitleFontSize(float scale)
+{
+    return 16.0f * ResolveChromeScale(scale);
+}
+
+inline float ResolveControlFontSize(float scale)
+{
+    return 14.0f * ResolveChromeScale(scale);
+}
 
 enum class View { Grid, List, Fan };
 
@@ -52,10 +70,9 @@ struct HeaderVerticalBounds
     int titleBottom = 44;
     int sortButtonTop = 14;
     int sortButtonBottom = 48;
-    int sortLabelOffsetY = 2;
 };
 
-inline int ScaleDimension(int value, float scale)
+inline int ScaleDimension(float value, float scale)
 {
     if (!std::isfinite(scale))
         scale = 1.0f;
@@ -65,6 +82,7 @@ inline int ScaleDimension(int value, float scale)
 
 inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
 {
+    scale = ResolveChromeScale(scale);
     HeaderVerticalBounds result;
     result.titleTop = ScaleDimension(18, scale);
     result.titleBottom = ScaleDimension(44, scale);
@@ -73,7 +91,6 @@ inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
     result.sortButtonTop = result.titleTop +
         (result.titleBottom - result.titleTop - sortButtonHeight) / 2;
     result.sortButtonBottom = result.sortButtonTop + sortButtonHeight;
-    result.sortLabelOffsetY = ScaleDimension(2, scale);
     return result;
 }
 
@@ -104,9 +121,7 @@ inline Metrics ResolveMetrics(
     int minimumListHeight = 1)
 {
     Metrics result;
-    result.scale = std::isfinite(pageScale)
-        ? std::clamp(pageScale, 0.1f, 8.0f)
-        : 1.0f;
+    result.scale = ResolveChromeScale(pageScale);
     result.cellWidth = std::max({
         1, pageCellWidth, minimumVisualWidth });
     result.cellHeight = std::max({
@@ -172,9 +187,11 @@ inline int ResolveListRowHeight(
             defaultFont));
 }
 
-inline int ResolveDetailsHeaderHeight(const Metrics& metrics)
+inline int ResolveDetailsHeaderHeight(const Metrics& metrics,
+    float categorizedTabHeight = 34.0f)
 {
-    return ScaleDimension(30, metrics.scale);
+    return ScaleDimension(collection_group_rules::ResolveCategorizedControlMetrics(
+        categorizedTabHeight).detailsHeaderHeightCu, metrics.scale);
 }
 
 // Keep a known folder's footprint through loading and empty/error status.
@@ -201,13 +218,40 @@ inline int PreferredColumnCount(
 }
 
 inline int ResolveGridColumnCount(
-    int viewportWidth, int minimumCellWidth, float spacingScale)
+    int viewportWidth, int minimumCellWidth)
 {
     const int cell = std::max(1, minimumCellWidth);
-    const float spacing = std::isfinite(spacingScale)
-        ? std::clamp(spacingScale, 0.5f, 2.0f) : 1.0f;
-    const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX * spacing)));
+    // Horizontal spacing changes title gaps, not popup column capacity.
+    const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX)));
     return std::clamp(std::max(1, viewportWidth) / (cell + gap), 1, kMaximumColumns);
+}
+
+inline int ResolveFixedGridColumnCount(const Metrics& metrics, int viewportWidth)
+{
+    return std::clamp(
+        (std::max(1, viewportWidth) + metrics.gapX) /
+            std::max(1, metrics.cellWidth + metrics.gapX),
+        1, kMaximumColumns);
+}
+
+// The frame follows whole grid tracks; controls adapt to its width.
+inline int ResolveFixedGridFrameWidth(const Metrics& metrics, int columns)
+{
+    columns = std::clamp(columns, 1, kMaximumColumns);
+    return metrics.paddingX * 2 + columns * metrics.cellWidth +
+        (columns - 1) * metrics.gapX;
+}
+
+inline RECT ResolveFixedGridItemRect(const Metrics& metrics, const RECT& viewport,
+    std::size_t index, int scrollOffset = 0)
+{
+    const int width = std::max(1, static_cast<int>(viewport.right - viewport.left));
+    const int columns = ResolveFixedGridColumnCount(metrics, width);
+    const int column = static_cast<int>(index % static_cast<std::size_t>(columns));
+    const int row = static_cast<int>(index / static_cast<std::size_t>(columns));
+    const LONG left = viewport.left + column * (metrics.cellWidth + metrics.gapX);
+    const LONG top = viewport.top + row * (metrics.cellHeight + metrics.gapY) - scrollOffset;
+    return {left, top, left + metrics.cellWidth, top + metrics.cellHeight};
 }
 
 inline int RequiredRowCount(
@@ -220,6 +264,39 @@ inline int RequiredRowCount(
         kEmptyRows, (static_cast<int>(itemCount) +
                columns - 1) /
             columns);
+}
+
+// Measure the complete frame, including visible controls. Prefer a balanced
+// footprint among layouts that fit; never add scrolling solely to improve shape.
+template <typename Measure>
+inline int ResolveBalancedColumnCount(std::size_t itemCount,
+    int maximumColumns, int maximumHeight, Measure&& measure)
+{
+    const int upper = PreferredColumnCount(itemCount,
+        std::clamp(maximumColumns, 1, kMaximumColumns));
+    if (itemCount == 0) return upper;
+    const int lower = std::min(kEmptyColumns, upper);
+    const int heightLimit = std::max(1, maximumHeight);
+    int selected = upper;
+    int bestOverflow = std::numeric_limits<int>::max();
+    double bestAspect = std::numeric_limits<double>::infinity();
+    for (int columns = lower; columns <= upper; ++columns)
+    {
+        const auto size = measure(columns);
+        const int width = std::max(1, size.first);
+        const int height = std::max(1, size.second);
+        const int overflow = std::max(0, height - heightLimit);
+        const double aspect = std::abs(std::log(
+            static_cast<double>(width) / std::min(height, heightLimit)));
+        if (overflow < bestOverflow ||
+            (overflow == bestOverflow && aspect < bestAspect))
+        {
+            selected = columns;
+            bestOverflow = overflow;
+            bestAspect = aspect;
+        }
+    }
+    return selected;
 }
 
 inline int RequiredListRowCount(std::size_t itemCount)
@@ -265,6 +342,29 @@ struct FanItem
     FanPoint center{};
     float angle = 0;
 };
+
+inline int FanLabelPadding(float scale)
+{
+    return ScaleDimension(8, scale);
+}
+
+inline RECT FitFanLabelToText(RECT label, float textWidth, float scale, bool mirrored)
+{
+    // Round each inset exactly as drawing does. Rounding the combined padding
+    // can leave a fitting title one pixel too narrow at fractional scales.
+    const int width = std::clamp(static_cast<int>(std::ceil(textWidth)) +
+        2 * FanLabelPadding(scale), ScaleDimension(36, scale),
+        static_cast<int>(label.right - label.left));
+    if (mirrored) label.right = label.left + width;
+    else label.left = label.right - width;
+    return label;
+}
+
+inline RECT FanLabelTextRect(RECT label, float scale)
+{
+    InflateRect(&label, -FanLabelPadding(scale), 0);
+    return label;
+}
 
 inline FanPoint RotateFanPoint(FanPoint point, FanPoint center, float angle)
 {

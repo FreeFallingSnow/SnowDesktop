@@ -5,13 +5,16 @@
 #include "quick_navigation_theme.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
+#include "navigation/quick_navigation_attraction_renderer.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
-void DesktopApp::ClearQuickNavigationGenie()
+void DesktopApp::ClearQuickNavigationDeformation()
 {
     quickNavBackdropCompositor_.ClearGenieTransform();
-    if (quickNavGenieStrips_.empty())
+    if (quickNavGenieStrips_.empty() && !quickNavAttractionSurface_)
         return;
     if (quickNavDcompVisual_)
     {
@@ -20,6 +23,8 @@ void DesktopApp::ClearQuickNavigationGenie()
         quickNavDcompVisual_->SetTransform(quickNavDcompScaleTransform_.Get());
     }
     quickNavGenieStrips_.clear();
+    quickNavAttractionSurface_.Reset();
+    quickNavAttractionSurfaceSize_ = {};
     quickNavGenieStripEdge_ = -1;
 }
 
@@ -31,11 +36,16 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         !quickNavDcompSurface_ || !quickNavDcompEffect_)
         return false;
 
-    if (quickNavGenieStripEdge_ != quickNavigationAnimationDockEdge_)
-        ClearQuickNavigationGenie();
+    if (quickNavGenieStripEdge_ != quickNavigationAnimationDockEdge_ ||
+        quickNavAttractionSurface_)
+        ClearQuickNavigationDeformation();
     const auto edge = static_cast<genie::Edge>(quickNavigationAnimationDockEdge_);
-    const float width = static_cast<float>(quickNavCompWidth_);
-    const float height = static_cast<float>(quickNavCompHeight_);
+    // A resize can retain a larger backing surface. Warp only the painted panel,
+    // including when dismissal interrupts the transition before its final frame.
+    const float width = static_cast<float>(std::max<LONG>(1,
+        quickNavigationRect_.right - quickNavigationRect_.left));
+    const float height = static_cast<float>(std::max<LONG>(1,
+        quickNavigationRect_.bottom - quickNavigationRect_.top));
     const auto rect = [](const RECT& value) {
         return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
             static_cast<double>(value.right), static_cast<double>(value.bottom)};
@@ -92,7 +102,7 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetY(0.0f);
         if (FAILED(hr))
         {
-            ClearQuickNavigationGenie();
+            ClearQuickNavigationDeformation();
             return false;
         }
         quickNavGenieStripEdge_ = quickNavigationAnimationDockEdge_;
@@ -129,6 +139,64 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         OffsetRect(&dock, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
         if (!quickNavBackdropCompositor_.SetGenieTransform(panel, dock,
                 quickNavigationAnimationDockEdge_, collapsed, opacity))
+            return false;
+    }
+    return CommitQuickNavigationCompositionFrame();
+}
+
+bool DesktopApp::ApplyQuickNavigationAttractionFrame(float collapsed, float opacity)
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    if (!quickNavDcompDevice_ || !quickNavDcompVisual_ || !quickNavAttractionBitmap_ ||
+        !quickNavDcompEffect_)
+        return false;
+    if (!quickNavGenieStrips_.empty()) ClearQuickNavigationDeformation();
+    HRESULT hr = S_OK;
+    const SIZE size{std::max<LONG>(1, quickNavigationHostRect_.right - quickNavigationHostRect_.left),
+        std::max<LONG>(1, quickNavigationHostRect_.bottom - quickNavigationHostRect_.top)};
+    if (!quickNavAttractionSurface_ || size.cx != quickNavAttractionSurfaceSize_.cx ||
+        size.cy != quickNavAttractionSurfaceSize_.cy)
+    {
+        quickNavAttractionSurface_.Reset();
+        hr = quickNavDcompDevice_->CreateSurface(static_cast<UINT>(size.cx), static_cast<UINT>(size.cy),
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &quickNavAttractionSurface_);
+        if (FAILED(hr)) return false;
+        quickNavAttractionSurfaceSize_ = size;
+    }
+    const auto rect = [](const RECT& value) {
+        return attraction::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    const auto frame = attraction::MeshFrame(rect(quickNavigationRect_),
+        rect(quickNavigationAnimationDockRect_), collapsed);
+    ComPtr<ID2D1DeviceContext> context;
+    POINT offset{};
+    hr = quickNavAttractionSurface_->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset);
+    if (FAILED(hr)) return false;
+    context->SetDpi(96, 96);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+    context->Clear(D2D1::ColorF(0, 0.f));
+    hr = navigation::DrawAttractionMesh(context.Get(), quickNavAttractionBitmap_.Get(), frame,
+        quickNavigationHostRect_.left, quickNavigationHostRect_.top,
+        quickNavigationRect_.right - quickNavigationRect_.left,
+        quickNavigationRect_.bottom - quickNavigationRect_.top);
+    context.Reset();
+    const HRESULT endResult = quickNavAttractionSurface_->EndDraw();
+    if (SUCCEEDED(hr)) hr = endResult;
+    if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetContent(quickNavAttractionSurface_.Get());
+    if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetX(0.0f);
+    if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetY(0.0f);
+    if (SUCCEEDED(hr)) hr = quickNavDcompEffect_->SetOpacity(opacity);
+    if (FAILED(hr)) return false;
+    if (quickNavGlassTheme_ && quickNavBackdropCompositor_.IsAvailable())
+    {
+        RECT panel = quickNavigationRect_, dock = quickNavigationAnimationDockRect_;
+        OffsetRect(&panel, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        OffsetRect(&dock, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        if (!quickNavBackdropCompositor_.SetAttractionTransform(panel, dock, collapsed, opacity))
             return false;
     }
     return CommitQuickNavigationCompositionFrame();
@@ -211,7 +279,7 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
-    ClearQuickNavigationGenie();
+    ClearQuickNavigationDeformation();
     StopQuickNavigationAnimationTimeline();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
@@ -220,6 +288,7 @@ void DesktopApp::ResetQuickNavCompositionResources()
     if (quickNavDcompVisual_)
         quickNavDcompVisual_->SetContent(nullptr);
     quickNavDcompSurface_.Reset();
+    quickNavAttractionBitmap_.Reset();
     quickNavCompWidth_ = 0;
     quickNavCompHeight_ = 0;
     quickNavCompositionCommitPending_ = false;
@@ -275,16 +344,25 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         }
     }
 
+    RECT surfaceRect = quickNavigationRect_;
+    if (quickNavigationAnimation_.Resize().IsAnimating())
+    {
+        // Reuse one surface for the complete transition instead of reallocating
+        // a GPU surface on every frame. Transparent pixels are cleared on paint.
+        const auto bounds = quickNavigationAnimation_.Resize().Envelope();
+        surfaceRect = {bounds.left, bounds.top, bounds.right, bounds.bottom};
+    }
+    surfaceRect = QuickNavigationRetainedAllocation(
+        MakeRect(0, 0, static_cast<LONG>(quickNavCompWidth_), static_cast<LONG>(quickNavCompHeight_)),
+        MakeRect(0, 0, surfaceRect.right - surfaceRect.left, surfaceRect.bottom - surfaceRect.top));
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
             1,
-            quickNavigationRect_.right -
-                quickNavigationRect_.left));
+            surfaceRect.right - surfaceRect.left));
     const UINT height = static_cast<UINT>(
         std::max<LONG>(
             1,
-            quickNavigationRect_.bottom -
-                quickNavigationRect_.top));
+            surfaceRect.bottom - surfaceRect.top));
 
     if (!quickNavDcompTarget_)
     {
@@ -363,7 +441,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     if (quickNavDcompSurface_ && quickNavCompWidth_ == width && quickNavCompHeight_ == height)
         return S_OK;
 
-    ClearQuickNavigationGenie();
+    ClearQuickNavigationDeformation();
     ComPtr<IDCompositionSurface> surface;
     HRESULT hr = quickNavDcompDevice_->CreateSurface(width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
@@ -374,22 +452,8 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         WriteDiagnosticLogEntry(buf);
         return hr;
     }
-    hr = quickNavDcompVisual_->SetContent(surface.Get());
-    if (FAILED(hr))
-    {
-        wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-        WriteDiagnosticLogEntry(buf);
-        return hr;
-    }
-    if (!CommitQuickNavigationCompositionFrame())
-    {
-        wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav CreateSurface queue commit FAILED");
-        WriteDiagnosticLogEntry(buf);
-        return E_FAIL;
-    }
-
+    // Keep the previously painted content attached until the replacement has
+    // completed EndDraw. An allocation is not a presentable frame yet.
     quickNavDcompSurface_ = surface;
     quickNavCompWidth_ = width;
     quickNavCompHeight_ = height;
@@ -433,6 +497,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     };
 
 
+    IDCompositionSurface* previousSurface = quickNavDcompSurface_.Get();
     HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
     if (FAILED(hr))
     {
@@ -440,8 +505,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    ApplyQuickNavigationAnimationFrame();
-
     ID2D1DeviceContext* rawContext = nullptr;
     POINT updateOffset{};
     hr = quickNavDcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
@@ -472,19 +535,80 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     brushCache_.clear();
     brushCacheContext_ = ctx.Get();
 
-    DrawQuickNavigationSurface(ctx.Get());
+    HRESULT contentResult = S_OK;
+    if (quickNavigationAnimation_.GetEffect() ==
+        snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
+    {
+        // Keep one ordinary image of the panel. The animated mesh samples this
+        // bitmap directly; it never samples separately clipped DComp children.
+        ComPtr<ID2D1DeviceContext> sourceContext;
+        contentResult = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &sourceContext);
+        const auto bitmapSize = quickNavAttractionBitmap_ ? quickNavAttractionBitmap_->GetPixelSize() : D2D1_SIZE_U{};
+        if (SUCCEEDED(contentResult) && (!quickNavAttractionBitmap_ ||
+                bitmapSize.width != quickNavCompWidth_ || bitmapSize.height != quickNavCompHeight_))
+        {
+            quickNavAttractionBitmap_.Reset();
+            contentResult = sourceContext->CreateBitmap(D2D1::SizeU(quickNavCompWidth_, quickNavCompHeight_),
+                nullptr, 0, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96),
+                &quickNavAttractionBitmap_);
+        }
+        if (SUCCEEDED(contentResult))
+        {
+            sourceContext->SetTarget(quickNavAttractionBitmap_.Get());
+            sourceContext->SetDpi(96, 96);
+            sourceContext->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            sourceContext->BeginDraw();
+            sourceContext->Clear(D2D1::ColorF(0, 0.f));
+            sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
+                -static_cast<float>(quickNavigationRect_.left), -static_cast<float>(quickNavigationRect_.top)));
+            brushCacheContext_ = sourceContext.Get();
+            DrawQuickNavigationSurface(sourceContext.Get());
+            contentResult = sourceContext->EndDraw();
+            sourceContext->SetTarget(nullptr);
+            brushCache_.clear();
+            brushCacheContext_ = ctx.Get();
+            if (SUCCEEDED(contentResult))
+                ctx->DrawBitmap(quickNavAttractionBitmap_.Get(), D2D1::RectF(
+                    static_cast<float>(quickNavigationRect_.left), static_cast<float>(quickNavigationRect_.top),
+                    static_cast<float>(quickNavigationRect_.left) + static_cast<float>(quickNavCompWidth_),
+                    static_cast<float>(quickNavigationRect_.top) + static_cast<float>(quickNavCompHeight_)));
+        }
+    }
+    else
+    {
+        quickNavAttractionBitmap_.Reset();
+        DrawQuickNavigationSurface(ctx.Get());
+    }
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 
     hr = quickNavDcompSurface_->EndDraw();
+    if (SUCCEEDED(hr)) hr = contentResult;
     if (FAILED(hr))
     {
         RecoverQuickNavCompositionFailure(L"EndDraw", hr);
         EndPaint(hwnd, &ps);
         return;
     }
+    if (previousSurface != quickNavDcompSurface_.Get())
+    {
+        hr = quickNavDcompVisual_->SetContent(quickNavDcompSurface_.Get());
+        if (FAILED(hr))
+        {
+            RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
+            EndPaint(hwnd, &ps);
+            return;
+        }
+    }
+    // A caret/hover repaint must not replace the backdrop's running native
+    // opening/closing transform with the logical timeline's static pose.
+    // Positioning stops that timeline first whenever the geometry changes.
+    if (!quickNavigationAnimationCompositorDriven_)
+        UpdateQuickNavigationBackdrop();
+    ApplyQuickNavigationAnimationFrame();
     if (!CommitQuickNavigationCompositionFrame())
     {
         RecoverQuickNavCompositionFailure(
@@ -492,6 +616,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
+    if (!FlushPendingQuickNavigationCompositionCommit())
+    {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    quickNavBackdropCompositor_.CommitVisualChanges();
     quickNavCompositionRenderRecoveryPending_ = false;
 
     EndPaint(hwnd, &ps);
@@ -505,19 +635,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     const float windowCornerRadius =
         static_cast<float>(
             QuickNavScale(navigationSettings_.layout.cornerRadius));
-    ComPtr<ID2D1RoundedRectangleGeometry>
-        windowClipGeometry;
+    const auto windowClipGeometry = snowdesktop::smooth_corners::Geometry(
+        d2dFactory_.Get(), ToD2DRect(overlay), windowCornerRadius);
     bool windowClipPushed = false;
-    if (d2dFactory_ &&
-        SUCCEEDED(
-            d2dFactory_->
-                CreateRoundedRectangleGeometry(
-                    D2D1::RoundedRect(
-                        ToD2DRect(overlay),
-                        windowCornerRadius,
-                        windowCornerRadius),
-                    &windowClipGeometry)) &&
-        windowClipGeometry)
+    if (windowClipGeometry)
     {
         ctx->PushLayer(
             D2D1::LayerParameters(
@@ -601,8 +722,15 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 registerHoverRegion(
                     visible, kind, index);
         };
-    quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
-        GetQuickNavigationMaxTabScrollOffset(overlay));
+    if (!searching && !UseQuickNavigationList())
+        UpdateQuickNavTabWidths();
+    snowdesktop::quick_navigation_rules::SetTabScrollOffset(
+        std::clamp(quickNavigationTabScrollOffset_, 0,
+            GetQuickNavigationMaxTabScrollOffset(overlay)),
+        quickNavigationTabScrollOffset_,
+        quickNavTabDragIndex_ != static_cast<size_t>(-1),
+        quickNavTabDragStartPoint_,
+        quickNavTabDragDeltaX_);
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(overlay, contentModel));
     const std::vector<RECT> itemRects =
@@ -643,7 +771,6 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         const size_t tabCount = collectionIndices.size() + 2;
-        UpdateQuickNavTabWidths();
         const auto& tabWidths = quickNavTabWidths_;
         const int gap = QuickNavScale(8);
         const int sepGap = QuickNavScale(6);
@@ -786,13 +913,22 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             quickNavTabDragIndex_ < tabWidths.size())
         {
             int dragTw = tabWidths[quickNavTabDragIndex_];
+            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) < tabWidths.size())
+            {
+                const size_t targetTab = static_cast<size_t>(dragTargetTab);
+                const int slotLeft = snowdesktop::quick_navigation_rules::TabDropSlotLeft(
+                    quickNavTabDragIndex_, targetTab, calcTabPosX(targetTab),
+                    dragTw, tabWidths[targetTab]);
+                const RECT slotRect = MakeRect(slotLeft, tabs.top + tabInsetY,
+                    slotLeft + dragTw, tabs.bottom - tabInsetY);
+                DrawD2DRoundedRectangle(ctx.Get(), slotRect,
+                    static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
+                    ToD2DColor(t.tabDragIndicator, 0.08f),
+                    ToD2DColor(t.tabDragIndicator, 0.90f),
+                    static_cast<float>(QuickNavScale(2)));
+            }
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
             RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + dragTw, tabs.bottom - tabInsetY);
-            tabRect.left = std::max(
-                tabRect.left,
-                static_cast<LONG>(
-                    tabsStart));
-            tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
                 ToD2DColor(t.tabDragFloatFill, 0.82f),
@@ -805,14 +941,6 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             DrawD2DTextEllipsis(ctx.Get(), label, textRect, quickNavTabTextFormat_.Get(),
                 ToD2DColor(t.tabDragFloatText),
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
-            {
-                int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab));
-                RECT ind = MakeRect(insertX - gap / 2, tabs.top + QuickNavScale(4),
-                    insertX - gap / 2 + QuickNavScale(2), tabs.bottom - QuickNavScale(4));
-                DrawD2DSeparator(ctx.Get(), ind, ToD2DColor(t.tabDragIndicator));
-            }
         }
 
         ctx->PopAxisAlignedClip();
@@ -1022,10 +1150,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 if (header.bottom <= contentApp.top ||
                     header.top >= contentApp.bottom)
                     continue;
-                const bool initialJumpHeader =
-                    quickNavigationActiveWidgetIndex_ ==
-                        static_cast<size_t>(-1) &&
-                    navigationSettings_.desktopViewMode ==
+                const bool initialJumpHeader = section.label.size() == 1 &&
+                    GetQuickNavigationViewMode() ==
                         QuickNavigationDesktopViewMode::
                             Initial;
                 if (initialJumpHeader)

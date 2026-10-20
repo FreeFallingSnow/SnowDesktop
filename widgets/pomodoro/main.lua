@@ -14,9 +14,9 @@ local descriptor
 
 local settings = {
     fields = {
-        { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "int", default = 25, min = 1, max = 120 },
-        { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "int", default = 5, min = 1, max = 60 },
-        { key = "longBreakMin", label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "int", default = 15, min = 1, max = 120 },
+        { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "duration", unit = "minutes", default = 25, min = 1, max = 120 },
+        { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "duration", unit = "minutes", default = 5, min = 1, max = 60 },
+        { key = "longBreakMin", label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "duration", unit = "minutes", default = 15, min = 1, max = 120 },
         { key = "longBreakInterval", label = l10n.tr("lua_widget.pomodoro.long_break_interval"), type = "int", default = 4, min = 1, max = 10 },
         { key = "workColor", label = l10n.tr("lua_widget.pomodoro.work_color"), type = "color", default = DEFAULT_WORK_COLOR },
         { key = "breakColor", label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR },
@@ -217,7 +217,7 @@ local function completePhase(model, config, notify)
     return true
 end
 
-local function reconcile(model, notify)
+local function reconcile(model, notify, deadlineExpired)
     local config = loadConfig()
     local signature = configSignature(config)
     local changed = signature ~= model.configSignature
@@ -226,7 +226,7 @@ local function reconcile(model, notify)
     if (state == "work" or state == "break") and
         remainingSeconds(config, nowSeconds()) <= 0 then
         completePhase(model, config, notify)
-    elseif changed then
+    elseif changed or deadlineExpired then
         configureSchedules(model, config)
     end
 end
@@ -573,7 +573,7 @@ end
 local function event(_context, model, value)
     if value.kind == "schedule" then
         if value.id == "visual" or value.id == "deadline" then
-            reconcile(model, true)
+            reconcile(model, true, value.id == "deadline")
         end
         return
     end

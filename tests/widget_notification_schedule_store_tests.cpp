@@ -121,6 +121,60 @@ void TestStrictSchemaRejection()
             "\"actions\":[]}]} ", error),
         "out-of-range structured progress must be rejected");
 }
+
+void TestCompleteEscapedCapacityAndFailedLoadGate()
+{
+    WidgetNotificationScheduleStore store;
+    std::string error;
+    for (unsigned index = 0; index < WidgetNotificationScheduleStore::MaximumEntries; ++index)
+    {
+        WidgetPersistedNotificationSchedule entry{
+            "owner-" + std::to_string(index / 32), "package",
+            "notification:" + std::to_string(index), std::string(256, '\x01'),
+            std::string(2048, '\\'), 2000000000000LL + index};
+        entry.imageResource = std::string(64, '\x02');
+        entry.actions = {{std::string(64, '\x03'), std::string(64, '\x04')},
+            {std::string(64, '\x05'), std::string(64, '\x06')}};
+        Check(store.Upsert(std::move(entry), error),
+            "all 16 owners may persist their full legal 32-record escaped notification quota");
+    }
+    auto serialized = store.Serialize();
+    Check(serialized.size() > 2 * 1024 * 1024,
+        "the legal full notification fixture exceeds the old reader budget");
+    WidgetNotificationScheduleStore restored;
+    Check(restored.LoadText(serialized, error) && restored.IsWritable() &&
+            restored.Entries().size() == WidgetNotificationScheduleStore::MaximumEntries,
+        "every accepted full escaped notification store survives complete reload");
+    for (unsigned index = 0; index < WidgetNotificationScheduleStore::MaximumEntries; ++index)
+    {
+        const auto entry = restored.Find("owner-" + std::to_string(index / 32),
+            "notification:" + std::to_string(index));
+        Check(entry && entry->message == std::string(2048, '\\') && entry->actions.size() == 2 &&
+                entry->title == std::string(256, '\x01') && entry->actions[1].label == std::string(64, '\x06'),
+            "reload retains each owner's full escaped message and structured presentation");
+    }
+    Check(restored.UpdateContent("owner-0", "notification:0", std::nullopt,
+            std::string(2048, '\x01'), std::nullopt, std::nullopt, std::nullopt),
+        "updating a full store with worst-case six-byte JSON escaping remains persistable");
+    WidgetNotificationScheduleStore updated;
+    Check(updated.LoadText(restored.Serialize(), error),
+        "the actual output of a maximum escaped-content update is readable");
+    const auto beforeFailure = restored.Serialize();
+    Check(!restored.LoadText("{broken", error) && !restored.IsWritable() &&
+            restored.Serialize() == beforeFailure,
+        "failed load preserves existing entries and closes the persistence gate");
+    Check(!restored.Upsert({"owner-0", "package", "notification:0", "new", "new", 2000}, error) &&
+            !restored.UpdateContent("owner-0", "notification:0", std::string("new"),
+                std::nullopt, std::nullopt, std::nullopt, std::nullopt) &&
+            !restored.Remove("owner-0", "notification:0") && restored.RemoveInstance("owner-0") == 0 &&
+            restored.Serialize() == beforeFailure,
+        "subsequent notification changes cannot turn a failed load into an empty or replacement store");
+    Check(restored.LoadText(beforeFailure, error) && restored.IsWritable(),
+        "only a successful complete reload reopens schedule persistence");
+    restored.MarkLoadFailed();
+    Check(!restored.IsWritable() && !restored.Remove("owner-0", "notification:0"),
+        "an IO failure before JSON decoding closes the same persistence gate");
+}
 }
 
 int main()
@@ -128,6 +182,7 @@ int main()
     TestRoundTripAndOrdering();
     TestOwnershipMutationAndDueSelection();
     TestStrictSchemaRejection();
+    TestCompleteEscapedCapacityAndFailedLoadGate();
     std::cout << "widget notification schedule store tests passed\n";
     return 0;
 }

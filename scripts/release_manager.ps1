@@ -502,18 +502,19 @@ function Invoke-LocalSquash {
     $logsDirectory = Get-LogsDirectory -Context $context
     $logPath = Join-Path $logsDirectory `
         "squash-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-    $temporarySquashScript = Join-Path `
+    $temporarySquashDirectory = Join-Path `
         ([System.IO.Path]::GetTempPath()) `
-        ("SnowDesktop-squash-{0}-{1}.bat" -f `
+        ("SnowDesktop-squash-{0}-{1}" -f `
             $PID, [guid]::NewGuid().ToString("N"))
-    Copy-Item `
-        -LiteralPath $squashScript `
-        -Destination $temporarySquashScript `
-        -Force
+    $temporarySquashScript = Join-Path $temporarySquashDirectory "squash_release_to_main.bat"
     $previousApproval = $env:SNOWDESKTOP_RELEASE_APPROVED
     $previousMessage = $env:SNOWDESKTOP_RELEASE_MESSAGE
     $previousRepositoryRoot = $env:SNOWDESKTOP_REPOSITORY_ROOT
     try {
+        New-Item -ItemType Directory -Path $temporarySquashDirectory | Out-Null
+        Copy-Item -LiteralPath $squashScript -Destination $temporarySquashScript
+        Copy-Item -LiteralPath (Join-Path $scriptDirectory "powershell_runtime.bat") `
+            -Destination (Join-Path $temporarySquashDirectory "powershell_runtime.bat")
         $env:SNOWDESKTOP_RELEASE_APPROVED = "1"
         $env:SNOWDESKTOP_RELEASE_MESSAGE = $commitMessage
         $env:SNOWDESKTOP_REPOSITORY_ROOT = $repositoryRoot
@@ -528,8 +529,13 @@ function Invoke-LocalSquash {
         $env:SNOWDESKTOP_RELEASE_APPROVED = $previousApproval
         $env:SNOWDESKTOP_RELEASE_MESSAGE = $previousMessage
         $env:SNOWDESKTOP_REPOSITORY_ROOT = $previousRepositoryRoot
-        if (Test-Path -LiteralPath $temporarySquashScript) {
-            Remove-Item -LiteralPath $temporarySquashScript -Force
+        $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $cleanupPath = [IO.Path]::GetFullPath($temporarySquashDirectory)
+        if (-not $cleanupPath.StartsWith($temporaryRoot,[StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing unsafe squash snapshot cleanup: $cleanupPath"
+        }
+        if (Test-Path -LiteralPath $cleanupPath) {
+            Remove-Item -LiteralPath $cleanupPath -Recurse -Force
         }
     }
 

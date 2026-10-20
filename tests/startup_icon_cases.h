@@ -3,6 +3,65 @@
 void TestStartupDesktopMetadataDeferral()
 {
     using namespace snowdesktop::shell_refresh;
+    FolderEntry folderEntry;
+    folderEntry.name = L"report.final.txt";
+    folderEntry.fullPath = L"C:\\Mapped\\report.final.txt";
+    bool showExtensions = false;
+    int displayQueries = 0;
+    const auto displayQuery = [&](const std::wstring& path, SHFILEINFOW& info) {
+        ++displayQueries;
+        Check(path == folderEntry.fullPath, "display lookup uses the full source path");
+        wcscpy_s(info.szDisplayName,
+            showExtensions ? L"report.final.txt" : L"report.final");
+        return true;
+    };
+    folderEntry.displayName = ReadFolderDisplayName(
+        folderEntry.fullPath, folderEntry.name, displayQuery);
+    Check(folderEntry.DisplayName() == L"report.final" &&
+            folderEntry.name == L"report.final.txt" &&
+            snowdesktop::folder_sort_rules::ExtensionOf(folderEntry.name) == L".txt",
+        "hidden extensions change presentation while preserving the real filename and type");
+    FolderEntry copied(folderEntry), assigned;
+    assigned = folderEntry;
+    Check(copied.DisplayName() == L"report.final" &&
+            assigned.DisplayName() == L"report.final",
+        "snapshot copies retain Shell display names");
+    FolderEntry moved(std::move(copied)), moveAssigned;
+    moveAssigned = std::move(assigned);
+    Check(moved.DisplayName() == L"report.final" &&
+            moveAssigned.DisplayName() == L"report.final",
+        "snapshot moves and sort exchanges retain Shell display names");
+    showExtensions = true;
+    folderEntry.displayName = ReadFolderDisplayName(
+        folderEntry.fullPath, folderEntry.name, displayQuery);
+    Check(displayQueries == 2 && folderEntry.DisplayName() == L"report.final.txt",
+        "a view-option change re-reads the label even when the source path and file stamp are unchanged");
+    folderEntry.displayName = ReadFolderDisplayName(folderEntry.fullPath, folderEntry.name,
+        [](const auto&, auto&) { return false; });
+    Check(folderEntry.DisplayName() == folderEntry.name,
+        "unavailable Shell metadata falls back to the actual filename");
+    Check(ReadFolderDisplayName(folderEntry.fullPath, folderEntry.name,
+            [](const auto&, auto&) { return true; }) == folderEntry.name,
+        "a successful query with an empty label cannot hide the item title");
+    moveAssigned.displayName.clear();
+    Check(moveAssigned.DisplayName() == moveAssigned.name,
+        "synthetic entries without Shell metadata retain their existing titles");
+    std::vector<FolderEntry> sorted(2);
+    sorted[0].name = L"z.txt";
+    sorted[0].displayName = L"Alpha";
+    sorted[0].fullPath = L"C:\\Mapped\\z.txt";
+    sorted[1].name = L"a.zip";
+    sorted[1].displayName = L"Zulu";
+    sorted[1].fullPath = L"C:\\Mapped\\a.zip";
+    snowdesktop::folder_sort_rules::StableSort(
+        sorted, snowdesktop::folder_sort_rules::kName, true);
+    Check(sorted.front().name == L"z.txt",
+        "name sorting follows the visible Shell label instead of the raw filename");
+    sorted[0].displayName = sorted[1].displayName = L"Same";
+    snowdesktop::folder_sort_rules::StableSort(
+        sorted, snowdesktop::folder_sort_rules::kName, true);
+    Check(sorted.front().fullPath == L"C:\\Mapped\\a.zip",
+        "identical labels retain distinct identities and deterministic path ordering");
     Check(LocalDesktopDisplayName(L"C:\\Desktop\\My.App.LnK", false) == L"My.App" &&
         LocalDesktopDisplayName(L"C:\\Desktop\\Website.URL", false) == L"Website" &&
         LocalDesktopDisplayName(L"C:\\Desktop\\notes.txt", false) == L"notes.txt" &&

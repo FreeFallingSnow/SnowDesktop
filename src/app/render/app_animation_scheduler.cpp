@@ -237,8 +237,9 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!quickNavigationAnimationFrameToken_ &&
-        quickNavigationAnimation_.IsAnimating() &&
-        !quickNavigationAnimationCompositorDriven_)
+        ((quickNavigationAnimation_.IsAnimating() &&
+            !quickNavigationAnimationCompositorDriven_) ||
+            quickNavigationAnimation_.Resize().IsAnimating()))
     {
         quickNavigationAnimationFrameToken_ =
             uiAnimationScheduler_.StartAnimation(
@@ -246,14 +247,27 @@ void DesktopApp::EnsureUiAnimationFrame()
                 [this](double nowMilliseconds) {
                     quickNavigationAnimation_.Advance(
                         AnimationTick(nowMilliseconds));
-                    ApplyQuickNavigationAnimationFrame();
+                    if (quickNavigationAnimation_.Resize().IsAnimating())
+                    {
+                        PositionQuickNavigationWindow();
+                        if (!quickNavigationAnimation_.Resize().IsAnimating() &&
+                            UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
+                        {
+                            EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(
+                                static_cast<size_t>(quickNavigationListSelection_)));
+                            InvalidateQuickNavigationWindow();
+                        }
+                    }
+                    else
+                        ApplyQuickNavigationAnimationFrame();
                     if (!quickNavigationAnimation_.IsAnimating() &&
                         quickNavigationAnimation_.IsHidden())
                     {
                         FinalizeCloseQuickNavigation();
                     }
                     const bool keep =
-                        quickNavigationAnimation_.IsAnimating();
+                        quickNavigationAnimation_.IsAnimating() ||
+                        quickNavigationAnimation_.Resize().IsAnimating();
                     if (!keep)
                     {
                         quickNavigationAnimationFrameToken_ = 0;
@@ -508,8 +522,74 @@ void DesktopApp::RequestDesktopDockAnimationPresentation(const RECT& dirty)
     });
 }
 
+void DesktopApp::ClearListTitleHover()
+{
+    if (listTitleHoverFrameToken_) uiAnimationScheduler_.Cancel(listTitleHoverFrameToken_);
+    listTitleHoverFrameToken_ = 0;
+    listTitleHoverOwner_.clear();
+    listTitleHoverKey_.clear();
+    listTitleHoverRect_ = {};
+    listTitleHoverPopup_ = false;
+    listTitleHoverStarted_ = 0;
+}
+
+void DesktopApp::UpdateListTitleHover()
+{
+    if (listTitleHoverOwner_.empty()) return;
+    const auto* open = GetOpenPopupWidget();
+    if (!PtInRect(&listTitleHoverRect_, lastMousePoint_) || dragSession_.IsActive() ||
+        HasActiveContextMenuSession() || renameController_.IsActive() ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled() ||
+        (listTitleHoverPopup_ ? (!IsCollectionPopupInteractive() || !open || open->id != listTitleHoverOwner_) :
+            (FindWidgetIndexById(listTitleHoverOwner_) >= widgets_.size() ||
+                IsPointOccludedByOpenPopup(lastMousePoint_))))
+        ClearListTitleHover();
+}
+
+std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner,
+    const std::wstring& key, RECT viewport, bool popup, float textWidth, float width, float scale)
+{
+    UpdateListTitleHover();
+    if (owner.empty() || !PtInRect(&viewport, lastMousePoint_)) return std::nullopt;
+    if (textWidth <= width + 0.5f || dragSession_.IsActive() || HasActiveContextMenuSession() ||
+        renameController_.IsActive() || !snowdesktop::animation::RuntimeAnimationsEnabled() ||
+        (popup ? !IsCollectionPopupInteractive() : IsPointOccludedByOpenPopup(lastMousePoint_)))
+    {
+        if (listTitleHoverOwner_ == owner && listTitleHoverPopup_ == popup) ClearListTitleHover();
+        return std::nullopt;
+    }
+    const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    if (listTitleHoverOwner_ != owner || listTitleHoverKey_ != key || listTitleHoverPopup_ != popup)
+    {
+        ClearListTitleHover();
+        listTitleHoverOwner_ = owner;
+        listTitleHoverKey_ = key;
+        listTitleHoverPopup_ = popup;
+        listTitleHoverStarted_ = now;
+    }
+    // Selection and harmless geometry changes must not replay the title.
+    listTitleHoverRect_ = viewport;
+    if (!listTitleHoverFrameToken_)
+    {
+        listTitleHoverFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            popup ? snowdesktop::UiAnimationSurface::Popup : snowdesktop::UiAnimationSurface::Desktop,
+            [this](double) {
+                const auto ownerId = listTitleHoverOwner_;
+                const bool isPopup = listTitleHoverPopup_;
+                UpdateListTitleHover();
+                if (isPopup)
+                    InvalidateCollectionPopupAnimation(true);
+                else if (QueueDesktopWidgetComposition(ownerId))
+                    (void)PresentQueuedDesktopWidgetComposition();
+                return listTitleHoverFrameToken_ != 0;
+            });
+    }
+    return snowdesktop::list_detail_rules::HoverTitleOffset(now - listTitleHoverStarted_, textWidth, width, scale);
+}
+
 void DesktopApp::CancelUiAnimationFrame()
 {
+    ClearListTitleHover();
     snowdesktop::UiScheduleToken* const tracks[] = {
         &popupAnimationFrameToken_,
         &popupFanScrollFrameToken_,
@@ -520,6 +600,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &dockMagnificationAnimationFrameToken_,
         &pageNotifyAnimationFrameToken_,
         &pointerRecoveryFrameToken_,
+        &listTitleHoverFrameToken_,
         &floatingDockHoverTailToken_,
         &desktopWidgetHoverTailToken_,
     };

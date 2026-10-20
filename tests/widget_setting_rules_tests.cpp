@@ -36,6 +36,16 @@ int main()
         "time settings use strict 24-hour HH:MM values");
 
     double number = 0.0;
+    Check(DurationSettingUnitSeconds("minutes") == 60 &&
+        IsValidDurationSettingValue(90061, "seconds", 0, 359999, 1) &&
+        IsValidDurationSettingValue(25, "minutes", 1, 120, 1) &&
+        !IsValidDurationSettingValue(25.5, "minutes", 1, 120, 1) &&
+        !IsValidDurationSettingValue(-1, "seconds", 0, 359999, 1) &&
+        !IsValidDurationSettingValue(359999 + 1, "seconds", 0, 359999, 1) &&
+        !IsValidDurationSettingValue(26, "minutes", 5, 120, 5) &&
+        !IsValidDurationSettingSchema("milliseconds", 0, 100, 1) &&
+        !IsValidDurationSettingSchema("minutes", 0, 6000, 1),
+        "duration values preserve units, reject fractional or unaligned input, and exceed one day safely");
     Check(ParseFiniteSettingNumber("3.25", number) && number == 3.25 &&
             !ParseFiniteSettingNumber("3.25x", number),
         "range numbers require a complete finite representation");

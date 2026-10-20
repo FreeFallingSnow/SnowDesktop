@@ -39,6 +39,11 @@ public:
     bool DisposeInvoked() const noexcept;
 
 private:
+    bool SetupUnprotected(lua_State*, int, PushContext, std::string&);
+    bool PushRenderArgumentsUnprotected(lua_State*, PushContext, std::string&) const;
+    bool EventUnprotected(lua_State*, int, PushContext, int, bool&, std::string&) const;
+    bool MenuUnprotected(lua_State*, int, PushContext, int, bool&, std::string&) const;
+    bool DisposeUnprotected(lua_State*, int, PushContext, const char*, std::string&);
     int modelRef_ = LUA_NOREF;
     bool setupCompleted_ = false;
     bool disposeInvoked_ = false;

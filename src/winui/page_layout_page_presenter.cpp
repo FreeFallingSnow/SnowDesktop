@@ -24,9 +24,10 @@ namespace
 
 struct SettingsCard
 {
-    muxc::Border root{nullptr};
+    muxc::StackPanel root{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
+    muxc::Border surface{nullptr};
 };
 
 void InitializeCard(
@@ -34,16 +35,20 @@ void InitializeCard(
     const mux::Style& style,
     const muxc::StackPanel& page)
 {
-    card.root = muxc::Border{};
-    card.root.Style(style);
+    card.root = muxc::StackPanel{};
+    card.root.Spacing(8.0);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(0.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    card.root.Children().Append(card.title);
+    card.surface = muxc::Border{};
+    card.surface.Style(style);
+    card.surface.Padding({0.0, 0.0, 0.0, 0.0});
+    card.surface.Child(card.content);
+    card.root.Children().Append(card.surface);
     page.Children().Append(card.root);
 }
 
@@ -108,13 +113,16 @@ struct PageLayoutPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     SettingsCard pagesCard;
-    SettingsCard gridCard;
+    muxc::TextBlock gridTitle{nullptr};
     muxc::InfoBar feedback{nullptr};
-    muxc::InfoBar mappingNotice{nullptr};
+    muxc::TextBlock mappingText{nullptr};
     muxc::ListView pageList{nullptr};
-    muxc::Button addPageButton{nullptr};
-    muxc::Button deletePageButton{nullptr};
+    muxc::HyperlinkButton addPageButton{nullptr};
+    muxc::HyperlinkButton deletePageButton{nullptr};
     muxc::TextBox nameBox{nullptr};
+    presenter_controls::SettingRow nameRow;
+    presenter_controls::SettingRow columnsRow;
+    presenter_controls::SettingRow rowsRow;
     muxc::Button saveNameButton{nullptr};
     muxc::Button cancelNameButton{nullptr};
     muxc::TextBlock selectedPageText{nullptr};
@@ -157,18 +165,21 @@ struct PageLayoutPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(8.0);
+        root.Spacing(24.0);
+        InitializeCard(pagesCard, cardStyle, root);
         feedback = muxc::InfoBar{};
         feedback.IsOpen(false);
         feedback.IsClosable(true);
-        root.Children().Append(feedback);
+        feedback.Margin({16.0, 16.0, 16.0, 0.0});
+        presenter_controls::BindInfoBarVisibility(feedback);
+        pagesCard.content.Children().Append(feedback);
 
-        InitializeCard(pagesCard, cardStyle, root);
-        mappingNotice = muxc::InfoBar{};
-        mappingNotice.Severity(muxc::InfoBarSeverity::Informational);
-        mappingNotice.IsClosable(false);
-        mappingNotice.IsOpen(true);
-        pagesCard.content.Children().Append(mappingNotice);
+        muxc::Border listRegion;
+        listRegion.Padding({16.0, 16.0, 16.0, 8.0});
+        muxc::StackPanel listContent;
+        listContent.Spacing(8.0);
+        listRegion.Child(listContent);
+        pagesCard.content.Children().Append(listRegion);
 
         pageList = muxc::ListView{};
         pageList.SelectionMode(muxc::ListViewSelectionMode::Single);
@@ -176,96 +187,118 @@ struct PageLayoutPagePresenter::Impl
         pageList.CanReorderItems(true);
         pageList.AllowDrop(true);
         pageList.IsSwipeEnabled(false);
-        pageList.MinHeight(180.0);
+        pageList.MinHeight(68.0);
         pageList.MaxHeight(360.0);
-        pagesCard.content.Children().Append(pageList);
+        listContent.Children().Append(pageList);
+        mappingText = muxc::TextBlock{};
+        mappingText.FontSize(12.0);
+        mappingText.Opacity(0.68);
+        mappingText.TextWrapping(mux::TextWrapping::Wrap);
+        mappingText.Visibility(mux::Visibility::Collapsed);
+        listContent.Children().Append(mappingText);
 
-        addPageButton = muxc::Button{};
-        addPageButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        addPageButton = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(addPageButton);
         muxc::StackPanel pageActions;
         pageActions.Orientation(muxc::Orientation::Horizontal);
         pageActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         pageActions.Spacing(8.0);
-        deletePageButton = muxc::Button{};
+        deletePageButton = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(deletePageButton);
         pageActions.Children().Append(deletePageButton);
         pageActions.Children().Append(addPageButton);
-        pagesCard.content.Children().Append(pageActions);
+        muxc::Grid pageHeader;
+        pageHeader.ColumnSpacing(12.0);
+        muxc::ColumnDefinition titleColumn, addColumn;
+        titleColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+        addColumn.Width(mux::GridLengthHelper::Auto());
+        pageHeader.ColumnDefinitions().Append(titleColumn);
+        pageHeader.ColumnDefinitions().Append(addColumn);
+        pagesCard.root.Children().RemoveAt(0);
+        pagesCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        pageHeader.Children().Append(pagesCard.title);
+        muxc::Grid::SetColumn(pageActions, 1);
+        pageHeader.Children().Append(pageActions);
+        pagesCard.root.Children().InsertAt(0, pageHeader);
 
-        InitializeCard(gridCard, cardStyle, root);
+        gridTitle = muxc::TextBlock{};
+        gridTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        gridTitle.TextWrapping(mux::TextWrapping::NoWrap);
         selectedPageText = muxc::TextBlock{};
         selectedPageText.Opacity(0.72);
-        selectedPageText.TextWrapping(mux::TextWrapping::Wrap);
-        gridCard.content.Children().Append(selectedPageText);
+        selectedPageText.TextWrapping(mux::TextWrapping::NoWrap);
+        selectedPageText.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        selectedPageText.VerticalAlignment(mux::VerticalAlignment::Center);
+        selectedPageText.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid gridHeading;
+        gridHeading.ColumnSpacing(16.0);
+        presenter_controls::StyleSettingsSubrow(gridHeading, false, 0.0);
+        gridHeading.Padding({16.0, 12.0, 16.0, 8.0});
+        gridHeading.MinHeight(0.0);
+        muxc::ColumnDefinition headingTitle, headingContext;
+        headingTitle.Width(mux::GridLengthHelper::Auto());
+        headingContext.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+        gridHeading.ColumnDefinitions().Append(headingTitle);
+        gridHeading.ColumnDefinitions().Append(headingContext);
+        gridTitle.VerticalAlignment(mux::VerticalAlignment::Center);
+        gridHeading.Children().Append(gridTitle);
+        muxc::Grid::SetColumn(selectedPageText, 1);
+        gridHeading.Children().Append(selectedPageText);
+        pagesCard.content.Children().Append(gridHeading);
         nameBox = muxc::TextBox{};
         nameBox.MaxLength(128); // Final shared validation counts Unicode scalars.
         nameBox.AcceptsReturn(false);
         nameBox.TextWrapping(mux::TextWrapping::NoWrap);
-        gridCard.content.Children().Append(nameBox);
+        muxc::Grid nameEditor;
+        nameEditor.ColumnSpacing(8.0);
+        muxc::ColumnDefinition nameColumn, nameActionsColumn;
+        nameActionsColumn.Width(mux::GridLengthHelper::Auto());
+        nameEditor.ColumnDefinitions().Append(nameColumn);
+        nameEditor.ColumnDefinitions().Append(nameActionsColumn);
+        nameEditor.Children().Append(nameBox);
         muxc::StackPanel nameActions;
         nameActions.Orientation(muxc::Orientation::Horizontal);
+        nameActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         nameActions.Spacing(8.0);
         saveNameButton = muxc::Button{};
         cancelNameButton = muxc::Button{};
         nameActions.Children().Append(saveNameButton);
         nameActions.Children().Append(cancelNameButton);
-        gridCard.content.Children().Append(nameActions);
-
-        muxc::StackPanel dimensions;
-        dimensions.Orientation(muxc::Orientation::Vertical);
-        dimensions.Spacing(8.0);
-
-        muxc::Grid columnsRow;
-        columnsRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition columnsLabelDefinition;
-        columnsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        muxc::ColumnDefinition columnsInputDefinition;
-        columnsInputDefinition.Width(mux::GridLengthHelper::Auto());
-        columnsRow.ColumnDefinitions().Append(columnsLabelDefinition);
-        columnsRow.ColumnDefinitions().Append(columnsInputDefinition);
-        columnsLabel = muxc::TextBlock{};
-        columnsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        columnsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
-        columnsRow.Children().Append(columnsLabel);
+        muxc::Grid::SetColumn(nameActions, 1);
+        nameEditor.Children().Append(nameActions);
+        nameRow.Initialize(nameEditor, 420.0);
+        presenter_controls::StyleSettingsSubrow(nameRow.root, true, 0.0);
+        pagesCard.content.Children().Append(nameRow.root);
         columnsBox = muxc::NumberBox{};
-        columnsBox.MinWidth(180.0);
+        columnsBox.Width(presenter_controls::kSettingNumberWidth);
         columnsBox.Minimum(1.0);
         columnsBox.Maximum(50.0);
         columnsBox.SmallChange(1.0);
         columnsBox.SpinButtonPlacementMode(
-            muxc::NumberBoxSpinButtonPlacementMode::Inline);
+            muxc::NumberBoxSpinButtonPlacementMode::Compact);
         columnsBox.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        muxc::Grid::SetColumn(columnsBox, 1);
-        columnsRow.Children().Append(columnsBox);
-        dimensions.Children().Append(columnsRow);
-
-        muxc::Grid rowsRow;
-        rowsRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition rowsLabelDefinition;
-        rowsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        muxc::ColumnDefinition rowsInputDefinition;
-        rowsInputDefinition.Width(mux::GridLengthHelper::Auto());
-        rowsRow.ColumnDefinitions().Append(rowsLabelDefinition);
-        rowsRow.ColumnDefinitions().Append(rowsInputDefinition);
-        rowsLabel = muxc::TextBlock{};
-        rowsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        rowsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
-        rowsRow.Children().Append(rowsLabel);
+        columnsRow.Initialize(columnsBox, presenter_controls::kSettingNumberWidth);
+        presenter_controls::StyleSettingsSubrow(columnsRow.root, false, 0.0);
+        columnsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        columnsRow.SetCompactEditor();
+        columnsLabel = columnsRow.label;
+        pagesCard.content.Children().Append(columnsRow.root);
         rowsBox = muxc::NumberBox{};
-        rowsBox.MinWidth(180.0);
+        rowsBox.Width(presenter_controls::kSettingNumberWidth);
         rowsBox.Minimum(1.0);
         rowsBox.Maximum(50.0);
         rowsBox.SmallChange(1.0);
         rowsBox.SpinButtonPlacementMode(
-            muxc::NumberBoxSpinButtonPlacementMode::Inline);
+            muxc::NumberBoxSpinButtonPlacementMode::Compact);
         rowsBox.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        muxc::Grid::SetColumn(rowsBox, 1);
-        rowsRow.Children().Append(rowsBox);
-        dimensions.Children().Append(rowsRow);
-        gridCard.content.Children().Append(dimensions);
+        rowsRow.Initialize(rowsBox, presenter_controls::kSettingNumberWidth);
+        presenter_controls::StyleSettingsSubrow(rowsRow.root, false, 0.0);
+        rowsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        rowsRow.SetCompactEditor();
+        rowsLabel = rowsRow.label;
+        pagesCard.content.Children().Append(rowsRow.root);
     }
 
     void HookEvents()
@@ -297,14 +330,19 @@ struct PageLayoutPagePresenter::Impl
             [this](const auto&, const auto&) { DeletePage(); });
         nameChangedToken = nameBox.TextChanged([this](const auto&, const auto&) {
             if (closed || updating) return;
-            if (!nameDirty) nameEditRevision = snapshot.revision;
-            nameDirty = true;
+            // TextChanged can arrive after a programmatic selection refresh
+            // has released updating. Only a different name is an unsaved edit.
+            const auto page = SelectedPage();
+            const std::wstring text = nameBox.Text().c_str();
+            const bool edited = page && text != page->name;
+            if (edited && !nameDirty) nameEditRevision = snapshot.revision;
+            nameDirty = edited;
             UpdateInteractionState();
         });
         saveNameToken = saveNameButton.Click([this](const auto&, const auto&) { SaveName(); });
         cancelNameToken = cancelNameButton.Click([this](const auto&, const auto&) {
             nameDirty = false;
-            UpdateGridEditor();
+            PresentSnapshot(snapshot);
             RefreshSnapshot();
         });
         columnsChangedToken = columnsBox.ValueChanged(
@@ -408,6 +446,8 @@ struct PageLayoutPagePresenter::Impl
         muxc::TextBlock title;
         title.Text(PageLabel(index));
         title.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        title.TextWrapping(mux::TextWrapping::Wrap);
+        title.MaxLines(2);
         muxc::ToolTipService::SetToolTip(title, winrt::box_value(PageLabel(index)));
         title.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -427,12 +467,16 @@ struct PageLayoutPagePresenter::Impl
         dimensions.Text(FormatText(L("settings.pages.gridValue"),
             {std::to_wstring(page.columns), std::to_wstring(page.rows)}));
         dimensions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dimensions.TextWrapping(mux::TextWrapping::Wrap);
+        dimensions.MaxWidth(160);
         muxc::TextBlock content;
         content.Text(FormatText(L("settings.pages.contentCount"),
             {std::to_wstring(page.itemCount),
              std::to_wstring(page.widgetCount)}));
         content.Opacity(0.72);
         content.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        content.TextWrapping(mux::TextWrapping::Wrap);
+        content.MaxWidth(160);
         metrics.Children().Append(dimensions);
         metrics.Children().Append(content);
         muxc::Grid::SetColumn(metrics, 2);
@@ -544,7 +588,7 @@ struct PageLayoutPagePresenter::Impl
         hasSnapshot = !snapshot.pages.empty() || snapshot.revision != 0;
         if (updateInPlace)
         {
-            if (preferredIndex && !snapshot.pages.empty())
+            if (!nameDirty && preferredIndex && !snapshot.pages.empty())
             {
                 const auto index = std::min(*preferredIndex, snapshot.pages.size() - 1);
                 const bool wasUpdating = updating;
@@ -582,20 +626,20 @@ struct PageLayoutPagePresenter::Impl
                 }
             }
         }
-        if (selection < 0 && preferredIndex && !snapshot.pages.empty())
+        if (selection < 0 && !nameDirty && preferredIndex && !snapshot.pages.empty())
         {
             selection = static_cast<int>(std::min(
                 *preferredIndex, snapshot.pages.size() - 1));
         }
-        if (selection < 0 && previousIndex >= 0 && !snapshot.pages.empty())
+        if (selection < 0 && !nameDirty && previousIndex >= 0 && !snapshot.pages.empty())
             selection = std::min(previousIndex,
                 static_cast<int>(snapshot.pages.size() - 1));
-        if (selection < 0 && !snapshot.pages.empty())
+        if (selection < 0 && !nameDirty && !snapshot.pages.empty())
             selection = 0;
         pageList.SelectedIndex(selection);
         selectedPageId = selection >= 0
             ? snapshot.pages[static_cast<std::size_t>(selection)].id
-            : std::wstring{};
+            : nameDirty ? previousSelection : std::wstring{};
         updating = wasUpdating;
         orderDirty = false;
         UpdateOrderButtons();
@@ -652,14 +696,16 @@ struct PageLayoutPagePresenter::Impl
     void UpdateInteractionState()
     {
         const bool enabled = active && hasSnapshot && snapshot.editable && !confirmationPending;
-        pageList.IsEnabled(enabled);
-        addPageButton.IsEnabled(enabled);
+        pageList.IsEnabled(enabled && !nameDirty);
+        addPageButton.IsEnabled(enabled && !nameDirty);
         const bool gridEnabled = enabled && SelectedPage() != nullptr;
-        columnsBox.IsEnabled(gridEnabled);
-        rowsBox.IsEnabled(gridEnabled);
+        columnsBox.IsEnabled(gridEnabled && !nameDirty);
+        rowsBox.IsEnabled(gridEnabled && !nameDirty);
         nameBox.IsEnabled(gridEnabled);
         saveNameButton.IsEnabled(gridEnabled && nameDirty);
-        cancelNameButton.IsEnabled(gridEnabled && nameDirty);
+        cancelNameButton.IsEnabled(enabled && nameDirty);
+        nameRow.help.Text(L("settings.pages.unsavedName"));
+        nameRow.help.Visibility(nameDirty ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         deletePageButton.IsEnabled(gridEnabled && !nameDirty &&
             snapshot.pages.size() > std::max<std::size_t>(1, snapshot.monitorCount));
         muxc::ToolTipService::SetToolTip(deletePageButton, winrt::box_value(
@@ -686,8 +732,12 @@ struct PageLayoutPagePresenter::Impl
             selectedPageText.Text(L("settings.pages.noSelection"));
             presenter_controls::SyncNumberBoxValue(columnsBox, 1.0);
             presenter_controls::SyncNumberBoxValue(rowsBox, 1.0);
-            nameBox.Text(L"");
+            if (!nameDirty) nameBox.Text(L"");
         }
+        muxc::ToolTipService::SetToolTip(selectedPageText, winrt::box_value(selectedPageText.Text()));
+        muxa::AutomationProperties::SetName(selectedPageText, selectedPageText.Text());
+        mappingText.Visibility(snapshot.monitorCount > 1 || snapshot.pages.size() > 1
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         updating = wasUpdating;
         UpdateInteractionState();
     }
@@ -864,6 +914,23 @@ struct PageLayoutPagePresenter::Impl
             return;
         }
         auto result = actions.renamePage(nameEditRevision, selectedPageId, text);
+        if (!result.Succeeded())
+        {
+            if (result.status == PageLayoutOperationStatus::Stale)
+            {
+                // Keep this object's draft; the next explicit Save uses the
+                // refreshed revision and never renames a different page.
+                snapshot = std::move(result.snapshot);
+                nameEditRevision = snapshot.revision;
+                UpdateGridEditor();
+            }
+            ShowFeedback(result.status == PageLayoutOperationStatus::Stale
+                    ? muxc::InfoBarSeverity::Warning : muxc::InfoBarSeverity::Error,
+                L("settings.pages.status.error"), result.message.empty()
+                    ? L(result.status == PageLayoutOperationStatus::Stale ? "settings.pages.status.stale" : "settings.pages.status.failed")
+                    : result.message);
+            return;
+        }
         nameDirty = false;
         ApplyResult(std::move(result), L("settings.pages.renamed"));
     }
@@ -925,12 +992,11 @@ struct PageLayoutPagePresenter::Impl
         if (closed)
             return;
         pagesCard.title.Text(L("settings.pages.manage"));
-        gridCard.title.Text(L("settings.pages.details"));
-        mappingNotice.Title(L("settings.pages.mapping.title"));
-        mappingNotice.Message(L("settings.pages.mapping.message"));
+        gridTitle.Text(L("settings.pages.details"));
+        mappingText.Text(L("settings.pages.mapping.message"));
         addPageButton.Content(winrt::box_value(L("app.menu.add_page")));
         deletePageButton.Content(winrt::box_value(L("settings.pages.delete")));
-        nameBox.Header(winrt::box_value(L("settings.pages.name")));
+        nameRow.SetText(L("settings.pages.name"));
         nameBox.PlaceholderText(L("settings.pages.nameHint"));
         saveNameButton.Content(winrt::box_value(L("settings.pages.saveName")));
         cancelNameButton.Content(winrt::box_value(L("app.settings.cancel")));
@@ -1020,7 +1086,7 @@ void PageLayoutPagePresenter::Activate()
     if (!impl_ || impl_->closed)
         return;
     impl_->active = true;
-    impl_->RefreshSnapshot();
+    if (!impl_->nameDirty) impl_->RefreshSnapshot();
     impl_->UpdateGridEditor();
     impl_->refreshTimer.Start();
 }
@@ -1031,7 +1097,6 @@ void PageLayoutPagePresenter::Deactivate() noexcept
         return;
     impl_->refreshTimer.Stop();
     impl_->active = false;
-    impl_->nameDirty = false;
     impl_->confirmation->completed = {};
     impl_->confirmationPending = false;
 }

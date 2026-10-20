@@ -1,10 +1,28 @@
 #pragma once
 #include "system_controls.h"
 #include <algorithm>
+#include <atomic>
+#include <objbase.h>
+#include <stdexcept>
 #include <utility>
 
 namespace snowdesktop::system_control
 {
+// A physical handle's lifetime, never its recycled GDI display/index, owns the
+// executable token. Re-enumeration invalidates previously queued requests.
+inline std::string NewBrightnessEndpointId()
+{
+    static const std::string epoch = [] {
+        GUID value{}; wchar_t text[40]{};
+        if (FAILED(CoCreateGuid(&value)) || !StringFromGUID2(value, text, 40))
+            throw std::runtime_error("cannot allocate a brightness endpoint identity");
+        std::string result;
+        for (const wchar_t character : text) if (character) result.push_back(static_cast<char>(character));
+        return "ddc:" + result + ":";
+    }();
+    static std::atomic_uint64_t serial{0};
+    return epoch + std::to_string(++serial);
+}
 // The entire PnP instance identifies a monitor, not its model/friendly name.
 // WMI appends an instance ordinal; a monitor interface appends its class GUID.
 inline std::wstring BrightnessMonitorIdentity(std::wstring value, bool wmiInstance = false)

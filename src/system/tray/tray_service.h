@@ -15,6 +15,7 @@ struct Icon
     Identity identity;
     std::string key, persistentKey;
     std::wstring tip, application;
+    bool tipKnown = false;
     DWORD callback = 0, version = 0, state = 0;
     DWORD width = 0, height = 0;
     std::vector<std::uint32_t> pixels;
@@ -41,12 +42,16 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
+    void RefreshNativeTooltips();
     void SubscribeChanges(HWND window);
     void UnsubscribeChanges(HWND window);
     bool AcknowledgeChange(HWND window, std::uint64_t token);
     void SetGeometry(const std::string& key, RECT rect);
     void ClearGeometries();
-    bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {});
+    bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
+        std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
+    bool ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,
+        FocusOrigin focus = {}, std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
     void CancelFocusReturn(HWND origin = nullptr);
     void ObserveForeground(HWND window, DWORD eventTime);
     std::optional<FocusDelivery> TakeFocusReturn(HWND origin, std::uint64_t serial);

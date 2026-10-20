@@ -1,29 +1,24 @@
 #include "app/app.h"
 #include "desktop/folder_mapping_visibility_rules.h"
+#include "desktop/desktop_membership_recovery.h"
+#include "drag_drop/desktop_landings.h"
+#include "layout/page_mapping.h"
+#include "layout/selected_desktop_move.h"
+#include "desktop_request.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
 POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
-    // DeactivateForDrop only ends interactive rendering; the adjusted session
-    // coordinates remain authoritative until the drop plan has been committed.
-    if (dragSession_.HasContext())
-    {
-        return dragSession_.ResolveTargetPoint(
-            { dragGroupOriginX_, dragGroupOriginY_ }, current);
-    }
-    return {
-        dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
-        dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
-    };
+    return snowdesktop::desktop_request::TargetPoint(dragSession_,
+        {dragGroupOriginX_, dragGroupOriginY_}, mouseDownPoint_, current);
 }
 
 GridCell DesktopApp::ResolveDesktopRequestCell(
     const DragSourceList& sourceList, POINT current) const
 {
-    if (sourceList.UsesPointerDesktopPlacement() || dragSession_.IsPointerAnchored())
-        return CellFromPoint(current);
-    return CellFromDragOrigin(GetDragTargetPoint(current), current);
+    return snowdesktop::desktop_request::Resolve(gridPages_, sourceList, dragSession_,
+        {dragGroupOriginX_, dragGroupOriginY_}, mouseDownPoint_, current, GetFirstPageGridPage());
 }
 
 void DesktopApp::RefreshDragPresentationAnchor()
@@ -227,24 +222,8 @@ void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& k
 {
     if (keys.empty()) return;
 
-    std::vector<std::wstring> normalizedKeys;
-    normalizedKeys.reserve(keys.size());
-    for (const auto& key : keys)
-        normalizedKeys.push_back(ToUpperInvariant(key));
-
     for (auto& widget : widgets_)
-    {
-        if (widget.type == DesktopWidgetType::FolderMapping)
-            continue;
-        widget.itemKeys.erase(
-            std::remove_if(widget.itemKeys.begin(), widget.itemKeys.end(),
-                [&](const std::wstring& existing) {
-                    std::wstring normalizedExisting = ToUpperInvariant(existing);
-                    return std::find(normalizedKeys.begin(), normalizedKeys.end(),
-                        normalizedExisting) != normalizedKeys.end();
-                }),
-            widget.itemKeys.end());
-    }
+        snowdesktop::desktop_membership_recovery::Forget(widget, keys);
     RefreshCollectedKeysCache();
 }
 
@@ -282,229 +261,29 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
     if (!page) return landings;
 
-    bool desktopToDesktopMove = internalMove && sourceList.hasDesktopIcons &&
+    bool desktopToDesktopMove = internalMove &&
+        (sourceList.hasDesktopIcons || sourceList.HasDesktopWidgetIcons()) &&
         !containers_.empty() && sourceList.origin == containers_.front().get();
     if (desktopToDesktopMove)
     {
-        std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
-        if (moves.empty()) return landings;
-
-        for (const auto& entry : sourceList.entries)
-        {
-            auto it = std::find_if(moves.begin(), moves.end(),
-                [&](const PendingGridMove& move) { return move.index == entry.desktopIndex; });
-            if (it == moves.end()) continue;
-            DropLanding landing;
-            landing.kind = DropLandingKind::DesktopCell;
-            landing.sourceIndex = entry.sourceIndex;
-            landing.cell = it->cell;
-            landing.span = entry.originalSpan;
-            landings.push_back(landing);
-        }
-        return landings;
+        return snowdesktop::selected_desktop_move::Landings({items_, widgets_, gridPages_}, sourceList,
+            BuildSelectedMove(targetCell, &sourceList));
     }
 
-    // 起始列：拖放目标列，换行时从该列另起一行而非从 0 开始
-    const int startCol = std::clamp(targetCell.column, 0, std::max(0, page->columns - 1));
-
-    auto advanceCell = [&](GridCell cell, GridSpan span) {
-        // 查找 cell 所在页的维度（支持跨页后 cursor 切到新页）
-        int cols = page->columns, rows = page->rows;
-        if (cell.pageId != page->id)
-        {
-            auto colIt = savedPageColumns_.find(cell.pageId);
-            auto rowIt = savedPageRows_.find(cell.pageId);
-            if (colIt != savedPageColumns_.end()) cols = colIt->second;
-            if (rowIt != savedPageRows_.end()) rows = rowIt->second;
-        }
-        cell.column += std::max(1, span.columns);
-        if (cell.column + span.columns > cols)
-        {
-            cell.column = startCol;
-            cell.row += std::max(1, span.rows);
-            // 到底后绕回起始行上方（搜索阶段会跳过已占位置）
-            if (cell.row + span.rows > rows)
-                cell.row = 0;
-        }
-        return cell;
+    snowdesktop::desktop_landings::Services services;
+    services.grouped = [this](const auto& widget) { return IsGroupedWidget(widget); };
+    services.owned = [this](const auto& item) { return IsItemInAnyWidget(item); };
+    services.normalize = ToUpperInvariant;
+    services.findFree = [this](auto span, auto& used, auto& cell, const auto& preferred, int slot) {
+        return TryFindFreeCell(span, used, cell, preferred, slot);
     };
-
-    std::unordered_set<std::wstring> sourceKeys;
-    for (const auto& entry : sourceList.entries)
-        if (!entry.desktopKey.empty())
-            sourceKeys.insert(ToUpperInvariant(entry.desktopKey));
-
-    std::unordered_set<std::wstring> usedSlots;
-    for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w))
-            MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
-    for (const auto& item : items_)
-    {
-        if (item.name.empty() || item.gridCell.pageId.empty()) continue;
-        if (IsItemInAnyWidget(item)) continue;
-        if (internalMove && sourceKeys.contains(ToUpperInvariant(item.layoutKey))) continue;
-        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-    }
-
-    GridCell cursor = targetCell;
-
-    // 阶段式搜索：1) 从 cursor 向右 + 下方行从 startCol 开始
-    //             1b) 上方行从 startCol 开始（绕回页面顶部填间隙）
-    //             1c) 下方/上方行从列 0..startCol-1 补扫（覆盖左侧空位）
-    //             2) 全页行优先搜索（兜底）
-    //             3) TryFindFreeCell 跨页搜索
-    auto tryPlaceRightward = [&](GridSpan span, GridCell fromCell, GridCell& outCell) -> bool {
-        // 获取 fromCell 所在页的维度（支持跨页后 cursor 切到新页）
-        int pageCols = page->columns, pageRows = page->rows;
-        if (fromCell.pageId != page->id)
-        {
-            auto colIt = savedPageColumns_.find(fromCell.pageId);
-            auto rowIt = savedPageRows_.find(fromCell.pageId);
-            if (colIt != savedPageColumns_.end()) pageCols = colIt->second;
-            if (rowIt != savedPageRows_.end()) pageRows = rowIt->second;
-        }
-
-        // 当前行从 fromCell.column 向右找
-        for (int c = fromCell.column; c + span.columns <= pageCols; ++c)
-        {
-            GridCell candidate{ fromCell.pageId, c, fromCell.row };
-            if (!AreGridSlotsMarked(usedSlots, candidate, span))
-            {
-                outCell = candidate;
-                return true;
-            }
-        }
-
-        // 下方行：先从 startCol 向右，再从 0..startCol-1 补扫
-        for (int r = fromCell.row + 1; r + span.rows <= pageRows; ++r)
-        {
-            for (int c = startCol; c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!AreGridSlotsMarked(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!AreGridSlotsMarked(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-        }
-
-        // 上方行：先从 startCol 向右，再从 0..startCol-1 补扫
-        for (int r = 0; r < fromCell.row && r + span.rows <= pageRows; ++r)
-        {
-            for (int c = startCol; c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!AreGridSlotsMarked(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!AreGridSlotsMarked(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-        }
-        return false;
+    services.generateId = [this](const auto& reserved) {
+        auto ids = savedPageIds_;
+        ids.insert(ids.end(), reserved.begin(), reserved.end());
+        return snowdesktop::page_mapping::GenerateId(ids);
     };
-
-    for (const auto& entry : sourceList.entries)
-    {
-        GridSpan span = entry.originalSpan;
-        span.columns = std::max(1, span.columns);
-        span.rows = std::max(1, span.rows);
-
-        GridCell cell{};
-        bool found = false;
-
-        // 获取 cursor 所在页的维度（支持跨页后 cursor 切到新页）
-        auto getPageSize = [&](const std::wstring& pid) -> std::pair<int,int> {
-            if (pid == page->id) return { page->columns, page->rows };
-            auto colIt = savedPageColumns_.find(pid);
-            auto rowIt = savedPageRows_.find(pid);
-            int c = (colIt != savedPageColumns_.end()) ? colIt->second : page->columns;
-            int r = (rowIt != savedPageRows_.end()) ? rowIt->second : page->rows;
-            return { c, r };
-        };
-
-        // 阶段 1：从 cursor 向右 + 下方行从 startCol
-        auto [curCols, curRows] = getPageSize(cursor.pageId);
-        if (IsGridAreaValid(cursor, span) && cursor.column + span.columns <= curCols &&
-            cursor.row + span.rows <= curRows &&
-            !AreGridSlotsMarked(usedSlots, cursor, span))
-        {
-            cell = cursor;
-            found = true;
-        }
-        else
-        {
-            found = tryPlaceRightward(span, cursor, cell);
-        }
-
-        // 阶段 2：全页行优先搜索（兜底，优先本页）
-        if (!found)
-        {
-            for (int r = 0; r + span.rows <= curRows && !found; ++r)
-            {
-                for (int c = 0; c + span.columns <= curCols && !found; ++c)
-                {
-                    GridCell candidate{ cursor.pageId, c, r };
-                    if (!AreGridSlotsMarked(usedSlots, candidate, span))
-                    {
-                        cell = candidate;
-                        found = true;
-                    }
-                }
-            }
-        }
-
-        // 阶段 3：跨页搜索（TryFindFreeCell 内部遍历其他显示页）
-        if (!found)
-        {
-            found = TryFindFreeCell(span, usedSlots, cell, cursor.pageId, 0);
-        }
-
-        // 阶段 4：所有现有页都满了 → 预分配新溢出页
-        if (!found)
-        {
-            std::wstring newPageId = GeneratePageId();
-            // GeneratePageId 保证唯一，savedPageColumns_ 不会有该页
-            if (!savedPageColumns_.count(newPageId))
-            {
-                cell = { newPageId, 0, 0 };
-                found = true;
-                // 新页维度由 ApplyPendingPlacement 创建时参考末屏设置
-            }
-        }
-
-        if (!found) continue;
-
-        DropLanding landing;
-        landing.kind = DropLandingKind::DesktopCell;
-        landing.sourceIndex = entry.sourceIndex;
-        landing.cell = cell;
-        landing.span = span;
-        landings.push_back(landing);
-
-        MarkGridArea(usedSlots, cell, span);
-        cursor = advanceCell(cell, span);
-    }
-    return landings;
+    return snowdesktop::desktop_landings::Build(sourceList, std::move(targetCell), internalMove, *page,
+        widgets_, items_, savedPageColumns_, savedPageRows_, services);
 }
 
 /**

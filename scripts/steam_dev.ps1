@@ -51,8 +51,8 @@ function ConvertTo-NativeArgument {
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
-$buildOutput = [System.IO.Path]::GetFullPath(
-    (Join-Path $repositoryRoot ".build\Release"))
+Import-Module (Join-Path $scriptDirectory "development_output.psm1") -Force
+$buildOutput = Get-SnowDesktopDevelopmentOutput -RepositoryRoot $repositoryRoot -Configuration Release
 $identityPath = Join-Path $repositoryRoot "packaging\steam-identity.json"
 $identity = Get-Content -LiteralPath $identityPath -Encoding UTF8 -Raw |
     ConvertFrom-Json
@@ -68,7 +68,13 @@ $executables = @{
 }
 $executable = Join-Path $buildOutput $executables[$Target]
 $bridge = Join-Path $buildOutput "SnowDesktopSteamBridge.exe"
-$steamApi = Join-Path $buildOutput "steam_api64.dll"
+$runtimeManifestPath = Join-Path $buildOutput "SnowDesktop.Runtime\SnowDesktop.Runtime.manifest"
+$runtimeManifest = [xml](Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8)
+if ($runtimeManifest.assembly.assemblyIdentity.name -cne "SnowDesktop.Runtime" -or
+    @($runtimeManifest.assembly.file | Where-Object { $_.name -ceq "steam_api64.dll" }).Count -ne 1) {
+    throw "The private runtime manifest must declare steam_api64.dll. Run scripts\build.bat first."
+}
+$steamApi = Join-Path $buildOutput "SnowDesktop.Runtime\steam_api64.dll"
 foreach ($path in @($executable, $bridge, $steamApi)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Steam development file is missing: $path`nRun scripts\build.bat first."

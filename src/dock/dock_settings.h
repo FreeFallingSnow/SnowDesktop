@@ -1,8 +1,10 @@
 #pragma once
 
 #include "dock_settings_rules.h"
+#include "dock_attention_dot.h"
 #include "dock_layout_settings.h"
 #include "dock_fullscreen_policy.h"
+#include "dock_tray_rules.h"
 #include "theme/personalization.h"
 #include "settings/animation_settings.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
@@ -10,6 +12,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -66,7 +69,9 @@ inline void ConfigureSystemTaskbarTargetProtection(
     // minimized application can reach any taskbar, including screens without
     // a Dock; intentional shell-panel access still releases that protection.
     target.suppressTaskbar = suppressionRequested && hasDock;
-    target.protectAutoHideActivation = protectActivation && !target.shellPanelVisible;
+    // Keep the controller attached while a shell panel is open. Its per-window
+    // decision releases the current request without disabling future requests.
+    target.protectAutoHideActivation = protectActivation;
 }
 
 struct DockSettings : DockLayoutSettings
@@ -79,15 +84,22 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
+    bool summonOnAppMinimize = true;
     int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
+    int edgeHoverDelayMs = snowdesktop::dock_settings_rules::kDefaultEdgeHoverDelayMs;
     DockFullscreenPolicy fullscreenPolicy = DockFullscreenPolicy::FullProtection;
     std::vector<DockFullscreenException> fullscreenExceptions;
+    std::vector<DockTrayRule> trayApplications = snowdesktop::dock_tray::Defaults();
     // Running applications remain enabled; task thumbnails are optional.
     // Keep the persisted names for compatibility with existing preferences.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
     bool followComponentAppearance = true;
+    bool followComponentCornerRadius = true;
+    float cornerRadius = 12.0f;
+    float attentionDotSizeScale = snowdesktop::dock_attention_dot::kDefaultSizeScale;
+    float attentionDotOffset = snowdesktop::dock_attention_dot::kDefaultOffset;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;
     int hoverEffect = 2;
@@ -117,20 +129,17 @@ inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
 {
-    // floatingShortcutMode enables a summon hotkey; it does not replace the
-    // ordinary bottom Dock. Appearance preferences are independent as well.
-    // Permanent hiding temporarily enables Shell auto-hide while preserving
-    // the user's original preference for restoration. Protect that override
-    // too, including taskbars on monitors without a Dock.
-    return dockEnabled && settings.position == DockPosition::Bottom &&
-        (autoHideEnabled || settings.suppressSystemTaskbar);
+    // A minimizing application can activate a taskbar on any screen, regardless
+    // of Dock placement or animation. Permanent hiding also owns an auto-hide
+    // override even when the saved Windows preference was disabled.
+    return autoHideEnabled || (dockEnabled && settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
 {
     auto value = settings.followComponentAppearance ? global :
         settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeAppearancePreset(settings.appearancePreset);
-    value.cornerRadius = global.cornerRadius;
+    value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
     return value;
 }
 
@@ -149,6 +158,11 @@ inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 
 inline void NormalizeDockSettings(DockSettings& settings)
 {
+    settings.edgeDistanceScale = ClampDockEdgeDistanceScale(settings.edgeDistanceScale);
+    settings.attentionDotSizeScale = snowdesktop::dock_attention_dot::NormalizeSizeScale(settings.attentionDotSizeScale);
+    settings.attentionDotOffset = snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset);
+    settings.cornerRadius = std::isfinite(settings.cornerRadius)
+        ? std::clamp(settings.cornerRadius, 0.0f, 28.0f) : DockSettings{}.cornerRadius;
     switch (settings.appearancePreset)
     {
     case kAppearancePresetDark: case kAppearancePresetLight:
@@ -163,8 +177,10 @@ inline void NormalizeDockSettings(DockSettings& settings)
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
     settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
     settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
+    settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs);
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::Normalize(static_cast<int>(settings.fullscreenPolicy));
     snowdesktop::dock_fullscreen::NormalizeExceptions(settings.fullscreenExceptions);
+    snowdesktop::dock_tray::NormalizeRules(settings.trayApplications);
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);
@@ -173,6 +189,7 @@ inline void NormalizeDockSettings(DockSettings& settings)
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

@@ -3,6 +3,7 @@
 #include "surface_theme.h"
 #include "navigation/navigation_settings.h"
 #include "theme_package_limits.h"
+#include "icon_theme_codec.h"
 
 #include <filesystem>
 #include <functional>
@@ -14,8 +15,8 @@
 namespace snowdesktop::themes
 {
 // The package version is independent of the widget API and Steam bridge CLI.
-inline constexpr int kPackageVersion = 1;
-enum class Kind { Global, QuickPanel, Popup };
+inline constexpr int kPackageVersion = 3;
+enum class Kind { Global, QuickPanel, Popup, Icon };
 enum Scope : unsigned { Components = 1, Dock = 2, StatusBar = 4, Taskbar = 8, All = 15 };
 inline constexpr unsigned Bars = Dock | StatusBar | Taskbar;
 inline bool FullScope(unsigned scopes) { return (scopes & Bars) == Bars; }
@@ -28,6 +29,7 @@ struct Theme
     PersonalizationSettings appearance;
     QuickNavigationLayout layout;
     std::map<std::string, std::string> colors;
+    IconBeautifySettings icon;
     std::string quickPanel, popup;
 };
 
