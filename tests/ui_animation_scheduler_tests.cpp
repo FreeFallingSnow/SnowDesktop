@@ -653,6 +653,8 @@ struct ShellShortcutRelayFixture
 {
     std::atomic<HWND> foreground{reinterpret_cast<HWND>(1)};
     std::atomic<bool> allowActivation{true}, allowFocus{true}, holdAfterActivation{false};
+    std::atomic<bool> updateForegroundOnActivation{true};
+    std::atomic<bool> throwDuringHandoff{false};
     std::atomic<int> held{0};
     std::atomic<unsigned> activations{0}, keyChecks{0}, sendCalls{0};
     std::atomic<DWORD> sendThread{0};
@@ -667,11 +669,15 @@ snowdesktop::StatusBarShellShortcutRelay::Api MakeShellShortcutRelayApi(
     const std::shared_ptr<ShellShortcutRelayFixture>& fixture)
 {
     snowdesktop::StatusBarShellShortcutRelay::Api api;
-    api.foreground = [fixture] { return fixture->foreground.load(); };
+    api.foreground = [fixture] {
+        if (fixture->throwDuringHandoff.load() && fixture->sendCalls.load() > 0)
+            throw std::runtime_error("injected handoff observation failure");
+        return fixture->foreground.load();
+    };
     api.activate = [fixture](HWND window) {
         ++fixture->activations;
         if (!fixture->allowActivation.load()) return false;
-        fixture->foreground.store(window);
+        if (fixture->updateForegroundOnActivation.load()) fixture->foreground.store(window);
         if (fixture->holdAfterActivation.load()) fixture->held.store(VK_CONTROL);
         return true;
     };
@@ -688,6 +694,41 @@ snowdesktop::StatusBarShellShortcutRelay::Api MakeShellShortcutRelayApi(
     };
     api.nowMilliseconds = [fixture] { return fixture->now.load(); };
     return api;
+}
+
+// Keep these business assertions on the original relay API so they can also
+// run against the previous header in an isolated negative-control build.
+void TestStatusBarShellShortcutNullForeground()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        auto relay = Relay::Start(nullptr, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay != nullptr, "a system-panel click with no foreground window starts an isolated relay");
+        Check(PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "a null initial foreground can hand off to the relay and accept the system-panel chord");
+        Check(fixture->activations.load() == 1 && fixture->sendCalls.load() == 1,
+            "a null initial foreground does not add activation or injection retries");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "the null-origin request retires normally after foreground handoff");
+    }
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        fixture->held.store(VK_CONTROL);
+        auto relay = Relay::Start(nullptr, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "a null-origin request waits for physical modifier release");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "an external foreground cancels a null-origin request even while the modifier stays held");
+        Check(relay->Poll() == Result::Cancelled && fixture->activations.load() == 0 &&
+            fixture->sendCalls.load() == 0,
+            "null is an exact foreground baseline, never permission to activate over another window");
+    }
 }
 
 void TestStatusBarShellShortcutRelay()
@@ -839,6 +880,89 @@ void TestStatusBarShellShortcutRelay()
         waitForExit(relay);
         Check(relay->Poll() == Result::Sent && fixture->sendCalls.load() == 1,
             "missing Shell handoff expires only the temporary queue and never replays the chord");
+    }
+}
+
+void TestStatusBarShellShortcutRelayDiagnostics()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    using Reason = Relay::Reason;
+    enum class Scenario { Accepted, ActivationRejected, ForegroundUnchanged, ExternalForeground, FocusRejected };
+    for (const auto scenario : {Scenario::Accepted, Scenario::ActivationRejected,
+        Scenario::ForegroundUnchanged, Scenario::ExternalForeground, Scenario::FocusRejected})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->foreground.store(nullptr);
+        fixture->allowActivation.store(scenario != Scenario::ActivationRejected);
+        fixture->updateForegroundOnActivation.store(scenario != Scenario::ForegroundUnchanged);
+        fixture->allowFocus.store(scenario != Scenario::FocusRejected);
+        auto api = MakeShellShortcutRelayApi(fixture);
+        if (scenario == Scenario::ExternalForeground)
+            api.activate = [fixture](HWND) {
+                ++fixture->activations;
+                fixture->foreground.store(reinterpret_cast<HWND>(2));
+                return true;
+            };
+        auto relay = Relay::Start(nullptr, {'N'}, std::move(api));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() != Result::Pending; }),
+            "each activation boundary publishes a terminal diagnostic");
+        const auto beforeCleanup = relay->Diagnostics();
+        if (scenario == Scenario::Accepted)
+        {
+            Check(beforeCleanup.result == Result::Sent && beforeCleanup.reason == Reason::InputAccepted &&
+                beforeCleanup.activationReturned && beforeCleanup.focusChecked && beforeCleanup.focused,
+                "accepted input records successful activation and focus validation without claiming Shell visibility");
+            fixture->foreground.store(reinterpret_cast<HWND>(2));
+        }
+        else if (scenario == Scenario::ActivationRejected)
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::ActivationRejected &&
+                !beforeCleanup.activationReturned && !beforeCleanup.focusChecked && !beforeCleanup.observedForeground,
+                "activation rejection is distinguishable from a focus check that never ran");
+        else if (scenario == Scenario::ForegroundUnchanged)
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::ForegroundNotAcquired &&
+                beforeCleanup.activationReturned && !beforeCleanup.focusChecked && !beforeCleanup.observedForeground,
+                "successful activation return without observed foreground ownership has its own reason");
+        else if (scenario == Scenario::ExternalForeground)
+            Check(beforeCleanup.result == Result::Cancelled && beforeCleanup.reason == Reason::ForegroundChanged &&
+                beforeCleanup.activationReturned && !beforeCleanup.focusChecked &&
+                beforeCleanup.observedForeground == reinterpret_cast<HWND>(2),
+                "an external foreground observed during activation cancels without focus probing or retrying");
+        else
+            Check(beforeCleanup.result == Result::Failed && beforeCleanup.reason == Reason::FocusNotAcquired &&
+                beforeCleanup.activationReturned && beforeCleanup.focusChecked && !beforeCleanup.focused &&
+                beforeCleanup.observedForeground == beforeCleanup.relayWindow,
+                "focus validation failure preserves the acquired foreground and actual failed check");
+        Check(!beforeCleanup.initialForeground && beforeCleanup.relayWindow &&
+            beforeCleanup.activationAttempted && fixture->activations.load() == 1 &&
+            fixture->sendCalls.load() == (scenario == Scenario::Accepted ? 1u : 0u),
+            "diagnostics retain the exact null baseline and single activation attempt");
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "diagnostic fixture releases its temporary GUI queue");
+        const auto afterCleanup = relay->Diagnostics();
+        Check(!relay->Window() && afterCleanup.result == beforeCleanup.result &&
+            afterCleanup.reason == beforeCleanup.reason && afterCleanup.relayWindow == beforeCleanup.relayWindow &&
+            afterCleanup.observedForeground == beforeCleanup.observedForeground &&
+            afterCleanup.activationAttempted == beforeCleanup.activationAttempted &&
+            afterCleanup.activationReturned == beforeCleanup.activationReturned &&
+            afterCleanup.focusChecked == beforeCleanup.focusChecked && afterCleanup.focused == beforeCleanup.focused,
+            "cleanup cannot overwrite the published terminal diagnostic or erase its relay window snapshot");
+        Check(Relay::ReasonName(afterCleanup.reason)[0] != L'\0', "terminal reasons have stable diagnostic names");
+    }
+    for (bool partial : {false, true})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->throwDuringHandoff.store(true);
+        if (partial) fixture->firstAccepted = 1;
+        auto relay = Relay::Start(fixture->foreground.load(), {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return !relay->Running(); }),
+            "a post-publication handoff exception still retires the relay window");
+        const auto snapshot = relay->Diagnostics();
+        Check(snapshot.result == (partial ? Result::Failed : Result::Sent) &&
+            snapshot.reason == (partial ? Reason::InputPartial : Reason::InputAccepted) &&
+            snapshot.observedForeground == snapshot.relayWindow && snapshot.relayWindow &&
+            !relay->Window() && snapshot.activationReturned && snapshot.focused,
+            "a later handoff exception preserves the first published result and diagnostic");
     }
 }
 
@@ -1024,7 +1148,9 @@ int main()
     TestTaskViewMouseHandoff();
     TestTaskViewPointerGuard();
     TestTaskViewInputMonitorLifetime();
+    TestStatusBarShellShortcutNullForeground();
     TestStatusBarShellShortcutRelay();
+    TestStatusBarShellShortcutRelayDiagnostics();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&

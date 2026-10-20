@@ -566,8 +566,25 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     statusBarActivationMonitor_ = nullptr;
                     if (result == Relay::Result::Failed || result == Relay::Result::TimedOut)
                     {
-                        WriteDiagnosticLogEntry(result == Relay::Result::Failed ?
-                            L"StatusBar system shortcut relay failed" : L"StatusBar system shortcut input release timed out");
+                        // Read the worker's published terminal snapshot. Its
+                        // window may already be gone, so querying it here
+                        // would lose the failed activation/focus evidence.
+                        const auto diagnostic = request->relay ?
+                            request->relay->Diagnostics() : Relay::DiagnosticSnapshot{};
+                        const wchar_t* reason = request->relay ? Relay::ReasonName(diagnostic.reason) :
+                            result == Relay::Result::TimedOut ? L"ui-input-release-timeout" : L"start-unavailable";
+                        wchar_t message[768]{};
+                        swprintf_s(message,
+                            L"StatusBar system shortcut relay failure: action=%u generation=%llu reason=%s "
+                            L"initialForeground=%p observedForeground=%p relayWindow=%p relayThread=%lu "
+                            L"activationAttempted=%u activationReturned=%u focusChecked=%u focused=%u accepted=%u",
+                            static_cast<unsigned>(action), static_cast<unsigned long long>(generation), reason,
+                            static_cast<void*>(foreground), static_cast<void*>(diagnostic.observedForeground),
+                            static_cast<void*>(diagnostic.relayWindow),
+                            request->relay ? request->relay->ThreadId() : 0ul,
+                            diagnostic.activationAttempted ? 1u : 0u, diagnostic.activationReturned ? 1u : 0u,
+                            diagnostic.focusChecked ? 1u : 0u, diagnostic.focused ? 1u : 0u, accepted);
+                        WriteDiagnosticLogEntry(message);
                         MessageBeep(MB_ICONWARNING);
                     }
                 };

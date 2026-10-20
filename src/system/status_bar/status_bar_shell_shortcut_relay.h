@@ -20,6 +20,42 @@ class StatusBarShellShortcutRelay
 {
 public:
     enum class Result { Pending, Sent, Cancelled, TimedOut, Failed };
+    enum class Reason
+    {
+        None, InputAccepted, Cancelled, ForegroundChanged, PreparationTimedOut,
+        WindowClassFailed, WindowCreationFailed, WindowUnavailable, ActivationRejected,
+        ForegroundNotAcquired, FocusNotAcquired, FocusLost, InputRejected, InputPartial, Exception
+    };
+    struct DiagnosticSnapshot
+    {
+        Result result = Result::Pending;
+        Reason reason = Reason::None;
+        HWND initialForeground = nullptr, observedForeground = nullptr, relayWindow = nullptr;
+        bool activationAttempted = false, activationReturned = false;
+        bool focusChecked = false, focused = false;
+    };
+    static const wchar_t* ReasonName(Reason reason) noexcept
+    {
+        switch (reason)
+        {
+        case Reason::None: return L"none";
+        case Reason::InputAccepted: return L"input-accepted";
+        case Reason::Cancelled: return L"cancelled";
+        case Reason::ForegroundChanged: return L"foreground-changed";
+        case Reason::PreparationTimedOut: return L"preparation-timeout";
+        case Reason::WindowClassFailed: return L"window-class-failed";
+        case Reason::WindowCreationFailed: return L"window-creation-failed";
+        case Reason::WindowUnavailable: return L"window-unavailable";
+        case Reason::ActivationRejected: return L"activation-rejected";
+        case Reason::ForegroundNotAcquired: return L"foreground-not-acquired";
+        case Reason::FocusNotAcquired: return L"focus-not-acquired";
+        case Reason::FocusLost: return L"focus-lost";
+        case Reason::InputRejected: return L"input-rejected";
+        case Reason::InputPartial: return L"input-partial";
+        case Reason::Exception: return L"exception";
+        }
+        return L"unknown";
+    }
 
     struct Api
     {
@@ -44,7 +80,9 @@ public:
     static std::shared_ptr<StatusBarShellShortcutRelay> Start(HWND initialForeground,
         StatusBarShellChord chord, Api api)
     {
-        if (!initialForeground || !chord.key || !api.foreground || !api.activate || !api.focused ||
+        // NULL is a valid foreground observation during a Shell transition.
+        // It remains an exact baseline, never a wildcard for another window.
+        if (!chord.key || !api.foreground || !api.activate || !api.focused ||
             !api.keyDown || !api.send || !api.nowMilliseconds)
             return {};
         bool expected = false;
@@ -72,6 +110,22 @@ public:
     StatusBarShellShortcutRelay& operator=(const StatusBarShellShortcutRelay&) = delete;
 
     Result Poll() const noexcept { return state_->result.load(std::memory_order_acquire); }
+    DiagnosticSnapshot Diagnostics() const noexcept
+    {
+        DiagnosticSnapshot snapshot;
+        // Complete publishes every field before the terminal result. Pending
+        // snapshots are provisional; terminal snapshots never change again.
+        snapshot.result = state_->result.load(std::memory_order_acquire);
+        snapshot.reason = state_->reason.load(std::memory_order_relaxed);
+        snapshot.initialForeground = state_->initialForeground;
+        snapshot.observedForeground = state_->observedForeground.load(std::memory_order_relaxed);
+        snapshot.relayWindow = state_->diagnosticWindow.load(std::memory_order_relaxed);
+        snapshot.activationAttempted = state_->activationAttempted.load(std::memory_order_relaxed);
+        snapshot.activationReturned = state_->activationReturned.load(std::memory_order_relaxed);
+        snapshot.focusChecked = state_->focusChecked.load(std::memory_order_relaxed);
+        snapshot.focused = state_->focused.load(std::memory_order_relaxed);
+        return snapshot;
+    }
     UINT AcceptedCount() const noexcept { return state_->accepted.load(std::memory_order_acquire); }
     UINT SentCount() const noexcept { return AcceptedCount(); }
     bool Running() const noexcept { return state_->running.load(std::memory_order_acquire); }
@@ -101,6 +155,10 @@ private:
         const Api api;
         std::atomic<unsigned> gate{kPending};
         std::atomic<Result> result{Result::Pending};
+        std::atomic<Reason> reason{Reason::None};
+        std::atomic<HWND> observedForeground{nullptr}, diagnosticWindow{nullptr};
+        std::atomic<bool> activationAttempted{false}, activationReturned{false};
+        std::atomic<bool> focusChecked{false}, focused{false};
         std::atomic<UINT> accepted{0};
         std::atomic<bool> running{true};
         std::atomic<HWND> window{nullptr};
@@ -149,6 +207,30 @@ private:
     static void WaitForInput() noexcept
     { MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE); }
 
+    static void Complete(State& state, Result result, Reason reason) noexcept
+    {
+        // Run is the sole terminal writer. A later handoff-loop exception must
+        // not replace accepted input or any already published failure.
+        if (state.result.load(std::memory_order_relaxed) != Result::Pending) return;
+        state.reason.store(reason, std::memory_order_relaxed);
+        state.result.store(result, std::memory_order_release);
+    }
+
+    static HWND ObserveForeground(State& state)
+    {
+        const HWND foreground = state.api.foreground();
+        state.observedForeground.store(foreground, std::memory_order_relaxed);
+        return foreground;
+    }
+
+    static bool CheckFocus(State& state, HWND window, DWORD thread)
+    {
+        state.focusChecked.store(true, std::memory_order_relaxed);
+        const bool focused = state.api.focused(window, thread);
+        state.focused.store(focused, std::memory_order_relaxed);
+        return focused;
+    }
+
     static void Run(const std::shared_ptr<State>& state) noexcept
     {
         struct Cleanup
@@ -170,46 +252,63 @@ private:
             const DWORD thread = GetCurrentThreadId();
             state->thread.store(thread, std::memory_order_release);
             const ULONGLONG deadline = api.nowMilliseconds() + kPreparationMilliseconds;
-            if (state->gate.load() == kCancelled || api.foreground() != state->initialForeground)
-            { state->result.store(Result::Cancelled); return; }
+            if (state->gate.load() == kCancelled)
+            { Complete(*state, Result::Cancelled, Reason::Cancelled); return; }
+            if (ObserveForeground(*state) != state->initialForeground)
+            { Complete(*state, Result::Cancelled, Reason::ForegroundChanged); return; }
             if (!RegisterWindowClass())
-            { state->result.store(Result::Failed); return; }
+            { Complete(*state, Result::Failed, Reason::WindowClassFailed); return; }
 
             cleanup.window = CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"",
                 WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
             if (!cleanup.window)
-            { state->result.store(Result::Failed); return; }
+            { Complete(*state, Result::Failed, Reason::WindowCreationFailed); return; }
             const HWND window = cleanup.window;
             state->window.store(window, std::memory_order_release);
+            state->diagnosticWindow.store(window, std::memory_order_relaxed);
             ShowWindow(window, SW_SHOWNOACTIVATE);
 
             bool activated = false;
             for (;;)
             {
-                if (!Pump() || !IsWindow(window) || state->gate.load() == kCancelled)
-                { state->result.store(Result::Cancelled); return; }
+                if (!Pump() || !IsWindow(window))
+                { Complete(*state, Result::Cancelled, Reason::WindowUnavailable); return; }
+                if (state->gate.load() == kCancelled)
+                { Complete(*state, Result::Cancelled, Reason::Cancelled); return; }
                 if (api.nowMilliseconds() >= deadline)
-                { state->result.store(Result::TimedOut); return; }
-                if (api.foreground() != (activated ? window : state->initialForeground))
-                { state->result.store(Result::Cancelled); return; }
+                { Complete(*state, Result::TimedOut, Reason::PreparationTimedOut); return; }
+                if (ObserveForeground(*state) != (activated ? window : state->initialForeground))
+                { Complete(*state, Result::Cancelled, Reason::ForegroundChanged); return; }
                 if (!KeysReleased(api, state->chord)) { WaitForInput(); continue; }
                 if (!activated)
                 {
                     // This attempt is never retried. A denied foreground
                     // request must not inject into whichever window kept it.
-                    if (!api.activate(window) || api.foreground() != window || !api.focused(window, thread))
-                    { state->result.store(Result::Failed); return; }
+                    state->activationAttempted.store(true, std::memory_order_relaxed);
+                    const bool activatedWindow = api.activate(window);
+                    state->activationReturned.store(activatedWindow, std::memory_order_relaxed);
+                    const HWND observed = ObserveForeground(*state);
+                    if (observed != window && observed != state->initialForeground)
+                    { Complete(*state, Result::Cancelled, Reason::ForegroundChanged); return; }
+                    if (!activatedWindow)
+                    { Complete(*state, Result::Failed, Reason::ActivationRejected); return; }
+                    if (observed != window)
+                    { Complete(*state, Result::Failed, Reason::ForegroundNotAcquired); return; }
+                    if (!CheckFocus(*state, window, thread))
+                    { Complete(*state, Result::Failed, Reason::FocusNotAcquired); return; }
                     activated = true;
                     // Activation can dispatch messages and take time. Sample
                     // physical input again instead of relying on the UI's
                     // earlier release check.
                     continue;
                 }
-                if (!api.focused(window, thread) || api.foreground() != window)
-                { state->result.store(Result::Cancelled); return; }
+                if (!CheckFocus(*state, window, thread))
+                { Complete(*state, Result::Cancelled, Reason::FocusLost); return; }
+                if (ObserveForeground(*state) != window)
+                { Complete(*state, Result::Cancelled, Reason::ForegroundChanged); return; }
                 unsigned expected = kPending;
                 if (!state->gate.compare_exchange_strong(expected, kSending))
-                { state->result.store(Result::Cancelled); return; }
+                { Complete(*state, Result::Cancelled, Reason::Cancelled); return; }
                 break;
             }
 
@@ -238,7 +337,8 @@ private:
                 if (releases) api.send(releases, release, sizeof(INPUT));
             }
             const ULONGLONG handoffDeadline = api.nowMilliseconds() + kHandoffMilliseconds;
-            state->result.store(accepted == count ? Result::Sent : Result::Failed, std::memory_order_release);
+            Complete(*state, accepted == count ? Result::Sent : Result::Failed,
+                accepted == count ? Reason::InputAccepted : accepted ? Reason::InputPartial : Reason::InputRejected);
             if (!accepted) return;
 
             // SendInput reports acceptance, not delivery or Shell visibility.
@@ -250,7 +350,7 @@ private:
         }
         catch (...)
         {
-            state->result.store(Result::Failed, std::memory_order_release);
+            Complete(*state, Result::Failed, Reason::Exception);
         }
     }
 
