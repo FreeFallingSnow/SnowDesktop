@@ -1812,7 +1812,13 @@ int main()
         dock.listMode = true;
         snowdesktop::list_detail_rules::SetListColumns(dock, columns);
         const auto encode = [](const std::wstring& value) {
-            return std::string(value.begin(), value.end());
+            const int characters = static_cast<int>(value.size());
+            const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                value.data(), characters, nullptr, 0, nullptr, nullptr);
+            std::string utf8(static_cast<size_t>(bytes), '\0');
+            if (bytes > 0) WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                value.data(), characters, utf8.data(), bytes, nullptr, nullptr);
+            return utf8;
         };
         std::ostringstream document;
         document << "{\"widgets\":[";
@@ -1838,7 +1844,7 @@ int main()
     snowdesktop::layout_storage::Document legacyColumns;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"widgets\":[{\"id\":\"legacy\",\"page\":\"page-a\",\"x\":0,\"y\":0}],"
-            "\"dockEntries\":[{\"ref\":\"folder\"}]}", legacyColumns, &layoutError) &&
+            "\"dockEntries\":[{\"type\":\"folderMapping\",\"ref\":\"folder\"}]}", legacyColumns, &layoutError) &&
             legacyColumns.widgets.front().listColumns == 1 && legacyColumns.dockEntries.front().listColumns == 1,
         "older layouts without a list column field remain single-column");
     Expect(!snowdesktop::layout_storage::ParseDocument(

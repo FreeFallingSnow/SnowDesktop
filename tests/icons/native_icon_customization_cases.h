@@ -95,6 +95,9 @@ inline void Run()
     Access::ReloadIconCustomizationLayout(app);
     Require(!Access::HasIconReplacement(app, target) && !Access::HasIconAppearance(app, target) &&
         !Access::MissingIconTargets(app).contains(target), "expired configurations remain deleted after actual layout reload");
+    for (const bool enabled : {true, false})
+        Require(Access::ReloadThumbnailPreference(app, enabled) == enabled,
+            "actual settings commits and layout reload retain both file thumbnail preference values");
 
     ComPtr<ID3D11Device> d3d;
     Require(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -109,6 +112,17 @@ inline void Run()
     Require(bitmap != nullptr, "create real non-square HBITMAP");
     const auto beautified = Access::UploadIconCustomization(app, renderContext.Get(), bitmap, true);
     const auto original = Access::UploadIconCustomization(app, renderContext.Get(), bitmap, false);
+    const auto thumbnailOff = Access::UploadFileThumbnail(app, renderContext.Get(), bitmap, false, true);
+    const auto thumbnailSmart = Access::UploadFileThumbnail(app, renderContext.Get(), bitmap, true, true);
+    const auto ordinarySmart = Access::UploadFileThumbnail(app, renderContext.Get(), bitmap, true, false);
+    const auto thumbnailNoResize = Access::UploadFileThumbnail(app, renderContext.Get(), bitmap, true, true, 2);
+    Require(thumbnailOff.first.width == 96 && thumbnailOff.first.height == 40 && !thumbnailOff.second.enabled,
+        "the real host preserves a file thumbnail when its global opt-in is off");
+    Require(thumbnailSmart.first.width == 96 && thumbnailSmart.first.height == 96 &&
+            thumbnailSmart.second.enabled && thumbnailSmart.second.mode == 1,
+        "smart file thumbnail upload always shrinks the content and adds the theme background");
+    Require(ordinarySmart.second.mode == 0 && thumbnailNoResize.second.mode == 2,
+        "thumbnail smart handling preserves ordinary icon recognition and explicit no-resize styling");
     DeleteObject(bitmap);
     Require(beautified.width == 96 && beautified.height == 96 && original.width == 96 && original.height == 40,
         "the actual host upload uses a square selected shape only while beautification is enabled");

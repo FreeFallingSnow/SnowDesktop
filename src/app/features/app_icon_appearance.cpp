@@ -120,9 +120,13 @@ std::wstring DesktopApp::ResolveIconTarget(std::wstring_view identity) const
 
 snowdesktop::IconBeautifySettings DesktopApp::ResolveIconAppearance(std::wstring_view identity, bool media) const
 {
-    return snowdesktop::icon_appearance::Resolve(iconBeautifySettings_,
+    auto style = snowdesktop::icon_appearance::Resolve(iconBeautifySettings_,
         FindIconAppearance(ResolveIconTarget(identity)), media, drawingIconAppearanceSource_,
         beautifyFileThumbnails_);
+    // File previews keep their content intact: smart mode always adds a plate
+    // and shrinks the thumbnail instead of treating its edge as an icon plate.
+    if (media && style.enabled && style.mode == 0) style.mode = 1;
+    return style;
 }
 const snowdesktop::IconAppearanceRecord* DesktopApp::FindIconAppearance(std::wstring_view target) const
 {

@@ -45,3 +45,36 @@
         app.d2dContext_.Reset();
         return size;
     }
+    static auto UploadFileThumbnail(DesktopApp& app, ID2D1DeviceContext* context,
+        HBITMAP source, bool enabled, bool thumbnail, int mode = 0)
+    {
+        app.d2dContext_ = context;
+        app.iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
+            snowdesktop::IconBeautifyPreset::DefaultBeautify);
+        const std::wstring identity = L"C:\\ThumbnailStyleProbe.png";
+        const auto target = app.ResolveIconTarget(identity);
+        if (mode == 2)
+        {
+            snowdesktop::IconAppearanceRecord own;
+            own.settings = app.iconBeautifySettings_;
+            own.settings.mode = mode;
+            app.iconAppearanceOverrides_[target] = own;
+        }
+        else app.iconBeautifySettings_.mode = mode;
+        app.beautifyFileThumbnails_ = enabled;
+        const auto bitmap = app.GetTargetIconBitmap(context, source, identity, thumbnail);
+        if (!bitmap) throw std::runtime_error("thumbnail appearance must reach the actual bitmap upload");
+        const auto result = std::make_pair(bitmap->GetPixelSize(), app.iconBitmapStyles_.at(bitmap));
+        app.ClearStyledIconCache();
+        app.iconAppearanceOverrides_.erase(target);
+        app.d2dContext_.Reset();
+        return result;
+    }
+    static bool ReloadThumbnailPreference(DesktopApp& app, bool enabled)
+    {
+        app.SetIconBeautifySettings(snowdesktop::icon_beautify::MakePreset(
+            snowdesktop::IconBeautifyPreset::DefaultBeautify), enabled);
+        app.beautifyFileThumbnails_ = !enabled;
+        app.LoadLayoutSlots();
+        return app.beautifyFileThumbnails_;
+    }

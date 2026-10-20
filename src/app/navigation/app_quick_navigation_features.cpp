@@ -351,7 +351,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
         else if (row.kind == Kind::Item && row.index < model.entries.size() && model.entries[row.index].itemIndex < items_.size())
         {
             const auto& item = items_[model.entries[row.index].itemIndex];
-            if (item.iconBitmap) DrawIconBitmap(context, GetOrCreateD2DBitmap(context, item.iconBitmap, ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)), icon);
+            if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail), icon);
             else DrawQuickNavSysIcon(context, item.sysIconIndex, icon);
         }
         else if (row.kind == Kind::Item && row.index < model.entries.size())
@@ -360,7 +360,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             if (entry.widgetIndex < widgets_.size() && entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
             {
                 const auto& item = widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
-                if (item.iconBitmap) DrawIconBitmap(context, GetOrCreateD2DBitmap(context,item.iconBitmap,ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)),icon);
+                if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.fullPath, item.iconIsMediaThumbnail), icon);
                 else DrawQuickNavSysIcon(context,item.sysIconIndex,icon);
             }
         }

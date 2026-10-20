@@ -915,6 +915,7 @@ struct DesktopPagePresenter::Impl
         beautifyFileThumbnails = muxc::ToggleSwitch{};
         beautifyFileThumbnails.HorizontalAlignment(mux::HorizontalAlignment::Right);
         beautifyFileThumbnailsRow.Initialize(beautifyFileThumbnails);
+        presenter_controls::StyleSettingsCard(beautifyFileThumbnailsRow.root);
         beautifyFileThumbnailsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         beautifyCard.content.Children().Append(beautifyFileThumbnailsRow.root);
         iconThemes = std::make_unique<ThemeLibraryControls>(localize, "icon", false, beautifyPreset, 6, 5, cardStyle);

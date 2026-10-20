@@ -126,7 +126,7 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
             content,
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight),
-            widget->GetListSpacing());
+            widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     }
     if (CollectionTitlelessActive(widget))
         return CollectionDenseLayout(widget).geometry;
@@ -366,9 +366,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     }
     else
     {
-        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
-            item.iconBitmap,
-            app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
+        auto* bmp = app_->GetTargetIconBitmap(context, item.iconBitmap,
+            item.layoutKey, item.iconIsMediaThumbnail);
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
@@ -1253,7 +1252,8 @@ bool Collection::SingleColumn() const
 BarStyle Collection::GetInsertionStyle() const
 {
     if (!data_ || !data_->scrollContainerMode) return BarStyle::VBar;
-    return data_->listMode ? BarStyle::HBar : BarStyle::VBar;
+    return data_->listMode && snowdesktop::list_detail_rules::ListColumns(*data_) == 1
+        ? BarStyle::HBar : BarStyle::VBar;
 }
 
 int Collection::GetItemHeight() const
