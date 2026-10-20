@@ -633,6 +633,39 @@ int RunTrayModelTests()
             "unknown optional collector operation is ignored without changing the model");
     }
     {
+        MenuPlacementSession placement;
+        MenuPopupObservation popup{};
+        popup.window = 1; popup.process = 99; popup.thread = 9;
+        popup.event = EVENT_OBJECT_SHOW; popup.eventTime = 101;
+        // Issue #30's IDM SHOW: style=0x94800000, ex=0x80189.
+        // Real TrackPopupMenu coverage separately checks the subsequent loss
+        // of WS_EX_LAYERED while the menu loop and HWND remain alive.
+        popup.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_BORDER;
+        popup.extendedStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME | WS_EX_LAYERED;
+        popup.bounds = {100, 100, 260, 180}; popup.visible = true;
+        popup.standardMenu = popup.targetRelated = true;
+        placement.Arm(99, {120, 120}, {0, 0, 1920, 1080}, 100);
+        placement.Observe(popup, 102);
+        check(placement.Bindings()[0].window == popup.window, "native SHOW supplies a placement binding");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
+        placement.Observe(popup, 103);
+        check(placement.Bindings()[0].window == popup.window,
+            "native menu animation ending cannot erase the placement hook's binding");
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_TOPMOST);
+        placement.Observe(popup, 104);
+        check(!placement.Bindings()[0].window, "other native menu identity style changes still invalidate placement");
+        popup.standardMenu = false; popup.event = EVENT_OBJECT_SHOW;
+        popup.extendedStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED;
+        placement.Arm(99, {120, 120}, {0, 0, 1920, 1080}, 100);
+        placement.Observe(popup, 102);
+        check(placement.Bindings()[0].window == popup.window, "custom SHOW supplies a strictly checked binding");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        popup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_LAYERED);
+        placement.Observe(popup, 103);
+        check(!placement.Bindings()[0].window, "custom popup styles do not inherit native animation tolerance");
+    }
+    {
         // Bounds correction must never become a general application-window
         // mover. Exercise the same candidate policy as the live WinEvent hook.
         MenuPlacementSession placement;

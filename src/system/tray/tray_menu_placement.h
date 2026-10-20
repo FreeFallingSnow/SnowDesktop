@@ -38,6 +38,16 @@ struct MenuPopupBinding
 };
 using MenuPopupBindings = std::array<MenuPopupBinding, 4>;
 
+inline bool SameMenuPopupStyles(bool standardMenu, LONG_PTR recordedStyle, LONG_PTR recordedExtendedStyle,
+    LONG_PTR currentStyle, LONG_PTR currentExtendedStyle)
+{
+    // User32 removes WS_EX_LAYERED after a native menu's show animation.
+    // Custom popup styles and every other identity bit remain exact.
+    const LONG_PTR transient = standardMenu ? WS_EX_LAYERED : 0;
+    return recordedStyle == currentStyle &&
+        ((recordedExtendedStyle ^ currentExtendedStyle) & ~transient) == 0;
+}
+
 // Pure policy shared by the event hook and tray regressions. Only new SHOW
 // events become candidates. Weakly related windows must be near the gesture;
 // a strongly identified root, or the same root already bound near this

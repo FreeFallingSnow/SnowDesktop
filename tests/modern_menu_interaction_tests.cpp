@@ -1280,6 +1280,7 @@ void CheckSortRows(HWND owner, bool negativeControl)
 }
 
 void RunTrayFocusWindowTests();
+void RunNativeTrayMenuLayerTests();
 
 int wmain(int argc, wchar_t** argv)
 {
@@ -1325,6 +1326,7 @@ int wmain(int argc, wchar_t** argv)
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;
     RunTrayFocusWindowTests();
+    RunNativeTrayMenuLayerTests();
     CheckStatusBarKeyboardMessages();
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;

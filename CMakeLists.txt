@@ -3196,6 +3196,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/modern_menu_interaction_tests.cpp
             tests/tray_focus_tests.cpp
+            tests/system/tray/native_menu_layer_tests.cpp
             src/ui/menu/menu_icon_render.cpp
             src/ui/menu/menu_builtin_icon.cpp
             src/ui/menu/modern_menu.cpp

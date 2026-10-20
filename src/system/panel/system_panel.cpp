@@ -441,14 +441,9 @@ struct SystemPanel::Impl
     }
     void SyncTrayMenuLayer()
     {
-        HWND above=nullptr;
-        unsigned anchorSource=0;
-        for(const auto& binding:context.popups)if(context.LivePopup(binding)){above=reinterpret_cast<HWND>(binding.window);anchorSource=1;break;}
-        if(!above&&context.menuThread)
-        {
-            RECT bounds{};
-            if(GetWindowRect(window,&bounds)){above=context.NativeMenuOverlapping(bounds);if(above)anchorSource=2;}
-        }
+        RECT panelBounds{};GetWindowRect(window,&panelBounds);
+        const auto placement=context.LayerPlacement(panelBounds);
+        const HWND above=placement.above;
         const DWORD now=GetTickCount();
         const bool trace=context.process&&trayLayerTraceCount<12&&
             (!trayLayerTraceCount||static_cast<DWORD>(now-trayLayerTraceLast)>=1000);
@@ -493,8 +488,11 @@ struct SystemPanel::Impl
         // Move only our own pair. A non-topmost custom menu otherwise remains
         // covered by the overflow panel even after its focus is retained. A
         // confirmed native menu can also outlive the short SHOW-event hook.
-        const bool topmost=!above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
-        const bool positioned=backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
+        const bool topmost=placement.preserveOrder?(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0:
+            !above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+        bool positioned=false;
+        if(placement.preserveOrder)backdrop.Reattach(window);
+        else positioned=backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
         if(trace)
         {
             bool menuAboveAfter=false;
@@ -502,14 +500,15 @@ struct SystemPanel::Impl
                 for(HWND candidate=survey.overlap;candidate;candidate=GetWindow(candidate,GW_HWNDNEXT))
                     if(candidate==window){menuAboveAfter=true;break;}
             wchar_t message[1024]{};
-            swprintf_s(message,L"[TrayMenuLayer] age=%lu pid=%lu target=%p targetThread=%lu menuThread=%lu menuOwner=%p observed=%u foreground=%p/%lu/%lu gui=%u/0x%lX/%p native=%u/%u/%u sample=%p/%p anchor=%p/%u panelTop=%u/%u menuAbove=%u/%u requestedTop=%u positioned=%u",
+            swprintf_s(message,L"[TrayMenuLayer] age=%lu pid=%lu target=%p targetThread=%lu menuThread=%lu menuOwner=%p observed=%u foreground=%p/%lu/%lu gui=%u/0x%lX/%p native=%u/%u/%u sample=%p/%p anchor=%p/%u panelTop=%u/%u menuAbove=%u/%u requestedTop=%u positioned=%u preserveOrder=%u sampleEx=0x%llX",
                 static_cast<DWORD>(now-trayLayerTraceStarted),context.process,context.target,context.targetThread,
                 context.menuThread,context.menuOwner,context.tracker.ObservedMenu()?1u:0u,
                 foreground,foregroundProcess,foregroundThread,haveGui?1u:0u,gui.flags,gui.hwndMenuOwner,
                 survey.visible,survey.intersecting,survey.related,survey.overlap,survey.overlapOwner,
-                above,anchorSource,panelTopmostBefore?1u:0u,
+                above,placement.source,panelTopmostBefore?1u:0u,
                 (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1u:0u,
-                menuAboveBefore?1u:0u,menuAboveAfter?1u:0u,topmost?1u:0u,positioned?1u:0u);
+                menuAboveBefore?1u:0u,menuAboveAfter?1u:0u,topmost?1u:0u,positioned?1u:0u,placement.preserveOrder?1u:0u,
+                static_cast<unsigned long long>(survey.overlap?GetWindowLongPtrW(survey.overlap,GWL_EXSTYLE):0));
             WriteDiagnosticLogEntry(message,DiagnosticLogLevel::Info);
         }
     }

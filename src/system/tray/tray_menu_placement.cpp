@@ -72,7 +72,9 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     else if ((popup.event != EVENT_OBJECT_LOCATIONCHANGE && popup.event != EVENT_OBJECT_SHOW) ||
         existing == windows_.end()) return {};
     if (existing->popup.owner != popup.owner || existing->popup.thread != popup.thread ||
-        existing->popup.style != popup.style || existing->popup.extendedStyle != popup.extendedStyle)
+        existing->popup.standardMenu != popup.standardMenu ||
+        !SameMenuPopupStyles(popup.standardMenu, existing->popup.style, existing->popup.extendedStyle,
+            popup.style, popup.extendedStyle))
     { *existing = {}; return {}; }
     if ((!(popup.style & WS_POPUP) || (popup.style & WS_THICKFRAME)) && !activeContextMenu) return {};
     const auto width = static_cast<std::int64_t>(popup.bounds.right) - popup.bounds.left;
@@ -269,8 +271,9 @@ struct MenuPlacementGuard::Impl
         // resize, change z-order, or move an unrelated/reused main HWND.
         DWORD process = 0; const auto thread = GetWindowThreadProcessId(window, &process);
         if (process != popup.process || thread != popup.thread || !IsWindowVisible(window) ||
-            GetWindowLongPtrW(window, GWL_STYLE) != popup.style ||
-            GetWindowLongPtrW(window, GWL_EXSTYLE) != popup.extendedStyle || GetWindow(window, GW_OWNER) != owner)
+            !SameMenuPopupStyles(popup.standardMenu, popup.style, popup.extendedStyle,
+                GetWindowLongPtrW(window, GWL_STYLE), GetWindowLongPtrW(window, GWL_EXSTYLE)) ||
+            GetWindow(window, GW_OWNER) != owner)
         { active->session.RejectCorrection(popup.window); return; }
         if (SetWindowPos(window, nullptr, position->x, position->y, 0, 0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS))
