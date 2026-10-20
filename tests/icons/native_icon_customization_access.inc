@@ -75,6 +75,6 @@
         app.SetIconBeautifySettings(snowdesktop::icon_beautify::MakePreset(
             snowdesktop::IconBeautifyPreset::DefaultBeautify), enabled);
         app.beautifyFileThumbnails_ = !enabled;
-        app.LoadLayoutSlots();
+        ReloadIconCustomizationLayout(app);
         return app.beautifyFileThumbnails_;
     }
