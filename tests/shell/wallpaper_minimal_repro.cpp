@@ -95,6 +95,36 @@ struct Observer
             !GetPropW(shell, L"SnowDesktop.Taskbar.HookOwner.v1"), "fresh Explorer required");
         Log("explorer-pid", explorer);
         Log("wallpaper-pid", wallpaper);
+        CheckCleanModules(explorer);
+        CheckCleanModules(wallpaper);
+    }
+
+    void CheckCleanModules(DWORD process)
+    {
+        HANDLE snapshot = INVALID_HANDLE_VALUE;
+        for (unsigned attempt = 0; attempt != 5; ++attempt)
+        {
+            snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, process);
+            if (snapshot != INVALID_HANDLE_VALUE || GetLastError() != ERROR_BAD_LENGTH) break;
+            Sleep(10);
+        }
+        Check(snapshot != INVALID_HANDLE_VALUE, "inspect loaded modules");
+        MODULEENTRY32W module{sizeof(module)};
+        const bool enumerated = Module32FirstW(snapshot, &module) != FALSE;
+        bool contaminated = false;
+        if (enumerated) do
+        {
+            if (_wcsnicmp(module.szModule, L"SnowDesktop", 11) == 0)
+            {
+                contaminated = true;
+                std::wcout << L"existing-SnowDesktop-module pid=" << process
+                    << L" name=" << module.szModule << '\n';
+            }
+        } while (Module32NextW(snapshot, &module));
+        CloseHandle(snapshot);
+        Check(enumerated, "enumerate loaded modules");
+        Log("existing-SnowDesktop-modules", contaminated ? process : 0);
+        Check(!contaminated, "restart this process without SnowDesktop before a clean reproduction");
     }
 
     void WorkerW()
@@ -192,6 +222,13 @@ int wmain(int argc, wchar_t** argv)
             Check(self.wallpaperUpdates == 1 && self.taskbarUpdates == 1,
                 "observer dispatch");
             self.Log("self-test-passed");
+            return 0;
+        }
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--check-environment")
+        {
+            Observer probe;
+            probe.Identify();
+            probe.Log("clean-environment-confirmed");
             return 0;
         }
         if (argc != 5 && argc != 6)
