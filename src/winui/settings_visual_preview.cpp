@@ -1232,14 +1232,26 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
         if (page == SettingsPage::Dock)
         {
+            int appearanceActionCount = 0;
             Walk(cards, [&](const x::DependencyObject& node) {
                 const auto button = node.try_as<c::Button>();
                 if (!button || x::Automation::AutomationProperties::GetName(button) != _LW("iconAppearance.edit")) return;
+                ++appearanceActionCount;
                 const auto parent = x::Media::VisualTreeHelper::GetParent(button).as<c::Grid>();
                 const auto bounds = button.TransformToVisual(parent).TransformBounds({0,0,static_cast<float>(button.ActualWidth()),static_cast<float>(button.ActualHeight())});
-                if (bounds.X < 0 || bounds.X + bounds.Width > parent.ActualWidth() + 1 || !button.Content().try_as<c::SymbolIcon>())
+                if (bounds.X < 0 || bounds.X + bounds.Width > parent.ActualWidth() + 1)
                     throw std::runtime_error("Dock icon appearance action exceeds its native settings column");
+                const auto icon = button.Content().try_as<c::IconElement>();
+                if (!icon || icon.ActualWidth() <= 0 || icon.ActualHeight() <= 0)
+                    throw std::runtime_error("Dock icon appearance action has no rendered icon");
+                const auto iconBounds = icon.TransformToVisual(button).TransformBounds({0,0,static_cast<float>(icon.ActualWidth()),static_cast<float>(icon.ActualHeight())});
+                if (iconBounds.X < 1 || iconBounds.Y < 1 ||
+                    iconBounds.X + iconBounds.Width > button.ActualWidth() - 1 ||
+                    iconBounds.Y + iconBounds.Height > button.ActualHeight() - 1)
+                    throw std::runtime_error("Dock icon appearance glyph exceeds its button content area");
             });
+            if (appearanceActionCount != 2)
+                throw std::runtime_error("Dock preview must include both icon appearance actions");
         }
         if (page == SettingsPage::AppearanceIconBeautification)
         {
