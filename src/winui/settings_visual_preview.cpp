@@ -19,6 +19,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <vector>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Provider.h>
@@ -1856,17 +1857,47 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (restore)
         {
             const auto originalSize = shell->ActualSize();
+            const auto originalRoute = shell->CurrentRoute();
+            const auto originalGeneration = shell->CurrentGeneration();
+            const auto originalRevision = shell->CurrentRevision();
+            const auto originalIsland = host.runtime.IslandWindow();
+            const auto navigation = shell->FindName(L"NavigationRoot").as<c::NavigationView>();
+            const auto originalSelection = navigation.SelectedItem();
+            std::vector<x::UIElement> originalCards;
+            for (const auto& card : cards.Children()) originalCards.push_back(card);
+            if (maximum > 0)
+            {
+                (void)scroll.ChangeView(nullptr, winrt::box_value(maximum / 2).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+                Settle(shell.as<x::FrameworkElement>());
+            }
+            const double originalOffset = scroll.VerticalOffset();
             for (int cycle = 0; cycle < 3; ++cycle)
             {
                 ShowWindow(host.window, SW_SHOWMINNOACTIVE);
                 PumpUntil([&] { return IsIconic(host.window) != FALSE; });
+                // Include WinUI's background resource timeout. Observe native
+                // restoration without forcing a layout pass in this probe.
+                const auto resumeAt = GetTickCount64() + (cycle == 0 ? 2300 : 100);
+                PumpUntil([&] { return GetTickCount64() >= resumeAt; });
                 ShowWindow(host.window, SW_SHOWNOACTIVATE);
                 PumpUntil([&] { return IsIconic(host.window) == FALSE; });
-                Settle(shell.as<x::FrameworkElement>());
+                const auto settledAt = GetTickCount64() + 180;
+                PumpUntil([&] { return GetTickCount64() >= settledAt; });
                 if (shell->ActualSize() != originalSize || !host.runtime.IsAttached())
                     throw std::runtime_error("restore changed the Island bounds or detached its content");
+                if (shell->CurrentRoute() != originalRoute || navigation.SelectedItem() != originalSelection)
+                    throw std::runtime_error("restore changed the active settings page");
+                if (shell->CurrentGeneration() != originalGeneration || shell->CurrentRevision() != originalRevision)
+                    throw std::runtime_error("restore restarted or refreshed the settings session");
+                if (host.runtime.IslandWindow() != originalIsland || cards.Children().Size() != originalCards.size())
+                    throw std::runtime_error("restore replaced the retained settings view");
+                for (std::uint32_t index = 0; index < originalCards.size(); ++index)
+                    if (cards.Children().GetAt(index) != originalCards[index])
+                        throw std::runtime_error("restore rebuilt a settings card");
+                if (std::abs(scroll.VerticalOffset() - originalOffset) > .5)
+                    throw std::runtime_error("restore changed the settings scroll position");
             }
-            std::ofstream(output / L"restore.tsv") << "cycles\tretained-layout\n3\tpassed\n";
+            std::ofstream(output / L"restore.tsv") << "cycles\tretained-layout\tpage\tcontrols\tscroll\tsession\n3\tpassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         const double step = std::max(100., scroll.ViewportHeight() - 48.);
         for (unsigned tile = 0; tile < 64; ++tile)

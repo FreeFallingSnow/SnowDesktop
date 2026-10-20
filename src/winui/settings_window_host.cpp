@@ -70,7 +70,6 @@ constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
-constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
 constexpr UINT_PTR kWorkingSetTrimTimerIdSeed = 0x53440000;
 constexpr UINT kWorkingSetTrimDelayMs = 2000;
 constexpr ULONGLONG kWorkingSetTrimCooldownMs = 30000;
@@ -441,7 +440,6 @@ struct SettingsWindowHost::Impl
     DebugPageSession debugSession;
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarInsetsUpdateQueued = false;
-    bool externalStateRefreshQueued = false;
     std::wstring lastError;
 
     struct ThemeTask
@@ -817,21 +815,6 @@ struct SettingsWindowHost::Impl
         catch (...)
         {
         }
-    }
-
-    void QueueExternalStateRefresh() noexcept
-    {
-        if (externalStateRefreshQueued || shuttingDown || !Visible())
-            return;
-        if (PostMessageW(window, kRefreshExternalStateMessage, 0, 0))
-            externalStateRefreshQueued = true;
-    }
-
-    void ApplyDeferredExternalStateRefresh() noexcept
-    {
-        externalStateRefreshQueued = false;
-        if (Visible())
-            RefreshExternalStateNow();
     }
 
     void ApplyIntegratedTitleBarButtonColors() noexcept
@@ -3233,9 +3216,6 @@ struct SettingsWindowHost::Impl
         case kUpdateIntegratedTitleBarInsetsMessage:
             self->UpdateIntegratedTitleBarInsets();
             return 0;
-        case kRefreshExternalStateMessage:
-            self->ApplyDeferredExternalStateRefresh();
-            return 0;
         case kDispatchOwnerTaskMessage:
         {
             std::unique_ptr<std::function<void()>> task(
@@ -3280,10 +3260,6 @@ struct SettingsWindowHost::Impl
             // The full-client Island owns every client pixel. A GDI erase can
             // be presented before its retained composition surface resumes.
             return 1;
-        case WM_ACTIVATEAPP:
-            if (wParam != FALSE)
-                self->QueueExternalStateRefresh();
-            break;
         case WM_ENTERSIZEMOVE:
             self->interactiveMoveSize = true;
             break;
@@ -3360,7 +3336,6 @@ struct SettingsWindowHost::Impl
             self->CancelWorkingSetTrim();
             self->systemBackdropUpdateQueued = false;
             self->integratedTitleBarInsetsUpdateQueued = false;
-            self->externalStateRefreshQueued = false;
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -3446,7 +3421,6 @@ struct SettingsWindowHost::Impl
         settingsSessionWorkingSetBaseline.reset();
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
-        externalStateRefreshQueued = false;
         interactionSuspended = true;
 
         if (shell)
@@ -3471,7 +3445,6 @@ struct SettingsWindowHost::Impl
         viewReleaseQueued = false;
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
-        externalStateRefreshQueued = false;
         interactionSuspended = true;
 
         // Keep one process-lifetime Shell and Island. WinUI retains SVG file,

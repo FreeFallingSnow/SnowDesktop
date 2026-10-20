@@ -66,7 +66,6 @@ struct WinUiRuntime::Impl
     bool ownsDispatcherQueue = false;
     bool addedControlParentStyle = false;
     bool systemBackdropEnabled = false;
-    bool minimized = false;
     HWND parentWindow = nullptr;
     HWND islandWindow = nullptr;
     HWND lastFocusedWindow = nullptr;
@@ -318,7 +317,6 @@ void WinUiRuntime::Detach() noexcept
     const bool siteAlive = impl_->islandWindow && IsWindow(impl_->islandWindow);
     impl_->islandWindow = nullptr;
     impl_->lastFocusedWindow = nullptr;
-    impl_->minimized = false;
     if (source)
     {
         // Clear the backdrop while the Island still owns a valid site. This is
@@ -446,6 +444,18 @@ void WinUiRuntime::ResizeToClient() noexcept
     if (width == 0 || height == 0)
         return;
 
+    RECT islandClient{};
+    POINT islandOrigin{};
+    if (impl_->islandWindow && GetClientRect(impl_->islandWindow, &islandClient) &&
+        islandClient.right - islandClient.left == width &&
+        islandClient.bottom - islandClient.top == height &&
+        ClientToScreen(impl_->islandWindow, &islandOrigin) &&
+        ScreenToClient(impl_->parentWindow, &islandOrigin) &&
+        islandOrigin.x == 0 && islandOrigin.y == 0)
+    {
+        return;
+    }
+
     try
     {
         impl_->xamlSource.SiteBridge().MoveAndResize(
@@ -525,33 +535,10 @@ void WinUiRuntime::HandleWindowMessage(
     switch (message)
     {
     case WM_SIZE:
-        if (wParam == SIZE_MINIMIZED)
-        {
-            impl_->minimized = true;
-            break;
-        }
-        ResizeToClient();
-        if (std::exchange(impl_->minimized, false) && impl_->xamlSource)
-        {
-            // Restoring to identical bounds may not trigger an Island layout
-            // pass. Resume the existing tree without recreating the page,
-            // losing editor state, or resetting NavigationView's pane.
-            try
-            {
-                const auto source = impl_->xamlSource;
-                source.SiteBridge().Show();
-                if (const auto content = source.Content())
-                {
-                    content.InvalidateMeasure();
-                    content.InvalidateArrange();
-                    content.UpdateLayout();
-                }
-                if (impl_->islandWindow)
-                    RedrawWindow(impl_->islandWindow, nullptr, nullptr,
-                        RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
-            }
-            catch (...) {}
-        }
+        // Minimize/restore retains the Island and its current page. Only a
+        // real change to client bounds needs a native Island resize.
+        if (wParam != SIZE_MINIMIZED)
+            ResizeToClient();
         break;
     case WM_DPICHANGED:
         ResizeToClient();

@@ -93,6 +93,12 @@ int main(int argc, char** argv)
          {"settings_window_restore_presentation.h", "settings_restore_presentation::"}},
         {"src/winui/settings_window_host.cpp", "[[nodiscard]] bool CreateHostWindow()", "void ReleaseView()",
          {"WS_EX_NOREDIRECTIONBITMAP"}},
+        // Native restore must retain the current view instead of restarting
+        // XAML layout or applying an activation-driven controller snapshot.
+        {"src/winui/winui_runtime.cpp", "case WM_SIZE:", "case WM_DPICHANGED:",
+         {".Show(", "InvalidateMeasure(", "InvalidateArrange(", "UpdateLayout(", "RedrawWindow("}},
+        {"src/winui/settings_window_host.cpp", "", "",
+         {"QueueExternalStateRefresh", "kRefreshExternalStateMessage"}},
     });
     passed = CheckWindowPlacement() && passed;
     using namespace snowdesktop::winui;
