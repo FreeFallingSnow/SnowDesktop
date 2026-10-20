@@ -83,6 +83,15 @@ void TestPermissionAndRelocatedRoutesCodec()
 
 void TestCodec()
 {
+    Check(!snowdesktop::DesktopDisplaySettings{}.beautifyFileThumbnails,
+        "file thumbnails remain exempt from global beautification by default");
+    for (const bool enabled : {true, false})
+    {
+        snowdesktop::DesktopDisplaySettings desktop;
+        desktop.beautifyFileThumbnails = enabled;
+        Check(Unpack<snowdesktop::DesktopDisplaySettings>(Pack(desktop)).beautifyFileThumbnails == enabled,
+            "enabling and disabling file thumbnail beautification crosses the settings process boundary");
+    }
     snowdesktop::widget_runtime::WidgetSettingFieldSchema duration;
     duration.key = "focus"; duration.rawType = "duration"; duration.durationUnit = "minutes";
     duration.minimum = 1; duration.maximum = 120; duration.step = 1;

@@ -97,6 +97,15 @@ int RunIconAppearanceTests()
         "removing an override restores the current global style");
     check(!rules::Resolve(global, nullptr, true, false).enabled && rules::Resolve(global, &own, true, false).enabled,
         "media thumbnails keep legacy global exemption but allow an explicit independent style");
+    check(icon_beautify::Equal(rules::Resolve(global, nullptr, true, false, true), global),
+        "opting into file thumbnail beautification applies the current global theme");
+    check(!rules::Resolve(disabledGlobal, nullptr, true, false, true).enabled,
+        "thumbnail opt-in does not enable a disabled global theme");
+    check(!rules::Resolve(global, &off, true, false, true).enabled &&
+            icon_beautify::Equal(rules::Resolve(global, &own, true, false, true), own.settings),
+        "thumbnail opt-in respects independent disabled and custom appearances");
+    check(!rules::Resolve(global, &own, true, true, true).enabled,
+        "raw source capture bypasses styles even when thumbnail beautification is enabled");
     check(!rules::Resolve(global, &own, false, true).enabled,
         "capturing a native Dock source never bakes in a prior beautification plate");
     rules::StyleIdentities identities;

@@ -377,6 +377,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify",
         "settings.desktop.iconBeautify",
         "settings.desktop.iconBeautify.description"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.fileThumbnails",
+        "app.settings.beautify_file_thumbnails", ""},
     {SettingsPage::AppearanceIconBeautification,
         "desktop.iconBeautify.mode",
         "iconStyle.strategy",

@@ -759,6 +759,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.titleEllipsis = titleEllipsis_;
     desktop.shortcutArrowMode = shortcutArrowMode_;
     desktop.groupComponentBadges = groupComponentBadges_;
+    desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
         settingsController_->SynchronizeGeneral(generalSettings_);
@@ -1058,6 +1059,7 @@ public:
                 snapshot.values.desktop.itemFontWeight));
             app_.SetIconBeautifySettings(
                 snapshot.values.desktop.iconBeautify,
+                snapshot.values.desktop.beautifyFileThumbnails,
                 snowdesktop::IconBeautifyUpdateKind::Preview);
         }
         return snowdesktop::SettingsActionResult::Success(domains);
@@ -1305,6 +1307,7 @@ public:
             app_.SetGroupComponentBadges(desktop.groupComponentBadges);
             app_.SetIconBeautifySettings(
                 desktop.iconBeautify,
+                desktop.beautifyFileThumbnails,
                 snowdesktop::IconBeautifyUpdateKind::Commit);
         }
         if (app_.hwnd_)

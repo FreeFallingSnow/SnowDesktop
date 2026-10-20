@@ -638,6 +638,8 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock beautifyModeLabel{nullptr};
     muxc::ComboBox beautifyMode{nullptr};
     SettingRow beautifyModeRow;
+    muxc::ToggleSwitch beautifyFileThumbnails{nullptr};
+    SettingRow beautifyFileThumbnailsRow;
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
@@ -707,6 +709,7 @@ struct DesktopPagePresenter::Impl
     winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
     winrt::event_token beautifyModeToken{};
+    winrt::event_token beautifyFileThumbnailsToken{};
     winrt::event_token backgroundSourceToken{}, filterModeToken{};
     winrt::event_token shapeToken{};
     winrt::event_token filterEnabledToken{};
@@ -909,6 +912,11 @@ struct DesktopPagePresenter::Impl
         beautifyCard.title.Visibility(mux::Visibility::Collapsed);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         AppendCombo(beautifyCard, beautifyModeRow, beautifyMode);
+        beautifyFileThumbnails = muxc::ToggleSwitch{};
+        beautifyFileThumbnails.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        beautifyFileThumbnailsRow.Initialize(beautifyFileThumbnails);
+        beautifyFileThumbnailsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        beautifyCard.content.Children().Append(beautifyFileThumbnailsRow.root);
         iconThemes = std::make_unique<ThemeLibraryControls>(localize, "icon", false, beautifyPreset, 6, 5, cardStyle);
         beautifyPresetRow.controlHost.Content(nullptr);
         beautifyPresetRow.controlHost.Content(iconThemes->SelectionContent());
@@ -1305,6 +1313,12 @@ struct DesktopPagePresenter::Impl
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                     [selection](DesktopDisplaySettings& settings) { settings.iconBeautify.mode = selection; });
             });
+        beautifyFileThumbnailsToken = beautifyFileThumbnails.Toggled([this](auto const&, auto const&) {
+            if (iconEditorMode) return;
+            const bool enabled = beautifyFileThumbnails.IsOn();
+            UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                [enabled](DesktopDisplaySettings& settings) { settings.beautifyFileThumbnails = enabled; });
+        });
         glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
             const bool v = glassEnabled.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
@@ -1722,6 +1736,7 @@ struct DesktopPagePresenter::Impl
     void UpdateConditionalStates()
     {
         SetDependentVisibility(beautifyModeRow.root, beautifyEnabled || iconEditorMode, beautifyPreset);
+        SetDependentVisibility(beautifyFileThumbnailsRow.root, beautifyEnabled && !iconEditorMode, beautifyPreset);
         SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
@@ -1757,6 +1772,7 @@ struct DesktopPagePresenter::Impl
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
         groupComponentBadges.IsOn(settings.groupComponentBadges);
+        beautifyFileThumbnails.IsOn(settings.beautifyFileThumbnails);
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
@@ -2066,6 +2082,8 @@ struct DesktopPagePresenter::Impl
             }, std::clamp(iconThemes->NativeSelection(), 0, 5));
         }
         iconThemes->LocalizeText();
+        beautifyFileThumbnailsRow.SetText(L("app.settings.beautify_file_thumbnails", L"Beautify file thumbnails"));
+        muxa::AutomationProperties::SetName(beautifyFileThumbnails, beautifyFileThumbnailsRow.label.Text());
         beautifyModeRow.SetText(
             L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
@@ -2220,6 +2238,13 @@ struct DesktopPagePresenter::Impl
                 return prerequisiteTarget(beautifyPreset, "enable", beautifyPresetRow.label.Text().c_str());
             return beautifyMode;
         }
+        if (id == "desktop.iconBeautify.fileThumbnails")
+        {
+            if (iconEditorMode) return nullptr;
+            if (!beautifyEnabled)
+                return prerequisiteTarget(beautifyPreset, "enable", beautifyPresetRow.label.Text().c_str());
+            return beautifyFileThumbnails;
+        }
         if (id == "desktop.iconBeautify.backgroundSource") return appearanceTarget(backgroundSource);
         if (id == "desktop.iconBeautify.filterMode") return dependentTarget(filterEnabled.IsOn(), filterMode, filterEnabled);
         if (id == "desktop.iconBeautify.backgroundColor")
@@ -2332,6 +2357,7 @@ struct DesktopPagePresenter::Impl
             collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
+            beautifyFileThumbnails.Toggled(beautifyFileThumbnailsToken);
             backgroundSource.SelectionChanged(backgroundSourceToken);
             filterMode.SelectionChanged(filterModeToken);
             glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);
@@ -2377,6 +2403,7 @@ void DesktopPagePresenter::SetIconEditorMode()
         // The shared setting row keeps its label beside a compact dialog editor.
         impl_->beautifyPresetRow.layout->controlWidth = 220;
         impl_->beautifyModeRow.layout->controlWidth = 220;
+        impl_->UpdateConditionalStates();
     }
 }
 

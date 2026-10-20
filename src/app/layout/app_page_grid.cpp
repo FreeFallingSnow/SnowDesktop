@@ -1258,15 +1258,17 @@ void DesktopApp::SetIconBeautifyEnabled(bool enabled)
 {
     auto settings = iconBeautifySettings_;
     settings.enabled = enabled;
-    SetIconBeautifySettings(settings);
+    SetIconBeautifySettings(settings, beautifyFileThumbnails_);
 }
 
 void DesktopApp::SetIconBeautifySettings(
     const snowdesktop::IconBeautifySettings& rawSettings,
+    bool beautifyFileThumbnails,
     snowdesktop::IconBeautifyUpdateKind updateKind)
 {
     const auto settings = snowdesktop::icon_beautify::NormalizeGlobal(rawSettings);
-    if (snowdesktop::icon_beautify::Equal(settings, iconBeautifySettings_))
+    if (snowdesktop::icon_beautify::Equal(settings, iconBeautifySettings_) &&
+        beautifyFileThumbnails == beautifyFileThumbnails_)
     {
         if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
             SaveLayoutSlots();
@@ -1274,6 +1276,7 @@ void DesktopApp::SetIconBeautifySettings(
     }
 
     iconBeautifySettings_ = settings;
+    beautifyFileThumbnails_ = beautifyFileThumbnails;
     desktopBackdropFullCollectionPending_ = true;
 
     ClearStyledIconCache();
@@ -1293,6 +1296,8 @@ void DesktopApp::SetIconBeautifySettings(
         SaveLayoutSlots();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
+    if (floatingPopupHwnd_)
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
     // Dock entries share the icon bitmap cache but may render in independent
     // persistent host windows. Invalidating only the desktop leaves those
     // surfaces on the previous style until pointer input happens to repaint

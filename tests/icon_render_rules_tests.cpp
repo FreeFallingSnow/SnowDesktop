@@ -592,6 +592,10 @@ int main(int argc, char** argv)
         "content/media thumbnails bypass icon beautification");
     Check(!rules::ShouldBeautify(false, false),
         "ordinary icons remain untouched when beautification is disabled");
+    Check(rules::ShouldBeautify(true, true, true) && rules::ShouldBeautify(true, false, true),
+        "thumbnail opt-in extends the enabled global style without excluding ordinary icons");
+    Check(!rules::ShouldBeautify(false, true, true) && !rules::ShouldBeautify(false, false, true),
+        "thumbnail opt-in cannot turn on disabled global beautification");
 
     Check(rules::ShouldRequestShellThumbnail(true, false, false),
         "full-quality non-application loads may request a Shell thumbnail");

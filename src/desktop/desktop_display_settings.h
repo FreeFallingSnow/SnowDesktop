@@ -25,6 +25,7 @@ struct DesktopDisplaySettings
     bool titleEllipsis = true;
     int shortcutArrowMode = 0;
     bool groupComponentBadges = true;
+    bool beautifyFileThumbnails = false;
     IconBeautifySettings iconBeautify;
 };
 } // namespace snowdesktop

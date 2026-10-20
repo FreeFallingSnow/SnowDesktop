@@ -1,16 +1,19 @@
 #pragma once
 #include "icon_appearance_codec.h"
+#include "icon_render_rules.h"
 #include <optional>
 #include <utility>
 
 namespace snowdesktop::icon_appearance
 {
 inline IconBeautifySettings Resolve(const IconBeautifySettings& global,
-    const IconAppearanceRecord* independent, bool media, bool rawSource)
+    const IconAppearanceRecord* independent, bool media, bool rawSource,
+    bool beautifyFileThumbnails = false)
 {
     auto style = independent && !independent->followGlobalTheme ? independent->settings : global;
     if (independent) style.mode = independent->settings.mode;
-    if (rawSource || (media && !independent)) style.enabled = false;
+    style.enabled = !rawSource && icon_render_rules::ShouldBeautify(
+        style.enabled, media && !independent, beautifyFileThumbnails);
     return style;
 }
 inline bool CurrentEdit(const IconAppearanceRequest& request, std::wstring_view target,

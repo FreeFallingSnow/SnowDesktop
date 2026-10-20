@@ -121,7 +121,8 @@ std::wstring DesktopApp::ResolveIconTarget(std::wstring_view identity) const
 snowdesktop::IconBeautifySettings DesktopApp::ResolveIconAppearance(std::wstring_view identity, bool media) const
 {
     return snowdesktop::icon_appearance::Resolve(iconBeautifySettings_,
-        FindIconAppearance(ResolveIconTarget(identity)), media, drawingIconAppearanceSource_);
+        FindIconAppearance(ResolveIconTarget(identity)), media, drawingIconAppearanceSource_,
+        beautifyFileThumbnails_);
 }
 const snowdesktop::IconAppearanceRecord* DesktopApp::FindIconAppearance(std::wstring_view target) const
 {

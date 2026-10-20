@@ -33,10 +33,11 @@ constexpr bool SourceLongEdgeCoversTarget(
         SourcePixelsForTarget(targetPixels);
 }
 
-/** Content/media thumbnails preserve their preview instead of receiving an icon plate. */
-constexpr bool ShouldBeautify(bool beautificationEnabled, bool mediaThumbnail)
+/** Content thumbnails opt into the global icon style separately from ordinary icons. */
+constexpr bool ShouldBeautify(bool beautificationEnabled, bool mediaThumbnail,
+    bool beautifyFileThumbnails = false)
 {
-    return beautificationEnabled && !mediaThumbnail;
+    return beautificationEnabled && (!mediaThumbnail || beautifyFileThumbnails);
 }
 
 /** Full-quality loads always request folder previews; application files stay icon-only. */
@@ -46,7 +47,7 @@ constexpr bool ShouldRequestShellThumbnail(
     return fullQualityPhase && (shellFolder || !applicationLike);
 }
 
-/** Folder previews remain beautifiable; only content/media thumbnails bypass beautification. */
+/** Distinguish file thumbnails from folder previews for the global beautification opt-in. */
 constexpr bool IsMediaThumbnail(bool shellThumbnail, bool shellFolder)
 {
     return shellThumbnail && !shellFolder;
