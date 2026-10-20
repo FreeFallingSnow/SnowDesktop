@@ -913,9 +913,16 @@ struct DesktopPagePresenter::Impl
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         AppendCombo(beautifyCard, beautifyModeRow, beautifyMode);
         beautifyFileThumbnails = muxc::ToggleSwitch{};
+        // The native template reserves 10 DIPs above and below its 20-DIP
+        // track. Fit that internal layout to the adjacent 32-DIP editors too.
+        beautifyFileThumbnails.Resources().Insert(
+            winrt::box_value(L"ToggleSwitchPreContentMargin"), winrt::box_value(6.0));
+        beautifyFileThumbnails.Resources().Insert(
+            winrt::box_value(L"ToggleSwitchPostContentMargin"), winrt::box_value(6.0));
         beautifyFileThumbnails.MinHeight(0.0);
         beautifyFileThumbnails.Height(32.0);
         beautifyFileThumbnails.VerticalAlignment(mux::VerticalAlignment::Center);
+        beautifyFileThumbnails.VerticalContentAlignment(mux::VerticalAlignment::Center);
         beautifyFileThumbnails.HorizontalAlignment(mux::HorizontalAlignment::Right);
         beautifyFileThumbnailsRow.Initialize(beautifyFileThumbnails);
         presenter_controls::StyleSettingsCard(beautifyFileThumbnailsRow.root);
