@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "Los valores negativos acercan el punto al centro del ícono; los positivos lo alejan. El desplazamiento es un porcentaje del tamaño del ícono.",
   "app.nav.view_frequency": "Frecuencia de uso",
   "app.nav.app_suggestions": "Aplicaciones sugeridas",
-  "quickNav.appSuggestions": "Activar aplicaciones sugeridas"
+  "quickNav.appSuggestions": "Activar aplicaciones sugeridas",
+  "settings.debug.forceRestartHotkey": "Atajo para forzar el reinicio",
+  "settings.debug.forceRestartHotkey.description": "Cierra y reinicia la aplicación de inmediato. Se perderán los cambios sin guardar."
 }

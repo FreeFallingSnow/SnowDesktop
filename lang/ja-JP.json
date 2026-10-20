@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "負の値でアイコンの中心に近づき、正の値で外側に移動します。移動量はアイコンのサイズに対する割合です。",
   "app.nav.view_frequency": "使用頻度",
   "app.nav.app_suggestions": "おすすめのアプリ",
-  "quickNav.appSuggestions": "おすすめのアプリを表示"
+  "quickNav.appSuggestions": "おすすめのアプリを表示",
+  "settings.debug.forceRestartHotkey": "強制再起動のショートカット",
+  "settings.debug.forceRestartHotkey.description": "アプリを直ちに終了して再起動します。保存されていない変更は失われます。"
 }

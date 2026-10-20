@@ -85,6 +85,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.softwareDesktopEnabled = val;
     if (ReadBoolField(text, "softwareDesktopHotkeyEnabled", val))
         settings.softwareDesktopHotkeyEnabled = val;
+    if (ReadBoolField(text, "forceRestartHotkeyEnabled", val))
+        settings.forceRestartHotkeyEnabled = val;
     if (ReadBoolField(text, "demoModeEnabled", val))
         settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
@@ -102,6 +104,12 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
         settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "forceRestartHotkeyModifiers", hotkeyValue))
+        settings.forceRestartHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    if (ReadIntField(text, "forceRestartHotkeyVirtualKey", hotkeyValue) &&
+        hotkeyValue >= 0 && hotkeyValue <= 0xff)
+        settings.forceRestartHotkeyVirtualKey = static_cast<UINT>(hotkeyValue);
     if (ReadIntField(text, "softwareDesktopHotkeyModifiers", hotkeyValue))
         settings.softwareDesktopHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -250,6 +258,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"animationOnBattery\": " << (settings.animationOnBattery ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"forceRestartHotkeyEnabled\": "
+         << (settings.forceRestartHotkeyEnabled ? "true" : "false") << ",\n";
+    file << "  \"forceRestartHotkeyModifiers\": "
+         << settings.forceRestartHotkeyModifiers << ",\n";
+    file << "  \"forceRestartHotkeyVirtualKey\": "
+         << settings.forceRestartHotkeyVirtualKey << ",\n";
     file << "  \"softwareDesktopHotkeyEnabled\": "
          << (settings.softwareDesktopHotkeyEnabled ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopHotkeyModifiers\": "

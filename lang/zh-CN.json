@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "负值向图标中心拉近，正值向外拉远；偏移量按图标尺寸的百分比计算。",
   "app.nav.view_frequency": "使用频率",
   "app.nav.app_suggestions": "应用建议",
-  "quickNav.appSuggestions": "开启应用建议栏"
+  "quickNav.appSuggestions": "开启应用建议栏",
+  "settings.debug.forceRestartHotkey": "强制重启软件快捷键",
+  "settings.debug.forceRestartHotkey.description": "立即结束并重新启动软件，未保存的更改会丢失。"
 }

@@ -14,6 +14,9 @@ inline bool IsGeneralShortcutOnlyCommit(
     const GeneralSettings& after) noexcept
 {
     const bool shortcutChanged =
+        before.forceRestartHotkeyEnabled != after.forceRestartHotkeyEnabled ||
+        before.forceRestartHotkeyModifiers != after.forceRestartHotkeyModifiers ||
+        before.forceRestartHotkeyVirtualKey != after.forceRestartHotkeyVirtualKey ||
         before.softwareDesktopHotkeyEnabled != after.softwareDesktopHotkeyEnabled ||
         before.softwareDesktopHotkeyModifiers != after.softwareDesktopHotkeyModifiers ||
         before.softwareDesktopHotkeyVirtualKey != after.softwareDesktopHotkeyVirtualKey ||

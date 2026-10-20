@@ -2,6 +2,7 @@
 
 #include "settings/settings_controller.h"
 #include "home_about_page_model.h"
+#include "hotkey_recorder.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -33,6 +34,9 @@ struct HomeAboutPageActions
         std::uint64_t generation,
         SettingsUpdateMode mode,
         GeneralEdit edit)> updateGeneral;
+    std::function<void(
+        SettingsHostActions::HotkeyTarget, HotkeyChord, std::uint64_t,
+        std::uint64_t, HotkeyRecorder::AvailabilityCompletion)> probeHotkey;
     /** Toggles the non-persisted animation metrics for this application run. */
     std::function<void(
         std::uint64_t generation,
@@ -94,6 +98,8 @@ public:
         FocusTarget(
             SettingsPage page,
             std::string_view focusId) const noexcept;
+    [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
+    void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
     void Close() noexcept;
 
 private:

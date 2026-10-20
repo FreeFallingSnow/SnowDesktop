@@ -1,3 +1,4 @@
+#include "platform/force_restart_hotkey.h"
 #include "app/app.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -18,6 +19,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::EmergencyRestartHotkey().Stop();
     StopRecycleBinWatcher();
     dockExternalMinimize_.reset();
     snowdesktop::SoftwareDesktopHotkey().Unregister();

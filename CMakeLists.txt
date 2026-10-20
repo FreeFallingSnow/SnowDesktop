@@ -436,6 +436,8 @@ set(SNOWDESKTOP_SOURCES
     src/data/full_data_backup.cpp
     src/data/portable_data_migration.cpp
     src/platform/single_instance.cpp
+    src/platform/force_restart_hotkey.cpp
+    src/platform/force_restart_hotkey.h
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
     src/platform/hook_entry_deployment.cpp
@@ -1389,6 +1391,19 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 user32 version
         LABELS core contract integration deployment steam)
+
+    snowdesktop_add_test(
+        SnowDesktopForceRestartHotkeyTests
+        force_restart_hotkey
+        SOURCES tests/platform/force_restart_hotkey_tests.cpp
+            src/platform/force_restart_hotkey.cpp
+            src/platform/single_instance.cpp
+            src/data/atomic_file.cpp
+            src/diagnostics/debug_profile.cpp
+            src/steam/steam_runtime_context.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 user32 version
+        LABELS contract integration input settings restart)
 
     snowdesktop_add_test(
         SnowDesktopHttpSecurityTests

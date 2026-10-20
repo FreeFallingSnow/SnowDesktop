@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "음수는 아이콘 중심 쪽으로, 양수는 바깥쪽으로 이동합니다. 이동량은 아이콘 크기에 대한 백분율입니다.",
   "app.nav.view_frequency": "사용 빈도",
   "app.nav.app_suggestions": "추천 앱",
-  "quickNav.appSuggestions": "추천 앱 표시"
+  "quickNav.appSuggestions": "추천 앱 표시",
+  "settings.debug.forceRestartHotkey": "강제 재시작 단축키",
+  "settings.debug.forceRestartHotkey.description": "앱을 즉시 종료하고 다시 시작합니다. 저장하지 않은 변경 사항은 손실됩니다."
 }

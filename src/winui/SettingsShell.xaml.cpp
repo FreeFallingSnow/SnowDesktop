@@ -1555,7 +1555,8 @@ bool SettingsShell::ApplyBackupDataPageSnapshot(
 
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
-    return generalPage_ && generalPage_->IsHotkeyCaptureActive();
+    return (generalPage_ && generalPage_->IsHotkeyCaptureActive()) ||
+        (homeAboutPage_ && homeAboutPage_->IsHotkeyCaptureActive());
 }
 
 void SettingsShell::CaptureRegisteredHotkey(
@@ -1564,6 +1565,8 @@ void SettingsShell::CaptureRegisteredHotkey(
 {
     if (generalPage_)
         generalPage_->CaptureRegisteredHotkey(modifiers, virtualKey);
+    if (homeAboutPage_)
+        homeAboutPage_->CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 
 snowdesktop::widget_runtime::WidgetSettingMutationResult
@@ -3197,6 +3200,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(homeAboutPage_->DebugContent());
             for (const std::string_view focusId : {
+                     "debug.forceRestartHotkey", "debug.forceRestartHotkey.hotkey",
                      "debug.profile", "debug.desktop", "debug.clearProfile",
                      "debug.initialization", "debug.resetUnlock", "debug.demo_mode", "debug.animation",
                      "debug.crash"})

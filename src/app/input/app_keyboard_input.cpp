@@ -82,6 +82,9 @@ bool DesktopApp::TryHandlePageNavigationKey(
         (navigationSettings_.enabled && conflictsWith(
             navigationSettings_.modifiers,
             navigationSettings_.virtualKey)) ||
+        (generalSettings_.forceRestartHotkeyEnabled &&
+            conflictsWith(generalSettings_.forceRestartHotkeyModifiers,
+                generalSettings_.forceRestartHotkeyVirtualKey)) ||
         (generalSettings_.softwareDesktopHotkeyEnabled &&
             conflictsWith(generalSettings_.softwareDesktopHotkeyModifiers,
                 generalSettings_.softwareDesktopHotkeyVirtualKey)) ||

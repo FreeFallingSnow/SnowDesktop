@@ -130,6 +130,14 @@ struct HomeAboutPagePresenter::Impl
     std::wstring profileDirectory;
     std::wstring simulatedDesktop;
     winrt::event_token profileToken{}, chooseDesktopToken{}, clearProfileToken{};
+    Section forceRestartSection;
+    controls::SettingRow forceRestartToggleRow;
+    controls::SettingRow forceRestartChordRow;
+    muxc::ToggleSwitch forceRestartToggle{nullptr};
+    HotkeyRecorder forceRestartRecorder;
+    bool forceRestartEnabled = true;
+    HotkeyChord forceRestartChord{MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN, 'S'};
+    winrt::event_token forceRestartToken{};
     Section demoModeSection;
     Section initializationSection;
     Section animationSection;
@@ -358,6 +366,20 @@ struct HomeAboutPagePresenter::Impl
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
+        InitializeSection(forceRestartSection, cardStyle, debugRoot);
+        forceRestartSection.title.Visibility(mux::Visibility::Collapsed);
+        forceRestartToggle = muxc::ToggleSwitch{};
+        forceRestartToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        forceRestartToggleRow.Initialize(forceRestartToggle);
+        forceRestartSection.content.Children().Append(forceRestartToggleRow.root);
+        forceRestartRecorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
+        forceRestartChordRow.Initialize(forceRestartRecorder.Root());
+        forceRestartChordRow.SetCompactEditor();
+        forceRestartChordRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        forceRestartSection.content.Children().Append(forceRestartChordRow.root);
+        forceRestartRecorder.SetDefaultValue(
+            {MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN, 'S'});
+
         InitializeSection(debugProfileSection, cardStyle, debugRoot);
         profileToggle = muxc::ToggleSwitch{};
         profileToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -480,6 +502,31 @@ struct HomeAboutPagePresenter::Impl
         clearProfileToken = clearProfileButton.Click([this](const auto&, const auto&) {
             if (CanInvokeDebug() && actions.clearDebugProfile) actions.clearDebugProfile(generation);
         });
+        forceRestartToken = forceRestartToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+            const bool enabled = forceRestartToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [enabled](GeneralSettings& settings) { settings.forceRestartHotkeyEnabled = enabled; });
+        });
+        forceRestartRecorder.SetAvailabilityProbe([this](HotkeyChord chord,
+            std::uint64_t expectedGeneration, std::uint64_t requestId,
+            HotkeyRecorder::AvailabilityCompletion completion) {
+            if (closed || !hasSnapshot || expectedGeneration != generation || !actions.probeHotkey)
+            {
+                completion(false, L("app.settings.hotkey_conflict_system"));
+                return;
+            }
+            actions.probeHotkey(SettingsHostActions::HotkeyTarget::ForceRestart,
+                chord, expectedGeneration, requestId, std::move(completion));
+        });
+        forceRestartRecorder.SetCommittedCallback([this](HotkeyChord chord) {
+            if (!CanInvokeDebug() || !actions.updateGeneral) return;
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [chord](GeneralSettings& settings) {
+                    settings.forceRestartHotkeyModifiers = chord.modifiers;
+                    settings.forceRestartHotkeyVirtualKey = chord.virtualKey;
+                });
+        });
         demoModeToken = demoModeToggle.Toggled(
             [this](const auto&, const auto&) {
                 if (updatingControls || !CanInvokeDebug() ||
@@ -590,6 +637,7 @@ struct HomeAboutPagePresenter::Impl
         initializationToggle.IsEnabled(!profileEnabled);
         profileDataPath.Text(L("settings.debug.profile.data") + L"\n" + profileDirectory);
         desktopDirectoryRow.SetText(L("settings.debug.profile.desktop"), simulatedDesktop);
+        forceRestartToggle.IsOn(forceRestartEnabled);
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
         initializationToggle.IsOn(temporaryInitializationEnabled);
@@ -601,6 +649,35 @@ struct HomeAboutPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
 
+    }
+
+    HotkeyRecorderText HotkeyText(std::wstring automationName) const
+    {
+        HotkeyRecorderText text;
+        text.automationName = std::move(automationName);
+        text.idleHint = L("app.settings.hotkey_capture_help");
+        text.captureHint = L("app.settings.hotkey_press");
+        text.checking = L("app.settings.hotkey_status_recording");
+        text.available = L("app.settings.hotkey_available");
+        text.conflict = L("app.settings.hotkey_status_conflict");
+        text.cleared = L("app.settings.hotkey_not_set");
+        text.none = L("app.settings.hotkey_not_set");
+        text.disabled = L("app.settings.hotkey_status_disabled");
+        text.captureActive = L("app.settings.hotkey_capture_active");
+        text.notSetWarning = L("app.settings.hotkey_not_set_warning");
+        text.availableStatus = L("app.settings.hotkey_status_available");
+        text.inUseStatus = L("app.settings.hotkey_status_in_use");
+        text.noModifierStatus =
+            L("app.settings.hotkey_status_no_modifier");
+        text.noModifierWarning =
+            L("app.settings.hotkey_no_modifier_warning");
+        text.systemConflict = L("app.settings.hotkey_conflict_system");
+        text.apply = L("app.settings.apply");
+        text.cancel = L("app.settings.cancel");
+        text.edit = L("app.settings.hotkey_edit");
+        text.clear = L("app.settings.widget.clear");
+        text.restoreDefault = L("app.settings.restore_default");
+        return text;
     }
 
     void RefreshLocalizedText()
@@ -643,6 +720,12 @@ struct HomeAboutPagePresenter::Impl
             SetAutomation(link.button, text, HomeAboutLinkUri(link.target));
         }
 
+        forceRestartToggleRow.SetText(L("settings.debug.forceRestartHotkey"),
+            L("settings.debug.forceRestartHotkey.description"));
+        SetAutomation(forceRestartToggle, forceRestartToggleRow.label.Text(),
+            forceRestartToggleRow.help.Text());
+        forceRestartChordRow.SetText(L("app.settings.hotkey"));
+        forceRestartRecorder.SetText(HotkeyText(L("settings.debug.forceRestartHotkey")));
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
         profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
         SetAutomation(profileToggle, profileRow.label.Text(), profileRow.help.Text());
@@ -719,13 +802,20 @@ struct HomeAboutPagePresenter::Impl
             generation = snapshot.generation;
             ResetStatusForGeneration();
         }
+        hasSnapshot = true;
         if (newGeneration || generalRevision !=
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
+            forceRestartEnabled = snapshot.values.general.forceRestartHotkeyEnabled;
+            forceRestartChord = {snapshot.values.general.forceRestartHotkeyModifiers,
+                snapshot.values.general.forceRestartHotkeyVirtualKey};
+            forceRestartRecorder.SetValidationContext(forceRestartEnabled, false);
+            forceRestartRecorder.Root().IsEnabled(forceRestartEnabled);
+            forceRestartChordRow.SetEnabled(forceRestartEnabled);
+            forceRestartRecorder.SetValue(forceRestartChord, generation);
         }
-        hasSnapshot = true;
         RenderStatus();
     }
 
@@ -778,6 +868,9 @@ struct HomeAboutPagePresenter::Impl
         }
         if (page == SettingsPage::Debug)
         {
+            if (focusId == "debug.forceRestartHotkey") return forceRestartToggle;
+            if (focusId == "debug.forceRestartHotkey.hotkey")
+                return forceRestartEnabled ? forceRestartRecorder.FocusTarget() : forceRestartToggle;
             if (focusId == "debug.profile") return profileToggle;
             if (focusId == "debug.desktop") return chooseDesktopButton;
             if (focusId == "debug.clearProfile") return clearProfileButton;
@@ -806,6 +899,7 @@ struct HomeAboutPagePresenter::Impl
             profileToggle.Toggled(profileToken);
             chooseDesktopButton.Click(chooseDesktopToken);
             clearProfileButton.Click(clearProfileToken);
+            forceRestartToggle.Toggled(forceRestartToken);
             demoModeToggle.Toggled(demoModeToken);
             initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);
@@ -815,6 +909,7 @@ struct HomeAboutPagePresenter::Impl
         catch (...)
         {
         }
+        forceRestartRecorder.Close();
         actions = {};
         localize = {};
     }
@@ -883,6 +978,7 @@ void HomeAboutPagePresenter::Deactivate() noexcept
 {
     if (impl_ && !impl_->closed)
     {
+        impl_->forceRestartRecorder.CancelCapture();
         impl_->active = false;
     }
 }
@@ -892,6 +988,18 @@ mux::FrameworkElement HomeAboutPagePresenter::FocusTarget(
     std::string_view focusId) const noexcept
 {
     return impl_ ? impl_->FocusTarget(page, focusId) : nullptr;
+}
+
+bool HomeAboutPagePresenter::IsHotkeyCaptureActive() const noexcept
+{
+    return impl_ && !impl_->closed && impl_->active &&
+        impl_->forceRestartRecorder.IsCapturing();
+}
+
+void HomeAboutPagePresenter::CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey)
+{
+    if (IsHotkeyCaptureActive())
+        impl_->forceRestartRecorder.CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 
 void HomeAboutPagePresenter::Close() noexcept

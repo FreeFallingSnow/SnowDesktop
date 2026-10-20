@@ -204,6 +204,7 @@ public:
         PagePrevious,
         PageNext,
         SoftwareDesktop,
+        ForceRestart,
     };
 
     enum class Action : std::uint8_t

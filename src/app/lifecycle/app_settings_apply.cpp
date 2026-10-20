@@ -1,3 +1,4 @@
+#include "platform/force_restart_hotkey.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
 #include "system/tray/tray_service.h"
@@ -1096,6 +1097,8 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
@@ -1213,6 +1216,8 @@ public:
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
@@ -1333,6 +1338,8 @@ public:
             app_.ApplyLanguageChange();
             break;
         case Action::RegisterHotkeys:
+            snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
@@ -1584,6 +1591,8 @@ private:
             return "app.settings.quick_navigation";
         case HotkeyTarget::DesktopPassthrough:
             return "app.settings.desktop_passthrough_hotkey";
+        case HotkeyTarget::ForceRestart:
+            return "settings.debug.forceRestartHotkey";
         case HotkeyTarget::SoftwareDesktop:
             return "app.settings.software_desktop_hotkey";
         case HotkeyTarget::FloatingDock:
@@ -1635,6 +1644,11 @@ private:
                 app_.generalSettings_.desktopPassthroughHotkeyModifiers,
                 app_.generalSettings_.desktopPassthroughHotkeyVirtualKey))
             return { false, HotkeyTarget::DesktopPassthrough };
+        if (conflictsWith(HotkeyTarget::ForceRestart,
+                app_.generalSettings_.forceRestartHotkeyEnabled,
+                app_.generalSettings_.forceRestartHotkeyModifiers,
+                app_.generalSettings_.forceRestartHotkeyVirtualKey))
+            return { false, HotkeyTarget::ForceRestart };
         if (conflictsWith(HotkeyTarget::SoftwareDesktop,
                 app_.generalSettings_.softwareDesktopHotkeyEnabled,
                 app_.generalSettings_.softwareDesktopHotkeyModifiers,
@@ -1676,6 +1690,13 @@ private:
 
         switch (target)
         {
+        case HotkeyTarget::ForceRestart:
+            if (app_.generalSettings_.forceRestartHotkeyEnabled &&
+                matches(app_.generalSettings_.forceRestartHotkeyModifiers,
+                    app_.generalSettings_.forceRestartHotkeyVirtualKey))
+                return { snowdesktop::EmergencyRestartHotkey().Matches(modifiers, virtualKey),
+                    HotkeyTarget::None };
+            break;
         case HotkeyTarget::SoftwareDesktop:
             if (app_.generalSettings_.softwareDesktopHotkeyEnabled &&
                 matches(app_.generalSettings_.softwareDesktopHotkeyModifiers,

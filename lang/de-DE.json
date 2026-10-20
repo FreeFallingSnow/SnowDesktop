@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "Negative Werte verschieben den Punkt zur Symbolmitte, positive nach außen. Der Versatz wird in Prozent der Symbolgröße angegeben.",
   "app.nav.view_frequency": "Nutzungshäufigkeit",
   "app.nav.app_suggestions": "App-Vorschläge",
-  "quickNav.appSuggestions": "App-Vorschläge aktivieren"
+  "quickNav.appSuggestions": "App-Vorschläge aktivieren",
+  "settings.debug.forceRestartHotkey": "Tastenkombination für erzwungenen Neustart",
+  "settings.debug.forceRestartHotkey.description": "Beendet die App sofort und startet sie neu. Nicht gespeicherte Änderungen gehen verloren."
 }

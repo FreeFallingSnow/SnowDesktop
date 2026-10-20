@@ -56,6 +56,18 @@ int main()
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
 
     GeneralSettings general;
+    auto restartShortcut = general;
+    restartShortcut.forceRestartHotkeyEnabled = false;
+    Check(IsGeneralShortcutOnlyCommit(general, restartShortcut),
+        "disabling emergency restart updates registration without rebuilding the desktop");
+    restartShortcut = general;
+    restartShortcut.forceRestartHotkeyModifiers = MOD_CONTROL;
+    restartShortcut.forceRestartHotkeyVirtualKey = 'R';
+    Check(IsGeneralShortcutOnlyCommit(general, restartShortcut),
+        "changing emergency restart uses the shortcut-only commit path");
+    restartShortcut.demoModeEnabled = true;
+    Check(!IsGeneralShortcutOnlyCommit(general, restartShortcut),
+        "a simultaneous visual change still uses the complete general settings pipeline");
     auto desktopShortcut = general;
     desktopShortcut.softwareDesktopHotkeyEnabled = true;
     Check(IsGeneralShortcutOnlyCommit(general, desktopShortcut),

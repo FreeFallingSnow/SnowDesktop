@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size.",
   "app.nav.view_frequency": "Usage frequency",
   "app.nav.app_suggestions": "App suggestions",
-  "quickNav.appSuggestions": "Enable app suggestions"
+  "quickNav.appSuggestions": "Enable app suggestions",
+  "settings.debug.forceRestartHotkey": "Force restart shortcut",
+  "settings.debug.forceRestartHotkey.description": "Immediately terminates and restarts the app. Unsaved changes will be lost."
 }

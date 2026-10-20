@@ -29,6 +29,9 @@ struct GeneralSettings
     bool softwareDesktopHotkeyEnabled = false;
     UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT softwareDesktopHotkeyVirtualKey = 'S';
+    bool forceRestartHotkeyEnabled = true;
+    UINT forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+    UINT forceRestartHotkeyVirtualKey = 'S';
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this

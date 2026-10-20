@@ -1,3 +1,4 @@
+#include "platform/force_restart_hotkey.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
@@ -753,6 +754,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartRecycleBinWatcher();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    snowdesktop::EmergencyRestartHotkey().Apply(generalSettings_.forceRestartHotkeyEnabled,
+        generalSettings_.forceRestartHotkeyModifiers, generalSettings_.forceRestartHotkeyVirtualKey);
     snowdesktop::SoftwareDesktopHotkey().Apply(controlHwnd_, generalSettings_);
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();

@@ -2551,5 +2551,7 @@
   "settings.dock.attentionDot.positionHint": "負值向圖示中心拉近，正值向外拉遠；偏移量按圖示尺寸的百分比計算。",
   "app.nav.view_frequency": "使用頻率",
   "app.nav.app_suggestions": "應用程式建議",
-  "quickNav.appSuggestions": "開啟應用程式建議列"
+  "quickNav.appSuggestions": "開啟應用程式建議列",
+  "settings.debug.forceRestartHotkey": "強制重新啟動軟體快捷鍵",
+  "settings.debug.forceRestartHotkey.description": "立即結束並重新啟動軟體，未儲存的變更將會遺失。"
 }

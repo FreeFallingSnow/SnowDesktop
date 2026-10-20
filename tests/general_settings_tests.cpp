@@ -446,6 +446,38 @@ int main(int argc, char** argv)
         std::filesystem::remove(path);
     }
     {
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopForceRestart-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        GeneralSettings restored;
+        Check(LoadGeneralSettings(path.c_str(), restored) && restored.forceRestartHotkeyEnabled &&
+            restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.forceRestartHotkeyVirtualKey == 'S',
+            "new and existing profiles enable the requested emergency restart chord");
+        for (const bool enabled : {false, true})
+        for (const UINT key : {UINT{'R'}, UINT{0}})
+        {
+            GeneralSettings settings;
+            settings.forceRestartHotkeyEnabled = enabled;
+            settings.forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+            settings.forceRestartHotkeyVirtualKey = key;
+            restored = {};
+            Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), restored) &&
+                restored.forceRestartHotkeyEnabled == enabled &&
+                restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT) &&
+                restored.forceRestartHotkeyVirtualKey == key,
+                "force restart enablement, custom chord and clearing survive settings reload");
+        }
+        { std::ofstream invalid(path); invalid <<
+            "{\"forceRestartHotkeyModifiers\":65535,\"forceRestartHotkeyVirtualKey\":256}"; }
+        restored = {};
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            restored.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.forceRestartHotkeyVirtualKey == 'S',
+            "invalid emergency keys retain the default and unsupported modifier flags are masked");
+        std::filesystem::remove(path);
+    }
+    {
         // Never reserve a shortcut for existing profiles. Preserve a chosen
         // chord, including clearing it, across application restarts.
         const auto path = std::filesystem::temp_directory_path() /

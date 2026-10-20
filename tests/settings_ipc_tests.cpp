@@ -188,6 +188,18 @@ void TestCodec()
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
     for (const bool enabled : {false, true})
+    for (const UINT key : {UINT{'R'}, UINT{0}})
+    {
+        extensions.forceRestartHotkeyEnabled = enabled;
+        extensions.forceRestartHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+        extensions.forceRestartHotkeyVirtualKey = key;
+        const auto copy = Unpack<GeneralSettings>(Pack(extensions));
+        Check(copy.forceRestartHotkeyEnabled == enabled &&
+            copy.forceRestartHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+            copy.forceRestartHotkeyVirtualKey == key,
+            "force restart enablement, custom chord and clearing cross settings IPC");
+    }
+    for (const bool enabled : {false, true})
     {
         extensions.softwareDesktopHotkeyEnabled = enabled;
         extensions.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;

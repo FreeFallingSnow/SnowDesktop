@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "platform/force_restart_hotkey.h"
 
 #include "settings_window_host.h"
 #include "settings/settings_window_open_rules.h"
@@ -1933,6 +1934,7 @@ struct SettingsWindowHost::Impl
                 state->owner->controller->InvokeHostAction(request);
             completion(result.Succeeded(), result.message);
         };
+        const auto probeHotkey = general.probeHotkey;
         general.languageCatalog = [weak]() {
             std::vector<SettingsLanguageOption> result;
             const auto state = weak.lock();
@@ -2369,6 +2371,7 @@ struct SettingsWindowHost::Impl
         shell->SetDockPageActions(std::move(dock));
 
         HomeAboutPageActions homeAbout;
+        homeAbout.probeHotkey = probeHotkey;
         homeAbout.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock();
                 state && state->alive.load() && state->owner)
@@ -3208,6 +3211,19 @@ struct SettingsWindowHost::Impl
         if (!self)
             return DefWindowProcW(hwnd, message, wParam, lParam);
 
+        if (message == snowdesktop::ForceRestartCaptureMessage())
+        {
+            if (self->shell && self->shell->IsHotkeyCaptureActive())
+            {
+                // Acknowledge before availability probing can call back into
+                // the host STA, which may itself be stalled.
+                ReplyMessage(1);
+                self->shell->CaptureRegisteredHotkey(static_cast<UINT>(wParam),
+                    static_cast<UINT>(lParam));
+                return 1;
+            }
+            return 0;
+        }
         switch (message)
         {
         case kApplyXamlBackdropMessage:
