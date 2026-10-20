@@ -11,7 +11,8 @@
 
 - Windows 11 26H2，OS Build `26300.9807`。
 - Wallpaper Engine 界面版本 `2.8.42`，文件版本 `2.8.0.42`。
-- Wallpaper Engine 全程保持同一进程；各隔离试验只按需重置 Explorer。
+- 凌晨的各组试验保持同一 Wallpaper Engine 进程，只按需重置 Explorer；上午的进一步隔离
+  重启了 Wallpaper Engine，以排除进程内残留 Hook，详见后文。
 - “覆盖壁纸图像”原为开启，“覆盖锁屏图像”原为关闭。顺序试验临时关闭前一项，
   在候选启动后重新开启；结束后恢复原值。
 - Wallpaper Engine 浏览器关闭后才开始判定持续表现。打开浏览器期间曾观察到通知暂停，
@@ -35,7 +36,8 @@
 Explorer 现有 DefView 的父窗口；保留托盘采集、重新注册握手与排除 Explorer 的收件人规则。
 删除未再使用的内部 `EnsureDesktopWorkerWindow` 声明和实现。
 
-此对照确认了可复现的触发边界，未确定 Wallpaper Engine 或 Explorer 内部形成反馈的具体实现。
+该轮对照记录了一个可复现组合，但没有证明托盘采集或应用通知是必要条件。后续纯 Win32
+试验进一步缩减了触发步骤，见下文；Wallpaper Engine 或 Explorer 内部的具体反馈实现仍未确定。
 
 ## 标准构建与定向回归
 
@@ -115,6 +117,93 @@ CTest 使用共同预设的 `execution.jobs=24`；本组涉及原生窗口的条
 | 正对照前无动作观察 | 1 次壁纸通知，稳定断言通过 |
 | WorkerW 后应用通知 | 10 次壁纸通知；退出采集后仍有通知，重复断言通过 |
 | 省去 WorkerW 的对照 | 新会话基线 1 次；动作及退出后观察合计 1 次壁纸通知，稳定断言通过；采集退出握手成功，`resync=0` |
+
+## 上午的纯 Win32 缩减与进程清洁检查
+
+独立程序 [wallpaper_minimal_repro.cpp](../../tests/shell/wallpaper_minimal_repro.cpp)
+不依赖项目头文件或 DLL。`workerw none` 模式只执行一次以下调用，然后通过自身的隐藏窗口
+记录通知；不建立托盘采集，不注入 DLL，不向应用发送 `TaskbarCreated`：
+
+```cpp
+SendMessageTimeoutW(FindWindowW(L"Progman", nullptr), 0x052C, 0, 0,
+    SMTO_ABORTIFHUNG | SMTO_NORMAL, 1000, &result);
+```
+
+`observe none` 模式省去此调用。默认 `--self-test` 只向自身窗口发送消息；
+`--check-environment` 只检查进程。手动诊断拒绝仍在运行的 SnowDesktop、多个 Wallpaper Engine
+进程、Explorer 的托盘驻留属性，以及 Explorer 或 Wallpaper Engine 内的 `SnowDesktop*` 模块。
+
+09:19 的组合试验虽由用户确认重播，09:21 的官方完整日志却显示 Wallpaper Engine 内仍加载
+`SnowDesktopWallpaperHook.dll`。退出主程序不足以排除这个残留因素，不能把该次结果直接
+归因于外部软件。随后由用户彻底退出并重新启动 Wallpaper Engine，保持覆盖选项关闭。
+09:25、09:26 的模块检查均确认新的 Wallpaper Engine 与 Explorer 没有 SnowDesktop 模块。
+
+### 已完成的干净正对照
+
+- Wallpaper Engine PID `57248`，启动于 09:24:40；Explorer PID `13284`，09:25:27 重建。
+- 09:25:31.872 仅发送一次 WorkerW 请求。09:25:32.303 收到的 `TaskbarCreated` 来自真实
+  Explorer 启动，并非诊断程序投递。
+- 随后由用户开启“覆盖壁纸图像”、确认并关闭设置和浏览器；用户反馈“已开启，重播”。
+- 09:26:00.474 至 09:28:44.884 记录到 24 次 `SPI_SETDESKWALLPAPER` 通知，间隔
+  6.981～7.398 秒，平均 7.148 秒。请求总数始终为 1。
+- 触发程序 09:28:51.887 退出后，独立的无动作观察器仍在 09:28:59、09:29:06、09:29:13、
+  09:29:20 收到更新。后续关闭覆盖及重置 Explorer 的操作不计入这个退出后观察区间。
+- 用户在该次重播中导出的 `info-workerw-only.txt` 没有 SnowDesktop DLL 条目，SHA256 为
+  `0185DFFD3057063036B14638503B699A01B4917E471AC56ABDC8B9A806B20FFD`。
+
+这一组排除了托盘采集、应用通知和 SnowDesktop Hook 为该触发路径的必要条件；约 7 秒的
+持续更新不是由本次程序按该周期重复发送请求形成。通知计数仍不等于画面重播次数，画面
+重播由用户实测确认。尚不能据此断定 Wallpaper Engine 内部是哪段代码形成循环。
+
+### 空白对照与复测
+
+09:30 的首次空白对照因覆盖选项未在预定时刻真正关闭而作废，不作为阴性证据。
+09:31:24 与 09:33:25 直接读取配置，均确认 `overridewallpaper=false`，随后由用户重启
+Wallpaper Engine。新的 PID `68884` 启动于 09:33:56，无 SnowDesktop 模块。
+09:34:22 重建 Explorer 后启动纯观察模式；用户重新开启覆盖并反馈“已开启，无重播”。
+09:34:48.132 仅出现一次开启覆盖相关更新，至 09:37:42.975 的 200 秒完整观察结束没有
+新增更新；WorkerW 请求总数为 0。09:35:04 直接读取配置确认覆盖已开启，Wallpaper Engine
+仍为 PID `68884`，无 SnowDesktop 模块。对照日志为 `fresh-noop-enable-after.log`。
+该组已要求关闭设置和浏览器，但用户没有单独确认关窗状态，因此不把它写成覆盖全部窗口
+状态因素的严格对照；不为这个细节追加重复试验。
+保留同一 Wallpaper Engine PID `68884` 和 Explorer PID `40588`，用户关闭覆盖后，
+09:38:30.334 使用 `7119bdb6` 程序只发送一次 WorkerW 请求；没有重启 Explorer，也没有
+发送应用通知。用户重新开启覆盖并反馈“已开启，重播”，09:39:00 起记录到连续约 7 秒
+一次的通知。此次请求发生在 Explorer 启动四分钟后，排除了必须赶在 Shell 启动阶段的条件。
+用户随后明确说明设置窗口当时仍打开、开关已在运行中生效；磁盘配置尚未写回，不能把
+其旧值用于否定运行状态，也不能将该阶段写成已经关闭设置和浏览器。随后用户关闭两个
+窗口并明确反馈仍重播；09:41:19 读回配置为开启，两个目标进程仍无 SnowDesktop 模块。
+
+09:39:00.122～09:41:47.303 共记录 25 次更新，平均间隔 6.966 秒，请求总数为 1。
+09:41:50.343 触发程序退出后，独立无动作观察器继续在 09:41:53.964、09:42:00.898、
+09:42:07.936、09:42:15.001 及以后收到更新。对应日志为 `settled-workerw-enable-after.log`
+和 `settled-after-trigger-exit.log`。这次正例使用的就是带模块前置检查的交付二进制。
+独立观察于 09:44:08.852 正常结束；触发程序退出后仍有 20 次更新，最后一次为
+09:44:06.936，距触发程序退出 136.593 秒。
+
+当前结论是本机已验证的充分复现顺序：一次 WorkerW 请求后启用覆盖，即可出现持续重播，
+无需托盘采集、应用通知或 SnowDesktop Hook；不是 SnowDesktop 每约 7 秒重复发起该请求。
+不据此断言 WorkerW 请求是所有重播路径的必要条件，也未确定 Windows/Wallpaper Engine
+内部维持该状态的具体代码位置。设置打开与关闭均已取得正例，无需再为这点追加试验。
+
+### 独立程序构建来源
+
+| 提交与协作批次 | 实际结果 |
+| --- | --- |
+| `a8b83115`；`75957ac7bb7342748bd36b5cc92b35cf` | 标准 Release 构建通过；`wallpaper_minimal_repro` 与 `wallpaper_shell_probe` 首次通过，2/2，总耗时 0.47 秒 |
+| `7119bdb6`；`2f4362d626ef4329aedae20cacf2c9d1` | 增加模块残留拒绝与只读环境检查；标准 Release 构建通过；`wallpaper_minimal_repro` 首次通过，1/1，总耗时 0.38 秒 |
+
+两批使用共同 CTest 预设的并行度 24，相关原生窗口条目按声明互斥；无编译或链接警告，
+未执行应用全量。第一组干净正对照使用 `a8b83115` 的诊断程序，其 SHA256 为
+`4243C2F202C46800EA98179E139B97ED5509D20E923A8C67D09F41F4B14EB1ED`；进程模块清洁性
+由同场外部检查确认。增加前置模块检查的 `7119bdb6` 程序 SHA256 为
+`48B9BE55B5E7A6B61AEB591DE5B7B5055D80545B3A33EADB17368059E7E1F5BC`。
+
+此轮未修改生产行为。原始证据另存于 `.codex-probes/issue29-minimal-20261020/`。
+官方完整日志仅用于本地邮件草稿附件，不随 Git 提交或公开上传。
+09:44:26 为清理实验状态重置 Explorer，保留同一 Wallpaper Engine 进程及覆盖开启状态；
+至 09:45:26 的 60 秒收尾观察仅出现 09:44:35 的一次初始化更新，无持续通知序列。
+所有本轮诊断程序均正常退出；SnowDesktop 保持用户为实验准备的关闭状态。
 
 ## 证据与限制
 
