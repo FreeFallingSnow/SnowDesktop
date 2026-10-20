@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iostream>
 #include <set>
+#include <utility>
 #include <vector>
 
 int RunIconAppearanceTests();
@@ -302,6 +303,17 @@ int main()
     // Production upload and the independent editor both prepare the same
     // canvas before rendering. A video thumbnail must not turn a selected
     // circular/square outline into an ellipse/horizontal pill.
+    for (const auto dimensions : {std::pair{6, 1}, std::pair{1, 6}, std::pair{6, 6}})
+    {
+        auto pixels = std::vector<std::uint32_t>(static_cast<size_t>(dimensions.first) * dimensions.second, 0xfff9f9f9);
+        int width = dimensions.first, height = dimensions.second;
+        Check(beautify::PrepareCanvas(pixels, width, height, true) && width == 64 && height == 64,
+            "tiny image thumbnails use a full-resolution square theme canvas instead of magnifying a few background pixels");
+        const auto visible = std::count(pixels.begin(), pixels.end(), 0xfff9f9f9u);
+        const int expectedShortEdge = static_cast<int>(std::lround(64.0 / (dimensions.first == dimensions.second ? 1 : 6)));
+        Check(visible == 64 * expectedShortEdge,
+            "upscaling a tiny source preserves its aspect ratio and original opaque color");
+    }
     for (const bool portrait : {false, true})
     {
         const int originalW = portrait ? 40 : 96, originalH = portrait ? 96 : 40;

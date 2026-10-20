@@ -124,6 +124,17 @@ inline void Run()
     Require(ordinarySmart.second.mode == 0 && thumbnailNoResize.second.mode == 2,
         "thumbnail smart handling preserves ordinary icon recognition and explicit no-resize styling");
     DeleteObject(bitmap);
+    snowdesktop::icon_image::Image tinyImage;
+    tinyImage.width = 6; tinyImage.height = 1;
+    tinyImage.pixels.assign(6, 0xfff9f9f9);
+    const auto tinyBitmap = snowdesktop::icon_image::CreateBitmap(tinyImage);
+    Require(tinyBitmap != nullptr, "create the reported six-by-one opaque PNG equivalent");
+    const auto tinyStyled = Access::UploadFileThumbnail(app, renderContext.Get(), tinyBitmap, true, true);
+    const auto tinyOriginal = Access::UploadFileThumbnail(app, renderContext.Get(), tinyBitmap, false, true);
+    DeleteObject(tinyBitmap);
+    Require(tinyStyled.first.width == 64 && tinyStyled.first.height == 64 &&
+            tinyOriginal.first.width == 6 && tinyOriginal.first.height == 1,
+        "actual host upload renders the reported tiny thumbnail theme at full resolution while opt-out preserves its source size");
     Require(beautified.width == 96 && beautified.height == 96 && original.width == 96 && original.height == 40,
         "the actual host upload uses a square selected shape only while beautification is enabled");
     Require(Access::NoPresentationWindows(app), "icon lifecycle and upload regression never starts a desktop presentation host");

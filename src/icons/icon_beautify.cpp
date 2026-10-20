@@ -1,5 +1,6 @@
 #include "icon_beautify.h"
 #include "icon_beautify_preview.h"
+#include "icon_render_rules.h"
 #include "theme/flat_glass_rim.h"
 #include "theme/appearance_edge_presets.h"
 
@@ -17,17 +18,36 @@
 
 namespace snowdesktop::icon_beautify
 {
+namespace
+{
+std::uint32_t SampleBilinear(const std::vector<std::uint32_t>& pixels,
+    int width, int height, float x, float y);
+}
+
 bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled)
 {
     if (width <= 0 || height <= 0 || pixels.size() != static_cast<size_t>(width) * height) return false;
-    if (!enabled || width == height) return true;
-    const int edge = std::max(width, height);
+    if (!enabled) return true;
+    const int sourceEdge = std::max(width, height);
+    const int edge = std::max(sourceEdge, icon_render_rules::kMinimumSourcePixels);
+    if (width == edge && height == edge) return true;
     if (static_cast<std::uint64_t>(edge) * edge > 16ull * 1024 * 1024) return false;
     std::vector<std::uint32_t> square(static_cast<size_t>(edge) * edge, 0);
-    const int left = (edge - width) / 2, top = (edge - height) / 2;
-    for (int y = 0; y < height; ++y)
-        std::copy_n(pixels.data() + static_cast<size_t>(y) * width, width,
-            square.data() + static_cast<size_t>(y + top) * edge + left);
+    const float scale = static_cast<float>(edge) / sourceEdge;
+    const int fittedWidth = std::max(1, static_cast<int>(std::lround(width * scale)));
+    const int fittedHeight = std::max(1, static_cast<int>(std::lround(height * scale)));
+    const int left = (edge - fittedWidth) / 2, top = (edge - fittedHeight) / 2;
+    for (int y = 0; y < fittedHeight; ++y)
+    {
+        auto* row = square.data() + static_cast<size_t>(y + top) * edge + left;
+        if (edge == sourceEdge)
+            std::copy_n(pixels.data() + static_cast<size_t>(y) * width, width, row);
+        else
+            for (int x = 0; x < fittedWidth; ++x)
+                row[x] = SampleBilinear(pixels, width, height,
+                    (static_cast<float>(x) + 0.5f) * width / fittedWidth - 0.5f,
+                    (static_cast<float>(y) + 0.5f) * height / fittedHeight - 0.5f);
+    }
     width = height = edge; pixels = std::move(square);
     return true;
 }

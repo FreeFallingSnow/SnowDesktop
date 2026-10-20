@@ -913,6 +913,9 @@ struct DesktopPagePresenter::Impl
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         AppendCombo(beautifyCard, beautifyModeRow, beautifyMode);
         beautifyFileThumbnails = muxc::ToggleSwitch{};
+        beautifyFileThumbnails.MinHeight(0.0);
+        beautifyFileThumbnails.Height(32.0);
+        beautifyFileThumbnails.VerticalAlignment(mux::VerticalAlignment::Center);
         beautifyFileThumbnails.HorizontalAlignment(mux::HorizontalAlignment::Right);
         beautifyFileThumbnailsRow.Initialize(beautifyFileThumbnails);
         presenter_controls::StyleSettingsCard(beautifyFileThumbnailsRow.root);
