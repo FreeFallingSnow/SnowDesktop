@@ -5,6 +5,7 @@
 #include "ui/menu/modern_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/status_bar/status_bar_task_view_input.h"
 #include "dock/dock_settings_rules.h"
 #include "platform/taskbar_monitor.h"
@@ -17,7 +18,7 @@ namespace
 void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     std::uint64_t generation, const wchar_t* phase, double started,
     const wchar_t* result = L"-", double callMilliseconds = 0,
-    UINT requested = 0, UINT sent = 0) noexcept try
+    UINT requested = 0, UINT sent = 0, DWORD hostUiThread = 0) noexcept try
 {
     if (started < 0) return;
     wchar_t inputState[448]{};
@@ -26,7 +27,7 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     {
         // These are input-state snapshots only; do not synchronously query
         // foreign window text/classes or consume queue-status change bits.
-        const DWORD uiThread = GetCurrentThreadId();
+        const DWORD uiThread = hostUiThread ? hostUiThread : GetCurrentThreadId();
         const HWND foreground = GetForegroundWindow();
         const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
         GUITHREADINFO uiInfo{};
@@ -47,10 +48,10 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     }
     wchar_t message[768]{};
     swprintf_s(message,
-        L"StatusBarShellActivation action=%u generation=%llu phase=%ls elapsedMs=%.3f result=%ls callMs=%.3f requested=%u sent=%u%ls",
+        L"StatusBarShellActivation action=%u generation=%llu phase=%ls elapsedMs=%.3f result=%ls callMs=%.3f requested=%u sent=%u callThread=%lu%ls",
         static_cast<unsigned>(action), static_cast<unsigned long long>(generation), phase,
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
-        result, callMilliseconds, requested, sent, inputState);
+        result, callMilliseconds, requested, sent, GetCurrentThreadId(), inputState);
     WriteDiagnosticLogEntry(message);
 }
 catch (...) { /* Diagnostics must not change activation or release behavior. */ }
@@ -519,51 +520,125 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             MessageBeep(MB_ICONWARNING);
             return;
         }
-        // Shell shortcut activation has no supported custom popup anchor. Let
-        // Windows place its own surface; never move or reparent its window.
-        statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, chord, {
-            [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
-            [this, action, generation, mouseHandoff, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
-                TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
-                const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-                const bool taskViewChord = action == Action::TaskView && count == 4 &&
-                    !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
-                if (taskViewChord && !statusBarTaskViewTransition_.Begin(before, systemTaskbarTaskViewActive_))
-                    return 0u;
-                if (taskViewChord && mouseHandoff) mouseHandoff->Begin(statusBarTaskViewTransition_.Remaining(before));
-                const UINT sent = SendInput(count, input, size);
-                if (taskViewChord && sent == 0) statusBarTaskViewTransition_.Reset();
-                if (taskViewChord && sent == 0 && mouseHandoff) mouseHandoff->Cancel();
-                const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before;
-                TraceStatusBarShellActivation(action, generation, L"send-input", started,
-                    sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);
-                return sent;
-            },
-            [this, current, foreground, action](auto token) {
-                return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground &&
-                    (action != Action::TaskView || statusBarTaskViewTransition_.CanBegin(
-                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_));
-            },
-            [this, lifetime, generation, action, hold, mouseHandoff](auto token, snowdesktop::StatusBarShortcutResult result) {
-                if (mouseHandoff) mouseHandoff->ReleaseIfUnused();
-                const wchar_t* outcome = result == snowdesktop::StatusBarShortcutResult::Sent ? L"sent" :
-                    result == snowdesktop::StatusBarShortcutResult::Cancelled ? L"canceled" :
-                    result == snowdesktop::StatusBarShortcutResult::TimedOut ? L"timed-out" : L"failed";
-                hold->shortcutFinished = true;
-                TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, outcome);
+        using Relay = snowdesktop::StatusBarShellShortcutRelay;
+        struct ShortcutRequest
+        {
+            std::shared_ptr<Relay> relay;
+            double taskViewSendDeadline = 0;
+            bool taskViewStarted = false;
+        };
+        const auto request = std::make_shared<ShortcutRequest>();
+        const double preparationDeadline = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 5000;
+        // The relay owns a separate foreground/focus window. Calling SendInput
+        // on a worker while the desktop proxy kept focus would not isolate the
+        // input destination. Shell still chooses where its own surface opens.
+        statusBarActivationToken_ = uiAnimationScheduler_.ScheduleInterval(16,
+            [this, lifetime, current, foreground, action, generation, chord, hold,
+                mouseHandoff, request, preparationDeadline](auto token) {
                 const auto state = lifetime.lock();
-                if (!state || *state != generation) return;
-                if (token != statusBarActivationToken_) return;
-                statusBarActivationToken_ = 0;
-                statusBarActivationMonitor_ = nullptr;
-                if (result == snowdesktop::StatusBarShortcutResult::Failed || result == snowdesktop::StatusBarShortcutResult::TimedOut)
+                if (!state) return;
+                if (*state != generation || token != statusBarActivationToken_)
                 {
-                    WriteDiagnosticLogEntry(result == snowdesktop::StatusBarShortcutResult::Failed ?
-                        L"StatusBar system shortcut input failed" : L"StatusBar system shortcut modifier release timed out");
-                    MessageBeep(MB_ICONWARNING);
+                    if (request->relay) request->relay->Cancel();
+                    uiAnimationScheduler_.Cancel(token);
+                    return;
                 }
-            }});
-        if (!statusBarActivationToken_ && mouseHandoff) mouseHandoff->Cancel();
+                const auto finish = [&](Relay::Result result) {
+                    const UINT accepted = request->relay ? request->relay->AcceptedCount() : 0;
+                    // Pending cancellation can race a committed SendInput.
+                    // Only a terminal result with no accepted input permits
+                    // removing Task View's independent transition protection.
+                    if (request->taskViewStarted && accepted == 0)
+                    {
+                        statusBarTaskViewTransition_.Reset();
+                        if (mouseHandoff) mouseHandoff->Cancel();
+                    }
+                    if (mouseHandoff) mouseHandoff->ReleaseIfUnused();
+                    hold->shortcutFinished = true;
+                    const wchar_t* outcome = result == Relay::Result::Sent ? L"input-accepted" :
+                        result == Relay::Result::Cancelled ? L"canceled" :
+                        result == Relay::Result::TimedOut ? L"timed-out" : L"failed";
+                    TraceStatusBarShellActivation(action, generation, L"finished",
+                        hold->shortcutStartedMilliseconds, outcome, 0, chord.alt ? 6u : 4u, accepted);
+                    uiAnimationScheduler_.Cancel(token);
+                    if (*state != generation || token != statusBarActivationToken_) return;
+                    statusBarActivationToken_ = 0;
+                    statusBarActivationMonitor_ = nullptr;
+                    if (result == Relay::Result::Failed || result == Relay::Result::TimedOut)
+                    {
+                        WriteDiagnosticLogEntry(result == Relay::Result::Failed ?
+                            L"StatusBar system shortcut relay failed" : L"StatusBar system shortcut input release timed out");
+                        MessageBeep(MB_ICONWARNING);
+                    }
+                };
+                const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (request->relay)
+                {
+                    const auto result = request->relay->Poll();
+                    if (result != Relay::Result::Pending) { finish(result); return; }
+                    if (!current() || (request->taskViewStarted && now >= request->taskViewSendDeadline))
+                        request->relay->Cancel();
+                    // No join or synchronous worker request on the UI thread.
+                    // Cancellation before injection publishes a terminal result;
+                    // a committed injection retains its own handoff lifetime.
+                    return;
+                }
+                if (!current() || GetForegroundWindow() != foreground ||
+                    (action == Action::TaskView &&
+                        !statusBarTaskViewTransition_.CanBegin(now, systemTaskbarTaskViewActive_)))
+                { finish(Relay::Result::Cancelled); return; }
+                if (now >= preparationDeadline) { finish(Relay::Result::TimedOut); return; }
+                // Every system chord changes the foreground queue. Finish the
+                // physical click before handing it to the temporary window.
+                for (const int key : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+                    VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, static_cast<int>(chord.key)})
+                    if (GetAsyncKeyState(key) & 0x8000) return;
+                if (action == Action::TaskView)
+                {
+                    if (!statusBarTaskViewTransition_.Begin(now, systemTaskbarTaskViewActive_))
+                    { finish(Relay::Result::Cancelled); return; }
+                    request->taskViewStarted = true;
+                    const double remaining = statusBarTaskViewTransition_.Remaining(now);
+                    request->taskViewSendDeadline = now + remaining;
+                    mouseHandoff->Begin(remaining);
+                }
+                Relay::Api api;
+                // This callback runs only on the relay thread and retains no
+                // DesktopApp, HWND owner, scheduler or Task View guard object.
+                api.send = [action, generation, hostUiThread = GetCurrentThreadId(),
+                    started = hold->shortcutStartedMilliseconds,
+                    sendDeadline = request->taskViewSendDeadline](UINT count, INPUT* input, int size) {
+                    TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
+                    const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                    const bool initialChord = count && !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
+                    if (initialChord && sendDeadline > 0 && before >= sendDeadline)
+                    {
+                        TraceStatusBarShellActivation(action, generation, L"send-input", started,
+                            L"handoff-expired", 0, count, 0, hostUiThread);
+                        return 0u;
+                    }
+                    const UINT accepted = SendInput(count, input, size);
+                    TraceStatusBarShellActivation(action, generation, L"send-input", started,
+                        accepted == count ? L"accepted" : L"incomplete",
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before, count, accepted,
+                        hostUiThread);
+                    return accepted;
+                };
+                request->relay = Relay::Start(foreground, chord, std::move(api));
+                if (!request->relay) { finish(Relay::Result::Failed); return; }
+                TraceStatusBarShellActivation(action, generation, L"relay-start",
+                    hold->shortcutStartedMilliseconds);
+            });
+        if (!statusBarActivationToken_)
+        {
+            if (mouseHandoff) mouseHandoff->Cancel();
+            hold->shortcutFinished = true;
+            statusBarActivationMonitor_ = nullptr;
+            TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
+                L"scheduler-unavailable");
+            WriteDiagnosticLogEntry(L"StatusBar system shortcut relay scheduler unavailable", DiagnosticLogLevel::Error);
+            MessageBeep(MB_ICONWARNING);
+        }
     }
     else if (action == Action::SystemMenu)
     {

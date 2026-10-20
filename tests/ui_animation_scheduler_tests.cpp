@@ -5,6 +5,7 @@
 #include "layout/popup_animation_rules.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "system/status_bar/status_bar_task_view_input.h"
+#include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/status_bar/status_bar_activation.h"
 #include "system/status_bar/status_bar_input_method.h"
 #include "system/panel/system_panel_transition.h"
@@ -13,6 +14,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace
@@ -647,6 +649,199 @@ void TestTaskViewInputMonitorLifetime()
     Check(UnregisterClassW(kTaskViewHookFixtureClass, windowClass.hInstance) != FALSE, "fixture unregisters after hook shutdown");
 }
 
+struct ShellShortcutRelayFixture
+{
+    std::atomic<HWND> foreground{reinterpret_cast<HWND>(1)};
+    std::atomic<bool> allowActivation{true}, allowFocus{true}, holdAfterActivation{false};
+    std::atomic<int> held{0};
+    std::atomic<unsigned> activations{0}, keyChecks{0}, sendCalls{0};
+    std::atomic<DWORD> sendThread{0};
+    std::atomic<ULONGLONG> now{0};
+    UINT firstAccepted = (std::numeric_limits<UINT>::max)();
+    // Written only by the worker; inspected after Running()==false publishes
+    // completion. No test invokes real foreground activation or SendInput.
+    std::vector<std::vector<INPUT>> inputs;
+};
+
+snowdesktop::StatusBarShellShortcutRelay::Api MakeShellShortcutRelayApi(
+    const std::shared_ptr<ShellShortcutRelayFixture>& fixture)
+{
+    snowdesktop::StatusBarShellShortcutRelay::Api api;
+    api.foreground = [fixture] { return fixture->foreground.load(); };
+    api.activate = [fixture](HWND window) {
+        ++fixture->activations;
+        if (!fixture->allowActivation.load()) return false;
+        fixture->foreground.store(window);
+        if (fixture->holdAfterActivation.load()) fixture->held.store(VK_CONTROL);
+        return true;
+    };
+    api.focused = [fixture](HWND window, DWORD) {
+        return fixture->allowFocus.load() && fixture->foreground.load() == window;
+    };
+    api.keyDown = [fixture](int key) { ++fixture->keyChecks; return fixture->held.load() == key; };
+    api.send = [fixture](UINT count, INPUT* inputs, int size) {
+        Check(size == sizeof(INPUT), "relay uses the native INPUT ABI");
+        fixture->sendThread.store(GetCurrentThreadId());
+        fixture->inputs.emplace_back(inputs, inputs + count);
+        return ++fixture->sendCalls == 1 &&
+            fixture->firstAccepted != (std::numeric_limits<UINT>::max)() ? fixture->firstAccepted : count;
+    };
+    api.nowMilliseconds = [fixture] { return fixture->now.load(); };
+    return api;
+}
+
+void TestStatusBarShellShortcutRelay()
+{
+    using Relay = snowdesktop::StatusBarShellShortcutRelay;
+    using Result = Relay::Result;
+    using snowdesktop::StatusBarShellChord;
+    const HWND initial = reinterpret_cast<HWND>(1);
+    const StatusBarShellChord taskView{VK_TAB, false, true};
+    const auto waitForExit = [](const auto& relay) {
+        Check(PumpMessagesUntil([&] { return !relay->Running(); }),
+            "relay worker exits without a UI-thread join");
+    };
+
+    for (const StatusBarShellChord chord : {
+        taskView, StatusBarShellChord{'N'}, StatusBarShellChord{'A'},
+        StatusBarShellChord{'D', false, true}, StatusBarShellChord{'D', true}})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, chord, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "isolated relay accepts each supported Shell chord");
+        const HWND window = relay->Window();
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        Check(window && process == GetCurrentProcessId() && thread != GetCurrentThreadId() &&
+            thread == relay->ThreadId() && thread == fixture->sendThread.load(),
+            "actual relay HWND and injection boundary run on a separate GUI thread");
+        Check(!GetParent(window) && !GetWindow(window, GW_OWNER) &&
+            !(GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD),
+            "relay window has no desktop parent, owner, or child style");
+        Check(!Relay::Start(initial, chord, MakeShellShortcutRelayApi(fixture)),
+            "accepted input keeps the global in-flight slot until its queue retires");
+        relay->Cancel();
+        Check(relay->Running() && IsWindow(window) && relay->Poll() == Result::Sent,
+            "cancellation after acceptance cannot destroy the foreground input queue");
+        fixture->foreground.store(initial); // Model Shell taking foreground.
+        waitForExit(relay);
+        Check(!IsWindow(window) && fixture->activations.load() == 1 && fixture->sendCalls.load() == 1,
+            "foreground handoff retires the window without focus or chord retries");
+        const auto& input = fixture->inputs.front();
+        const unsigned presses = chord.alt ? 3u : 2u;
+        Check(input.size() == presses * 2 && relay->AcceptedCount() == input.size() &&
+            input[0].ki.wVk == VK_LWIN && input[presses - 1].ki.wVk == chord.key &&
+            (!chord.alt || input[1].ki.wVk == VK_MENU),
+            "relay preserves Windows, optional Alt, and destination-key order");
+        for (unsigned i = 0; i < presses; ++i)
+            Check(input[i].type == INPUT_KEYBOARD && !(input[i].ki.dwFlags & KEYEVENTF_KEYUP) &&
+                input[input.size() - 1 - i].ki.wVk == input[i].ki.wVk &&
+                input[input.size() - 1 - i].ki.dwFlags == (input[i].ki.dwFlags | KEYEVENTF_KEYUP),
+                "relay pairs each synthetic press with its reverse-order release");
+    }
+
+    for (bool refuseActivation : {true, false})
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->allowActivation.store(!refuseActivation);
+        fixture->allowFocus.store(refuseActivation);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay != nullptr, "foreground refusal fixture starts asynchronously");
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Failed && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 1,
+            "either foreground or focus refusal prevents injection without a fallback");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->held.store(VK_LBUTTON);
+        auto relay = Relay::Start(initial, {'N'}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "physical pointer hold is observed on the worker");
+        relay->Cancel();
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Cancelled && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 0,
+            "even a notification chord waits for pointer release and can cancel without activation");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->holdAfterActivation.store(true);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->held.load() == VK_CONTROL; }),
+            "modifier can become held during foreground activation");
+        Check(relay->Poll() == Result::Pending && fixture->sendCalls.load() == 0,
+            "relay resamples modifiers after activation instead of sending a stale chord");
+        fixture->foreground.store(reinterpret_cast<HWND>(2));
+        fixture->held.store(0);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Cancelled && fixture->sendCalls.load() == 0 &&
+            fixture->activations.load() == 1,
+            "external foreground change cancels the waiting request without reclaiming focus");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->held.store(VK_SHIFT);
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return fixture->keyChecks.load() > 0; }),
+            "held-modifier timeout fixture reaches the physical-state check");
+        fixture->now.store(6000);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::TimedOut && fixture->sendCalls.load() == 0,
+            "preparation has a finite deadline without releasing the user's modifier");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        fixture->firstAccepted = 2; // Win and Alt accepted, D never pressed.
+        auto relay = Relay::Start(initial, {'D', true}, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Failed; }),
+            "partial input acceptance is reported as failure");
+        Check(relay->Running(), "partial acceptance also retains the input queue during handoff");
+        fixture->foreground.store(initial);
+        waitForExit(relay);
+        Check(fixture->sendCalls.load() == 2 && fixture->inputs[1].size() == 2 &&
+            fixture->inputs[1][0].ki.wVk == VK_MENU && fixture->inputs[1][1].ki.wVk == VK_LWIN &&
+            (fixture->inputs[1][0].ki.dwFlags & KEYEVENTF_KEYUP) &&
+            (fixture->inputs[1][1].ki.dwFlags & KEYEVENTF_KEYUP),
+            "partial acceptance releases only unmatched synthetic presses and never retries the chord");
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "request-release fixture reaches accepted input");
+        const HWND window = relay->Window();
+        const HANDLE worker = OpenThread(SYNCHRONIZE, FALSE, relay->ThreadId());
+        Check(worker != nullptr, "fixture observes only its own worker thread lifetime");
+        relay.reset();
+        const ULONGLONG until = GetTickCount64() + 40;
+        PumpMessagesUntil([&] { return GetTickCount64() >= until; });
+        Check(IsWindow(window) && WaitForSingleObject(worker, 0) == WAIT_TIMEOUT,
+            "releasing the final UI request preserves the worker's foreground queue");
+        fixture->foreground.store(initial);
+        Check(PumpMessagesUntil([&] { return WaitForSingleObject(worker, 0) == WAIT_OBJECT_0; }) &&
+            !IsWindow(window), "worker retains its own state and retires after Shell takes over");
+        CloseHandle(worker);
+    }
+
+    {
+        auto fixture = std::make_shared<ShellShortcutRelayFixture>();
+        auto relay = Relay::Start(initial, taskView, MakeShellShortcutRelayApi(fixture));
+        Check(relay && PumpMessagesUntil([&] { return relay->Poll() == Result::Sent; }),
+            "handoff deadline fixture sends once");
+        fixture->now.store(1600);
+        waitForExit(relay);
+        Check(relay->Poll() == Result::Sent && fixture->sendCalls.load() == 1,
+            "missing Shell handoff expires only the temporary queue and never replays the chord");
+    }
+}
+
 void TestStatusBarShellShortcuts()
 {
     using namespace snowdesktop;
@@ -829,6 +1024,7 @@ int main()
     TestTaskViewMouseHandoff();
     TestTaskViewPointerGuard();
     TestTaskViewInputMonitorLifetime();
+    TestStatusBarShellShortcutRelay();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
