@@ -129,6 +129,15 @@
         app.popupAnchoredToDock_ = true; app.popupWidgetIndex_ = static_cast<size_t>(-1);
         app.dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&app.dockFolderPopupWidget_, &app);
         app.desktopItemsReady_ = true;
+        // An actual opened popup has already classified its Dock source.
+        // Keep the real asynchronous provider and delivery in this fixture.
+        const auto deadline = GetTickCount64() + 10000;
+        while (!app.IsFolderDockEntry(app.dockEntries_.front()))
+        {
+            if (GetTickCount64() >= deadline) throw std::runtime_error("classify the real isolated Dock folder before menu commands");
+            app.shellVisualWork_.Drain();
+            Sleep(1);
+        }
     }
     static void AppendPopupDisplayMenu(DesktopApp& app, HMENU menu) { app.AppendDockFolderPopupDisplayMenu(menu); }
     static bool PopupDisplayCommand(DesktopApp& app, UINT command) { return app.ExecuteDockFolderPopupDisplayCommand(command); }
