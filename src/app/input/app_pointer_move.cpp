@@ -273,6 +273,7 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdateListTitleHover();
     UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
         PresentPassiveHoverVisualChange();

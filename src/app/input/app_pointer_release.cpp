@@ -129,6 +129,7 @@ void DesktopApp::OnMouseLeave()
             cursorValid ? 1 : 0);
         snowdesktop::dock_taskbar_diagnostics::Record(phase);
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
+        ClearListTitleHover();
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
         // The title is part of the floating HWND region. Shrink that input
@@ -270,6 +271,7 @@ void DesktopApp::ReconcileDesktopHoverState(
         {
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
+            UpdateListTitleHover();
             // A stale floating-Dock leave may have consumed tracking before
             // the cursor reached its final desktop or Dock point. Keep the title
             // HRGN synchronized with the repaired point before presenting so

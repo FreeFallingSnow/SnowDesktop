@@ -265,6 +265,9 @@ public:
         savedGridSpan_ = sourceData_->gridSpan;
         savedGridCell_ = sourceData_->gridCell;
         savedBounds_ = sourceData_->bounds;
+        savedHosted_ = source_->IsHosted();
+        savedPopupHosted_ = source_->IsPopupHosted();
+        savedFrame_ = source_->GetLayoutFrameRect();
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
         savedListColumns_ = sourceData_->listColumns;
@@ -380,6 +383,10 @@ public:
             savedSearchSelectionAnchor_,
             savedSearchComposition_,
             savedSearchCompositionCursor_);
+        // Geometry queries can nest while the same source is being painted.
+        // Restore the outer projection, including its popup font scale.
+        if (savedPopupHosted_) source_->SetPopupFrame(&savedFrame_);
+        else if (savedHosted_) source_->SetHostedFrame(&savedFrame_);
     }
 
     explicit operator bool() const { return active_; }
@@ -392,6 +399,9 @@ private:
     GridSpan savedGridSpan_{};
     GridCell savedGridCell_{};
     RECT savedBounds_{};
+    RECT savedFrame_{};
+    bool savedHosted_ = false;
+    bool savedPopupHosted_ = false;
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
     int savedListColumns_ = 1;

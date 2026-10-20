@@ -522,56 +522,74 @@ void DesktopApp::RequestDesktopDockAnimationPresentation(const RECT& dirty)
     });
 }
 
-std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner,
-    const std::wstring& key, RECT viewport, bool popup, float overflow, float scale)
+void DesktopApp::ClearListTitleHover()
 {
-    if (owner.empty() || overflow <= 0.5f || !PtInRect(&viewport, lastMousePoint_) ||
-        mouseDown_ || dragSession_.IsActive() || HasActiveContextMenuSession() ||
+    if (listTitleHoverFrameToken_) uiAnimationScheduler_.Cancel(listTitleHoverFrameToken_);
+    listTitleHoverFrameToken_ = 0;
+    listTitleHoverOwner_.clear();
+    listTitleHoverKey_.clear();
+    listTitleHoverRect_ = {};
+    listTitleHoverPopup_ = false;
+    listTitleHoverStarted_ = 0;
+}
+
+void DesktopApp::UpdateListTitleHover()
+{
+    if (listTitleHoverOwner_.empty()) return;
+    const auto* open = GetOpenPopupWidget();
+    if (!PtInRect(&listTitleHoverRect_, lastMousePoint_) || dragSession_.IsActive() ||
+        HasActiveContextMenuSession() || renameController_.IsActive() ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled() ||
+        (listTitleHoverPopup_ ? (!IsCollectionPopupInteractive() || !open || open->id != listTitleHoverOwner_) :
+            (FindWidgetIndexById(listTitleHoverOwner_) >= widgets_.size() ||
+                IsPointOccludedByOpenPopup(lastMousePoint_))))
+        ClearListTitleHover();
+}
+
+std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner,
+    const std::wstring& key, RECT viewport, bool popup, float textWidth, float width, float scale)
+{
+    UpdateListTitleHover();
+    if (owner.empty() || !PtInRect(&viewport, lastMousePoint_)) return std::nullopt;
+    if (textWidth <= width + 0.5f || dragSession_.IsActive() || HasActiveContextMenuSession() ||
         renameController_.IsActive() || !snowdesktop::animation::RuntimeAnimationsEnabled() ||
         (popup ? !IsCollectionPopupInteractive() : IsPointOccludedByOpenPopup(lastMousePoint_)))
-        return std::nullopt;
-    const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    if (listTitleHoverOwner_ != owner || listTitleHoverKey_ != key ||
-        listTitleHoverPopup_ != popup || !EqualRect(&listTitleHoverRect_, &viewport))
     {
+        if (listTitleHoverOwner_ == owner && listTitleHoverPopup_ == popup) ClearListTitleHover();
+        return std::nullopt;
+    }
+    const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    if (listTitleHoverOwner_ != owner || listTitleHoverKey_ != key || listTitleHoverPopup_ != popup)
+    {
+        ClearListTitleHover();
         listTitleHoverOwner_ = owner;
         listTitleHoverKey_ = key;
-        listTitleHoverRect_ = viewport;
         listTitleHoverPopup_ = popup;
         listTitleHoverStarted_ = now;
     }
-    listTitleHoverLastDraw_ = now;
+    // Selection and harmless geometry changes must not replay the title.
+    listTitleHoverRect_ = viewport;
     if (!listTitleHoverFrameToken_)
     {
         listTitleHoverFrameToken_ = uiAnimationScheduler_.StartAnimation(
             popup ? snowdesktop::UiAnimationSurface::Popup : snowdesktop::UiAnimationSurface::Desktop,
-            [this](double frameTime) {
-                const bool keep = PtInRect(&listTitleHoverRect_, lastMousePoint_) &&
-                    !mouseDown_ && !dragSession_.IsActive() && !HasActiveContextMenuSession() &&
-                    !renameController_.IsActive() && snowdesktop::animation::RuntimeAnimationsEnabled() &&
-                    frameTime - listTitleHoverLastDraw_ < 250.0 &&
-                    (listTitleHoverPopup_ ? IsCollectionPopupInteractive() :
-                        !IsPointOccludedByOpenPopup(lastMousePoint_));
+            [this](double) {
                 const auto ownerId = listTitleHoverOwner_;
                 const bool isPopup = listTitleHoverPopup_;
-                if (!keep)
-                {
-                    listTitleHoverFrameToken_ = 0;
-                    listTitleHoverOwner_.clear();
-                    listTitleHoverKey_.clear();
-                }
+                UpdateListTitleHover();
                 if (isPopup)
                     InvalidateCollectionPopupAnimation(true);
                 else if (QueueDesktopWidgetComposition(ownerId))
                     (void)PresentQueuedDesktopWidgetComposition();
-                return keep;
+                return listTitleHoverFrameToken_ != 0;
             });
     }
-    return snowdesktop::list_detail_rules::HoverTitleOffset(now - listTitleHoverStarted_, overflow, scale);
+    return snowdesktop::list_detail_rules::HoverTitleOffset(now - listTitleHoverStarted_, textWidth, width, scale);
 }
 
 void DesktopApp::CancelUiAnimationFrame()
 {
+    ClearListTitleHover();
     snowdesktop::UiScheduleToken* const tracks[] = {
         &popupAnimationFrameToken_,
         &popupFanScrollFrameToken_,

@@ -2447,128 +2447,94 @@ RECT ScrollingItemWidget::GetListItemTextRect(RECT cell) const
 
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     RECT cell, RECT iconRect, const std::wstring& title,
-    bool lightTheme) const
+    bool lightTheme, RECT hoverRect, std::wstring_view identity) const
 {
-    if (!app_ || !context || title.empty()) return;
-    RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
+    if (!app_ || !context || !app_->dwriteFactory_ || !app_->componentListTextFormat_ || title.empty()) return;
+    const RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
         cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
     if (textRect.right <= textRect.left) return;
-
-    const float width = static_cast<float>(
-        std::max<LONG>(1, textRect.right - textRect.left));
-    const float height = static_cast<float>(
-        std::max<LONG>(1, textRect.bottom - textRect.top));
+    const float width = static_cast<float>(textRect.right - textRect.left);
+    const float height = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
     const float layoutScale = GetCellScale();
     const float fontSize = FontCu(app_->listItemFontSizeCu_);
     const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
-        snowdesktop::font_weight_rules::RenderedWeight(
-            app_->itemFontWeight_, lightTheme));
-    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
-    std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
-        std::to_wstring(textRect.right - textRect.left) + L"x" +
-        std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(scaleKey) + L"@" + std::to_wstring(fontWeight);
-    auto layoutIt = app_->componentListTextLayoutCache_.find(layoutKey);
-    if (layoutIt == app_->componentListTextLayoutCache_.end())
-    {
+        snowdesktop::font_weight_rules::RenderedWeight(app_->itemFontWeight_, lightTheme));
+    const std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
+        std::to_wstring(width) + L"x" + std::to_wstring(height) + L"@" +
+        std::to_wstring(layoutScale) + L"@" + std::to_wstring(fontSize) + L"@" + std::to_wstring(fontWeight);
+    // Both presentations use immutable layouts with the same explicit font.
+    const auto getLayout = [&](bool scrolling) -> ComPtr<IDWriteTextLayout> {
+        const std::wstring key = scrolling ? layoutKey + L"\x1fscroll" : layoutKey;
+        auto& cache = app_->componentListTextLayoutCache_;
+        if (const auto found = cache.find(key); found != cache.end()) return found->second;
         ComPtr<IDWriteTextLayout> layout;
-        if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
-            title.c_str(), static_cast<UINT32>(title.size()),
-            app_->componentListTextFormat_.Get(),
-            width, height, &layout)) && layout)
+        if (FAILED(app_->dwriteFactory_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
+                app_->componentListTextFormat_.Get(), width, height, &layout)) || !layout) return {};
+        const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(title.size())};
+        layout->SetFontSize(fontSize, range);
+        snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, range);
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+        DWRITE_TRIMMING trimming{};
+        if (scrolling)
         {
-            const DWRITE_TEXT_RANGE fullRange{
-                0, static_cast<UINT32>(title.size())
-            };
-            layout->SetFontSize(fontSize, fullRange);
-            snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, fullRange);
-            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-            layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                fontSize * 7.0f / 6.0f,
-                fontSize * 5.0f / 6.0f);
-            DWRITE_TRIMMING trimming{};
+            layout->SetTrimming(&trimming, nullptr);
+            DWRITE_TEXT_METRICS metrics{};
+            if (FAILED(layout->GetMetrics(&metrics))) return {};
+            layout->SetMaxWidth(std::max(width, std::ceil(metrics.widthIncludingTrailingWhitespace)));
+        }
+        else
+        {
             trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
             ComPtr<IDWriteInlineObject> ellipsis;
-            ComPtr<IDWriteTextFormat> ellipsisFormat;
+            ComPtr<IDWriteTextFormat> format;
             snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI", fontWeight,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
-            if (SUCCEEDED(app_->dwriteFactory_->
-                    CreateEllipsisTrimmingSign(
-                        ellipsisFormat ? ellipsisFormat.Get() : app_->componentListTextFormat_.Get(),
-                        &ellipsis)) && ellipsis)
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format);
+            if (SUCCEEDED(app_->dwriteFactory_->CreateEllipsisTrimmingSign(
+                    format ? format.Get() : app_->componentListTextFormat_.Get(), &ellipsis)) && ellipsis)
                 layout->SetTrimming(&trimming, ellipsis.Get());
-            layoutIt = app_->componentListTextLayoutCache_.emplace(
-                layoutKey, std::move(layout)).first;
         }
-    }
-    if (!IsPreviewRendering() && data_ && PtInRect(&textRect, app_->lastMousePoint_))
+        cache.emplace(key, layout);
+        return layout;
+    };
+    if (!IsPreviewRendering() && data_ && PtInRect(&hoverRect, app_->lastMousePoint_))
     {
-        const std::wstring scrollKey = layoutKey + L"\x1fscroll";
-        auto scrollIt = app_->componentListTextLayoutCache_.find(scrollKey);
-        if (scrollIt == app_->componentListTextLayoutCache_.end())
-        {
-            ComPtr<IDWriteTextLayout> layout;
-            if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
-                    title.c_str(), static_cast<UINT32>(title.size()),
-                    app_->componentListTextFormat_.Get(), width, height, &layout)) && layout)
-            {
-                const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(title.size())};
-                layout->SetFontSize(fontSize, range);
-                snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, range);
-                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-                layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                    fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
-                DWRITE_TRIMMING noTrim{};
-                layout->SetTrimming(&noTrim, nullptr);
-                DWRITE_TEXT_METRICS metrics{};
-                if (SUCCEEDED(layout->GetMetrics(&metrics)))
-                {
-                    layout->SetMaxWidth(std::max(width, std::ceil(metrics.widthIncludingTrailingWhitespace)));
-                    scrollIt = app_->componentListTextLayoutCache_.emplace(scrollKey, std::move(layout)).first;
-                }
-            }
-        }
-        if (scrollIt != app_->componentListTextLayoutCache_.end())
+        if (const auto layout = getLayout(true))
         {
             DWRITE_TEXT_METRICS metrics{};
-            if (SUCCEEDED(scrollIt->second->GetMetrics(&metrics)))
+            if (SUCCEEDED(layout->GetMetrics(&metrics)))
             {
                 std::wstring owner = data_->id;
                 const size_t groupIndex = app_->FindFileGroupIndexForChild(owner);
                 if (groupIndex < app_->widgets_.size()) owner = app_->widgets_[groupIndex].id;
-                const auto* open = app_->GetOpenPopupWidget();
-                const bool popup = IsPopupHosted() || (open && open->id == owner &&
-                    PtInRect(&app_->popupRect_, app_->lastMousePoint_));
-                RECT visible{};
-                const RECT viewport = popup ? app_->GetCollectionPopupContentRect(app_->popupRect_) : GetContentViewportRect();
-                IntersectRect(&visible, &textRect, &viewport);
-                if (const auto offset = app_->ResolveListTitleHover(owner, scrollKey, visible,
-                        popup, metrics.widthIncludingTrailingWhitespace - width, layoutScale))
+                const std::wstring key = (identity.empty()
+                    ? std::to_wstring(hoverRect.left) + L"," + std::to_wstring(hoverRect.top)
+                    : std::wstring(identity)) + L"\x1f" + title;
+                if (const auto offset = app_->ResolveListTitleHover(owner, key, hoverRect,
+                        IsPopupHosted(), metrics.widthIncludingTrailingWhitespace, width, layoutScale))
                 {
+                    // Keep the caller's viewport clip; only this title moves.
                     context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(textRect.left), static_cast<float>(textRect.top),
                         static_cast<float>(textRect.right), static_cast<float>(textRect.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    app_->DrawStyledItemTextLayout(context, scrollIt->second.Get(), scrollKey,
-                        D2D1::Point2F(static_cast<float>(textRect.left) - *offset, static_cast<float>(textRect.top)),
-                        D2D1::SizeF(scrollIt->second->GetMaxWidth(), height), layoutScale, 1.0f,
-                        lightTheme, true);
+                    const std::wstring shadowKey = layoutKey + L"\x1fscroll";
+                    const float cycle = metrics.widthIncludingTrailingWhitespace + std::max(1.0f, 24.0f * layoutScale);
+                    for (const float shift : {0.0f, cycle})
+                        app_->DrawStyledItemTextLayout(context, layout.Get(), shadowKey,
+                            D2D1::Point2F(textRect.left - *offset + shift, static_cast<float>(textRect.top)),
+                            D2D1::SizeF(layout->GetMaxWidth(), height), layoutScale, 1.0f, lightTheme, true);
                     context->PopAxisAlignedClip();
                     return;
                 }
             }
         }
     }
-    layoutIt = app_->componentListTextLayoutCache_.find(layoutKey);
-    if (layoutIt != app_->componentListTextLayoutCache_.end())
-        app_->DrawStyledItemTextLayout(context, layoutIt->second.Get(),
-            layoutIt->first,
-            D2D1::Point2F(static_cast<float>(textRect.left),
-                static_cast<float>(textRect.top)),
-            D2D1::SizeF(width, height), layoutScale, 1.0f,
-            lightTheme, true);
+    if (const auto layout = getLayout(false))
+        app_->DrawStyledItemTextLayout(context, layout.Get(), layoutKey,
+            D2D1::Point2F(static_cast<float>(textRect.left), static_cast<float>(textRect.top)),
+            D2D1::SizeF(width, height), layoutScale, 1.0f, lightTheme, true);
 }
 
 /**
@@ -2587,7 +2553,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
     const DesktopWidget* demoCollection,
     const ListItemDetails& details,
-    std::optional<bool> lightTheme, bool drawTitle, std::wstring_view iconIdentity) const
+    std::optional<bool> lightTheme, bool drawTitle, std::wstring_view iconIdentity,
+    std::optional<RECT> hoverViewport) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -2643,7 +2610,12 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity));
     if (drawTitle)
-        DrawListItemTitle(context, nameCell, iconRect, title, light);
+    {
+        RECT hoverRect{};
+        const RECT viewport = hoverViewport ? *hoverViewport : GetContentViewportRect();
+        IntersectRect(&hoverRect, &cell, &viewport);
+        DrawListItemTitle(context, nameCell, iconRect, title, light, hoverRect, iconIdentity);
+    }
 
     if (!IsDetailsVisible() || !demoIdentity.empty()) return;
 
@@ -2735,7 +2707,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         if (showLabel)
             DrawListItemTitle(
                 context, rect, iconRect, label,
-                UsesLightContentTheme());
+                UsesLightContentTheme(), RECT{}, {});
         return;
     }
 

@@ -527,6 +527,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    if (listTitleHoverPopup_) ClearListTitleHover();
     if (auto* view = GetCategorizedPopupView())
     {
         view->EndCategoryTabDrag(false);

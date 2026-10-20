@@ -325,7 +325,8 @@ public:
         const DesktopWidget* demoCollection = nullptr,
         const ListItemDetails& details = {},
         std::optional<bool> lightTheme = std::nullopt,
-        bool drawTitle = true, std::wstring_view iconIdentity = {}) const;
+        bool drawTitle = true, std::wstring_view iconIdentity = {},
+        std::optional<RECT> hoverViewport = std::nullopt) const;
 
     int GetListRowHeight() const;
     RECT GetListItemTextRect(RECT cell) const;
@@ -486,7 +487,7 @@ private:
         size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
         RECT iconRect, const std::wstring& title,
-        bool lightTheme) const;
+        bool lightTheme, RECT hoverRect, std::wstring_view identity) const;
     snowdesktop::list_detail_rules::Columns GetDetailsColumns(
         int availableWidth) const;
     int categorizedTabRowOffset_ = 0;

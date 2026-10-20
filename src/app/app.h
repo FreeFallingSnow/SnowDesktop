@@ -927,7 +927,9 @@ private:
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
     std::optional<float> ResolveListTitleHover(const std::wstring& owner,
-        const std::wstring& key, RECT viewport, bool popup, float overflow, float scale);
+        const std::wstring& key, RECT viewport, bool popup, float textWidth, float width, float scale);
+    void UpdateListTitleHover();
+    void ClearListTitleHover();
     void RequestDockAnimationPresentation(DockContainer& dock);
     void RequestDesktopDockAnimationPresentation(const RECT& dirty);
     /** @brief 取消所有应用内 UI 动画轨道。 */
@@ -3628,7 +3630,7 @@ private:
     std::wstring listTitleHoverOwner_, listTitleHoverKey_;
     RECT listTitleHoverRect_{};
     bool listTitleHoverPopup_ = false;
-    double listTitleHoverStarted_ = 0.0, listTitleHoverLastDraw_ = 0.0;
+    double listTitleHoverStarted_ = 0.0;
     bool compositionCommitPending_ = false;
     ULONGLONG desktopInteractionTraceId_ = 0;
     ULONGLONG desktopInteractionTraceUntil_ = 0;

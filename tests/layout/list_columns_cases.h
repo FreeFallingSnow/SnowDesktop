@@ -65,14 +65,12 @@ void Run(Check check)
     detail::SetListColumns(dock, 99);
     check(view.listColumns == 1 && dock.listColumns == 4,
         "invalid stored or requested list column counts are bounded");
-    check(detail::HoverTitleOffset(2000, 0, 1) == 0 &&
-            detail::HoverTitleOffset(799, 64, 1) == 0 &&
-            std::abs(detail::HoverTitleOffset(1800, 64, 1) - 32) < .01f &&
-            detail::HoverTitleOffset(3000, 64, 1) == 64 &&
-            std::abs(detail::HoverTitleOffset(4600, 64, 1) - 32) < .01f &&
-            detail::HoverTitleOffset(5600, 64, 1) == 0,
-        "overflow titles pause at both ends, reveal the suffix and return without jumping");
-    check(std::abs(detail::HoverTitleOffset(1800, 128, 2) - 64) < .01f,
+    check(detail::HoverTitleOffset(2000, 64, 64, 1) == 0 &&
+            std::abs(detail::HoverTitleOffset(100, 128, 64, 1) - 2.4f) < .01f &&
+            std::abs(detail::HoverTitleOffset(1000, 128, 64, 1) - 24) < .01f &&
+            std::abs(detail::HoverTitleOffset(6500, 128, 64, 1) - 4) < .01f,
+        "overflow titles move immediately at 24 CU/second and wrap after the text and gap");
+    check(std::abs(detail::HoverTitleOffset(1000, 256, 128, 2) - 48) < .01f,
         "hover filename scrolling scales with the owning page");
 }
 }

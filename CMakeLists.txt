@@ -2872,6 +2872,14 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;icon;data;rendering")
 
+    add_test(NAME native_list_title_hover
+        COMMAND SnowDesktopNativeDragIntegrationTests --list-title-hover)
+    add_test(NAME native_list_title_font_isolation
+        COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
+    set_tests_properties(native_list_title_hover native_list_title_font_isolation PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;widget;rendering")
+
     # Every mode in this fixture uses its own process, GUID storage/profile and
     # message-only HWND. It never starts the desktop host, clipboard service or
     # persistent Dock windows. Shell file operations touch only owned paths.

@@ -281,7 +281,7 @@ void DesktopApp::DrawCollectionPopup(
         widget.contentSortAscending;
     Collection popupListRenderer(
         &popupListStyle, this);
-    popupListRenderer.SetHostedFrame(&popupRect_);
+    popupListRenderer.SetPopupFrame(&popupRect_);
     if (UsesCollectionPopupList(widget) && !fan)
     {
         popupListRenderer.DrawDetailsHeader(
@@ -444,7 +444,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&entry), entry.fullPath);
+                    collectionPopupLightTheme_, !IsRenamingItem(&entry), entry.fullPath, content);
                 continue;
             }
             const bool hovered =
@@ -515,7 +515,7 @@ void DesktopApp::DrawCollectionPopup(
                         item.fileSize,
                         false,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&item), item.layoutKey);
+                    collectionPopupLightTheme_, !IsRenamingItem(&item), item.layoutKey, content);
                 continue;
             }
             bool hovered =

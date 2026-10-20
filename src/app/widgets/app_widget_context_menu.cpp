@@ -428,7 +428,6 @@ void DesktopApp::ShowWidgetContextMenu(
                 const UINT id = kContextWidgetListColumnsFirst + columns - 1;
                 AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
                     id, std::to_wstring(columns).c_str());
-                setFluentIcon(columnsMenu, id, snowdesktop::menu_fluent_glyphs::kContentLayout);
             }
             AppendMenuW(menu, MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
                 reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));

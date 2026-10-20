@@ -135,17 +135,13 @@ inline void SetListColumns(View& view, int columns)
     }
 }
 
-// Pause at both ends so the beginning and extension remain readable.
-inline float HoverTitleOffset(double elapsedMs, float overflow, float scale)
+// Match RSS titles: start immediately and repeat with a gap at 24 CU/second.
+inline float HoverTitleOffset(double elapsedMs, float textWidth, float width, float scale)
 {
-    if (overflow <= 0.5f) return 0.0f;
-    const double travelMs = overflow / std::max(1.0f, 32.0f * scale) * 1000.0;
-    const double phase = std::fmod(std::max(0.0, elapsedMs), 1600.0 + travelMs * 2.0);
-    if (phase < 800.0) return 0.0f;
-    if (phase < 800.0 + travelMs)
-        return static_cast<float>((phase - 800.0) / travelMs) * overflow;
-    if (phase < 1600.0 + travelMs) return overflow;
-    return static_cast<float>(1.0 - (phase - 1600.0 - travelMs) / travelMs) * overflow;
+    if (textWidth <= width + 0.5f) return 0.0f;
+    const float gap = std::max(1.0f, 24.0f * scale);
+    return static_cast<float>(std::fmod(std::max(0.0, elapsedMs) * gap / 1000.0,
+        textWidth + gap));
 }
 
 inline Columns BuildColumns(
