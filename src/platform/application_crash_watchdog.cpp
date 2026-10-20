@@ -21,6 +21,16 @@ constexpr wchar_t kHeartbeat[] = L"SnowDesktop.Health.Heartbeat";
 constexpr wchar_t kReceived[] = L"SnowDesktop.Health.ButtonTime";
 constexpr wchar_t kEnabled[] = L"SnowDesktop.Health.Enabled";
 constexpr wchar_t kBusy[] = L"SnowDesktop.Health.Busy";
+constexpr wchar_t kDesktop[] = L"SnowDesktop.Health.Desktop";
+constexpr wchar_t kObserverTick[] = L"SnowDesktop.Health.ObserverTick";
+constexpr wchar_t kRawAvailable[] = L"SnowDesktop.Health.RawAvailable";
+constexpr wchar_t kRawButtons[] = L"SnowDesktop.Health.RawButtons";
+constexpr wchar_t kTargetClicks[] = L"SnowDesktop.Health.TargetClicks";
+constexpr wchar_t kLastRawTime[] = L"SnowDesktop.Health.LastRawTime";
+constexpr wchar_t kLastTargetTime[] = L"SnowDesktop.Health.LastTargetTime";
+constexpr wchar_t kLastRejection[] = L"SnowDesktop.Health.LastRejection";
+constexpr wchar_t kPendingClicks[] = L"SnowDesktop.Health.PendingClicks";
+constexpr wchar_t kRecoveryStage[] = L"SnowDesktop.Health.RecoveryStage";
 UiSession* currentUi = nullptr;
 HWND currentControl = nullptr;
 RecoveryStage pendingRequest = RecoveryStage::None;
@@ -52,12 +62,15 @@ bool IsButtonDown(UINT message)
     default: return false;
     }
 }
-bool IsObservedWindow(HWND window)
+bool IsObservedWindow(HWND window, HWND control)
 {
+    // Publish the actual rendering HWND. The legacy proof-window class name
+    // is different from the production desktop class and misses real clicks.
+    if (window && reinterpret_cast<HWND>(Read(control, kDesktop)) == window) return true;
     wchar_t name[96]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
     const std::wstring_view type(name);
-    return type == kWindowClassName || type == kFloatingDockWindowClassName ||
+    return type == kFloatingDockWindowClassName ||
         type == L"SnowDesktop.StatusBar";
 }
 }
@@ -89,7 +102,7 @@ UiSession::~UiSession()
     if (currentUi != this) return;
     if (hook_) UnhookWindowsHookEx(hook_);
     if (timer_) KillTimer(control_, timer_);
-    for (const auto key : {kEnabled, kBusy, kHeartbeat, kReceived})
+    for (const auto key : {kEnabled, kBusy, kHeartbeat, kReceived, kDesktop})
         RemovePropW(control_, key);
     currentUi = nullptr;
     currentControl = nullptr;
@@ -110,7 +123,7 @@ LRESULT CALLBACK UiSession::ObserveMessage(int code, WPARAM wp, LPARAM lp)
         const ULONGLONG now = GetTickCount64();
         if (now - Read(currentControl, kHeartbeat) >= 500)
             Heartbeat(currentControl, 0, 0, 0);
-        if (IsButtonDown(message.message) && IsObservedWindow(message.hwnd))
+        if (IsButtonDown(message.message) && IsObservedWindow(message.hwnd, currentControl))
             Store(currentControl, kReceived, message.time);
         if (message.hwnd == currentControl && RecoveryMessage() &&
             message.message == RecoveryMessage() &&
@@ -124,9 +137,10 @@ LRESULT CALLBACK UiSession::ObserveMessage(int code, WPARAM wp, LPARAM lp)
     return CallNextHookEx(nullptr, code, wp, lp);
 }
 
-void UiSession::Publish(bool enabled, bool busy)
+void UiSession::Publish(bool enabled, bool busy, HWND desktop)
 {
     if (!currentControl) return;
+    Store(currentControl, kDesktop, reinterpret_cast<ULONG_PTR>(desktop));
     Store(currentControl, kBusy, busy ? 1 : 0);
     Store(currentControl, kEnabled, enabled ? 1 : 0);
 }
@@ -204,6 +218,13 @@ public:
     }
     ~Observer()
     {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(control_, &pid);
+        if (pid == process_)
+            for (const auto key : {kObserverTick, kRawAvailable, kRawButtons,
+                kTargetClicks, kLastRawTime, kLastTargetTime, kLastRejection,
+                kPendingClicks, kRecoveryStage})
+                RemovePropW(control_, key);
         if (inputAvailable_)
         {
             RAWINPUTDEVICE mouse{1, 2, RIDEV_REMOVE, nullptr};
@@ -260,25 +281,54 @@ public:
         const auto stage = monitor_.Poll(sample);
         if (monitor_.TakeRecoveryConfirmation() && !lastReportPath_.empty())
         {
-            const std::string detail = "newButtonReceived=" + std::to_string(sample.receivedButtonTime) +
-                " confirmationTick=" + std::to_string(sample.now) + "\r\n";
-            HANDLE file = CreateFileW(lastReportPath_.c_str(), FILE_APPEND_DATA,
-                FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file != INVALID_HANDLE_VALUE)
-            {
-                DWORD written = 0;
-                WriteFile(file, detail.data(), static_cast<DWORD>(detail.size()), &written, nullptr);
-                CloseHandle(file);
-            }
+            AppendEvidence("newButtonReceived=" + std::to_string(sample.receivedButtonTime) +
+                " confirmationTick=" + std::to_string(sample.now) +
+                " afterRequestedStage=" + std::to_string(static_cast<unsigned>(lastRequestedStage_)) + "\r\n");
         }
         if (stage != RecoveryStage::None)
         {
             Report(process, sample, stage, gui);
-            PostRecoveryRequest(control_, stage);
+            const bool posted = PostRecoveryRequest(control_, stage);
+            lastRequestedStage_ = stage;
+            AppendEvidence("recoveryRequested=" + std::to_string(static_cast<unsigned>(stage)) +
+                " requestTick=" + std::to_string(sample.now) + " posted=" + std::to_string(posted) + "\r\n");
+            lastStatus_ = 0;
         }
+        PublishStatus(GetTickCount64());
     }
 
 private:
+    // Diagnostic codes only; no cursor positions or unrelated input contents
+    // are stored. These show which observation gate rejected the latest press.
+    enum class Rejection : ULONG_PTR
+    {
+        None, StaleInput, DisabledOrBusy, NoCursor, OtherWindow,
+        NotHostSurface, HitTest, InactiveDesktop
+    };
+    void PublishStatus(ULONGLONG now)
+    {
+        if (!control_ || (lastStatus_ && now < lastStatus_ + 1000)) return;
+        lastStatus_ = now;
+        Store(control_, kObserverTick, static_cast<ULONG_PTR>(now));
+        Store(control_, kRawAvailable, inputAvailable_ ? 1 : 0);
+        Store(control_, kRawButtons, rawButtons_);
+        Store(control_, kTargetClicks, targetClicks_);
+        Store(control_, kLastRawTime, lastRawTime_);
+        Store(control_, kLastTargetTime, lastTargetTime_);
+        Store(control_, kLastRejection, static_cast<ULONG_PTR>(lastRejection_));
+        Store(control_, kPendingClicks, monitor_.PendingClicks());
+        Store(control_, kRecoveryStage, static_cast<ULONG_PTR>(monitor_.Stage()));
+    }
+    void AppendEvidence(const std::string& detail)
+    {
+        if (lastReportPath_.empty()) return;
+        HANDLE file = CreateFileW(lastReportPath_.c_str(), FILE_APPEND_DATA,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written = 0;
+        WriteFile(file, detail.data(), static_cast<DWORD>(detail.size()), &written, nullptr);
+        CloseHandle(file);
+    }
     static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (message == WM_NCCREATE)
@@ -297,27 +347,33 @@ private:
             !(data.data.mouse.usButtonFlags & (RI_MOUSE_LEFT_BUTTON_DOWN | RI_MOUSE_RIGHT_BUTTON_DOWN)))
             return;
         const DWORD time = static_cast<DWORD>(GetMessageTime());
-        if (GetTickCount() - time > 250) return;
+        ++rawButtons_;
+        lastRawTime_ = time;
+        if (GetTickCount() - time > 250) { lastRejection_ = Rejection::StaleInput; return; }
         const auto sample = ReadSample(control_, GetTickCount64());
-        if (!sample.enabled || sample.busy) return;
+        if (!sample.enabled || sample.busy) { lastRejection_ = Rejection::DisabledOrBusy; return; }
         POINT point{};
-        if (!GetCursorPos(&point)) return;
+        if (!GetCursorPos(&point)) { lastRejection_ = Rejection::NoCursor; return; }
         const HWND hit = WindowFromPoint(point);
         DWORD pid = 0;
         const DWORD thread = GetWindowThreadProcessId(hit, &pid);
         if (pid != process_ || thread != GetWindowThreadProcessId(control_, nullptr) ||
-            !IsWindowEnabled(hit) || !IsWindowVisible(hit)) return;
+            !IsWindowEnabled(hit) || !IsWindowVisible(hit))
+        { lastRejection_ = Rejection::OtherWindow; return; }
         // Exclude transparent backdrops, Quick Navigation, editors and dialogs.
-        if (!IsObservedWindow(hit)) return;
+        if (!IsObservedWindow(hit, control_)) { lastRejection_ = Rejection::NotHostSurface; return; }
         // WindowFromPoint is only a rectangular candidate, not the actual
         // non-client hit test. Transparent bar/desktop regions are not failures.
         DWORD_PTR hitCode = HTNOWHERE;
         if (!SendMessageTimeoutW(hit, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y),
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 50, &hitCode) || hitCode != HTCLIENT)
-            return;
+        { lastRejection_ = Rejection::HitTest; return; }
         HDESK desktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
-        if (!desktop) return;
+        if (!desktop) { lastRejection_ = Rejection::InactiveDesktop; return; }
         CloseDesktop(desktop);
+        ++targetClicks_;
+        lastTargetTime_ = time;
+        lastRejection_ = Rejection::None;
         monitor_.ObserveClick(sample.now, time);
     }
     void Report(HANDLE process, const Sample& sample, RecoveryStage stage, const GUITHREADINFO& gui)
@@ -355,6 +411,10 @@ private:
             "\r\ntick=" + std::to_string(sample.now) +
             "\r\nheartbeat=" + std::to_string(sample.heartbeat) +
             "\r\nlastButton=" + std::to_string(sample.receivedButtonTime) +
+            "\r\ndesktop=" + std::to_string(Read(control_, kDesktop)) +
+            "\r\nrawButtons=" + std::to_string(rawButtons_) +
+            "\r\ntargetClicks=" + std::to_string(targetClicks_) +
+            "\r\nlastRejection=" + std::to_string(static_cast<ULONG_PTR>(lastRejection_)) +
             "\r\nstage=" + std::to_string(static_cast<unsigned>(stage)) +
             "\r\nguiFlags=" + std::to_string(gui.flags) +
             "\r\ncapture=" + std::to_string(reinterpret_cast<ULONG_PTR>(gui.hwndCapture)) +
@@ -377,6 +437,11 @@ private:
     Monitor monitor_;
     ULONGLONG lastPoll_ = 0, hardHangSince_ = 0, lastReport_ = 0;
     unsigned reports_ = 0;
+    ULONG_PTR rawButtons_ = 0, targetClicks_ = 0;
+    DWORD lastRawTime_ = 0, lastTargetTime_ = 0;
+    ULONGLONG lastStatus_ = 0;
+    Rejection lastRejection_ = Rejection::None;
+    RecoveryStage lastRequestedStage_ = RecoveryStage::None;
     std::wstring lastReportPath_;
 };
 }

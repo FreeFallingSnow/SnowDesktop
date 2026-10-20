@@ -24,7 +24,8 @@ struct Sample
 };
 
 // A responsive pump alone does not prove that its attached input queue works.
-// Require repeated fresh clicks, separated in time, before requesting repair.
+// Require repeated fresh button presses before requesting repair. Fast presses
+// matter too: the actual failure is commonly triggered by alternating buttons.
 class Monitor
 {
 public:
@@ -37,11 +38,13 @@ public:
             pending_ = true;
             firstClick_ = lastClick_ = now;
             firstMessageTime_ = messageTime;
+            lastMessageTime_ = messageTime;
             clicks_ = 1;
         }
-        else if (now >= lastClick_ + 1000)
+        else if (messageTime != lastMessageTime_)
         {
             lastClick_ = now;
+            lastMessageTime_ = messageTime;
             ++clicks_;
         }
     }
@@ -57,7 +60,7 @@ public:
             confirmed_ = true;
             stage_ = RecoveryStage::None;
             ClearPending();
-            nextObservation_ = sample.now + 60000;
+            nextObservation_ = sample.now + 2000;
         }
         if (gap || !sample.enabled || sample.busy || !sample.heartbeat ||
             sample.now < sample.heartbeat || sample.now - sample.heartbeat > 3000)
@@ -70,8 +73,8 @@ public:
         {
             ClearPending();
             stage_ = RecoveryStage::None;
-            // Acknowledgement of a late click does not justify immediate repair.
-            nextObservation_ = sample.now + 10000;
+            // Normal received input must not create a blind interval: a fast
+            // switch from working clicks to lost clicks is the real trigger.
         }
         if (pending_ && sample.now > lastClick_ + 10000) ClearPending();
         if (!pending_ || clicks_ < 2 || sample.now < firstClick_ + 5000 ||
@@ -82,7 +85,7 @@ public:
         ClearPending();
         // Each escalation requires NEW failed clicks after the previous repair.
         // Old queued clicks and an idle desktop must never cause escalation.
-        nextObservation_ = sample.now + 10000;
+        nextObservation_ = sample.now + 2000;
         return stage_;
     }
 
@@ -92,6 +95,9 @@ public:
         confirmed_ = false;
         return result;
     }
+
+    unsigned PendingClicks() const { return pending_ ? clicks_ : 0; }
+    RecoveryStage Stage() const { return stage_; }
 
     void ClearPending()
     {
@@ -103,6 +109,7 @@ private:
     bool pending_ = false;
     unsigned clicks_ = 0;
     DWORD firstMessageTime_ = 0;
+    DWORD lastMessageTime_ = 0;
     DWORD recoveryMessageTime_ = 0;
     bool confirmed_ = false;
     std::uint64_t firstClick_ = 0, lastClick_ = 0, lastPoll_ = 0;
@@ -119,7 +126,7 @@ public:
     ~UiSession();
     UiSession(const UiSession&) = delete;
     UiSession& operator=(const UiSession&) = delete;
-    static void Publish(bool enabled, bool busy);
+    static void Publish(bool enabled, bool busy, HWND desktop);
     static RecoveryStage TakeRequest();
 
 private:

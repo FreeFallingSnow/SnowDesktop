@@ -30,7 +30,7 @@ void DesktopApp::PollInputHangRecovery()
         dragDropController_.IsTransportActive() || renameController_.IsActive() ||
         luaInlineEdit_ || HasActiveContextMenuSession() || settingsWindowOpening_ ||
         statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
-    UiSession::Publish(enabled, busy);
+    UiSession::Publish(enabled, busy, hwnd_);
     const auto stage = UiSession::TakeRequest();
     if (stage == RecoveryStage::None) return;
     const bool held = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||

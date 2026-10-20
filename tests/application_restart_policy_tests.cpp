@@ -50,9 +50,8 @@ void TestInputHangDetection()
     };
     Expect(poll(100000) == RecoveryStage::None, "a healthy idle pump needs no recovery");
     monitor.ObserveClick(100100, 100100);
-    monitor.ObserveClick(100150, 100150);
     for (ULONGLONG now = 101000; now <= 106000; now += 1000)
-        Expect(poll(now) == RecoveryStage::None, "a single double-click cannot trigger repair");
+        Expect(poll(now) == RecoveryStage::None, "one unreceived press cannot trigger repair");
     monitor.ObserveClick(106100, 106100);
     Expect(poll(107000, 106100) == RecoveryStage::None, "received host input clears suspected loss");
     for (ULONGLONG now = 108000; now <= 118000; now += 1000) poll(now, 106100);
@@ -83,6 +82,44 @@ void TestInputHangDetection()
     Expect(poll(177000, 176900) == RecoveryStage::None && monitor.TakeRecoveryConfirmation(),
         "only a new received host button confirms input delivery after repair");
     Expect(!monitor.TakeRecoveryConfirmation(), "a confirmation is consumed once");
+    // A recovered desktop can fail again immediately during the next switch.
+    // The old one-minute confirmation cooldown silently lost that episode.
+    poll(178000, 176900);
+    poll(179000, 176900);
+    monitor.ObserveClick(179100, 179100);
+    monitor.ObserveClick(179150, 179150);
+    for (ULONGLONG now = 180000; now <= 183000; now += 1000) poll(now, 176900);
+    Expect(poll(184150, 176900) == RecoveryStage::ResetInput,
+        "a new rapid failure after recovery is detected without a minute-long blind interval");
+
+    Monitor rapid;
+    rapid.Poll({100000, 100000, 0, true, false});
+    rapid.ObserveClick(100100, 100100);
+    rapid.Poll({100200, 100200, 100100, true, false});
+    rapid.ObserveClick(100250, 100250);
+    rapid.ObserveClick(100300, 100300);
+    for (ULONGLONG now = 101000; now <= 104000; now += 1000)
+        Expect(rapid.Poll({now, now, 100100, true, false}) == RecoveryStage::None,
+            "fast lost clicks still need the full observation period");
+    Expect(rapid.Poll({105300, 105300, 100100, true, false}) == RecoveryStage::ResetInput,
+        "rapid failed presses immediately after a healthy press are counted independently");
+
+    Monitor deliveredDoubleClick;
+    deliveredDoubleClick.Poll({100000, 100000, 0, true, false});
+    deliveredDoubleClick.ObserveClick(100100, 100100);
+    deliveredDoubleClick.ObserveClick(100150, 100150);
+    for (ULONGLONG now = 101000; now <= 106000; now += 1000)
+        Expect(deliveredDoubleClick.Poll({now, now, 100150, true, false}) == RecoveryStage::None,
+            "an ordinary received double-click must never request repair");
+
+    Monitor shielded;
+    shielded.Poll({100000, 100000, 0, true, false});
+    shielded.ObserveClick(100100, 100100);
+    shielded.ObserveClick(100150, 100150);
+    shielded.Poll({101000, 101000, 0, true, true});
+    for (ULONGLONG now = 102000; now <= 106000; now += 1000)
+        Expect(shielded.Poll({now, now, 0, true, false}) == RecoveryStage::None,
+            "intentional transition shielding clears suspected rapid input loss");
 
     for (const int condition : {0, 1, 2, 3})
     {
@@ -115,7 +152,7 @@ void TestHealthMessageTransport()
     WNDCLASSW type{};
     type.lpfnWndProc = DefWindowProcW;
     type.hInstance = GetModuleHandleW(nullptr);
-    type.lpszClassName = kWindowClassName;
+    type.lpszClassName = L"SnowDesktop.Health.TransportFixture";
     RegisterClassW(&type);
     const HWND window = CreateWindowExW(0, type.lpszClassName, L"health test", 0,
         0, 0, 0, 0, HWND_MESSAGE, nullptr, type.hInstance, nullptr);
@@ -128,7 +165,7 @@ void TestHealthMessageTransport()
     };
     {
         UiSession session(window);
-        UiSession::Publish(true, false);
+        UiSession::Publish(true, false, window);
         const auto before = ReadSample(window, GetTickCount64());
         Expect(before.enabled && !before.busy && before.heartbeat != 0,
             "real UI session publishes its initial heartbeat and readiness");
@@ -144,6 +181,18 @@ void TestHealthMessageTransport()
         drain();
         Expect(UiSession::TakeRequest() == RecoveryStage::None,
             "a request delayed by a long synchronous call cannot restart a recovered host");
+        WNDCLASSW legacyType = type;
+        legacyType.lpszClassName = kWindowClassName;
+        RegisterClassW(&legacyType);
+        const HWND unrelated = CreateWindowExW(0, legacyType.lpszClassName, L"unrelated", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, type.hInstance, nullptr);
+        Expect(unrelated != nullptr, "unrelated legacy-class fixture window is created");
+        PostMessageW(unrelated, WM_LBUTTONDOWN, MK_LBUTTON, 0);
+        drain();
+        Expect(ReadSample(window, GetTickCount64()).receivedButtonTime == 0,
+            "a legacy proof-window class cannot acknowledge clicks for the actual bound desktop");
+        DestroyWindow(unrelated);
+        UnregisterClassW(legacyType.lpszClassName, legacyType.hInstance);
         PostMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, 0);
         // PM_NOREMOVE probes must not be mistaken for delivered input.
         MSG queued{};
@@ -153,7 +202,7 @@ void TestHealthMessageTransport()
         drain();
         Expect(ReadSample(window, GetTickCount64()).receivedButtonTime != 0,
             "removing a real host button message acknowledges delivery");
-        UiSession::Publish(true, true);
+        UiSession::Publish(true, true, window);
         Expect(ReadSample(window, GetTickCount64()).busy, "busy state crosses the production property transport");
     }
     Expect(!ReadSample(window, GetTickCount64()).enabled &&
