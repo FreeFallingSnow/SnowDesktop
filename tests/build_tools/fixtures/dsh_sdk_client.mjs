@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import net from 'node:net';
 import vm from 'node:vm';
 import {createRequire,registerHooks} from 'node:module';
 import {pathToFileURL} from 'node:url';
@@ -79,15 +80,22 @@ try{
  const {loadProfileDirectory,loadLayeredEnv}=await sdk('@deepseek-ai/dsh-app-boot');
  const {runProfile}=await sdk('@deepseek-ai/dsh/profile-boot');
  const installAnchor=requireSdk.resolve('@deepseek-ai/dsh/package.json');
- app=await runProfile({environment:loadLayeredEnv('dsh',profile),profile:'desktop',resolvedProfile:{profile:loadProfileDirectory('dsh',profile,installAnchor),installAnchor},patchFiles:[],args:['--no-open','--host','127.0.0.1','--port','0']});
+ // DSH's CLI turns 0 into a random low port, including Fetch-forbidden 5060.
+ // Ask the OS for an ephemeral port and pass it explicitly; bind races fail.
+ const reservation=net.createServer();
+ await new Promise((resolve,reject)=>{reservation.once('error',reject);reservation.listen(0,'127.0.0.1',resolve);});
+ const port=reservation.address().port;
+ await new Promise((resolve,reject)=>reservation.close(error=>error?reject(error):resolve()));
+ app=await runProfile({environment:loadLayeredEnv('dsh',profile),profile:'desktop',resolvedProfile:{profile:loadProfileDirectory('dsh',profile,installAnchor),installAnchor},patchFiles:[],args:['--no-open','--host','127.0.0.1','--port',String(port)]});
  const address=app.ctx.connection.authenticatedUrl(`${app.ctx.webServer.protocol}//127.0.0.1:${app.ctx.webServer.port}`);
  const authenticated=await fetch(address,{redirect:'manual'});await authenticated.body?.cancel();
  const cookie=authenticated.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ');
  const method='settings/describe',rpcId='cold-start-welcome';
  const response=await fetch(new URL('/api/'+method,address),{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({type:'client-request',rpcId,method,payload:{args:{}}})});
  const envelope=await response.json();
- cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:app.ctx.get('snowCollaboration')?.bridge.root===repository};
-}catch(error){cold={ok:false,error:String(error.stack||error),bootOutput};}
+ const configuredRoot=app.ctx.get('snowCollaboration')?.bridge.root;
+ cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository)};
+}catch(error){cold={ok:false,error:String(error.stack||error),cause:String(error.cause?.message||''),bootOutput};}
 finally{
  try{if(app)await app.shutdown.shutdown(0);}finally{
   process.stdout.write=originalWrite;
