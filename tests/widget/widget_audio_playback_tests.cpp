@@ -373,10 +373,21 @@ void RealSystemMedia(const std::filesystem::path& path)
         Check(session.TryPauseAsync().get(), "system pause accepted");
         bool paused = false, nativeCanSeek = false;
         Check(Wait([&] { for (const auto& item : service.Drain()) { TraceAudio(item); paused |= item.state.status == "paused"; nativeCanSeek = item.state.canSeek; } return paused; }), "system pause reaches native player");
-        Check(session.TryPlayAsync().get(), "system play accepted");
         std::cout << "SMTC seek capability: native=" << nativeCanSeek << " system="
             << session.GetPlaybackInfo().Controls().IsPlaybackPositionEnabled() << std::endl;
-        Check(session.TryChangePlaybackPositionAsync(1000000).get(), "system seek accepted");
+        if (nativeCanSeek && session.GetPlaybackInfo().Controls().IsPlaybackPositionEnabled())
+        {
+            // A cover-only MP3 fixture may contain just one audio frame. Never
+            // send a fixed 100 ms seek beyond its real duration.
+            const auto seekMs = duration > 0 ? (std::min)(std::int64_t{100}, duration / 4) : 0;
+            Check(session.TryChangePlaybackPositionAsync(seekMs * 10000).get(), "system in-range seek accepted");
+        }
+        Check(session.TryPlayAsync().get(), "system play accepted");
+        bool resumed = false;
+        Check(Wait([&] {
+            for (const auto& item : service.Drain()) { TraceAudio(item); resumed |= item.state.status == "playing"; }
+            return resumed;
+        }), "system play reaches native player before navigation");
         const auto command = [&](const char* name, auto request) {
             std::cout << "SMTC command: " << name << std::endl;
             Check(request().get(), "system command accepted");
