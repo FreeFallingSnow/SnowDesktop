@@ -4159,7 +4159,7 @@ int main(int argc, char** argv)
             denseTwoByTwo.columns * denseTwoByTwo.rows > 4 &&
             denseTwoByTwo.iconSize >=
                 denseTwoByTwo.minimumIconSize,
-        "a default 2x2 titleless Collection must gain at least a 3x3 dense grid without shrinking icons below 80 percent");
+        "a default 2x2 titleless Collection must gain at least a 3x3 dense grid while keeping icons legible");
     const auto denseLandscape = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 300, 150 }, 2, 2,
         50, 2, 2, 1.0f);
@@ -4182,7 +4182,7 @@ int main(int argc, char** argv)
             denseLargeIcons.minimumIconSize &&
             denseLargeIcons.columns * denseLargeIcons.rows <=
                 denseTwoByTwo.columns * denseTwoByTwo.rows,
-        "larger icon and spacing settings must recompute density while preserving the 80 percent floor");
+        "larger icon and spacing settings must recompute density while preserving the legibility floor");
     const auto denseFallback = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 60, 60 }, 2, 2,
         50, 2, 2, 1.0f);
@@ -4232,67 +4232,59 @@ int main(int argc, char** argv)
             : dense.geometry.viewport.bottom - icons.back().bottom);
         return gaps;
     };
-    const auto denseOuterGaps = [&](
-        const titleless::DenseLayout& dense) {
-        const auto horizontal = denseVisualGaps(dense, true);
-        const auto vertical = denseVisualGaps(dense, false);
-        return std::array<int, 4>{
-            horizontal.front(), horizontal.back(),
-            vertical.front(), vertical.back()
-        };
-    };
-    const auto hasUnifiedOuterPadding = [&](
-        const titleless::DenseLayout& dense) {
-        const auto gaps = denseOuterGaps(dense);
-        const auto [minimum, maximum] =
-            std::minmax_element(gaps.begin(), gaps.end());
-        return *maximum - *minimum <= 1 &&
-            std::all_of(gaps.begin(), gaps.end(),
-                [&](int gap) {
-                    return std::abs(gap - dense.outerPadding) <= 1;
-                });
-    };
-    const auto hasEvenInternalDistribution = [&](
+    // The user's edge padding contract is half the internal visual gap on
+    // each axis, allowing one physical pixel for icon/track rounding.
+    const auto hasHalfGapPadding = [&](
         const titleless::DenseLayout& dense, bool horizontal) {
         const auto gaps = denseVisualGaps(dense, horizontal);
-        if (gaps.size() <= 3)
-            return true;
+        if (gaps.front() < 0 || gaps.back() < 0 ||
+            std::abs(gaps.front() - gaps.back()) > 1)
+            return false;
+        if (gaps.size() == 2) return true;
+        for (auto gap = gaps.begin() + 1; gap != gaps.end() - 1; ++gap)
+        {
+            if (*gap < 0 ||
+                std::abs(*gap - gaps.front() * 2) > 2 ||
+                std::abs(*gap - gaps.back() * 2) > 2)
+                return false;
+        }
         const auto [minimum, maximum] = std::minmax_element(
             gaps.begin() + 1, gaps.end() - 1);
         return *maximum - *minimum <= 1;
     };
-    Check(hasUnifiedOuterPadding(denseTwoByTwo) &&
-            hasUnifiedOuterPadding(denseLandscape) &&
-            hasUnifiedOuterPadding(densePortrait) &&
-            hasEvenInternalDistribution(denseTwoByTwo, true) &&
-            hasEvenInternalDistribution(denseTwoByTwo, false) &&
-            hasEvenInternalDistribution(denseLandscape, true) &&
-            hasEvenInternalDistribution(denseLandscape, false) &&
-            hasEvenInternalDistribution(densePortrait, true) &&
-            hasEvenInternalDistribution(densePortrait, false),
-        "dense compact grids must use one visual padding on all four edges and distribute each axis remainder evenly");
+    Check(hasHalfGapPadding(denseTwoByTwo, true) &&
+            hasHalfGapPadding(denseTwoByTwo, false) &&
+            hasHalfGapPadding(denseLandscape, true) &&
+            hasHalfGapPadding(denseLandscape, false) &&
+            hasHalfGapPadding(densePortrait, true) &&
+            hasHalfGapPadding(densePortrait, false),
+        "titleless Collection edges must be half the internal gap on each axis, with even pixel distribution");
     // A narrow frame must trade a little icon size for another column instead
     // of exposing an icon-wide gutter (162x112 previously had a 52px gap).
-    for (const int scale : { 1, 2, 3 })
+    for (const int percentage : { 100, 125, 150, 200, 300 })
     {
-        for (const int height : { 112, 246 })
+        const auto scaled = [percentage](int value) {
+            return static_cast<int>(std::round(value * percentage / 100.0f));
+        };
+        for (const int height : { 112, 246, 254, 277 })
         {
             const auto narrow = titleless::ResolveDenseLayout(
-                RECT{ 13, 17, 13 + 162 * scale, 17 + height * scale },
+                RECT{ 13, 17, 13 + scaled(162), 17 + scaled(height) },
                 2, height == 112 ? 1 : 2,
-                64 * scale, 2 * scale, 2 * scale, 1.0f);
+                scaled(64), scaled(2), scaled(2), 1.0f);
             auto gaps = denseVisualGaps(narrow, true);
             const auto verticalGaps = denseVisualGaps(narrow, false);
             gaps.insert(gaps.end(), verticalGaps.begin(), verticalGaps.end());
             const auto [minimum, maximum] =
                 std::minmax_element(gaps.begin(), gaps.end());
             Check(narrow.columns >= 3 &&
-                    narrow.iconSize < 52 * scale &&
+                    narrow.iconSize < scaled(52) &&
                     narrow.iconSize >= narrow.minimumIconSize &&
                     *minimum >= 0 &&
                     *maximum - *minimum <= narrow.iconSize / 4 &&
-                    hasUnifiedOuterPadding(narrow),
-                "narrow titleless Collections must shrink and reflow icons instead of retaining a wide gutter at any DPI");
+                    hasHalfGapPadding(narrow, true) &&
+                    hasHalfGapPadding(narrow, false),
+                "narrow titleless Collections must reflow icons with half-gap edge padding at each tested scale");
             const auto presentation = localLayout::ResolveCollectionPresentation(
                 15, static_cast<size_t>(narrow.columns * narrow.rows),
                 false, false);
@@ -4314,9 +4306,11 @@ int main(int argc, char** argv)
         50, 2, 2, 1.0f);
     Check(denseSingleColumn.columns == 1 &&
             denseSingleRow.rows == 1 &&
-            hasUnifiedOuterPadding(denseSingleColumn) &&
-            hasUnifiedOuterPadding(denseSingleRow),
-        "single-column and single-row compact Collections must share the same horizontal and vertical edge padding");
+            hasHalfGapPadding(denseSingleColumn, true) &&
+            hasHalfGapPadding(denseSingleColumn, false) &&
+            hasHalfGapPadding(denseSingleRow, true) &&
+            hasHalfGapPadding(denseSingleRow, false),
+        "single-column and single-row compact Collections must remain centered and preserve half-gap padding on the repeated axis");
     const auto ordinaryGrid = localLayout::ResolveGrid(
         RECT{ 0, 0, 184, 232 }, 2, 2,
         61, 80, 1.0f);
