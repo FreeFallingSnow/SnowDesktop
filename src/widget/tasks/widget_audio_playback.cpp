@@ -4,6 +4,7 @@
 #include <shcore.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <algorithm>
@@ -57,7 +58,11 @@ public:
                 if (leaf && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
                     throw std::runtime_error("notFile");
             }
-            winrt::check_hresult(CreateRandomAccessStreamOnFile(path.c_str(), GENERIC_READ,
+            // This parameter is a WinRT FileAccessMode, not a CreateFile access
+            // mask. A nonzero value requests write access and conflicts with the
+            // read-only pinned leaf above.
+            winrt::check_hresult(CreateRandomAccessStreamOnFile(path.c_str(),
+                static_cast<DWORD>(winrt::Windows::Storage::FileAccessMode::Read),
                 winrt::guid_of<winrt::Windows::Storage::Streams::IRandomAccessStream>(), winrt::put_abi(stream_)));
             auto extension = path.extension().wstring();
             std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
@@ -81,7 +86,11 @@ public:
         for (HANDLE file : pinned_) CloseHandle(file);
         pinned_.clear();
     }
-    void Play() override { terminal_->value = 0; player_.Play(); }
+    void Play() override
+    {
+        if (terminal_->value == 2) throw std::runtime_error("audioDecodeFailed");
+        player_.Play();
+    }
     void Pause() override { player_.Pause(); }
     void Seek(std::int64_t ms) override
     {

@@ -678,7 +678,7 @@
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
 ---@field items? SnowFilesystemPickerTaskValue[] fileDrop selections: opaque read handles, basenames and kinds; no absolute paths.
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'native.event'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'native.event'|'audio.state'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -742,6 +742,12 @@
 ---@field ok? boolean
 ---@field value? SnowAudioPlayValue|SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowNativeTaskValue|SnowLocationTaskValue|SnowStateValue
 ---@field error? string
+---@field playbackId? string Opaque VM-owned audio playback identity for audio.state.
+---@field status? 'loading'|'playing'|'paused'|'ended'|'stopped'|'error' Audio playback state.
+---@field positionMs? integer Audio position in milliseconds.
+---@field durationMs? integer Audio duration in milliseconds, zero until known.
+---@field volume? number Playback volume in 0..1.
+---@field loop? boolean Whether this playback loops.
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.

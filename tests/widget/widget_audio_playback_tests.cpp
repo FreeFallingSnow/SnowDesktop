@@ -132,19 +132,33 @@ void RealBackend(const std::filesystem::path& path)
     WidgetAudioPlayback service;
     AudioPlaybackRequest request{1, 1, "audio.play", {}, path}; request.volume = 0; request.loop = true;
     const auto result = Complete(service, request);
-    Check(result.ok, "real backend opens local audio");
+    if (!result.ok) throw std::runtime_error("real audio open: " + result.state.error);
     bool ready = false;
     Check(Wait([&] { for (auto& item : service.Drain()) {
         if (item.state.status == "error") throw std::runtime_error(item.state.error);
         if (item.state.status == "playing" && item.state.durationMs > 0) ready = true;
     } return ready; }), "real backend decodes local file and publishes duration");
+    // Both fixtures are shorter than 1.4 s. Crossing their duration must keep
+    // a looping voice alive rather than turning a MediaEnded callback terminal.
+    std::this_thread::sleep_for(1600ms);
+    for (const auto& item : service.Drain())
+        Check(item.state.status != "ended" && item.state.status != "error", "real loop remains active beyond the source duration");
     request = AudioPlaybackRequest{2, 1, "audio.pause", result.playbackId};
     Check(Complete(service, request).ok, "real pause");
     request.action = "audio.seek"; request.taskId = 3; request.positionMs = 100;
     Check(Complete(service, request).ok, "real seek");
     request.action = "audio.resume"; request.taskId = 4;
     Check(Complete(service, request).ok, "real resume");
-    request.action = "audio.stop"; request.taskId = 5;
+    request.action = "audio.setVolume"; request.taskId = 5; request.volume = 0;
+    Check(Complete(service, request).ok, "real per-playback volume");
+    request.action = "audio.setLoop"; request.taskId = 6; request.loop = false;
+    Check(Complete(service, request).ok, "real loop can be disabled");
+    bool ended = false;
+    Check(Wait([&] { for (const auto& item : service.Drain()) if (item.state.status == "ended") ended = true;
+        return ended; }), "real non-looping playback ends and retires its voice");
+    request = AudioPlaybackRequest{7, 1, "audio.play", {}, path}; request.volume = 0;
+    const auto replay = Complete(service, request); Check(replay.ok, "real replay");
+    request = AudioPlaybackRequest{8, 1, "audio.stop", replay.playbackId};
     Check(Complete(service, request).ok, "real stop");
 }
 }

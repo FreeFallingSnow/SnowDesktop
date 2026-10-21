@@ -1,4 +1,4 @@
-#include "system/calendar/calendar_service.h"
+﻿#include "system/calendar/calendar_service.h"
 #include "widget/runtime/widget_lua_lifecycle.h"
 #include "widget/runtime/widget_calendar_provider.h"
 #include "widget/runtime/widget_timer_dispatch.h"
@@ -90,6 +90,7 @@ calendar={dateInfo=_dateInfo,addDays=_addDays,selectDate=_selectDate,
     preferences=function()return {enabled=true,calendar="gregorian",weekStart=1}end,
     annotations=function(first,last) _annotationRange={first,last};return {}end}
 storage={get=_storageGet,set=_storageSet,remove=function(key)return _storageSet(key,nil)end}
+resource={audio=function(name)return {name=name}end}
 data={subscribe=_subscribe}
 schedule={every=_every,after=_after,at=_at,timeline=_timeline,cancel=_cancel}
 interaction={region=_region,scroll=_scroll,setScrollOffset=function()end,
@@ -438,6 +439,11 @@ void TestHiddenDeadline(const fs::path& root)
     Directory directory;Calendar calendar(directory.path/L"calendar.json");
     std::vector<TimerOwner> owners(1);owners.front().runtimeToken=1;
     Vm vm(calendar,owners,1);vm.storage["workMin"]="1";vm.storage["breakMin"]="1";
+    vm.Run(R"lua(
+_audioPlays=0
+widget.hasFeature=function(name)return name=="task.audio.playback" end
+task={start=function(name) if name=="audio.play" then _audioPlays=_audioPlays+1 end;return 1 end}
+)lua");
     vm.Load(root/"widgets/pomodoro/main.lua");vm.Action("pomodoro.start");
     Require(vm.storage["state"]=="work","start actual pomodoro phase");
     owners.front().namedTimers.SetVisible(false,Schedule::TimePoint{});
@@ -450,6 +456,10 @@ void TestHiddenDeadline(const fs::path& root)
     Require(delay&&delay->count()==30000,"consumed hidden deadline must rearm the actual remaining wall time");
     vm.FireDue(90000,1'060'000);
     Require(vm.storage["state"]=="break"&&vm.storage["sessions"]=="1","hidden pomodoro completes after the replacement deadline fires");
+    Require(GlobalInteger(vm,"_audioPlays")==0,"completion sound is off by default even with playback permission");
+    vm.storage["soundEnabled"]="true";
+    vm.Action("pomodoro.start");vm.FireDue(150000,1'120'000);
+    Require(GlobalInteger(vm,"_audioPlays")==1,"an enabled sound plays once at a hidden completion deadline");
 }
 void PushContext(lua_State* state){lua_newtable(state);}
 void TestRetiringVmTimers()

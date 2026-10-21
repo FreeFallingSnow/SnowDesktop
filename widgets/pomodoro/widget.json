@@ -365,5 +365,6 @@
     "task.notification.show",
     "task.start",
     "task.audio.playback"
-  ]
+  ],
+  "preview": "preview.png"
 }

@@ -37,7 +37,9 @@
       "music.loop": "单曲循环",
       "music.repeat": "列表循环",
       "music.stop": "停止播放",
-      "music.clear": "清空列表"
+      "music.clear": "清空列表",
+      "music.page_previous": "上一页",
+      "music.page_next": "下一页"
     },
     "en-US": {
       "music.name": "Local Music",
@@ -62,7 +64,9 @@
       "music.loop": "Repeat track",
       "music.repeat": "Repeat playlist",
       "music.stop": "Stop",
-      "music.clear": "Clear playlist"
+      "music.clear": "Clear playlist",
+      "music.page_previous": "Previous page",
+      "music.page_next": "Next page"
     }
   },
   "defaultSize": {
@@ -92,7 +96,9 @@
     "task.filesystem.picker.multiple",
     "storage.typed",
     "module.package",
-    "widget.panel"
+    "widget.panel",
+    "interaction.pointerActions",
+    "view.actionControls"
   ],
   "optionalFeatures": [],
   "resources": {},
@@ -103,7 +109,7 @@
   ],
   "optionalPermissions": [],
   "minSize": {
-    "columns": 2,
+    "columns": 3,
     "rows": 2
   },
   "preview": "workshop-preview.png"
