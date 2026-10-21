@@ -3399,7 +3399,10 @@ if (BUILD_TESTING)
         # 20 native hosts alongside tool workflows saturated the 24-core test
         # machine and caused timeouts, while eight heavy natives passed.
         if("isolated-native-model" IN_LIST test_labels OR "tools" IN_LIST test_labels)
-            set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
+            get_property(test_has_processor_budget TEST ${test_name} PROPERTY PROCESSORS SET)
+            if(NOT test_has_processor_budget)
+                set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
+            endif()
         endif()
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)

@@ -62,6 +62,9 @@ if(BUILD_TESTING AND WIN32)
         test_selection_tests.cpp "tools;core;contract;build" 30)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCollaborationTests build_collaboration
         build_collaboration_tests.cpp "tools;core;contract;build" 180)
+    # Three independent fixture groups run concurrently within this one test.
+    # Reserve their combined budget rather than multiplying hidden parallelism.
+    set_tests_properties(build_collaboration PROPERTIES PROCESSORS 9)
     snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
         build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 90)
     add_test(NAME dsh_installed_sdk COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --installed-sdk)

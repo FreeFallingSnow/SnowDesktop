@@ -1,6 +1,8 @@
 #include "build_tool_test_support.h"
 #include <algorithm>
+#include <future>
 #include <iostream>
+#include <syncstream>
 using namespace build_test;
 namespace {
 Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
@@ -22,8 +24,7 @@ Json registration_semantics(Json value){
     for(auto& item:value.items)item=registration_semantics(std::move(item));
     return value;
 }
-void run_tests(const fs::path& repo){
-    for(bool legacy:{false,true}){
+void run_presence(const fs::path& repo,bool legacy){
         Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
         if(legacy)presence.bridge=std::make_unique<Bridge>(repo,presence.root,true);
         auto empty=presence.call({"task-list"});
@@ -87,7 +88,8 @@ void run_tests(const fs::path& repo){
         auto shared=presence.finish("peer",waiting);require(shared.at("outcome").str()=="passed","Acknowledged event blocked resumed build");
         presence.call({"task-close","reader","-TaskRevision","1","-TaskPhase","completed"});
         require(!presence.call({"task-list"}).at("tasks").items[0].at("capabilities").at("idleWake").boolean,"CLI falsely advertised host wake");
-    }
+}
+void run_contracts(const fs::path& repo){
     {
         Coordinator unplanned(repo,"explicit-selection");
         const auto registration=unplanned.call({"begin","missing-plan"});
@@ -128,5 +130,27 @@ void run_tests(const fs::path& repo){
     c.finish("a",bid,1,2);auto newA=c.begin("a").at("batchId").str();c.finish("a",bid,1,2);require(c.state().at("current").at("id").str()==newA,"Old passed result finished new editor");auto fresh=c.finish("a",newA);require(fresh.at("inputCheck").str()=="stable"&&fresh.at("inputStart").at("digest").str()!=resultA.at("inputStart").at("digest").str(),"New result reused old input identity");equal(resultA,c.call({"status","-Batch",bid}));
     std::cout<<"PASS coordinator overlap, race, failure, crash, preflight and six input invalidations\n";
 }
+void run_tests(const fs::path& repo,bool sequential){
+    const auto measured=[&](const char* name,const auto& action){
+        const auto started=std::chrono::steady_clock::now();
+        const auto report=[&](const char* outcome){
+            const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+            std::osyncstream(std::cout)<<"CASE "<<Json::object({{"name",name},{"mode",sequential?"sequential":"parallel"},{"outcome",outcome},{"elapsedSeconds",elapsed}}).dump()<<'\n';
+        };
+        try{action();report("passed");}catch(...){report("failed");throw;}
+    };
+    const auto ps7=[&]{measured("presence-ps7",[&]{run_presence(repo,false);});};
+    const auto ps5=[&]{measured("presence-ps5",[&]{run_presence(repo,true);});};
+    const auto contracts=[&]{measured("coordinator-contracts",[&]{run_contracts(repo);});};
+    if(sequential){ps7();ps5();contracts();return;}
+    // Each group owns its repository, metadata, processes and streams. Preserve
+    // every assertion and await all cleanup even when one group fails.
+    auto first=std::async(std::launch::async,ps7);
+    auto second=std::async(std::launch::async,ps5);
+    auto third=std::async(std::launch::async,contracts);
+    std::exception_ptr failure;
+    for(auto* group:{&first,&second,&third}){try{group->get();}catch(...){if(!failure)failure=std::current_exception();}}
+    if(failure)std::rethrow_exception(failure);
 }
-int main(int argc,char** argv){return test_main(argc,argv,run_tests);}
+}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){run_tests(repo,argc>2&&std::string(argv[2])=="--sequential");});}
