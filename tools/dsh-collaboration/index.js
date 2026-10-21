@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery';
 import {Remote,TypertRemoteService} from '@deepseek-ai/dsh-typert-protocol';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
-import {CollaborationBridge,inside,taskId} from './core.js';
+import {CollaborationBridge,inside,taskId,canonicalTarget} from './core.js';
 
 export const inject=['tools','agents','workingDirectory','fs'];
 export const Config=z.object({repositoryRoot:z.string(),dashboardPort:z.natural().min(1024).max(65535).default(8765),wakeResidentAgents:z.boolean().default(false)});
@@ -36,7 +36,7 @@ export function apply(ctx,config){
  ctx.on('tools/pre-execute',async(exec,next)=>{if(exec.agent)await ensure(exec.agent);return next();});
  const checkWrite=async(target,exec,next)=>{
   const file=ctx.fs.processPath(target);
-  if(inside(bridge.root,file)){
+  if(inside(bridge.root,file)||inside(bridge.root,canonicalTarget(file))){
    if(!exec.agent)throw new Error('SnowDesktop writes require an owning agent and an editing grant.');
    await ensure(exec.agent);await bridge.verifyWrite(exec.agent.id,file);
   }

@@ -26,6 +26,10 @@ if(mode==='open'){
  const registration=await bridge.operate(agent,{action:'begin'});result={write:await attempt(),registration,id};
 }else if(mode==='outside'){
  result={outside:await bridge.verifyWrite(agent,path.join(root,'../'+path.basename(root)+'-outside.txt')),id};
+}else if(mode==='escape'){
+ const outside=root+'-escape';fs.mkdirSync(outside);fs.writeFileSync(path.join(outside,'keep.txt'),'outside original');
+ fs.symlinkSync(outside,path.join(root,'src/link'),'junction');
+ try{await bridge.verifyWrite(agent,path.join(root,'src/link/keep.txt'));result={denied:false};}catch(error){result={denied:true,error:String(error.message)};}
 }else if(mode==='bad-command'){
  try{await bridge.call('recover',id);result={rejected:false};}catch(error){result={rejected:true,error:String(error.message)};}
 }
@@ -37,7 +41,7 @@ console.log(JSON.stringify(result));
         return Json::parse(result.out);
     };
     const auto opened=node("open");
-    require(opened.at("current").kind==Json::Kind::Null&&!opened.at("write").at("allowed").boolean&&!fs::exists(c.root/L"src/a.txt"),
+    require(opened.at("current").kind==Json::Kind::Null&&!opened.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="original\n",
             "Investigation blocked a batch or an unregistered write mutated source");
     const auto granted=node("grant");
     const auto id=granted.at("id").str(),batch=granted.at("registration").at("batchId").str();
@@ -53,6 +57,7 @@ console.log(JSON.stringify(result));
     c.plan(id,batch,1,"none","","tool","src/a.txt");
     c.ready(id,batch,1);c.finish("peer",batch);
     require(!node("write").at("write").at("allowed").boolean,"Retired grant permitted later source mutation");
+    require(node("escape").at("denied").boolean&&read(fs::path(c.root.wstring()+L"-escape")/L"keep.txt")=="outside original","Repository junction bypassed the write gate or changed external data");
     // Execute the production Host module against a small public-API carrier;
     // the actual state and write decisions still cross the real coordinator.
     // This is not a DSH runtime or UI acceptance fixture.

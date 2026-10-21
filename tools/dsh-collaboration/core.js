@@ -65,7 +65,11 @@ export class CollaborationBridge{
  }
  async open(agentId){return this.call('task-open',taskId(agentId),['-TaskName','DSH '+agentId.slice(0,12),'-Adapter','dsh']);}
  async verifyWrite(agentId,file){
-  const target=canonicalTarget(file);if(!inside(this.root,target))return null;
+  const target=canonicalTarget(file);
+  if(!inside(this.root,target)){
+   if(inside(this.root,path.resolve(file)))throw new Error('Write path escapes the configured checkout through a link.');
+   return null;
+  }
   const relative=path.relative(this.root,target).replaceAll('\\','/');
   if(!relative)throw new Error('Writing the repository root is not supported');
   const id=taskId(agentId),grant=this.grant(id,[relative]);
