@@ -30,6 +30,10 @@ void check_cache(const fs::path& repo,bool omitHeaderIdentity){
 project(WebPProbeCache LANGUAGES C)
 option(SNOWDESKTOP_CACHE_WEBP_PROBES "Probe cache" ON)
 option(PROBE_IMPORTED "Unknown imported dependency" OFF)
+option(PROBE_MODULES "Custom compiler check module" OFF)
+if(PROBE_MODULES)
+ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/custom")
+endif()
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.WebPProbeCache.cmake")
 if(PROBE_IMPORTED)
  add_library(ProbeDependency INTERFACE IMPORTED GLOBAL)
@@ -77,6 +81,21 @@ file(WRITE "${CMAKE_BINARY_DIR}/probe-state.json" "{\"sse2\":\"${WEBP_HAVE_SSE2}
     require(imported.second.dump()==first.second.dump()&&probes(imported.first.out)>0,"Imported dependency reused a context with unknown target state");
     const auto uncached=configure({L"-DPROBE_IMPORTED=OFF",L"-DSNOWDESKTOP_CACHE_WEBP_PROBES=OFF"});
     require(uncached.second.dump()==first.second.dump()&&probes(uncached.first.out)>0,"Uncached control changed SIMD selection or skipped the real checks");
+    const auto module=root/L"custom/CheckCSourceCompiles.cmake";
+    write(module,"include(\"${CMAKE_ROOT}/Modules/CheckCSourceCompiles.cmake\")\n");
+    const auto custom=configure({L"-DSNOWDESKTOP_CACHE_WEBP_PROBES=ON",L"-DPROBE_MODULES=ON"});
+    require(custom.second.dump()==first.second.dump()&&probes(custom.first.out)>0,"Custom check module reused an untracked compiler check");
+    write(module,R"CMAKE(include("${CMAKE_ROOT}/Modules/CheckCSourceCompiles.cmake")
+macro(check_c_source_compiles source result)
+ cmake_push_check_state()
+ list(APPEND CMAKE_REQUIRED_DEFINITIONS -DSNOWDESKTOP_PROBE_DISABLE_SSE2)
+ cmake_check_source_compiles(C "${source}" ${result} ${ARGN})
+ cmake_pop_check_state()
+endmacro()
+)CMAKE");
+    const auto moduleChanged=configure();
+    require(moduleChanged.second.at("sse2").str()=="0"&&probes(moduleChanged.first.out)>0,
+            "Changed custom check module retained stale SSE2 capability");
 }
 }
 void configuration_cache_tests(const fs::path& repo,bool omitHeaderIdentity){
