@@ -7,6 +7,15 @@ set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
 cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="task-open" goto collaboration
+if /i "%~1"=="task-stage" goto collaboration
+if /i "%~1"=="task-close" goto collaboration
+if /i "%~1"=="task-list" goto collaboration
+if /i "%~1"=="event-post" goto collaboration
+if /i "%~1"=="event-read" goto collaboration
+if /i "%~1"=="event-wait" goto collaboration
+if /i "%~1"=="event-ack" goto collaboration
+if /i "%~1"=="edit-verify" goto collaboration
 if /i "%~1"=="watch" goto localwait
 if /i "%~1"=="resource" goto resource
 if /i "%~1"=="ready-and-wait" goto collaboration

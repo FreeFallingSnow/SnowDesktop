@@ -5,6 +5,57 @@ namespace {
 Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
 void equal(const Json& a,const Json& b){require(equivalent_results(a,b),"Waiters did not receive equivalent persisted results\n"+a.dump()+"\n"+b.dump());}
 void run_tests(const fs::path& repo){
+    for(bool legacy:{false,true}){
+        Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
+        if(legacy)presence.bridge=std::make_unique<Bridge>(repo,presence.root,true);
+        auto empty=presence.call({"task-list"});
+        require(empty.at("tasks").items.empty()&&!fs::exists(presence.stateRoot/L"state.json"),"Read-only task list wrote state");
+        auto opened=presence.call({"task-open","reader","-TaskName","Investigate deadlock","-Adapter","dsh"});
+        require(opened.at("task").at("phase").str()=="investigating"&&!opened.at("editingAuthority").boolean&&presence.state().at("current").kind==Json::Kind::Null,"Investigation joined editing barrier");
+        presence.call({"edit-verify","reader","-Files","src/a.txt"},2);
+        auto batch=presence.begin("editor").at("batchId").str();
+        auto state=presence.state();
+        write(presence.scripts/L"clock.ps1", ". $PSScriptRoot/build_protocol.ps1\n$now=[DateTime]::UtcNow\n$invalid=$false;try{ConvertTo-UtcTimestamp ([DateTime]::SpecifyKind($now,[DateTimeKind]::Unspecified))|Out-Null}catch{$invalid=$true}\n[pscustomobject]@{utc=(Get-TimestampAge $now);local=(Get-TimestampAge $now.ToLocalTime());offset=(Get-TimestampAge ([DateTimeOffset]$now));text=(Get-TimestampAge $now.ToString('o'));invalid=$invalid}|ConvertTo-Json\n");
+        const auto ages=presence.bridge->call(presence.scripts/L"clock.ps1",{});
+        for(const auto& field:{"utc","local","offset","text"})require(ages.at(field).number>=0&&ages.at(field).number<5,"UTC type conversion introduced timezone offset");
+        require(ages.at("invalid").boolean,"Ambiguous timestamp silently used local zone");
+        auto status=presence.call({"status"});
+        require(status.at("current").at("registrationAgesSeconds").items[0].at("ageSeconds").number<15,"JSON date coercion inflated registration age");
+        auto claim=presence.bound("claim","editor",batch);claim.insert(claim.end(),{"-Files","src/a.txt"});presence.call(claim);
+        auto verify=presence.bound("edit-verify","editor",batch);verify.insert(verify.end(),{"-Files","src/a.txt"});
+        require(presence.call(verify).at("allowed").boolean,"Valid path grant rejected");verify.back()="src/not-owned.txt";presence.call(verify,2);
+        presence.gate("hold-build");auto worker=presence.start(presence.bound("finish","editor",batch));
+        until([&]{return fs::exists(presence.root/L"build-started");});
+        presence.call({"task-open","reader-while-building"});
+        require(presence.state().at("current").at("participants").items.size()==1,"Task open altered frozen participants");
+        presence.gate("hold-build",false);complete(*worker);
+        require(presence.calls()==2&&presence.state().at("taskLedger").at("tasks").items.size()==3,"Investigation delayed build or was lost at retirement");
+        auto updated=presence.call({"task-stage","reader","-TaskRevision","0","-TaskPhase","blocked","-Progress","Located delay","-Blocker","Waiting for dependency"});
+        require(updated.at("task").at("revision").integer()==1,"Task progress revision missing");
+        presence.call({"task-stage","reader","-TaskRevision","0"},2);
+        auto waiting=presence.begin("waiter").at("batchId").str();presence.begin("peer");
+        auto waiter=presence.start(presence.bound("finish","waiter",waiting));
+        until([&]{return presence.state().at("current").at("participants").items[0].at("state").str()=="finished";});
+        const auto before=presence.state().at("current").dump();
+        const std::vector<std::string> post={"event-post","reader","-Target","waiter","-EventKey","requirement-1","-EventKind","requirements","-Importance","urgent","-Text","Review changed requirement","-RequirementsRevision","2"};
+        auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty(),"Persistence claimed delivery");
+        require(presence.call(post).at("sequence").integer()==event.at("sequence").integer(),"Retried event was duplicated");
+        require(complete(*waiter,6).at("registrationRetained").boolean&&presence.state().at("current").dump()==before,"Urgent wait return changed registration or execution");
+        presence.call({"event-ack","reader-while-building","-Sequence","1"},2);
+        auto received=presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","adapter"});
+        require(received.at("receipts").items.size()==1&&received.at("receipts").items[0].at("level").str()=="adapter","Adapter receipt became agent acknowledgement");
+        presence.call(presence.bound("wait","waiter",waiting),6);
+        presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","agent"});
+        auto timed=presence.call({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","1"});
+        require(timed.at("timedOut").boolean&&timed.at("events").items.empty(),"Bounded idle wait returned false messages");
+        auto broadcast=presence.call({"event-post","reader","-EventKey","broadcast-1","-Text","Project progress"});
+        presence.call({"task-open","late-reader"});
+        require(presence.call({"event-read","late-reader"}).at("events").items.empty(),"Broadcast silently changed recipient scope");
+        presence.call({"task-close","waiter","-TaskRevision","1","-TaskPhase","completed"},2);
+        auto shared=presence.finish("peer",waiting);require(shared.at("outcome").str()=="passed","Acknowledged event blocked resumed build");
+        presence.call({"task-close","reader","-TaskRevision","1","-TaskPhase","completed"});
+        require(!presence.call({"task-list"}).at("tasks").items[0].at("capabilities").at("idleWake").boolean,"CLI falsely advertised host wake");
+    }
     {
         Coordinator unplanned(repo,"explicit-selection");
         const auto registration=unplanned.call({"begin","missing-plan"});

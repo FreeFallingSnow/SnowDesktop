@@ -318,6 +318,35 @@ prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有
 
 ### 缺少依赖与退出码
 
+### 调查登记与协作事件
+
+调查与编辑权使用两个独立修订；调查不会加入构建屏障，也不会由超时自动结束。
+
+```bat
+scripts\build.bat task-open task-unique -TaskName "调查构建等待" -Adapter dsh
+scripts\build.bat task-stage task-unique -TaskRevision 0 -TaskPhase investigating -Progress "已找到等待入口" -RequirementsRevision 1
+scripts\build.bat task-list
+scripts\build.bat begin task-unique
+scripts\build.bat claim task-unique -Batch BATCH -Revision EDIT_REVISION -Files scripts/example.ps1
+scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -Files scripts/example.ps1
+```
+
+`task-open` 对未关闭 ID 幂等；每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。阶段变化和活动期间不超过 60 秒报告有意义进展。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
+
+```bat
+scripts\build.bat event-post task-unique -Target target-task -EventKey requirement-unique -EventKind requirements -Importance urgent -Text "需求已更新，请复核" -RequirementsRevision 2
+scripts\build.bat event-read target-task -AfterSequence 0
+scripts\build.bat event-wait target-task -AfterSequence 0 -WaitSeconds 30
+scripts\build.bat event-ack target-task -Sequence 1 -AckLevel adapter
+scripts\build.bat event-ack target-task -Sequence 1 -AckLevel agent
+```
+
+消息以 EventKey 幂等，重用键但改内容会拒绝；Target 为 `*` 时固定投递给当时已登记且未关闭的任务，后来加入者不追收旧广播。事件写入、适配器收到、智能体确认分别记录。read/wait 不代替确认；单次返回至多 100 条，续读以最后实际返回的事件 sequence 为游标，不用顶层高水位跳过后续页。event-wait 默认最多等待 30 秒，超时返回空事件和 timedOut，不取消任务或构建。finish/wait 在等待阶段收到未确认紧急事件时返回 6，保留编辑登记和批次；执行中的编译不会因观察者退出而在此接口里取消。只在安全等待边界检查事件，持久 Run 的独立执行在后续批次实现。
+
+任务上限 2000、事件上限 4096，达到上限明确拒绝新增，保留全部未消费消息；不静默淘汰。需要通过审阅后的迁移归档。当前 CLI 能力声明不含 DSH 写入拦截或 idleWake；DSH 插件会通过宿主能力接入，悬浮窗读取同一接口，网页保持只读。普通编辑器和任意 shell 写入不能被单独的 edit-verify 校验强制拦截。
+
+### 运行时依赖
+
 基础 plan/claim/ready-and-wait/status/repair 只需 PowerShell，不需要安装 Python。
 所有批处理入口、CMake 和构建子进程优先使用 PowerShell 7，未安装时回退系统 Windows PowerShell 5.1。
 `SNOWDESKTOP_ENTRY_POWERSHELL` 保存该次执行所选的绝对路径，子进程沿用它；可显式设为系统 5.1 路径做兼容检查。

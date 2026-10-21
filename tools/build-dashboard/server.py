@@ -349,8 +349,28 @@ class Store:
                 if data.get("batchId") == file.stem:
                     history.append({**{k: data.get(k) for k in ("batchId", "outcome", "createdUtc", "buildStartedUtc", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")},
                                     "participants": [redact(x.get("displayName") or x.get("id", "unknown")) for x in data.get("participants", [])[:8]]})
+            ledger = state.get("taskLedger") or {}
+            presence = []
+            for task in (ledger.get("tasks") or [])[-200:]:
+                presence.append({**{key: redact(str(task.get(key) or "")) for key in
+                                    ("id", "displayName", "phase", "progress", "blocker", "adapter", "registrationOrigin")},
+                                 **{key: task.get(key) for key in ("revision", "requirementsRevision", "openedUtc", "lastHeartbeatUtc", "lastProgressUtc", "closedUtc")},
+                                 "heartbeatAgeSeconds": age(task.get("lastHeartbeatUtc")),
+                                 "capabilities": {key: (task.get("capabilities") or {}).get(key) is True for key in
+                                                  ("taskRegistration", "beforeWriteGate", "boundedWait", "liveProgress", "activeTurnSteering", "idleWake")}})
+            events = []
+            for event in (ledger.get("events") or [])[-100:]:
+                recipients = event.get("recipients") or []
+                receipts = event.get("receipts") or []
+                events.append({**{key: redact(str(event.get(key) or "")) for key in ("key", "sender", "target", "kind", "importance", "text")},
+                               **{key: event.get(key) for key in ("sequence", "createdUtc", "requirementsRevision")},
+                               "delivery": "persisted", "recipientCount": len(recipients),
+                               "adapterReceived": sum(any(r.get("task") == who and r.get("level") == "adapter" for r in receipts) for who in recipients),
+                               "agentAcknowledged": sum(any(r.get("task") == who and r.get("level") == "agent" for r in receipts) for who in recipients)})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
                           "current": active, "history": history, "waits": self.waits(),
+                          "taskPresence": presence, "taskPresenceTotal": len(ledger.get("tasks") or []),
+                          "events": events, "eventTotal": len(ledger.get("events") or []),
                           "limitation": "Only registered cooperating tasks are visible. Stale age is diagnostic; it never completes an editor. Build and link stages are inferred from logs; counts remain unknown until reported."}
             self.cache_time = time.monotonic()
             return self.cache

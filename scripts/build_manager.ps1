@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
@@ -14,7 +14,18 @@ param(
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
     [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
-    [switch]$AutoCheck
+    [switch]$AutoCheck,
+    [ValidateLength(0,160)][string]$TaskName='',
+    [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
+    [long]$TaskRevision=-1, [long]$RequirementsRevision=-1,
+    [ValidateLength(0,2000)][string]$Progress='', [ValidateLength(0,2000)][string]$Blocker='',
+    [ValidateSet('cli','codex','dsh')][string]$Adapter='cli',
+    [ValidatePattern('^(\*|[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})$')][string]$Target='*',
+    [ValidateSet('requirements','conflict','input-invalidated','owner-lost','result','user-cancel','progress')][string]$EventKind='progress',
+    [ValidateSet('normal','urgent')][string]$Importance='normal',
+    [ValidateLength(0,4000)][string]$Text='', [ValidatePattern('^[a-zA-Z0-9._-]{1,100}$')][string]$EventKey,
+    [long]$AfterSequence=0, [long]$Sequence=0,
+    [ValidateSet('adapter','agent')][string]$AckLevel='adapter'
 )
 
 # Foreground execution needs neither Python nor a hidden worker launch. It uses
@@ -40,7 +51,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')
 . (Join-Path $PSScriptRoot 'build_preflight.ps1')
-if($Command -ne 'status' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
+if($Command -notin 'status','task-list','event-read','event-wait','event-ack','edit-verify' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
     . (Join-Path $PSScriptRoot 'build_runtime.ps1')
     Ensure-BuildDashboard
 }
@@ -50,6 +61,7 @@ function Write-AtomicJson($Value, [string]$Path) {
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
         $bytes = $utf8.GetBytes((ConvertTo-Json -InputObject $Value -Depth 20))
+        if($Path -eq $statePath -and $bytes.Length -gt 6MB){throw 'Collaboration metadata reached its byte budget; preserve state and archive through a reviewed migration. No event or task was discarded.'}
         $stream = [IO.File]::Open($temporary, 'CreateNew', 'Write', 'None')
         try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) }
         finally { $stream.Dispose() }
@@ -232,10 +244,21 @@ try {
         if($result){$result|ConvertTo-Json -Depth 20;exit 0}
         if($Batch -and (-not $current -or $current.id -ne $Batch)){throw 'Unknown batch.'}
         $diagnostic=if($current){[pscustomobject]@{batch=$current;ownerState=(Owner-State $current.owner);persistedResult=(Read-Result $current.id);
-            registrationAgesSeconds=@($current.participants|ForEach-Object {[pscustomobject]@{participant=$_.id;state=$_.state;ageSeconds=[int]([DateTime]::UtcNow-[DateTime]::Parse($_.registeredUtc).ToUniversalTime()).TotalSeconds}})}}else{$null}
-        [pscustomobject]@{schemaVersion=1;stateRoot=$stateRoot;current=$diagnostic;execution=(Read-EntryJson (Join-Path $stateRoot 'execution.json'));observation='Atomic read-only snapshot; execution record may be historical.'}|ConvertTo-Json -Depth 20
+            registrationAgesSeconds=@($current.participants|ForEach-Object {[pscustomobject]@{participant=$_.id;state=$_.state;ageSeconds=[int](Get-TimestampAge $_.registeredUtc)}})}}else{$null}
+        [pscustomobject]@{schemaVersion=1;stateRoot=$stateRoot;current=$diagnostic;tasks=(Get-Field (Get-Field $state 'taskLedger') 'tasks' @());execution=(Read-EntryJson (Join-Path $stateRoot 'execution.json'));observation='Atomic read-only snapshot; execution record may be historical.'}|ConvertTo-Json -Depth 20
         exit 0
     }
+    if($Command -in 'task-list','event-read') {
+        $state=Read-State;$ledger=Get-Field $state 'taskLedger'
+        if($Command -eq 'task-list') {[pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0)}|ConvertTo-Json -Depth 20}
+        else {
+            if(-not $Participant){throw 'event-read requires a task ID.'}
+            [pscustomobject]@{events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100);sequence=(Get-Field $ledger 'sequence' 0);delivery='Reading is not acknowledgement.'}|ConvertTo-Json -Depth 20
+        }
+        exit 0
+    }
+    if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
+    if($Command -eq 'event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=30}
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
         $metadata = Lock-State
@@ -246,6 +269,74 @@ try {
         try {
             $state = Read-State
             $current = $state.current
+            if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack') {
+                $ledger=Get-TaskLedger $state
+                if($Command -eq 'task-open') {
+                    $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
+                } else { $task=Find-VisibleTask $ledger $Participant }
+                if($Command -in 'task-stage','task-close') {
+                    Assert-TaskRevision $task $TaskRevision
+                    if($task.phase -in 'completed','cancelled'){throw 'Closed task cannot change phase.'}
+                    if($Command -eq 'task-close') {
+                        if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
+                        if($current -and @($current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
+                        $task.closedUtc=[DateTime]::UtcNow.ToString('o')
+                    } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
+                    $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
+                    $task.lastHeartbeatUtc=[DateTime]::UtcNow.ToString('o');$task.lastProgressUtc=$task.lastHeartbeatUtc
+                    $task.revision=[long]$task.revision+1
+                    if($RequirementsRevision -ge 0){
+                        if($RequirementsRevision -lt $task.requirementsRevision){throw 'Requirements revision cannot move backwards.'}
+                        $task.requirementsRevision=$RequirementsRevision
+                    }
+                }
+                if($Command -eq 'event-post') {
+                    if(-not $EventKey -or [string]::IsNullOrWhiteSpace($Text)){throw 'event-post requires EventKey and Text.'}
+                    $existing=@($ledger.events | Where-Object key -eq $EventKey)
+                    if($existing.Count){
+                        $event=$existing[0]
+                        if($event.sender -ne $Participant -or $event.target -ne $Target -or $event.kind -ne $EventKind -or $event.importance -ne $Importance -or $event.text -cne $Text -or $event.requirementsRevision -ne $RequirementsRevision){throw 'EventKey already belongs to a different event.'}
+                    } else {
+                        if(@($ledger.events).Count -ge 4096){throw 'Event ledger is full; preserve unconsumed events and archive through a reviewed migration.'}
+                        $recipients=if($Target -eq '*'){@($ledger.tasks | Where-Object {$_.phase -notin 'completed','cancelled'} | ForEach-Object {$_.id})}else{@((Find-VisibleTask $ledger $Target).id)}
+                        $ledger.sequence=[long]$ledger.sequence+1
+                        $event=[pscustomobject]@{sequence=$ledger.sequence;key=$EventKey;sender=$Participant;target=$Target;recipients=$recipients;kind=$EventKind;importance=$Importance;text=$Text;
+                            requirementsRevision=$RequirementsRevision;createdUtc=[DateTime]::UtcNow.ToString('o');receipts=@();delivery='persisted'}
+                        $ledger.events=@($ledger.events)+@($event)
+                    }
+                    Write-AtomicJson $state $statePath;$event|ConvertTo-Json -Depth 20;exit 0
+                }
+                if($Command -eq 'event-ack') {
+                    $events=@(Get-TaskEvents $ledger $Participant | Where-Object sequence -eq $Sequence)
+                    if($events.Count -ne 1){throw 'Event is not addressed to this task.'}
+                    $event=$events[0]
+                    if(@($event.receipts | Where-Object {$_.task -eq $Participant -and $_.level -eq $AckLevel}).Count -eq 0){$event.receipts=@($event.receipts)+@([pscustomobject]@{task=$Participant;level=$AckLevel;utc=[DateTime]::UtcNow.ToString('o')})}
+                    Write-AtomicJson $state $statePath;$event|ConvertTo-Json -Depth 20;exit 0
+                }
+                if($Command -eq 'event-wait') {
+                    $events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100)
+                    if($events.Count -or $clock.Elapsed.TotalSeconds -ge $WaitSeconds){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
+                } else {
+                    Write-AtomicJson $state $statePath
+                    [pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}|ConvertTo-Json -Depth 20;exit 0
+                }
+            }
+            if($Command -in 'finish','wait' -and ($hasFinishedCurrentBatch -or $Command -eq 'wait')) {
+                $ledger=Get-Field $state 'taskLedger'
+                if($ledger){
+                    $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
+                    if($urgent.Count){[pscustomobject]@{attention='urgent-event';events=$urgent;batchId=$Batch;editRevision=$Revision;registrationRetained=$true;next='Read event, acknowledge explicitly, then re-evaluate current revision.'}|ConvertTo-Json -Depth 20;exit 6}
+                }
+            }
+            if($Command -eq 'edit-verify') {
+                if(-not $current -or $current.id -ne $Batch -or $current.phase -ne 'editing'){throw 'No active editing window.'}
+                $entries=@($current.participants | Where-Object {$_.id -eq $Participant -and $_.state -eq 'editing'})
+                if($entries.Count -ne 1){throw 'No active edit grant.'};Assert-EditRevision $entries[0] $Revision
+                $paths=@($Files.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_})
+                if(-not $paths.Count){throw 'edit-verify requires explicit Files.'}
+                foreach($path in $paths){if(@(Get-Field $entries[0] 'ownedFiles' @() | Where-Object {$path.Equals($_,[StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0){throw "No edit grant for $path"}}
+                [pscustomobject]@{allowed=$true;batchId=$Batch;editRevision=$Revision;paths=$paths;observation='Point-in-time verification; only an integrated write gate enforces subsequent writes.'}|ConvertTo-Json -Depth 10;exit 0
+            }
             if(-not $current -and $Command -in 'begin','repair') {
                 $outputProbe=Try-Lease 'build.lock'
                 if(-not $outputProbe){throw 'A standalone shared-output entry owns build.lock. No editor registered; read status and retry after execution finishes.'}
@@ -344,6 +435,9 @@ try {
                     $state.current = $current
                 }
                 if ($current.phase -eq 'editing') {
+                    $ledger=Get-TaskLedger $state
+                    $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'begin-compatibility'
+                    if($task.phase -ne 'editing'){$task.phase='editing';$task.revision=[long]$task.revision+1;$task.lastProgressUtc=[DateTime]::UtcNow.ToString('o')}
                     $entry = @($current.participants | Where-Object id -eq $Participant)
                     if ($entry.Count -eq 1 -and $entry[0].state -eq 'finished') { Reopen-Entry $entry[0]; Write-AtomicJson $state $statePath }
                     if ($entry.Count -eq 0) {
@@ -360,7 +454,8 @@ try {
                         Write-AtomicJson $state $statePath
                     }
                     elseif ($entry[0].state -ne 'editing') { throw 'This participant was withdrawn. Use a different task ID or wait for the batch result.' }
-                    ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing'; editRevision=(Get-EditRevision (@($current.participants | Where-Object id -eq $Participant)[0])) })
+                    Write-AtomicJson $state $statePath
+                    ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing'; editRevision=(Get-EditRevision (@($current.participants | Where-Object id -eq $Participant)[0]));taskRevision=$task.revision;next='claim explicit paths before writing' })
                     exit 0
                 }
             }
@@ -534,7 +629,7 @@ try {
                             Write-AtomicJson $state $statePath; throw
                         }
                         $preflight=Get-Field $current 'preflight'
-                        if(-not $preflight -or ([DateTime]::UtcNow-[DateTime]::Parse($preflight.observedUtc).ToUniversalTime()).TotalSeconds -gt 10){$preflight=Get-ReadOnlyPreflight $repositoryRoot}
+                        if(-not $preflight -or (Get-TimestampAge $preflight.observedUtc) -gt 10){$preflight=Get-ReadOnlyPreflight $repositoryRoot}
                         Set-Field $current 'preflight' $preflight
                         if($frozenPlan.buildRequired -and $preflight.status -ne 'clear' -and -not (Get-Field $current 'reloadShellRequested' $false) -and -not (Get-Field $current 'closeApplicationRequested' $false)) {
                             Set-Field $current 'planStatus' 'waiting-output-owner';Write-AtomicJson $state $statePath
@@ -637,7 +732,8 @@ try {
             finally { $buildLease.Dispose() }
             Emit-Result $result
         }
-        Wait-Again 'Waiting for this batch: editors must finish; a crashed build requires explicit recover. Do not modify files after finish.'
+        if($Command -eq 'event-wait'){Start-Sleep -Milliseconds 200}
+        else {Wait-Again 'Waiting for this batch: editors must finish; a crashed build requires explicit recover. Do not modify files after finish.'}
     }
 }
 catch {

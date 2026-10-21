@@ -7,6 +7,63 @@ function Get-Field($Object, [string]$Name, $Default = $null) {
 function Set-Field($Object, [string]$Name, $Value) {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
+# ConvertFrom-Json returns strings in Windows PowerShell and can return typed
+# dates in PowerShell 7. Never stringify a typed date: that drops its UTC kind.
+function ConvertTo-UtcTimestamp($Value) {
+    if ($Value -is [DateTimeOffset]) { return $Value.UtcDateTime }
+    if ($Value -is [DateTime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified) { throw 'Timestamp has no time zone.' }
+        return $Value.ToUniversalTime()
+    }
+    if ($Value -isnot [string] -or $Value -notmatch '(Z|[+-][0-9]{2}:[0-9]{2})$') { throw 'Timestamp requires an explicit time zone.' }
+    return [DateTimeOffset]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+}
+function Get-TimestampAge($Value) {
+    return [Math]::Max(0, ([DateTime]::UtcNow - (ConvertTo-UtcTimestamp $Value)).TotalSeconds)
+}
+
+# Investigation presence and durable messages share the coordinator's atomic
+# state transaction. Neither grants editing authority nor joins its barrier.
+function Get-TaskLedger($State) {
+    $ledger = Get-Field $State 'taskLedger'
+    if (-not $ledger) {
+        $ledger = [pscustomobject]@{schemaVersion=1; sequence=[long]0; tasks=@(); events=@()}
+        Set-Field $State 'taskLedger' $ledger
+    }
+    if ($ledger.schemaVersion -ne 1) { throw 'Unknown task ledger version; preserve state.' }
+    return $ledger
+}
+function Find-VisibleTask($Ledger, [string]$Id) {
+    $found = @($Ledger.tasks | Where-Object id -eq $Id)
+    if ($found.Count -ne 1) { throw 'Task is not registered. Use task-open before investigation.' }
+    return $found[0]
+}
+function Assert-TaskRevision($Task, [long]$Expected) {
+    if ($Expected -lt 0 -or $Task.revision -ne $Expected) { throw "Stale/missing task revision; current revision is $($Task.revision). Read task-list and re-evaluate." }
+}
+function Open-VisibleTask($Ledger, [string]$Id, [string]$Name, [string]$Adapter, [string]$Origin) {
+    $found = @($Ledger.tasks | Where-Object id -eq $Id)
+    if ($found.Count) {
+        if ($found[0].phase -in 'completed','cancelled') { throw 'Task ID is closed; use a new ID for a new task.' }
+        return $found[0]
+    }
+    if (@($Ledger.tasks).Count -ge 2000) { throw 'Task ledger is full; archive through a reviewed migration. No task was removed.' }
+    if ([string]::IsNullOrWhiteSpace($Name)) { $Name=$Id }
+    $now=[DateTime]::UtcNow.ToString('o')
+    $task=[pscustomobject]@{id=$Id; displayName=$Name; phase='investigating'; revision=[long]0; requirementsRevision=[long]0;
+        openedUtc=$now; lastHeartbeatUtc=$now; lastProgressUtc=$now; progress=''; blocker=''; closedUtc=$null;
+        registrationOrigin=$Origin; adapter=$Adapter;
+        capabilities=[pscustomobject]@{taskRegistration=$true; beforeWriteGate=$false; boundedWait=$false; liveProgress=$false; activeTurnSteering=$false; idleWake=$false}}
+    $Ledger.tasks=@($Ledger.tasks)+@($task)
+    return $task
+}
+function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
+    if(-not $Ledger){return @()}
+    return @($Ledger.events | Where-Object {
+        $_.sequence -gt $After -and $_.recipients -contains $Id -and
+        (-not $UrgentUnacknowledged -or ($_.importance -eq 'urgent' -and @($_.receipts | Where-Object { $_.task -eq $Id -and $_.level -eq 'agent' }).Count -eq 0))
+    })
+}
 function Get-EditRevision($Entry) { return [long](Get-Field $Entry 'editRevision' 0) }
 function Assert-EditRevision($Entry, [long]$Expected) {
     $actual = Get-EditRevision $Entry
