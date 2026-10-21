@@ -140,11 +140,17 @@ try {
     }
     if($Command -in 'status','wait','invoke'){
         $timer=[Diagnostics.Stopwatch]::StartNew()
-        $notice=[Diagnostics.Stopwatch]::StartNew();$logReaders=@{}
+        $notice=[Diagnostics.Stopwatch]::StartNew();$logReaders=@{};$errorReader=$null
         try {
         do {
             $view=Get-RunView $RunId
             if($Command -eq 'invoke'){
+                $errorPath=Run-Path $RunId '.stderr.log'
+                if(-not $errorReader -and [IO.File]::Exists($errorPath)){
+                    $errorStream=[IO.File]::Open($errorPath,'Open','Read',([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+                    $errorReader=New-Object IO.StreamReader($errorStream,[Text.Encoding]::UTF8)
+                }
+                if($errorReader){$chunk=$errorReader.ReadToEnd();if($chunk){[Console]::Error.Write($chunk)}}
                 foreach($event in @($view.stageEvents|Where-Object {$_.kind -eq 'start' -and $_.name -like '*-pipeline' -and $_.logPath})){
                     $path=[IO.Path]::GetFullPath($event.logPath)
                     if(-not $path.StartsWith((Join-Path $root '.build')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Run log escaped this checkout output.'}
@@ -162,7 +168,7 @@ try {
             if($urgent.Count){[pscustomobject]@{id=$RunId;status=$view.status;events=$urgent;runPreserved=$true}|ConvertTo-Json -Depth 25;exit 6}
             Start-Sleep -Milliseconds 500
         } while($true)
-        } finally {foreach($reader in $logReaders.Values){$reader.Dispose()}}
+        } finally {foreach($reader in $logReaders.Values){$reader.Dispose()};if($errorReader){$errorReader.Dispose()}}
         if($Command -eq 'invoke'){
             [Console]::Error.WriteLine('Run '+$RunId+': '+$view.status+'. Record: '+(Run-Path $RunId '.json'))
             if($view.record.error){[Console]::Error.WriteLine($view.record.error)}
@@ -231,9 +237,9 @@ try {
         if(-not $ownsRun){throw}
         $record.status='failed';$record.exitCode=2;$record.error=$_.Exception.ToString()
     } finally {
-        if($ownsRun){$record.completedUtc=[DateTime]::UtcNow.ToString('o');Write-RunRecord $record}
+        # Terminal means that the leased output and automatic task transaction
+        # have both finished. Observers may submit their next entry immediately.
         Exit-BuildEntry $entry
-        if($ownerLease){$ownerLease.Dispose()}
         if($ownsRun -and $request.PSObject.Properties['automaticTask'] -and $request.automaticTask){
             try {
                 $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
@@ -241,6 +247,8 @@ try {
                 $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') task-close $request.task -TaskRevision $taskRecord.revision -TaskPhase $(if($record.status -eq 'cancelled'){'cancelled'}else{'completed'})
             } catch {[Console]::Error.WriteLine('Run is terminal; automatic task closure needs attention: '+$_.Exception.Message)}
         }
+        if($ownsRun){$record.completedUtc=[DateTime]::UtcNow.ToString('o');Write-RunRecord $record}
+        if($ownerLease){$ownerLease.Dispose()}
     }
     $record|ConvertTo-Json -Depth 30;exit ([int]$record.exitCode)
 } catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}

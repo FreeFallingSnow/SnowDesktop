@@ -93,6 +93,8 @@ void test(const fs::path& repo) {
         const auto result=command(c,id,{L"-Command",L"wait",L"-Seconds",L"10"});
         view=Json::parse(result.out);
         require(result.code==0&&view.at("status").str()=="passed"&&c.calls()==1,"Default entry did not publish successful durable execution");
+        HANDLE lease=CreateFileW((c.stateRoot/L"build.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
+        require(lease!=INVALID_HANDLE_VALUE,"A terminal default Run still owns its output lease");CloseHandle(lease);
         require(view.at("stageError").str().empty(),"Actual stage observations were unreadable");
         bool preflight=false,pipeline=false,completed=false;
         for(const auto& event:view.at("stageEvents").items){
@@ -101,7 +103,8 @@ void test(const fs::path& repo) {
             if(event.at("kind").str()=="end")completed=completed||(event.at("exitCode").integer()==0&&event.at("elapsedSeconds").number>=0);
         }
         require(preflight&&pipeline&&completed,"Default production entry did not retain actual preflight/pipeline intervals");
-        until([&]{const auto current=c.state();for(const auto& entry:current.at("taskLedger").at("tasks").items)if(entry.at("id").str()==task)return entry.at("closedUtc").kind==Json::Kind::String;return false;});
+        const auto taskState=c.state();bool closed=false;for(const auto& entry:taskState.at("taskLedger").at("tasks").items)if(entry.at("id").str()==task)closed=entry.at("closedUtc").kind==Json::Kind::String;
+        require(closed,"A terminal default Run has not completed its automatic task transaction");
         std::cout<<"PASS default entry survives observer Job close, registers/finishes its task and records actual stages\n";
     }
     {
