@@ -164,7 +164,7 @@ function Checks-BlockFreeze($Current) {
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
-    $tasks=@(); $full=$false; $build=$false
+    $tasks=@(); $full=$false; $build=$false; $testing=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
         $plan=Get-Field $entry 'testPlan'
@@ -177,13 +177,18 @@ function New-FrozenPlan($Current) {
         # explicit full suite can select whole-product coverage now.
         $plan.requiredFull = $plan.suites -contains 'full'
         if ($plan.requiredFull) { $full=$true }
-        if ($plan.suites -notcontains 'none') { $build=$true }
+        if ($plan.suites -notcontains 'none') {
+            $testing=$true
+            # Test selection and a complete host build are distinct needs.
+            # Targeted test builds still use the inventory's real dependencies.
+            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}
+        }
         $tasks += [pscustomobject]@{ participant=$entry.id; editRevision=(Get-EditRevision $entry); requirement=$plan }
     }
     $names=@($tasks | ForEach-Object { $_.requirement.tests } | Sort-Object -Unique)
     $suites=@($tasks | ForEach-Object { $_.requirement.suites } | Where-Object { $_ -ne 'none' } | Sort-Object -Unique)
     return [pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
-        mode=$(if($full){'full'}elseif($build){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
+        mode=$(if($full){'full'}elseif($testing){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
 }
 function Resolve-PlanTests($Plan, $Inventory) {
     $selected=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)

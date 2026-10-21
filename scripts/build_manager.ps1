@@ -1,9 +1,10 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
     [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
     [switch]$ConfirmStopped,
     [switch]$ReloadShell,
@@ -152,6 +153,7 @@ function New-Result($Current, [string]$Outcome, [int]$Code, [string]$ErrorText) 
         outcome = $Outcome; exitCode = $Code; error = $ErrorText
         createdUtc = $Current.createdUtc; buildStartedUtc = $Current.buildStartedUtc
         completedUtc = [DateTime]::UtcNow.ToString('o'); participants = @($Current.participants)
+        runId=(Get-Field $Current 'runId')
         logPath = $Current.logPath; commands = if(Get-Field $Current 'testingPlan'){@($(if($Current.testingPlan.buildRequired){'scripts\build.bat'});'scripts\build_batch_tests.ps1 -Batch '+$Current.id)}else{@('scripts\build.bat','scripts\test.bat')}
         inputStart = if ($Current.PSObject.Properties['inputStart']) { $Current.inputStart } else { $null }
         inputEnd = $null; inputCheck = 'not-run'; pipelineExitCode = $null
@@ -166,6 +168,22 @@ function Publish-Result($State, $Result) {
     else { throw 'A batch result already exists; use recover to finish its publication.' }
     $State.current = $null
     Write-AtomicJson $State $statePath
+}
+function Assert-BatchRunCaller($Current,[switch]$Leased){
+    if(-not $ExecutionRun -or -not $Current -or $Current.id -ne $Batch -or $Current.phase -ne 'building' -or
+        (Get-Field $Current 'runId') -ne $ExecutionRun -or (Get-Field $Current 'protocolVersion' 1) -lt 3){throw 'No matching durable batch reservation.'}
+    $request=Read-EntryJson (Join-Path $stateRoot ('runs/'+$ExecutionRun+'.request.json'))
+    $record=Read-EntryJson (Join-Path $stateRoot ('runs/'+$ExecutionRun+'.json'))
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $repositoryRoot -or $request.id -ne $ExecutionRun -or
+        $request.action -ne 'batch' -or $request.batch -ne $Batch -or $request.task -ne $Participant -or $request.editRevision -ne $Revision -or
+        $record.id -ne $ExecutionRun -or $record.repositoryRoot -ne $repositoryRoot -or $record.nonce -ne $request.nonce -or $record.owner.pid -ne $PID -or
+        $record.owner.startTicks -ne (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString() -or $record.status -notin 'queued','running'){
+        throw 'Batch execution/publication requires its live immutable Run owner.'
+    }
+    if($Leased -and (-not (Test-EntryDelegation $repositoryRoot) -or $Current.owner.pid -ne $PID -or $Current.owner.startTicks -ne $record.owner.startTicks)){
+        throw 'Batch execution requires the Run-owned output lease.'
+    }
+    return $record
 }
 function Start-ReadyWorker($Current, $Entry) {
     $existing = Get-Field $Entry 'waiter'
@@ -407,7 +425,7 @@ try {
                         Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$entry.editRevision;reason='Prior ready evidence is not reused for repaired inputs.'})
                         $members += $entry
                     }
-                    $current=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');protocolVersion=2;phase='editing';participants=$members;createdUtc=[DateTime]::UtcNow.ToString('o');buildStartedUtc=$null;owner=$null;logPath=$null;inputStart=$null;repairOf=$Batch;logicalBatchId=(Get-Field $result 'logicalBatchId' $Batch);attempt=([int](Get-Field $result 'attempt' 1)+1);repairReason=$Reason}
+                    $current=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');protocolVersion=$(if((Get-Field $result 'protocolVersion' 1) -ge 3){3}else{2});phase='editing';participants=$members;createdUtc=[DateTime]::UtcNow.ToString('o');buildStartedUtc=$null;owner=$null;logPath=$null;inputStart=$null;repairOf=$Batch;logicalBatchId=(Get-Field $result 'logicalBatchId' $Batch);attempt=([int](Get-Field $result 'attempt' 1)+1);repairReason=$Reason}
                     $state.current=$current
                 }
                 if($current.phase -ne 'editing'){throw 'Repair attempt is frozen. Observe it; no edit permission granted.'}
@@ -431,7 +449,7 @@ try {
                 }
                 if ($null -eq $current) {
                     $current = [pscustomobject]@{
-                        id = [Guid]::NewGuid().ToString('N'); protocolVersion = 2; phase = 'editing'; participants = @()
+                        id = [Guid]::NewGuid().ToString('N'); protocolVersion = 3; phase = 'editing'; participants = @()
                         createdUtc = [DateTime]::UtcNow.ToString('o'); buildStartedUtc = $null; owner = $null; logPath = $null; inputStart = $null
                     }
                     $state.current = $current
@@ -459,6 +477,30 @@ try {
                     Write-AtomicJson $state $statePath
                     ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing'; editRevision=(Get-EditRevision (@($current.participants | Where-Object id -eq $Participant)[0]));taskRevision=$task.revision;next='claim explicit paths before writing' })
                     exit 0
+                }
+            }
+            elseif ($Command -in 'execute','publish-run') {
+                $runRecord=Assert-BatchRunCaller $current -Leased:($Command -eq 'execute')
+                if($Command -eq 'execute'){$selected=$current}
+                else {
+                    $releaseProbe=Try-Lease 'build.lock'
+                    if($releaseProbe){
+                        $releaseProbe.Dispose()
+                        $pendingPath=Join-Path $stateRoot ($Batch+'.pending-result.json')
+                        $pending=Read-EntryJson $pendingPath
+                        if($pending){
+                            if($pending.batchId -ne $Batch -or $pending.repositoryRoot -ne $repositoryRoot -or $pending.runId -ne $ExecutionRun){throw 'Pending batch result identity mismatch.'}
+                            $result=$pending
+                        } else {
+                            $cancelPath=Join-Path $stateRoot ('runs/'+$ExecutionRun+'.cancel')
+                            $request=Read-EntryJson (Join-Path $stateRoot ('runs/'+$ExecutionRun+'.request.json'))
+                            $cancelled=$runRecord.exitCode -eq 4 -and [IO.File]::Exists($cancelPath) -and [IO.File]::ReadAllText($cancelPath).Trim() -ceq $request.nonce
+                            $result=New-Result $current $(if($cancelled){'cancelled'}else{'failed'}) $(if($cancelled){4}else{2}) $Reason
+                        }
+                        Set-Field $result 'publishedUtc' ([DateTime]::UtcNow.ToString('o'))
+                        Publish-Result $state $result
+                        Emit-Result $result
+                    }
                 }
             }
             elseif ($Command -in 'plan','ready','check','claim','commit') {
@@ -671,6 +713,19 @@ try {
             continue
         }
         if ($null -ne $selected) {
+            if((Get-Field $selected 'protocolVersion' 1) -ge 3 -and -not $ExecutionRun){
+                try {
+                    $submitted=& (Join-Path $PSScriptRoot 'build_run.ps1') -Command start -Task $Participant -Action batch -Batch $selected.id -EditRevision $observedRevision
+                    if($LASTEXITCODE -ne 0){throw ('Persistent batch submission failed: '+($submitted -join "`n"))}
+                } catch {
+                    $metadata=Lock-State
+                    try {$state=Read-State;$result=New-Result $state.current 'failed' 2 $_.Exception.Message;Publish-Result $state $result}
+                    finally {$metadata.Dispose()}
+                    $buildLease.Dispose();$buildLease=$null
+                    Emit-Result $result
+                } finally {if($buildLease){$buildLease.Dispose();$buildLease=$null}}
+                continue
+            }
             try {
                 $code = 1; $errorText = ''; $outcome = 'failed'
                 $oldNodeReuse = [Environment]::GetEnvironmentVariable('MSBUILDDISABLENODEREUSE', 'Process')
@@ -680,16 +735,26 @@ try {
                     # outside our job. Use fresh workers in this batch only.
                     [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', '1', 'Process')
                     Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
+                    if($ExecutionRun){Set-EntryRunControl $repositoryRoot;. (Join-Path $PSScriptRoot 'build_telemetry.ps1')}
                     [Console]::Error.WriteLine("Building batch $($selected.id). Log: $($selected.logPath)")
                     # Destructive preflight belongs to the outer execution owner;
                     # all configure/build/test children retain strict Job containment.
                     $code=0
                     if($selected.testingPlan.buildRequired){
-                        $code=Invoke-EntryPreflight $repositoryRoot ([bool](Get-Field $selected 'reloadShellRequested' $false)) ([bool](Get-Field $selected 'closeApplicationRequested' $false)) 'Release' $selected.logPath
+                        $preflightStage=$null
+                        if($ExecutionRun){$preflightStage=Start-BuildStage $repositoryRoot 'preflight' $selected.logPath}
+                        try {$code=Invoke-EntryPreflight $repositoryRoot ([bool](Get-Field $selected 'reloadShellRequested' $false)) ([bool](Get-Field $selected 'closeApplicationRequested' $false)) 'Release' $selected.logPath}
+                        finally {if($ExecutionRun){Complete-BuildStage $repositoryRoot $preflightStage $code}}
                         if($code -ne 0){$code=3}
                     }
-                    if($code -eq 0){$code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, $false, $false)}
+                    $pipelineStage=$null
+                    if($ExecutionRun){$pipelineStage=Start-BuildStage $repositoryRoot 'batch-pipeline' $selected.logPath}
+                    $previousParent=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT','Process')
+                    if($pipelineStage){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$pipelineStage.id,'Process')}
+                    try {if($code -eq 0){$code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, $false, $false)}}
+                    finally {[Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$previousParent,'Process');if($ExecutionRun){Complete-BuildStage $repositoryRoot $pipelineStage $code}}
                     if ($code -eq 0) { $outcome = if($selected.testingPlan.mode -eq 'skipped'){'skipped'}else{'passed'} }
+                    elseif($ExecutionRun -and [SnowDesktop.Build.Job]::RunWasCancelled){$outcome='cancelled';$code=4}
                     else { $errorText = "Build/test pipeline exited with code $code. See the batch log." }
                 }
                 catch { $errorText = $_.Exception.ToString() }
@@ -719,7 +784,8 @@ try {
                     $result.inputEnd = $endInputs
                     $result.inputCheck = $inputCheck
                     $result.pipelineExitCode = $pipelineCode
-                    Publish-Result $state $result
+                    if($ExecutionRun){Write-AtomicJson $result (Join-Path $stateRoot ($selected.id+'.pending-result.json'))}
+                    else {Publish-Result $state $result}
                 }
                 catch {
                     # A result committed before retirement failed is still the
@@ -731,7 +797,7 @@ try {
                 }
                 finally { $metadata.Dispose() }
             }
-            finally { $buildLease.Dispose() }
+            finally { if($buildLease){$buildLease.Dispose()} }
             Emit-Result $result
         }
         if($Command -eq 'event-wait'){Start-Sleep -Milliseconds 200}

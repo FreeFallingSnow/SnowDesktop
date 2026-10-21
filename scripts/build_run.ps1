@@ -5,12 +5,14 @@ param(
     [ValidateSet('start','invoke','status','wait','cancel','worker')][string]$Command='status',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Task,
-    [ValidateSet('release','debug','tests','ide')][string]$Action='tests',
+    [ValidateSet('release','debug','tests','ide','batch')][string]$Action='tests',
     [ValidateSet('full','fast','core','tools','label','name','list','plan')][string]$Mode='list',
     [string]$Filter='',
     [ValidateSet('Release','Debug')][string]$Configuration='Release',
     [string[]]$Targets=@(),
     [ValidatePattern('^[a-f0-9]{32}$')][string]$PlanBatch,
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
+    [long]$EditRevision=-1,
     [ValidateRange(0,60)][int]$Seconds=30,
     [switch]$ReloadShell,[switch]$CloseApplication
 )
@@ -55,7 +57,7 @@ function Get-RunView([string]$Id){
     $ownerState=Run-OwnerState $record.owner
     if($ownerState -eq 'none' -and [IO.File]::Exists((Run-Path $Id '.launch.json'))){$ownerState=Run-OwnerState (Read-RunJson (Run-Path $Id '.launch.json'))}
     if($ownerState -eq 'none'){$ownerState=Run-OwnerState $request.launcher}
-    $terminal=$record.status -in 'passed','failed','cancelled','start-failed','invalidated'
+    $terminal=$record.status -in 'passed','failed','cancelled','start-failed','invalidated','interrupted'
     $observed=if(-not $terminal -and $ownerState -eq 'exited'){'interrupted'}else{$record.status}
     $metrics=if([IO.File]::Exists((Run-Path $Id '.resources.json'))){Read-RunJson (Run-Path $Id '.resources.json')}else{$null}
     $stages=@();$stageError=''
@@ -73,6 +75,28 @@ function Start-RunStage($Record,[string]$Name){
     $Record.stages=@($Record.stages)+@($stage);Write-RunRecord $Record;return $stage
 }
 function Complete-RunStage($Record,$Stage,[int]$Code){$Stage.completedUtc=[DateTime]::UtcNow.ToString('o');$Stage.exitCode=$Code;Write-RunRecord $Record}
+function Enter-BatchRun($Request){
+    $metadata=$null;$lease=$null
+    try {
+        $metadata=[IO.File]::Open((Join-Path $root '.build/collaboration/state.lock'),'OpenOrCreate','ReadWrite','None')
+        $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+        $current=$state.current
+        if(-not $current -or $current.id -ne $Request.batch -or $current.phase -ne 'building' -or
+            $current.runId -ne $Request.id -or $current.protocolVersion -lt 3){throw 'The frozen batch no longer matches this Run.'}
+        $planPath=Join-Path $root ('.build/collaboration/'+$Request.batch+'.plan.json')
+        if((Get-FileHash -LiteralPath $planPath -Algorithm SHA256).Hash -ne $Request.planHash){throw 'The immutable frozen plan changed before execution.'}
+        if($current.owner.pid -ne $Request.launcher.pid -or $current.owner.startTicks -ne $Request.launcher.startTicks){throw 'The batch execution reservation already changed owner.'}
+        $lease=[IO.File]::Open((Join-Path $root '.build/collaboration/build.lock'),'OpenOrCreate','ReadWrite','None')
+        $current.owner=[pscustomobject]@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()}
+        Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')
+        $old=Start-EntryCredential $root $Request.batch
+        return [pscustomobject]@{lease=$lease;oldToken=$old}
+    } catch {
+        if($lease){$lease.Dispose()}
+        if($_.Exception -is [IO.IOException]){throw 'Shared output lease/transaction is busy; the frozen Run is queued.'}
+        throw
+    } finally {if($metadata){$metadata.Dispose()}}
+}
 
 try {
     if($Command -in 'start','invoke'){
@@ -83,6 +107,7 @@ try {
             if($LASTEXITCODE -ne 0){throw 'Could not register the standard entry task.'}
         }
         if(-not $Task){throw 'run start requires -Task from task-open.'}
+        if($Action -eq 'batch' -and ($Command -ne 'start' -or -not $Batch -or $EditRevision -lt 0)){throw 'A batch Run requires a coordinator reservation and exact edit revision.'}
         if($Filter.Length -gt 4096){throw 'Test filter exceeds its length budget.'}
         if($ReloadShell -and ($CloseApplication -or $Action -notin 'release','debug')){throw 'ReloadShell requires release/debug and cannot be combined with CloseApplication.'}
         if($CloseApplication -and $Action -ne 'release'){throw 'CloseApplication requires release.'}
@@ -98,10 +123,29 @@ try {
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
             completedUtc=$null;exitCode=$null;error='';waitingFor='';stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
+        $batchTransaction=$null
+        try {
+        if($Action -eq 'batch'){
+            $batchTransaction=[IO.File]::Open((Join-Path $root '.build/collaboration/state.lock'),'OpenOrCreate','ReadWrite','None')
+            $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+            $current=$state.current
+            if(-not $current -or $current.id -ne $Batch -or $current.phase -ne 'building' -or $current.protocolVersion -lt 3 -or
+                $current.owner.pid -ne $PID -or $current.owner.startTicks -ne $request.launcher.startTicks -or $current.PSObject.Properties['runId']){
+                throw 'Only the current freezing coordinator can reserve one Run for a new batch.'
+            }
+            $member=@($current.participants|Where-Object id -eq $Task)
+            if($member.Count -ne 1 -or $member[0].editRevision -ne $EditRevision -or $member[0].state -ne 'finished'){throw 'Batch Run participant/revision mismatch.'}
+            $request|Add-Member NoteProperty batch $Batch
+            $request|Add-Member NoteProperty editRevision $EditRevision
+            $request|Add-Member NoteProperty planHash ((Get-FileHash -LiteralPath (Join-Path $root ('.build/collaboration/'+$Batch+'.plan.json')) -Algorithm SHA256).Hash)
+            $current|Add-Member NoteProperty runId $id
+        }
         # Identity is fresh. Request publication is create-only, never a mutable plan.
         $stream=[IO.File]::Open((Run-Path $id '.request.json'),'CreateNew','Write','Read')
         try {$bytes=[Text.Encoding]::UTF8.GetBytes(($request|ConvertTo-Json -Depth 12));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
         Write-RunRecord $record
+        if($Action -eq 'batch'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
+        } finally {if($batchTransaction){$batchTransaction.Dispose()}}
         $launched=$false
         try {
             $child=Start-BuildPowerShellScript -Script $PSCommandPath -Arguments ('-Command worker -RunId '+$id) -WorkingDirectory $root -Breakaway `
@@ -199,8 +243,8 @@ try {
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
         $queueNotice=[Diagnostics.Stopwatch]::StartNew()
         while(-not $entry){
-            if(Run-CancellationRequested $request){$record.status='cancelled';$record.exitCode=4;Complete-RunStage $record $queue 4;break}
-            try {$entry=Enter-BuildEntry $root}
+            if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$record.status='cancelled';break}
+            try {$entry=if($request.action -eq 'batch'){Enter-BatchRun $request}else{Enter-BuildEntry $root}}
             catch {
                 if($_.Exception.Message -notmatch '^Shared output (busy:|lease/transaction is busy;)'){throw}
                 if($record.waitingFor -ne $_.Exception.Message){$record.waitingFor=$_.Exception.Message;Write-RunRecord $record}
@@ -223,7 +267,9 @@ try {
                 if($request.PSObject.Properties['planBatch'] -and $request.planBatch){$options.EntryPlanBatch=$request.planBatch}
                 if($request.reloadShell){$options.EntryReloadShell=$true};if($request.closeApplication){$options.EntryCloseApplication=$true}
                 $global:LASTEXITCODE=0
-                & (Join-Path $PSScriptRoot 'build_entry.ps1') @options
+                if($request.action -eq 'batch'){
+                    & (Join-Path $PSScriptRoot 'build_manager.ps1') execute $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId
+                } else {& (Join-Path $PSScriptRoot 'build_entry.ps1') @options}
                 $record.exitCode=$global:LASTEXITCODE
             } finally {[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$previousRun,'Process')}
             Complete-RunStage $record $stage $record.exitCode
@@ -240,6 +286,15 @@ try {
         # Terminal means that the leased output and automatic task transaction
         # have both finished. Observers may submit their next entry immediately.
         Exit-BuildEntry $entry
+        if($ownsRun -and $request.action -eq 'batch'){
+            try {
+                $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') publish-run $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId -Reason $record.error -WaitSeconds 30
+                if($LASTEXITCODE -ne 0){throw 'Batch result publication failed; preserve state and inspect status/recover.'}
+                $batchResult=Read-EntryJson (Join-Path $root ('.build/collaboration/'+$request.batch+'.json'))
+                $record.status=if($batchResult.outcome -eq 'skipped'){'passed'}else{$batchResult.outcome}
+                $record.exitCode=$batchResult.exitCode;$record.error=$batchResult.error
+            } catch {$record.status='failed';$record.exitCode=2;$record.error+=' '+$_.Exception.Message}
+        }
         if($ownsRun -and $request.PSObject.Properties['automaticTask'] -and $request.automaticTask){
             try {
                 $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')

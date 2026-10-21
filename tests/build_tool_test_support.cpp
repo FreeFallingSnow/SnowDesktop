@@ -221,8 +221,8 @@ Json owner(DWORD pid) {HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATI
 bool owner_alive(const Json& value) {if(!value.has("pid")||!value.has("startTicks"))return false;HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return false;bool alive=WaitForSingleObject(handle,0)==WAIT_TIMEOUT&&std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str();CloseHandle(handle);return alive;}
 void stop_owner(const Json& value) {if(!owner_alive(value))return;HANDLE handle=OpenProcess(PROCESS_TERMINATE|PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return;if(std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str()){TerminateProcess(handle,4);WaitForSingleObject(handle,5000);}CloseHandle(handle);}
 int test_main(int argc,char** argv,const std::function<void(const fs::path&)>& test) {try {require(argc>=2,"Repository argument required");test(fs::path(wide(argv[1])));std::cout<<"PASSED"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}}
-Coordinator::Coordinator(const fs::path& repo,const std::string& label):root(temporary(label)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration") {
-    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_telemetry.ps1","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
+Coordinator::Coordinator(const fs::path& repo,const std::string& label,bool durableBatches):root(temporary(label)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration"),durableBatches_(durableBatches) {
+    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
     write(scripts/L"build_preflight.ps1",R"PS(param([Alias('ReloadShell')][switch]$ExecuteReloadShell,[Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {
  $unknown=Test-Path (Join-Path $Root 'preflight-unknown');$blocked=Test-Path (Join-Path $Root 'preflight-blocked')
@@ -252,7 +252,7 @@ Write-Output "controlled $Phase passed";exit 0
     write(scripts/L"build_batch_tests.ps1","param([string]$Batch)\n& (Join-Path $PSScriptRoot 'fake.ps1') -Phase test;exit $LASTEXITCODE\n",true);
     for(const auto& path:{"src/a.txt","src/b.txt","src/other.txt","src/fixture.cpp","src/winui/presenter.cpp","src/core/desktop.cpp"})write(root/path,"original\n");
     write(root/L".gitignore","/*\n!/scripts/\n!/src/\n!/.gitignore\n!/CMakePresets.json\n");init_git(root);
-    bridge=std::make_unique<Bridge>(repo,root);
+    bridge=std::make_unique<Bridge>(repo,root,false,true);
 }
 Coordinator::~Coordinator(){for(const auto& worker:workers)stop_owner(worker);}
 Json Coordinator::call(std::vector<std::string> args,int code){return bridge->call(scripts/L"build_manager.ps1",args,code);}
@@ -261,6 +261,11 @@ Json Coordinator::state() const{return Json::parse(read(stateRoot/L"state.json")
 Json Coordinator::result(const std::string& batch) const{return Json::parse(read(stateRoot/wide(batch+".json")));}
 Json Coordinator::begin(const std::string& task){
     auto value=call({"begin",task});
+    if(!durableBatches_){
+        // Seed a legacy registration as input, rather than changing production
+        // routing. Its existing owner/crash tests must retain v2 semantics.
+        auto existing=state();existing["current"]["protocolVersion"]=2;atomic(stateRoot/L"state.json",existing.dump());
+    }
     // Lifecycle fixtures deliberately request complete synthetic coverage.
     // Production registrations have no default plan; missing-plan cases use call directly.
     if(value.at("editRevision").integer()==0){

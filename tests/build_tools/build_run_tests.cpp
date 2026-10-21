@@ -8,7 +8,7 @@ namespace {
 class ParentJob {
     HANDLE job_=nullptr,process_=nullptr;
 public:
-    ParentJob(const fs::path& script,const fs::path& root,bool allow) {
+    ParentJob(const fs::path& script,const fs::path& root,bool allow,const std::string& label="native-launcher") {
         HANDLE input=INVALID_HANDLE_VALUE,output=INVALID_HANDLE_VALUE,error=INVALID_HANDLE_VALUE;
         LPPROC_THREAD_ATTRIBUTE_LIST attributes=nullptr;bool initialized=false;PROCESS_INFORMATION info{};
         const auto cleanup=[&]{
@@ -24,8 +24,8 @@ public:
             auto engine=powershell();std::wstring command=quote(engine.wstring())+L" -NoProfile -NonInteractive -File "+quote(script.wstring());
             SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES),nullptr,TRUE};
             input=CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,OPEN_EXISTING,0,nullptr);
-            output=CreateFileW((root/L"native-launcher.out").c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
-            error=CreateFileW((root/L"native-launcher.err").c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
+            output=CreateFileW((root/wide(label+".out")).c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
+            error=CreateFileW((root/wide(label+".err")).c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
             require(input!=INVALID_HANDLE_VALUE&&output!=INVALID_HANDLE_VALUE&&error!=INVALID_HANDLE_VALUE,"Controlled launcher streams failed");
             SIZE_T size=0;InitializeProcThreadAttributeList(nullptr,1,0,&size);storage.resize(size);attributes=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
             require(InitializeProcThreadAttributeList(attributes,1,0,&size)!=FALSE,"Controlled launcher attribute allocation failed");initialized=true;
@@ -78,8 +78,77 @@ Json await_running(Coordinator& c,const std::string& id) {
     c.workers.push_back(view.at("record").at("owner"));return view;
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
+void tool_plan(const fs::path& repo,bool oldBehavior=false){
+    Coordinator c(repo,oldBehavior?"old-tool-plan":"tool-plan-no-host",true);
+    if(oldBehavior){
+        auto source=read(c.scripts/L"build_protocol.ps1");
+        replace(source,"if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}","$build=$true");
+        write(c.scripts/L"build_protocol.ps1",source,true);
+    }
+    const auto batch=c.begin("tool").at("batchId").str();c.plan("tool",batch,0,"selected","Alpha","tool");
+    write(c.root/L"finish.ps1","& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait tool -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
+    ParentJob parent(c.root/L"finish.ps1",c.root,true);
+    require(parent.wait()==0,"Tool-only durable batch failed: "+read(c.root/L"native-launcher.err"));
+    require(c.calls()==1&&read(c.root/L"calls.txt")=="test\n"&&!fs::exists(c.root/L"build-started"),"Tool plan invoked unnecessary host compilation");
+    const auto result=c.result(batch);
+    require(result.at("outcome").str()=="passed"&&!result.at("testingPlan").at("buildRequired").boolean&&result.at("testingPlan").at("mode").str()=="selected","Tool tests were skipped or escalated to a host build");
+}
 
 void test(const fs::path& repo) {
+    {
+        Coordinator c(repo,"durable-batch",true);setup_run(c,repo);
+        const auto batch=c.begin("runner").at("batchId").str();c.begin("peer");
+        require(c.state().at("current").at("protocolVersion").integer()==3,"New production batch did not choose durable execution");
+        for(const std::string task:{"runner","peer"})write(c.root/wide(task+"-finish.ps1"),"& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait "+task+" -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
+        ParentJob first(c.root/L"runner-finish.ps1",c.root,true,"runner");ParentJob second(c.root/L"peer-finish.ps1",c.root,true,"peer");
+        std::string id;
+        until([&]{const auto current=c.state().at("current");if(current.has("runId")){id=current.at("runId").str();return true;}return false;});
+        auto view=await_running(c,id);first.close();second.close();
+        c.call({"execute",view.at("task").str(),"-Batch",batch,"-Revision","0","-ExecutionRun",id},2);
+        require(owner_alive(view.at("record").at("owner"))&&c.calls()==1,"Closing all batch observers killed or duplicated execution");
+        size_t requests=0;for(const auto& file:fs::directory_iterator(c.stateRoot/L"runs"))if(file.path().filename().wstring().ends_with(L".request.json"))++requests;
+        require(requests==1,"Concurrent finishers reserved more than one Run");
+        c.call({"event-post","runner","-Target",view.at("task").str(),"-EventKind","requirements","-Importance","urgent","-Text","review before continuing","-EventKey","durable-test"});
+        require(command(c,id,{L"-Command",L"wait",L"-Seconds",L"1"}).code==6&&owner_alive(view.at("record").at("owner")),"Urgent observation cancelled or hid the active batch");
+        require(command(c,id,{L"-Command",L"cancel",L"-Task",wide(view.at("task").str())}).code==0,"Explicit batch cancellation failed");
+        until([&]{return fs::exists(c.stateRoot/wide(batch+".json"));});
+        const auto result=c.result(batch);
+        require(result.at("outcome").str()=="cancelled"&&result.at("runId").str()==id&&c.state().at("current").kind==Json::Kind::Null,"Batch did not publish one shared cancellation after lease release");
+        HANDLE lease=CreateFileW((c.stateRoot/L"build.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
+        require(lease!=INVALID_HANDLE_VALUE,"Shared batch result preceded output lease release");CloseHandle(lease);
+        await_dead(Json::parse(read(c.root/L"child.json")));await_dead(Json::parse(read(c.root/L"grandchild.json")));
+        std::cout<<"PASS concurrent durable finishers, observer loss, urgent return, explicit cancellation and shared terminal release\n";
+    }
+    {
+        tool_plan(repo);
+        const auto controlRoot=temporary("old-host-plan-control");
+        const auto control=run({executable().wstring(),repo.wstring(),L"--old-host-plan"},controlRoot,30);
+        require(control.code==1&&control.err.find("Tool plan invoked unnecessary host compilation")!=std::string::npos,"Restored host-build coupling was not caught by its actual invocation assertion: "+control.out+control.err);
+        std::cout<<"PASS tool-only batch avoids host compilation and rejects restored old behavior\n";
+    }
+    {
+        Coordinator c(repo,"batch-refusal",true);
+        const auto batch=c.begin("tool").at("batchId").str();c.plan("tool",batch,0,"selected","Alpha","tool");
+        write(c.root/L"finish.ps1","& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait tool -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
+        ParentJob parent(c.root/L"finish.ps1",c.root,false);
+        require(parent.wait()==2,"Restrictive batch parent silently used foreground execution");
+        const auto result=c.result(batch);require(result.at("outcome").str()=="failed"&&result.at("runId").kind==Json::Kind::String&&c.calls()==0,"Refused batch lost shared failure or started work");
+        const auto view=status(c,result.at("runId").str());require(view.at("status").str()=="start-failed","Refused batch did not retain its immutable Run request");
+        std::cout<<"PASS refused persistent batch launch publishes failure and preserves its request without executing\n";
+    }
+    {
+        Coordinator c(repo,"durable-batch-crash",true);setup_run(c,repo);
+        const auto batch=c.begin("runner").at("batchId").str();
+        write(c.root/L"finish.ps1","& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait runner -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
+        ParentJob parent(c.root/L"finish.ps1",c.root,true);
+        std::string id;until([&]{const auto current=c.state().at("current");if(current.has("runId")){id=current.at("runId").str();return true;}return false;});
+        auto view=await_running(c,id);parent.close();stop_owner(view.at("record").at("owner"));
+        await_dead(Json::parse(read(c.root/L"child.json")));await_dead(Json::parse(read(c.root/L"grandchild.json")));
+        require(status(c,id).at("status").str()=="interrupted"&&!fs::exists(c.stateRoot/wide(batch+".json")),"Lost executor silently published success or replayed the batch");
+        c.call({"recover","-Batch",batch,"-ConfirmStopped","-Reason","verified fixture executor exited"});
+        require(c.result(batch).at("outcome").str()=="interrupted"&&c.result(batch).at("runId").str()==id&&c.calls()==1,"Explicit recovery lost the Run link or repeated work");
+        std::cout<<"PASS batch executor loss cleans children and requires explicit shared recovery\n";
+    }
     {
         Coordinator c(repo,"default-entry");setup_run(c,repo);
         write(c.root/L"launch-entry.ps1","[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$null,'Process')\n[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$null,'Process')\n& "+ps_literal(c.scripts/L"build_entry.ps1")+" -Action release\nexit $LASTEXITCODE\n",true);
@@ -166,4 +235,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,test);}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}test(repo);});}

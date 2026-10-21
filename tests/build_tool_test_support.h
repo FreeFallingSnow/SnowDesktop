@@ -102,7 +102,9 @@ public:
     fs::path root, scripts, stateRoot;
     std::unique_ptr<Bridge> bridge;
     std::vector<Json> workers;
-    Coordinator(const fs::path& repo, const std::string& label);
+    // Existing fixtures exercise retained v2 semantics. New lifecycle tests
+    // explicitly keep production's default durable protocol.
+    Coordinator(const fs::path& repo, const std::string& label, bool durableBatches = false);
     ~Coordinator();
     Json call(std::vector<std::string> args, int code = 0);
     std::unique_ptr<Child> start(std::vector<std::string> args);
@@ -119,5 +121,7 @@ public:
     int calls() const;
     void gate(const std::string& name, bool present = true);
     Result git(const std::vector<std::wstring>& args);
+private:
+    bool durableBatches_ = false;
 };
 }
