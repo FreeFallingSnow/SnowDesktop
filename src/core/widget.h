@@ -610,6 +610,12 @@ public:
     }
     bool CollectTopLevelDesktopItems();
     bool PruneUncollectableItems();
+    /**
+     * @brief 判断指定桌面项当前是否仍由本组件的自动收纳管理。
+     * @param layoutKey 桌面项布局键
+     * @return 仍在自动收纳范围内返回 true；已保留但类别不再收纳时返回 false
+     */
+    bool AutoCollectsItem(const std::wstring& layoutKey) const;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -676,6 +682,8 @@ private:
 
     void EnsureCategorySnapshot() const;
     void InvalidateCategorySnapshot() const;
+    /** @brief 在分类快照中查找布局键所属分类；未收录时返回空。 */
+    std::wstring CachedCategoryIdForKey(const std::wstring& layoutKey) const;
 
     mutable CategorySnapshot categorySnapshot_;
     mutable std::vector<LayoutSegment> layoutCache_;

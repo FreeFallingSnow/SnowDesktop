@@ -336,8 +336,36 @@ void DesktopApp::ShowWidgetContextMenu(
          widget.type == DesktopWidgetType::FolderMapping);
     if (widget.type == DesktopWidgetType::FileGroup)
     {
-        effectiveSourceIndex =
-            FindWidgetIndexById(widget.activeCategoryId);
+        // The group displays its first visible source while no active source is
+        // stored, so menu source options must resolve to that displayed source
+        // instead of falling back to the group itself.
+        for (const auto& container : containers_)
+        {
+            const auto* group = dynamic_cast<const FileGroup*>(container.get());
+            if (!group || group->GetWidgetData() != &widget) continue;
+            effectiveSourceIndex =
+                FindWidgetIndexById(group->GetActiveSourceId());
+            break;
+        }
+        if (effectiveSourceIndex >= widgets_.size())
+            effectiveSourceIndex =
+                FindWidgetIndexById(widget.activeCategoryId);
+        if (effectiveSourceIndex >= widgets_.size())
+        {
+            for (const auto& childId : widget.childWidgetIds)
+            {
+                const size_t childIndex = FindWidgetIndexById(childId);
+                if (childIndex < widgets_.size() &&
+                    (widgets_[childIndex].type ==
+                         DesktopWidgetType::FileCategories ||
+                     widgets_[childIndex].type ==
+                         DesktopWidgetType::FolderMapping))
+                {
+                    effectiveSourceIndex = childIndex;
+                    break;
+                }
+            }
+        }
         if (effectiveSourceIndex >= widgets_.size())
             effectiveSourceIndex = widgetIndex;
     }

@@ -17,6 +17,14 @@ inline bool Matches(const DesktopWidget& widget, std::wstring_view category)
             widget.autoCollectCategoryIds.end();
 }
 
+// Whether the component still auto-collects a member of the category. Members
+// of categories that are no longer selected stay in the component but are no
+// longer owned by its auto-collection, so they can be dragged out again.
+inline bool AutoCollectsCategory(const DesktopWidget& widget, std::wstring_view category)
+{
+    return widget.autoCollect && Matches(widget, category);
+}
+
 // The collection menu behaves like a checkbox list in both scopes. Clearing
 // one option while the empty All scope is active expands that scope first, so
 // the clicked category is the one removed instead of the only one retained.

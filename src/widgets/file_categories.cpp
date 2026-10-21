@@ -286,6 +286,30 @@ const std::vector<std::wstring>& FileCategories::CachedCategoryKeys(
     return it != categorySnapshot_.keysByCategory.end() ? it->second : empty;
 }
 
+std::wstring FileCategories::CachedCategoryIdForKey(
+    const std::wstring& layoutKey) const
+{
+    if (!data_ || layoutKey.empty()) return {};
+    EnsureCategorySnapshot();
+    const std::wstring key = ToUpperInvariant(layoutKey);
+    for (const auto& [categoryId, keys] : categorySnapshot_.keysByCategory)
+    {
+        if (categoryId == L"all") continue;
+        if (std::find(keys.begin(), keys.end(), key) != keys.end())
+            return categoryId;
+    }
+    return {};
+}
+
+bool FileCategories::AutoCollectsItem(const std::wstring& layoutKey) const
+{
+    if (!data_) return false;
+    // The aggregate snapshot row shares the "all" id, so resolve the real
+    // category first; an unclassified key keeps the legacy All-scope answer.
+    return snowdesktop::file_category_auto_collect_rules::AutoCollectsCategory(
+        *data_, CachedCategoryIdForKey(layoutKey));
+}
+
 const std::vector<std::wstring>& FileCategories::CachedVisibleCategoryIds() const
 {
     EnsureCategorySnapshot();

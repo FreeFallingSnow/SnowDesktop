@@ -498,15 +498,9 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
             : _LW("core.drag.release_occupied");
     }
 
-    if (!ctrlDown && !altDown)
-    {
-        auto* originWidget = dynamic_cast<WidgetContainer*>(origin);
-        DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
-        if (originData &&
-            originData->type == DesktopWidgetType::FileCategories &&
-            originData->autoCollect)
-            return _LW("core.drag.auto_collect_off_first");
-    }
+    if (!ctrlDown && !altDown &&
+        app_->IsAutoCollectFileCategorySource(sourceList))
+        return _LW("core.drag.auto_collect_off_first");
 
     // Internal drag
     if (altDown)  return _LW("core.drag.release_shortcut_here");

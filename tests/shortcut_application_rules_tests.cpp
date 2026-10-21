@@ -352,6 +352,22 @@ int wmain(int argc, wchar_t** argv)
     Check(allScope.autoCollect && autoCollect::Matches(allScope, L"images"),
         "the same category can be added back after clearing it in the All scope");
 
+    DesktopWidget scoped;
+    scoped.type = DesktopWidgetType::FileCategories;
+    scoped.autoCollect = true;
+    scoped.autoCollectCategoryIds = {L"images"};
+    Check(autoCollect::AutoCollectsCategory(scoped, L"images") &&
+        !autoCollect::AutoCollectsCategory(scoped, L"documents"),
+        "only selected categories are still auto-collected and cannot be dragged out");
+    scoped.autoCollect = false;
+    Check(!autoCollect::AutoCollectsCategory(scoped, L"images"),
+        "turning auto-collection off frees every category");
+    scoped.autoCollect = true;
+    scoped.autoCollectCategoryIds.clear();
+    Check(autoCollect::AutoCollectsCategory(scoped, L"documents") &&
+        autoCollect::AutoCollectsCategory(scoped, L"custom-new"),
+        "the All scope keeps every current and future category collected");
+
     std::vector<DesktopWidget> collectors(4);
     for (size_t index = 0; index < collectors.size(); ++index)
     {

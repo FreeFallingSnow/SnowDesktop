@@ -352,7 +352,50 @@ bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
 bool DesktopApp::IsAutoCollectFileCategorySource(
     const DragSourceList& sourceList) const
 {
-    return snowdesktop::drop_pipeline::AutoCollectSource(sourceList, widgets_);
+    if (!sourceList.hasOriginWidget ||
+        sourceList.originWidgetType != DesktopWidgetType::FileCategories)
+        return false;
+    const size_t widgetIndex = FindWidgetIndexById(sourceList.originWidgetId);
+    if (widgetIndex >= widgets_.size()) return false;
+    const DesktopWidget& widget = widgets_[widgetIndex];
+    if (!widget.autoCollect) return false;
+    // Retained members of categories that are no longer selected stay in the
+    // component but are no longer owned by its auto-collection. They can be
+    // dragged out without being re-collected, so decide per dragged item.
+    const FileCategories* view = nullptr;
+    for (const auto& container : containers_)
+    {
+        if (auto* categories = dynamic_cast<FileCategories*>(container.get());
+            categories && categories->GetWidgetData() == &widget)
+        {
+            view = categories;
+            break;
+        }
+    }
+    if (!view)
+    {
+        // File groups host their sources instead of keeping a desktop
+        // container for each child widget.
+        for (const auto& container : containers_)
+        {
+            auto* group = dynamic_cast<FileGroup*>(container.get());
+            if (!group || !group->GetWidgetData()) continue;
+            const auto& children = group->GetWidgetData()->childWidgetIds;
+            if (std::find(children.begin(), children.end(), widget.id) ==
+                children.end())
+                continue;
+            view = dynamic_cast<FileCategories*>(
+                group->GetSourceContainerById(widget.id));
+            break;
+        }
+    }
+    if (!view) return true;
+    for (const auto& entry : sourceList.entries)
+    {
+        if (entry.desktopKey.empty() || view->AutoCollectsItem(entry.desktopKey))
+            return true;
+    }
+    return false;
 }
 
 /**
