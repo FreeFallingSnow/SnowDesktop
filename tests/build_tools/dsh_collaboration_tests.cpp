@@ -97,6 +97,8 @@ try{
  const output=await tool.execute({action:'status'},{agent});
  await promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Target',ownId,'-EventKey','fixture-urgent','-EventKind','requirements','-Importance','urgent','-Text','fixture changed requirement'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
  await poll();
+ const deliveryDeadline=Date.now()+10000;
+ while(notices.length<2&&Date.now()<deliveryDeadline)await new Promise(resolve=>setTimeout(resolve,10));
  // Exercise the real consumer contract: pending inbox rendering and next-step
  // admission both dereference source.kind, including when a notice is replayed.
  const replayed=JSON.parse(JSON.stringify(notices));
