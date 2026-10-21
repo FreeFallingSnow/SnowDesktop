@@ -64,7 +64,7 @@ console.log(JSON.stringify(result));
     write(c.root/L"sdk-fixture.mjs",R"JS(const chain=new Proxy(function(){return chain;},{get(){return chain;}});
 export default chain;
 export const defineTool=value=>value;
-export const createUserMessage=value=>value;
+export const createUserMessage=value=>structuredClone({...value,role:'user',id:'fixture-message-'+Math.random()});
 export const Remote=()=>{};
 export class TypertRemoteService{constructor(ctx,name){this.ctx=ctx;ctx.services[name]=this;}}
 )JS");
@@ -74,7 +74,8 @@ export class TypertRemoteService{constructor(ctx,name){this.ctx=ctx;ctx.services
     write(c.root/L"register-loader.mjs","import {register} from 'node:module'; register('./loader.mjs',import.meta.url);\n");
     write(c.root/L"host.mjs",R"JS(import fs from 'node:fs';import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
 const [moduleFile,root]=process.argv.slice(2),{apply}=await import(pathToFileURL(moduleFile));
-const hooks=new Map(),disposers=[],notices=[],services={};let tool;
+const hooks=new Map(),disposers=[],notices=[],services={};let tool,poll;
+const nativeSetInterval=globalThis.setInterval;globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
 const agent={id:'host-fixture-agent',session:{},status:'idle',inject:message=>notices.push(message)};
 const ctx={services,logger:{warn(){}},workingDirectory:{get:()=>root},fs:{processPath:target=>target},agents:{list:()=>[]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:false});
@@ -94,7 +95,13 @@ try{
  await bridge.call('begin',ownId);const stale=await deniedBoth();
  await tool.execute({action:'begin'},{agent});const rebound=await hooks.get('fs/edit-intent')(path.join(root,'src/a.txt'),{agent},()=>({sentinel:'fresh'}));
  const output=await tool.execute({action:'status'},{agent});
- result={denied,kept,ready,stale,rebound,notices:notices.length,rendered:tool.output.render({},output),tool:tool.name};
+ await promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Target',ownId,'-EventKey','fixture-urgent','-EventKind','requirements','-Importance','urgent','-Text','fixture changed requirement'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+ await poll();
+ // Exercise the real consumer contract: pending inbox rendering and next-step
+ // admission both dereference source.kind, including when a notice is replayed.
+ const replayed=JSON.parse(JSON.stringify(notices));
+ const consumerKinds=replayed.map(message=>message.source.kind);
+ result={denied,kept,ready,stale,rebound,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
@@ -102,7 +109,11 @@ console.log(JSON.stringify(result));
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
     require(observed.at("denied").items.size()==2&&observed.at("denied").items[0].boolean&&observed.at("denied").items[1].boolean,"Host write/edit hooks did not deny missing grants");
-    require(observed.at("notices").integer()==1&&observed.at("kept").items[0].at("sentinel").str()=="kept"&&observed.at("kept").items[1].at("sentinel").str()=="kept","Plugin lost early presence or another policy's write intent");
+    require(observed.at("notices").items.size()==2&&observed.at("kept").items[0].at("sentinel").str()=="kept"&&observed.at("kept").items[1].at("sentinel").str()=="kept","Plugin lost registration/event delivery or another policy's write intent");
+    for(const auto& notice:observed.at("notices").items){
+        require(notice.at("role").str()=="user"&&notice.at("source").at("kind").str()=="snowdesktop-collaboration"&&notice.at("source").at("form").str()=="notice"&&!notice.at("source").at("summary").str().empty()&&notice.at("source").at("summary").str().size()<=120,"Persisted coordination notice has no valid producer-owned source");
+    }
+    require(observed.at("consumerKinds").items.size()==2,"Replayed notices failed consumer source classification");
     for(const auto& phase:{"ready","stale"})require(observed.at(phase).items[0].boolean&&observed.at(phase).items[1].boolean,"Host gate accepted a ready or superseded cached grant");
     require(observed.at("rebound").at("sentinel").str()=="fresh","Explicit Host reacquisition failed");
     require(observed.at("rendered").items[0].at("type").str()=="text"&&observed.at("tool").str()=="snow_collaboration","Plugin tool output violated the inspected content contract");
