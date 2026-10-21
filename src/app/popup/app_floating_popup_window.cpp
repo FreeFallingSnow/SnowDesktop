@@ -14,6 +14,9 @@ namespace
 {
 constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
 constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
+constexpr UINT kPopupPresentationRetryIntervalMs = 100;
+constexpr unsigned kPopupPresentationRetryLimit = 5;
 
 RECT UnionRects(const RECT& first, const RECT& second)
 {
@@ -210,6 +213,9 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
 
 void DesktopApp::AdvanceFloatingPopupContentGeneration()
 {
+    floatingPopupPresentationRetryCount_ = 0;
+    if (floatingPopupHwnd_)
+        KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     popupMouseLeaveController_.Reset();
     ++floatingPopupMouseHookGeneration_;
     if (floatingPopupMouseHookGeneration_ == 0)
@@ -517,11 +523,24 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
 
 void DesktopApp::ResetFloatingPopupCompositionResources()
 {
+    // A transparent DComp frame does not make its native HWND click-through.
+    // Retire input before discarding the last usable pixels.
+    collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupDcompVisual_)
         floatingPopupDcompVisual_->SetContent(nullptr);
     floatingPopupDcompSurface_.Reset();
     floatingPopupCompWidth_ = 0;
     floatingPopupCompHeight_ = 0;
+}
+
+void DesktopApp::SuspendFloatingPopupPresentation()
+{
+    collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
+    if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_) &&
+        ShouldShowFloatingPopupWindow() &&
+        floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
+        SetTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId,
+            kPopupPresentationRetryIntervalMs, nullptr);
 }
 
 void DesktopApp::RecoverFloatingPopupCompositionFailure(
@@ -731,12 +750,23 @@ bool DesktopApp::PresentFloatingPopupComposition()
     if (floatingPopupCompositionPaintInProgress_)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        return true;
+        return false;
     }
     if (!RenderFloatingPopupCompositionFrame())
+    {
+        SuspendFloatingPopupPresentation();
         return false;
+    }
     ValidateRect(floatingPopupHwnd_, nullptr);
-    return FlushPendingCompositionCommit();
+    if (!FlushPendingCompositionCommit())
+    {
+        ResetFloatingPopupCompositionResources();
+        SuspendFloatingPopupPresentation();
+        return false;
+    }
+    KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
+    floatingPopupPresentationRetryCount_ = 0;
+    return true;
 }
 
 void DesktopApp::InvalidateFloatingPopupWindow(
@@ -932,6 +962,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
+        if (floatingPopupHwnd_) KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
+        floatingPopupPresentationRetryCount_ = 0;
         StopFloatingPopupOutsideClickMonitor();
         collectionPopupBackdropCompositor_.HidePopupWindowPair(
             floatingPopupHwnd_);
@@ -1044,6 +1076,12 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             menuZOrderBefore,
             CaptureMenuHostZOrder(floatingPopupHwnd_),
             positioned == FALSE);
+        if (!positioned)
+        {
+            floatingPopupWindowBounds_ = {};
+            SuspendFloatingPopupPresentation();
+            return;
+        }
     }
     else
     {
@@ -1055,6 +1093,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!wasVisible || boundsChanged || regionChanged)
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
+        bool regionReady = windowRegion != nullptr;
         auto appendRegion = [&](RECT desktopRect, float radius) {
             if (!windowRegion || IsRectEmpty(&desktopRect))
                 return;
@@ -1066,11 +1105,13 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
             if (added)
             {
-                CombineRgn(
+                if (CombineRgn(
                     windowRegion, windowRegion,
-                    added, RGN_OR);
+                    added, RGN_OR) == ERROR)
+                    regionReady = false;
                 DeleteObject(added);
             }
+            else regionReady = false;
         };
         const auto* popup = GetOpenPopupWidget();
         appendRegion(floatingPopupCollectionRegion_, popup ?
@@ -1078,17 +1119,34 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         appendRegion(
             floatingPopupLuaPanelRegion_,
             floatingPopupModalRegion_ ? 0.f : 18.f);
-        if (windowRegion &&
-            !SetWindowRgn(
-                floatingPopupHwnd_, windowRegion, FALSE))
-            DeleteObject(windowRegion);
+        if (!regionReady || !SetWindowRgn(floatingPopupHwnd_, windowRegion, FALSE))
+        {
+            if (windowRegion) DeleteObject(windowRegion);
+            // Retry identical geometry too; failed native clipping must not
+            // become a successful cached input region.
+            floatingPopupWindowBounds_ = {};
+            SuspendFloatingPopupPresentation();
+            return;
+        }
     }
 
     const bool rendered = immediatePresent
         ? PresentFloatingPopupComposition()
         : false;
     if (!rendered)
+    {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        if (immediatePresent)
+        {
+            // A nested provider callback can ask for presentation while the
+            // outer frame owns BeginDraw. It is deferred, not failed: preserve
+            // an existing usable frame and let the outer presenter reveal a
+            // hidden host only after that frame completes.
+            if (!floatingPopupCompositionPaintInProgress_)
+                SuspendFloatingPopupPresentation();
+            return;
+        }
+    }
 
     if (snowdesktop::floating_popup_rules::ShouldRevealHost(
             wasVisible, immediatePresent))
@@ -1209,7 +1267,7 @@ void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)
         RenderFloatingPopupCompositionFrame();
     EndPaint(hwnd, &paint);
     if (ShouldShowFloatingPopupWindow() && !rendered)
-        InvalidateRect(hwnd, nullptr, FALSE);
+        SuspendFloatingPopupPresentation();
 }
 
 POINT DesktopApp::FloatingPopupClientToDesktop(
@@ -1316,6 +1374,17 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     }
     case WM_TIMER:
+        if (wp == kPopupPresentationRetryTimerId)
+        {
+            KillTimer(hwnd, kPopupPresentationRetryTimerId);
+            if (ShouldShowFloatingPopupWindow() &&
+                floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
+            {
+                ++floatingPopupPresentationRetryCount_;
+                UpdateFloatingPopupWindowBounds(true);
+            }
+            return 0;
+        }
         if (wp == kPopupMouseLeaveTimerId)
         {
             SyncPopupMouseLeaveTimer();
@@ -1363,6 +1432,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         {
             CancelPointerPressWithoutCaptureRelease();
         }
+        if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+            ReleaseCapturePreservingPointerState();
         return 0;
     case WM_LBUTTONDBLCLK:
     {

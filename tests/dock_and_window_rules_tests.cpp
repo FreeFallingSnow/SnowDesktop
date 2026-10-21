@@ -2558,8 +2558,6 @@ int main(int argc, char** argv)
     CheckDockWindowPreviewLateOwnerPromotion();
     using snowdesktop::desktop_keyboard_rules::
         IsForegroundFocusReady;
-    using snowdesktop::desktop_keyboard_rules::
-        ShouldAttachForegroundInputQueue;
 
     Check(!IsForegroundFocusReady(
               true, false, false, false),
@@ -2572,10 +2570,6 @@ int main(int argc, char** argv)
             IsForegroundFocusReady(
               true, true, true, true),
         "foreground activation is additionally required for popup input proxies");
-    Check(ShouldAttachForegroundInputQueue(10, 20, false) &&
-            !ShouldAttachForegroundInputQueue(10, 10, false) &&
-            !ShouldAttachForegroundInputQueue(10, 20, true),
-        "a failed cross-thread foreground focus check requires one queue attachment retry");
 
     CheckPopupWindowPairZOrderTransitions();
     {

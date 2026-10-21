@@ -150,26 +150,8 @@ bool ActivateSettingsWindow(HWND window) noexcept
         SetActiveWindow(window);
     };
     requestActivation();
-    if (GetForegroundWindow() == window)
-        return true;
-
-    // The tray and single-instance messages can be dispatched after Windows
-    // has transferred foreground ownership to another process. Match the
-    // existing Dock activation policy: briefly share input queues only for a
-    // retry against SnowDesktop's own responsive window, then always detach.
-    const HWND foreground = GetForegroundWindow();
-    const DWORD foregroundThread = foreground
-        ? GetWindowThreadProcessId(foreground, nullptr)
-        : 0;
-    const DWORD currentThread = GetCurrentThreadId();
-    const bool attached = foregroundThread != 0 &&
-        foregroundThread != currentThread &&
-        AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
-    if (attached)
-    {
-        requestActivation();
-        AttachThreadInput(currentThread, foregroundThread, FALSE);
-    }
+    // Observe the normal request without joining an arbitrary foreground
+    // thread's input queue. Delivery may finish asynchronously in User32.
     return GetForegroundWindow() == window;
 }
 

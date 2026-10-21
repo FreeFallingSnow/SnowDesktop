@@ -1380,6 +1380,7 @@ private:
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
+    void SuspendFloatingPopupPresentation();
     void PaintFloatingPopupWindow(HWND hwnd);
     POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
@@ -4282,6 +4283,7 @@ private:
     bool floatingPopupModalRegion_ = false;
     bool floatingPopupCompositionRenderRecoveryPending_ = false;
     bool floatingPopupCompositionPaintInProgress_ = false;
+    unsigned floatingPopupPresentationRetryCount_ = 0;
     bool floatingPopupDropTargetRegistered_ = false;
     snowdesktop::LowLevelMouseHook floatingPopupMouseHook_;
     std::uint32_t floatingPopupMouseHookGeneration_ = 0;

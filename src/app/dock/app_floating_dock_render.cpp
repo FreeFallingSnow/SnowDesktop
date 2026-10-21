@@ -538,9 +538,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE) CancelRenameClick();
-        if (msg == WM_CANCELMODE ||
-            !IsOwnedPointerCaptureWindow(
-                reinterpret_cast<HWND>(lp)))
+        if (snowdesktop::floating_popup_rules::ShouldCancelPointerPressForHostMessage(
+                msg == WM_CANCELMODE, hwnd, GetCapture(),
+                IsOwnedPointerCaptureWindow(GetCapture()),
+                IsOwnedPointerCaptureWindow(reinterpret_cast<HWND>(lp))))
         {
             if (rightButtonDownDockHost_ == &host)
                 rightButtonDownDockHost_ = nullptr;
@@ -548,6 +549,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             {
                 CancelPointerPressWithoutCaptureRelease();
             }
+            if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+                ReleaseCapturePreservingPointerState();
         }
         return 0;
     case WM_LBUTTONDBLCLK:

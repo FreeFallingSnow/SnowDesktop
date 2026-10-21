@@ -493,48 +493,22 @@ bool DesktopApp::FocusKeyboardWindow(
     if (observation.ready)
         return true;
 
-    // GetFocus only reports the calling thread's queue and can therefore
-    // claim success while Explorer or Settings still owns the foreground
-    // queue receiving physical keyboard input. Retry whenever the observed
-    // foreground queue is different, then validate that queue with
-    // GetGUIThreadInfo instead of trusting the local queue again.
-    const DWORD attachedThread = observation.foregroundThread;
-    const bool shouldAttach =
-        ((deliberateFullscreenExit && !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) ||
-            !snowdesktop::fullscreen::ObserveForeground()) &&
-        snowdesktop::desktop_keyboard_rules::
-            ShouldAttachForegroundInputQueue(
-                currentThread, attachedThread,
-                observation.ready);
-    const bool attached = shouldAttach &&
-        AttachThreadInput(
-            currentThread, attachedThread, TRUE) != FALSE;
-    if (attached)
-    {
-        TraceDesktopInteraction(L"focus-attached-retry", target);
-        const bool attempted = requestFocus();
-        AttachThreadInput(
-            currentThread, attachedThread, FALSE);
-        if (!attempted) return false;
-    }
-    observation = observeFocus();
-    TraceDesktopInteraction(L"focus-retry-result", target);
-    if (observation.ready)
-        return true;
+    // Activation permission and cross-thread delivery belong to User32. A
+    // failed/queued foreground request must not couple our input queue to an
+    // unrelated application: synchronous activation can then block both.
 
     wchar_t message[384]{};
     swprintf_s(
         message,
         L"%ls focus FAILED target=%p activation=%p foreground=%p "
         L"foregroundThread=%lu foregroundFocus=%p focusKnown=%d "
-        L"localFocus=%p attachRequested=%d attached=%d",
+        L"localFocus=%p",
         diagnosticLabel ? diagnosticLabel : L"Keyboard window",
         target, activationWindow, observation.foreground,
         observation.foregroundThread,
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
-        GetFocus(), shouldAttach ? 1 : 0,
-        attached ? 1 : 0);
+        GetFocus());
     WriteDiagnosticLogEntry(message);
     return false;
 }

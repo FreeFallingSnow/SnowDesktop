@@ -603,7 +603,9 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     repaint(hwnd_);
     for (const auto& host : persistentDockHosts_)
         if (host) repaint(host->hwnd);
-    repaint(floatingPopupHwnd_);
+    // A failed popup frame now hides its native input surface. Hidden windows
+    // cannot recover through WM_PAINT alone after the bounded retry expires.
+    if (ShouldShowFloatingPopupWindow()) UpdateFloatingPopupWindowBounds(true);
     repaint(quickNavigationHwnd_);
     repaint(dragPreviewHwnd_);
     EnsureUiAnimationFrame();

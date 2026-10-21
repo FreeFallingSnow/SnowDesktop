@@ -1,0 +1,204 @@
+    struct InputSafetyWindowContext
+    {
+        DesktopApp* app = nullptr;
+        DesktopApp::PersistentDockHost* dock = nullptr;
+        bool popup = false;
+    };
+    static LRESULT CALLBACK InputSafetyWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        auto* context = reinterpret_cast<InputSafetyWindowContext*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (context && (message == WM_CANCELMODE || message == WM_CAPTURECHANGED || message == WM_NCHITTEST ||
+            (context->popup && message == WM_TIMER)))
+        {
+            if (context->popup) return context->app->HandleFloatingPopupMessage(window, message, wp, lp);
+            if (context->dock) return context->app->HandleFloatingDockMessage(*context->dock, window, message, wp, lp);
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+    // Override only this test process's imported OS boundaries. The production
+    // activation methods still execute; denied foreground requests must return
+    // without joining a foreign thread's input queue.
+    struct InputSafetyImport
+    {
+        ULONG_PTR* slot = nullptr;
+        ULONG_PTR original = 0;
+        InputSafetyImport(const char* name, ULONG_PTR replacement, bool optional = false)
+        {
+            const auto module = reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
+            const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
+            const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(module + dos->e_lfanew);
+            const auto imports = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(module +
+                nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+            for (auto entry = imports; entry->Name && !slot; ++entry)
+            {
+                if (!entry->OriginalFirstThunk) continue;
+                auto names = reinterpret_cast<const IMAGE_THUNK_DATA*>(module + entry->OriginalFirstThunk);
+                auto addresses = reinterpret_cast<IMAGE_THUNK_DATA*>(module + entry->FirstThunk);
+                for (; names->u1.AddressOfData; ++names, ++addresses)
+                {
+                    if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+                    const auto imported = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(module + names->u1.AddressOfData);
+                    if (strcmp(reinterpret_cast<const char*>(imported->Name), name) == 0)
+                    { slot = &addresses->u1.Function; break; }
+                }
+            }
+            if (!slot && optional) return;
+            if (!slot) throw std::runtime_error(std::string("missing input-safety OS import: ") + name);
+            DWORD protection = 0;
+            if (!VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &protection))
+                throw std::runtime_error("cannot protect test-process import slot");
+            original = *slot; *slot = replacement;
+            DWORD ignored = 0; VirtualProtect(slot, sizeof(*slot), protection, &ignored);
+        }
+        ~InputSafetyImport()
+        {
+            if (!slot) return;
+            DWORD protection = 0;
+            if (VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &protection))
+            { *slot = original; DWORD ignored = 0; VirtualProtect(slot, sizeof(*slot), protection, &ignored); }
+        }
+        InputSafetyImport(const InputSafetyImport&) = delete;
+        InputSafetyImport& operator=(const InputSafetyImport&) = delete;
+    };
+    static inline HWND inputSafetyForeground = nullptr;
+    static inline unsigned inputSafetyAttachCalls = 0;
+    static inline bool inputSafetyAllowForeground = false;
+    static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
+    static HWND WINAPI InputSafetyForeground() { return inputSafetyForeground; }
+    static BOOL WINAPI InputSafetyDenyForeground(HWND window)
+    { if (!inputSafetyAllowForeground) return FALSE; inputSafetyForeground = window; return TRUE; }
+    static HWND WINAPI InputSafetyDenyFocus(HWND) { return nullptr; }
+    static BOOL WINAPI InputSafetyAttach(DWORD, DWORD, BOOL) { ++inputSafetyAttachCalls; return FALSE; }
+    static DWORD WINAPI InputSafetyThread(HWND window, LPDWORD process)
+    {
+        if (window == inputSafetyForeground)
+        { if (process) *process = GetCurrentProcessId() + 1000; return GetCurrentThreadId() + 1000; }
+        return inputSafetyOriginalThread(window, process);
+    }
+    static BOOL WINAPI InputSafetyGui(DWORD, PGUITHREADINFO info)
+    { info->hwndActive = info->hwndFocus = inputSafetyForeground; return TRUE; }
+    static BOOL WINAPI InputSafetyDenyRegion(HWND, HRGN, BOOL)
+    { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return FALSE; }
+
+    static void RunInputSafety()
+    {
+        std::vector<std::string> failures;
+        const auto check = [&](bool value, const char* message) {
+            if (!value) { failures.emplace_back(message); std::cerr << "FAIL: " << message << '\n'; }
+        };
+        WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
+        cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
+        if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
+        app->instance_ = cls.hInstance;
+        std::vector<HWND> windows;
+        const auto create = [&](InputSafetyWindowContext* context, int width = 400, int height = 300) {
+            HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+                (context && context->popup ? WS_EX_NOREDIRECTIONBITMAP : 0),
+                cls.lpszClassName, L"Input safety fixture", WS_POPUP, 0, 0, width, height,
+                nullptr, nullptr, cls.hInstance, context);
+            if (!window) throw std::runtime_error("create isolated input window");
+            windows.push_back(window); return window;
+        };
+        InputSafetyWindowContext dockContext{app}, popupContext{app, nullptr, true};
+        struct Cleanup
+        {
+            DesktopApp& app; std::vector<HWND>& windows;
+            ~Cleanup()
+            {
+                app.StopFloatingPopupOutsideClickMonitor();
+                app.luaWidgetPanelRequest_ = {};
+                ReleaseCapture();
+                for (auto it = windows.rbegin(); it != windows.rend(); ++it) DestroyWindow(*it);
+                app.hwnd_ = app.floatingPopupHwnd_ = nullptr;
+                for (const auto& host : app.persistentDockHosts_) host->hwnd = nullptr;
+            }
+        } cleanup{*app, windows};
+        app->hwnd_ = create(nullptr, 6400, 2160);
+        const HWND control = create(nullptr);
+        auto host = std::make_unique<DesktopApp::PersistentDockHost>();
+        host->active = true; dockContext.dock = host.get(); host->hwnd = create(&dockContext);
+        const HWND dockWindow = host->hwnd;
+        app->persistentDockHosts_.push_back(std::move(host));
+        const HWND popupWindow = create(&popupContext);
+        app->floatingPopupHwnd_ = popupWindow;
+        const auto capture = [](HWND window) {
+            SetCapture(window);
+            if (GetCapture() != window) throw std::runtime_error("input capture fixture setup failed");
+        };
+        capture(control); SendMessageW(control, WM_CANCELMODE, 0, 0);
+        check(!GetCapture(), "default WM_CANCELMODE control must release capture");
+        for (const auto window : {dockWindow, popupWindow})
+        {
+            app->mouseDown_ = true; capture(window); SendMessageW(window, WM_CANCELMODE, 0, 0);
+            check(!GetCapture(), window == dockWindow ? "Dock cancellation must release its capture" :
+                "popup cancellation must release its capture");
+            check(!app->mouseDown_, "cancellation must clear the ordinary pointer press");
+            ReleaseCapture();
+            const HWND other = window == dockWindow ? popupWindow : dockWindow;
+            app->mouseDown_ = true; capture(window); capture(other);
+            SendMessageW(window, WM_CANCELMODE, 0, 0);
+            check(GetCapture() == other && app->mouseDown_, "old host cancellation must preserve transferred owned capture and press");
+            ReleaseCapture();
+            app->mouseDown_ = true; capture(window); capture(control);
+            check(GetCapture() == control && !app->mouseDown_, "capture loss must preserve the external owner and cancel the old press");
+            ReleaseCapture();
+        }
+        app->luaWidgetPanelRequest_.widgetId = L"input-safety-dialog";
+        app->luaWidgetPanelRequest_.surface = "dialog";
+        app->luaWidgetPanelRequest_.modal = true;
+        app->luaWidgetPanelAnimation_.ShowImmediately();
+        app->UpdateFloatingPopupWindowBounds(true);
+        check(!app->floatingPopupDcompSurface_, "first-frame failure fixture must have no completed surface");
+        check(!IsWindowVisible(popupWindow), "failed modal first frame must not expose a full-desktop input window");
+        for (unsigned retry = 0; retry < 8; ++retry)
+            SendMessageW(popupWindow, WM_TIMER, 2, 0);
+        check(app->floatingPopupPresentationRetryCount_ == 5 && !IsWindowVisible(popupWindow),
+            "unavailable presentation must stop after five retries without reviving its input window");
+        if (!app->InitGraphics()) throw std::runtime_error("initialize real graphics for popup recovery control");
+        app->UpdateFloatingPopupWindowBounds(true);
+        check(app->floatingPopupDcompSurface_ && IsWindowVisible(popupWindow) && app->floatingPopupPresentationRetryCount_ == 0,
+            "a real successful composition frame must restore the hidden popup and clear retry state");
+        app->floatingPopupCompositionPaintInProgress_ = true;
+        app->UpdateFloatingPopupWindowBounds(true);
+        check(IsWindowVisible(popupWindow), "a deferred reentrant frame must not retire an existing usable input surface");
+        app->floatingPopupCompositionPaintInProgress_ = false;
+        {
+            InputSafetyImport region("SetWindowRgn", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyRegion));
+            app->floatingPopupWindowBounds_ = {};
+            app->UpdateFloatingPopupWindowBounds(true);
+            check(!IsWindowVisible(popupWindow) && IsRectEmpty(&app->floatingPopupWindowBounds_),
+                "native clipping failure must hide input and invalidate its successful-geometry cache");
+        }
+        SendMessageW(popupWindow, WM_TIMER, 2, 0);
+        check(IsWindowVisible(popupWindow) && !IsRectEmpty(&app->floatingPopupWindowBounds_),
+            "identical geometry must retry clipping and recover through the production timer route");
+        app->ResetFloatingPopupCompositionResources();
+        check(!IsWindowVisible(popupWindow), "discarding the last surface must immediately retire native popup input");
+        app->StopFloatingPopupOutsideClickMonitor();
+        app->luaWidgetPanelRequest_ = {};
+
+        inputSafetyForeground = control;
+        inputSafetyOriginalThread = &GetWindowThreadProcessId;
+        {
+            InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+            InputSafetyImport denyForeground("SetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyForeground));
+            InputSafetyImport denyActive("SetActiveWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
+            InputSafetyImport denyFocus("SetFocus", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
+            InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
+            InputSafetyImport gui("GetGUIThreadInfo", reinterpret_cast<ULONG_PTR>(&InputSafetyGui));
+            InputSafetyImport attach("AttachThreadInput", reinterpret_cast<ULONG_PTR>(&InputSafetyAttach), true);
+            inputSafetyAttachCalls = 0;
+            const bool focused = app->FocusKeyboardWindow(popupWindow, true, L"Input safety denied activation");
+            check(!focused && inputSafetyAttachCalls == 0, "denied host activation must return without attaching a foreign input queue");
+            inputSafetyAllowForeground = true;
+            check(app->FocusKeyboardWindow(popupWindow, true, L"Input safety permitted activation") && inputSafetyAttachCalls == 0,
+                "a permitted foreground request must retain the ordinary successful focus route");
+            inputSafetyAllowForeground = false;
+        }
+        if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " native input safety assertions failed");
+        std::cout << "Native input safety: cancel, capture transfer, failed modal frame and denied activation passed\n";
+    }

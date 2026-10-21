@@ -6,6 +6,7 @@
 #include "app/widgets/widget_pair_drag_source.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -1082,6 +1083,7 @@ struct NativeDragIntegrationAccess
 #include "../icons/native_icon_customization_access.inc"
 #include "../dock/native_preview_order_access.inc"
 #include "../layout/native_list_hover_access.inc"
+#include "native_input_safety_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
@@ -1117,6 +1119,7 @@ struct NativeDragIntegrationAccess
 #include "../dock/native_preview_order_cases.h"
 #include "../layout/native_list_hover_cases.h"
 #include "../layout/native_popup_display_menu_cases.h"
+#include "native_input_safety_cases.h"
 
 namespace
 {
@@ -1223,6 +1226,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-hover") native_list_hover_cases::RunHover();
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-fonts") native_list_hover_cases::RunFonts();
         else if (argc == 2 && std::string_view(argv[1]) == "--popup-display-menu") native_popup_display_menu_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--input-safety") native_input_safety_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") native_icon_customization_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") {
             native_namespace_rejection_cases::Run(); native_external_namespace_cases::Run();
