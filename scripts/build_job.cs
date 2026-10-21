@@ -5,6 +5,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
+using System.Globalization;
 
 namespace SnowDesktop.Build
 {
@@ -38,11 +40,30 @@ namespace SnowDesktop.Build
             public BasicLimits basic; public IoCounters io;
             public UIntPtr processMemory, jobMemory, peakProcessMemory, peakJobMemory;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        struct Accounting
+        {
+            public long userTime, kernelTime, periodUserTime, periodKernelTime;
+            public uint pageFaults, totalProcesses, activeProcesses, terminatedProcesses;
+            public IoCounters io;
+        }
+        static string cancelPath, cancelNonce, metricsPath;
+        public static bool RunWasCancelled { get; private set; }
+        public static void ConfigureRunControl(string cancellationPath, string nonce, string resourcePath)
+        {
+            if (!Path.IsPathRooted(cancellationPath) || !Path.IsPathRooted(resourcePath) ||
+                nonce == null || !System.Text.RegularExpressions.Regex.IsMatch(nonce, "^[a-f0-9]{32}$"))
+                throw new ArgumentException("Run control needs absolute paths and a fenced nonce");
+            cancelPath = cancellationPath; cancelNonce = nonce; metricsPath = resourcePath;
+        }
         [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateJobObject(IntPtr security, string name);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref Limits limits, int size);
         [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint code);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, ref Accounting info, int size, IntPtr returned);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, ref Limits info, int size, IntPtr returned);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CreateFile(string path, uint access, uint share, ref Security security, uint creation, uint flags, IntPtr template);
@@ -59,6 +80,37 @@ namespace SnowDesktop.Build
         static void Close(IntPtr handle)
         {
             if (handle != IntPtr.Zero && handle != new IntPtr(-1)) CloseHandle(handle);
+        }
+        static bool CancellationRequested()
+        {
+            if (cancelPath == null || !File.Exists(cancelPath)) return false;
+            try { return File.ReadAllText(cancelPath, Encoding.UTF8).Trim() == cancelNonce; }
+            catch (IOException) { return false; }
+        }
+        static void Sample(IntPtr job, int pid, Stopwatch elapsed, bool finished, bool cancelled)
+        {
+            if (metricsPath == null) return;
+            Accounting accounting = new Accounting(); Limits limits = new Limits();
+            bool available = QueryInformationJobObject(job, 8, ref accounting, Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero);
+            int accountingError = available ? 0 : Marshal.GetLastWin32Error();
+            bool memoryAvailable = QueryInformationJobObject(job, 9, ref limits, Marshal.SizeOf(typeof(Limits)), IntPtr.Zero);
+            string json = "{\"schemaVersion\":1,\"sampledUtc\":\"" + DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) +
+                "\",\"pid\":" + pid + ",\"elapsedSeconds\":" + elapsed.Elapsed.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture) +
+                ",\"finished\":" + (finished ? "true" : "false") + ",\"cancelled\":" + (cancelled ? "true" : "false") +
+                ",\"accountingAvailable\":" + (available ? "true" : "false") + ",\"accountingError\":" + accountingError +
+                ",\"cpuSeconds\":" + (available ? ((accounting.userTime + accounting.kernelTime) / 10000000.0).ToString("F6", CultureInfo.InvariantCulture) : "null") +
+                ",\"activeProcesses\":" + (available ? accounting.activeProcesses.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"totalProcesses\":" + (available ? accounting.totalProcesses.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"ioReadBytes\":" + (available ? accounting.io.readBytes.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"ioWriteBytes\":" + (available ? accounting.io.writeBytes.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"peakJobMemoryBytes\":" + (memoryAvailable ? limits.peakJobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") + "}";
+            string temporary = metricsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, json, new UTF8Encoding(false));
+                if (File.Exists(metricsPath)) File.Replace(temporary, metricsPath, null); else File.Move(temporary, metricsPath);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
 
         public static int Run(string directory, string logPath)
@@ -105,6 +157,7 @@ namespace SnowDesktop.Build
 
         static int RunCommand(string directory, string logPath, string pipeline)
         {
+            RunWasCancelled = false;
             IntPtr job = IntPtr.Zero, output = IntPtr.Zero, input = IntPtr.Zero;
             IntPtr attributes = IntPtr.Zero, handles = IntPtr.Zero, jobList = IntPtr.Zero;
             bool initialized = false, completed = false;
@@ -150,11 +203,35 @@ namespace SnowDesktop.Build
                 StringBuilder command = new StringBuilder("\"" + cmd + "\" /d /s /c \"" + pipeline + "\"");
                 Check(CreateProcess(cmd, command, IntPtr.Zero, IntPtr.Zero, true,
                     0x80000 | 0x8000000, IntPtr.Zero, directory, ref startup, out process));
-                Check(WaitForSingleObject(process.process, uint.MaxValue) == 0);
+                Stopwatch elapsed = Stopwatch.StartNew(); double nextSample = 0, nextNotice = 30;
+                bool cancelled = false, metricWarning = false;
+                for (;;)
+                {
+                    uint wait = WaitForSingleObject(process.process, 200);
+                    if (wait != 0 && wait != 258) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if (wait == 258 && CancellationRequested())
+                    {
+                        Check(TerminateJobObject(job, 4));
+                        Check(WaitForSingleObject(process.process, 5000) == 0);
+                        cancelled = true; RunWasCancelled = true; wait = 0;
+                    }
+                    if (elapsed.Elapsed.TotalSeconds >= nextSample || wait == 0)
+                    {
+                        try { Sample(job, process.pid, elapsed, wait == 0, cancelled); }
+                        catch (IOException error) { if (!metricWarning) Console.Error.WriteLine("Run resource sample unavailable: " + error.Message); metricWarning = true; }
+                        nextSample = elapsed.Elapsed.TotalSeconds + 1;
+                    }
+                    if (wait == 0) break;
+                    if (elapsed.Elapsed.TotalSeconds >= nextNotice)
+                    {
+                        Console.Error.WriteLine("Build/test child " + process.pid + " remains active after " + (int)elapsed.Elapsed.TotalSeconds + "s; owned Job remains contained.");
+                        nextNotice += 30;
+                    }
+                }
                 uint code;
                 Check(GetExitCodeProcess(process.process, out code));
                 completed = true;
-                return unchecked((int)code);
+                return cancelled ? 4 : unchecked((int)code);
             }
             finally
             {

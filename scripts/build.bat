@@ -7,6 +7,7 @@ set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
 cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="run" goto persistent
 if /i "%~1"=="task-open" goto collaboration
 if /i "%~1"=="task-stage" goto collaboration
 if /i "%~1"=="task-close" goto collaboration
@@ -59,6 +60,9 @@ if defined CLOSE_APPLICATION set "RELOAD_SHELL_ARG=-CloseApplication"
 rem Acquire execution authority before any preflight/process action or output write.
 if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
+exit /b %ERRORLEVEL%
+:persistent
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_run.ps1" %*
 exit /b %ERRORLEVEL%
 :leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify

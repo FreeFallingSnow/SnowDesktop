@@ -30,7 +30,7 @@ function Get-BuildPowerShell {
 
 function Start-BuildPowerShellScript {
     param([string]$Script,[string]$Arguments='',[string]$WorkingDirectory,
-        [string]$OutputPath,[string]$ErrorPath,[int]$StartupSeconds=6)
+        [string]$OutputPath,[string]$ErrorPath,[int]$StartupSeconds=6,[switch]$Breakaway)
     # A two-file handshake separates engine initialization from script execution.
     # A child cannot execute the target until this parent grants permission. This
     # makes a startup-only retry safe even if readiness races with the timeout.
@@ -68,6 +68,9 @@ namespace SnowDesktop.Entry {
    finally {LocalFree(memory);}
   }
   public static Process Start(string executable,string arguments,string directory,string output,string error) {
+   return Start(executable,arguments,directory,output,error,false);
+  }
+  public static Process Start(string executable,string arguments,string directory,string output,string error,bool breakaway) {
    // Reject corrupt executables before entering Windows app-compat/error UI.
    // The loader can block here even when CreateProcess requested no window.
    using(var image=new BinaryReader(File.Open(executable,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))) {
@@ -93,7 +96,9 @@ namespace SnowDesktop.Entry {
     if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handles,new IntPtr(3*IntPtr.Size),IntPtr.Zero,IntPtr.Zero))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     var startup=new ExtendedStartup();startup.startup.size=Marshal.SizeOf(typeof(ExtendedStartup));startup.startup.flags=0x100;
     startup.startup.input=input;startup.startup.output=stdout;startup.startup.error=stderr;startup.attributes=attributes;
-    if(!CreateProcess(executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,true,0x80000|0x8000000,IntPtr.Zero,directory,ref startup,out child))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    uint creation=0x80000|0x8000000;
+    if(breakaway)creation|=0x01000000; // CREATE_BREAKAWAY_FROM_JOB; refusal is not a persistent launch.
+    if(!CreateProcess(executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,true,creation,IntPtr.Zero,directory,ref startup,out child))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     var process=Process.GetProcessById(child.pid);GC.KeepAlive(process.Handle);return process;
    } finally {
     foreach(var handle in new[]{input,stdout,stderr,child.process,child.thread})if(handle!=IntPtr.Zero&&handle!=new IntPtr(-1))CloseHandle(handle);
@@ -121,7 +126,7 @@ namespace SnowDesktop.Entry {
         $timer=[Diagnostics.Stopwatch]::StartNew()
         try {
             $env:SNOWDESKTOP_ENTRY_POWERSHELL=$runtime
-            $process=[SnowDesktop.Entry.PowerShellChild]::Start($runtime,('-NoProfile -NonInteractive -File "'+$bootstrapPath+'"'),$WorkingDirectory,$out,$err)
+            $process=[SnowDesktop.Entry.PowerShellChild]::Start($runtime,('-NoProfile -NonInteractive -File "'+$bootstrapPath+'"'),$WorkingDirectory,$out,$err,[bool]$Breakaway)
             $null=$process.Handle
             while(-not $process.HasExited -and -not [IO.File]::Exists($ready) -and $timer.Elapsed.TotalSeconds -lt $StartupSeconds){Start-Sleep -Milliseconds 20}
             if([IO.File]::Exists($ready) -and -not $process.HasExited) {
@@ -141,6 +146,10 @@ namespace SnowDesktop.Entry {
             [pscustomobject]@{runtime=$runtime;attempt=$attempt+1;target=$Script;scriptStarted=$false;error=$_.Exception.Message;utc=[DateTime]::UtcNow.ToString('o')} |
                 ConvertTo-Json | Set-Content -LiteralPath ($OutputPath+'.startup-'+($attempt+1)+'.json') -Encoding UTF8
             [Console]::Error.WriteLine('PowerShell initialization failed before target execution; evidence: '+$OutputPath+'.startup-'+($attempt+1)+'.json')
+            $failure=$_.Exception.GetBaseException()
+            if($Breakaway -and $failure -is [ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5){
+                throw 'Persistent worker launch was refused by the parent Job. No non-persistent fallback or build was started; the request is retained.'
+            }
         } finally {
             # Never remove the permit while the granted child is still reading it.
             # The child removes both handshake files before entering the target.
@@ -246,6 +255,24 @@ function Enter-BuildEntry([string]$Root) {
 function Exit-BuildEntry($Entry) {
     if($Entry){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$Entry.oldToken,'Process');$Entry.lease.Dispose()}
 }
+function Set-EntryRunControl([string]$Root) {
+    $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if(-not $id){return}
+    if($id -notmatch '^[a-f0-9]{32}$'){throw 'Invalid Run identity.'}
+    $directory=Join-Path $Root '.build/collaboration/runs'
+    $request=Read-EntryJson (Join-Path $directory ($id+'.request.json'))
+    $record=Read-EntryJson (Join-Path $directory ($id+'.json'))
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $Root -or $record.repositoryRoot -ne $Root -or
+        $record.id -ne $id -or $record.nonce -ne $request.nonce -or $record.status -ne 'running'){
+        throw 'Run control has no live matching request and execution record.'
+    }
+    if($record.owner.pid -ne $PID){return} # Delegated children are contained by the outer Run Job.
+    if($record.owner.startTicks -ne (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()){
+        throw 'Run executor process identity changed.'
+    }
+    Assert-EntryExecutionOwner $Root
+    [SnowDesktop.Build.Job]::ConfigureRunControl((Join-Path $directory ($id+'.cancel')),$request.nonce,(Join-Path $directory ($id+'.resources.json')))
+}
 function Assert-EntryExecutionOwner([string]$Root) {
     $record=Read-EntryJson (Join-Path $Root '.build/collaboration/execution.json')
     if(-not (Test-EntryDelegation $Root) -or -not $record -or $record.owner.pid -ne $PID -or
@@ -285,6 +312,7 @@ function Invoke-EntryPreflight([string]$Root,[bool]$ReloadShell,[bool]$CloseAppl
 
 if($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference='Stop';$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$entry=$null
+    $previousNodeReuse=[Environment]::GetEnvironmentVariable('MSBUILDDISABLENODEREUSE','Process')
     try {
         if($EntryAction -eq 'verify') {
             if(-not (Test-EntryDelegation $root)){throw 'Shared CMake/IDE output requires a live leased entry. Use scripts/build.bat, scripts/test.bat, or scripts/build_entry.ps1 -Action ide; independent output remains available for diagnostics.'}
@@ -304,6 +332,8 @@ if($MyInvocation.InvocationName -ne '.') {
             # interrupted entry cannot release the lease while its CMake child
             # keeps writing. No user process is attached to this Job.
             Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
+            [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE','1','Process')
+            Set-EntryRunControl $root
             if($EntryAction -eq 'ide') {
                 $preset=if($EntryConfiguration -eq 'Debug'){'debug'}else{'release'}
                 foreach($target in $EntryTargets){if($target -notmatch '^[A-Za-z0-9_.-]+$'){throw 'IDE targets must be literal target names.'}}
@@ -327,5 +357,5 @@ if($MyInvocation.InvocationName -ne '.') {
             exit $code
         } finally {Pop-Location}
     } catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
-    finally {Exit-BuildEntry $entry}
+    finally {[Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE',$previousNodeReuse,'Process');Exit-BuildEntry $entry}
 }

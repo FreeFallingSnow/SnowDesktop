@@ -2,6 +2,22 @@
 
 本目录统一保存开发、测试和发布入口及其实现：
 
+持久执行的初步接入使用 `build.bat run`；普通入口与旧批次目前仍沿用既有执行方式，不会热迁移活动任务：
+
+```bat
+scripts\build.bat task-open my-task -TaskName "当前调查任务"
+scripts\build.bat run start -Task my-task -Action tests -Mode name -Filter build_run
+scripts\build.bat run status -RunId <runId>
+scripts\build.bat run wait -RunId <runId> -Seconds 30
+scripts\build.bat run cancel -RunId <runId> -Task my-task
+```
+
+`start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求以新 ID 独占创建于 `.build/collaboration/runs/<id>.request.json`，后续不改写；记录、日志、资源采样和带代际标记的取消请求分别保存。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6；两者均保留运行。退出观察者不取消执行，只有显式 `cancel` 才请求终止本次私有 Job 内的进程树。取消请求和已完成取消分开报告。
+
+启动必须获父 Job 允许脱离；拒绝时保留 `start-failed` 和原始请求，不退化成依附聊天的后台进程。执行者随后为编译和测试创建带 `KILL_ON_JOB_CLOSE` 的私有 Job，未继承执行租约或 Job 句柄；执行者异常退出会清理子进程。观察接口将已确认退出的执行者投影为 `interrupted`，保留最后记录和请求，不按心跳超时重新接管。继续执行需显式新建 Run。普通入口与协作入口均禁用 MSBuild 节点复用，避免旧工作节点逃出本次归属。
+
+当前仅接通独立标准入口的持久请求、queue/pipeline 实际区间、CPU/内存/I/O Job 采样和取消；尚未将旧批次切换为单一执行器，也未完成 configure/codegen/compile/link/arrange/test/acceptance 的完整阶段拆分及面板接入。资源采样缺失用不可用或 null 表示，不作为零占用或性能改善。此入口不等同于 B 批全部完成。
+
 - `build.bat`：默认无进程副作用的 Release 编译；
 - `build_debug.bat`：默认无进程副作用的 Debug 编译；
 - `test.bat`：按完整、快速、核心、标签或名称构建并运行 CTest 测试；
