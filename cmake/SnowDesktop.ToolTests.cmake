@@ -69,4 +69,6 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
         build_tools/build_run_tests.cpp "tools;core;integration" 180)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildTelemetryTests build_telemetry
+        build_tools/build_telemetry_tests.cpp "tools;integration" 180)
 endif()

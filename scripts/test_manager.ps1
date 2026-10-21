@@ -42,10 +42,8 @@ function Invoke-Checked {
     }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     $stageName=if($FilePath -eq 'ctest'){'test-execute'}elseif($FilePath -eq 'cmake' -and $Arguments -contains '--build'){'test-target-build'}elseif($FilePath -eq 'cmake'){'configure'}else{'arrange'}
-    $stage=Start-BuildStage $repositoryRoot $stageName
     $commandExit=2
-    try {& $FilePath @Arguments;$commandExit=$LASTEXITCODE}
-    finally {Complete-BuildStage $repositoryRoot $stage $commandExit}
+    Invoke-BuildStageCommand $repositoryRoot $stageName $FilePath $Arguments ([ref]$commandExit)
     $elapsed.Stop()
     Write-Host ("{0}: {1:N2}s, exit {2}" -f $FilePath, $elapsed.Elapsed.TotalSeconds, $commandExit)
     if ($reportPath) { Write-Host "CTest report: $reportPath" }

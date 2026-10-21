@@ -23,6 +23,7 @@ $directory=Join-Path $root '.build/collaboration/runs'
 [void][IO.Directory]::CreateDirectory($directory)
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+$script:runStageClocks=@{}
 
 function Run-Path([string]$Id,[string]$Suffix){return Join-Path $directory ($Id+$Suffix)}
 function Read-RunJson([string]$Path){
@@ -85,10 +86,11 @@ function Run-CancellationRequested($Request){
 }
 function Write-RunRecord($Record){$Record.updatedUtc=[DateTime]::UtcNow.ToString('o');Write-RunJson $Record (Run-Path $Record.id '.json')}
 function Start-RunStage($Record,[string]$Name){
-    $stage=[pscustomobject]@{name=$Name;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;exitCode=$null}
+    $stage=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');name=$Name;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;exitCode=$null}
+    $script:runStageClocks[$stage.id]=[Diagnostics.Stopwatch]::StartNew()
     $Record.stages=@($Record.stages)+@($stage);Write-RunRecord $Record;return $stage
 }
-function Complete-RunStage($Record,$Stage,[int]$Code){$Stage.completedUtc=[DateTime]::UtcNow.ToString('o');$Stage.exitCode=$Code;Write-RunRecord $Record}
+function Complete-RunStage($Record,$Stage,[int]$Code){$Stage.completedUtc=[DateTime]::UtcNow.ToString('o');$Stage.elapsedSeconds=$script:runStageClocks[$Stage.id].Elapsed.TotalSeconds;$Stage.exitCode=$Code;Write-RunRecord $Record}
 function Enter-BatchRun($Request){
     $metadata=$null;$lease=$null
     try {
@@ -136,7 +138,7 @@ try {
             action=$Action;mode=$Mode;filter=$Filter;configuration=$Configuration;targets=@($Targets);planBatch=$PlanBatch;automaticTask=$automaticTask;
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
-            completedUtc=$null;exitCode=$null;error='';waitingFor='';stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
+            completedUtc=$null;exitCode=$null;error='';waitingFor='';waitIntervals=@();waitIntervalsTruncated=$false;stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
         $batchTransaction=$null
         try {
         if($Action -eq 'batch'){
@@ -256,16 +258,25 @@ try {
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$null,'Process')
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
         $queueNotice=[Diagnostics.Stopwatch]::StartNew()
+        $waitInterval=$null;$waitClock=$null
         while(-not $entry){
             if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$record.status='cancelled';break}
             try {$entry=if($request.action -eq 'batch'){Enter-BatchRun $request}else{Enter-BuildEntry $root}}
             catch {
                 if($_.Exception.Message -notmatch '^Shared output (busy:|lease/transaction is busy;)'){throw}
-                if($record.waitingFor -ne $_.Exception.Message){$record.waitingFor=$_.Exception.Message;Write-RunRecord $record}
+                if($record.waitingFor -ne $_.Exception.Message){
+                    if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds}
+                    $record.waitingFor=$_.Exception.Message
+                    $waitInterval=[pscustomobject]@{resource='shared-output';reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed busy until acquisition or reason change, including retry/backoff.'}
+                    $waitClock=[Diagnostics.Stopwatch]::StartNew()
+                    if(@($record.waitIntervals).Count -lt 100){$record.waitIntervals=@($record.waitIntervals)+@($waitInterval)}else{$record.waitIntervalsTruncated=$true}
+                    Write-RunRecord $record
+                }
                 if($queueNotice.Elapsed.TotalSeconds -ge 30){[Console]::Error.WriteLine('Run '+$RunId+' is queued: '+$record.waitingFor);$queueNotice.Restart()}
                 Start-Sleep -Milliseconds 200
             }
         }
+        if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds;Write-RunRecord $record}
         if($entry){
             $record.waitingFor=''
             Complete-RunStage $record $queue 0

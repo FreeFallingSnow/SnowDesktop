@@ -82,7 +82,7 @@ if %ERRORLEVEL% NEQ 0 exit /b 3
 
 :configure
 echo === Configuring CMake (Release preset) ===
-cmake --preset release
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Preset release
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configure FAILED
     exit /b 1
@@ -90,7 +90,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building SnowDesktop.exe, Steam launcher, Workshop Manager, Steam Bridge and snowwidget.exe ===
-cmake --build --preset release
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Preset release
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     exit /b 1
@@ -98,7 +98,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Configuring 32-bit Wallpaper Engine one-shot capture helper ===
-cmake -B .build\wallpaper_hook32 -S src\wallpaper_hook -A Win32 "-DSNOWDESKTOP_OUTPUT_DIR=%CD%/.build/Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Directory .build\wallpaper_hook32 -Source src\wallpaper_hook -Architecture Win32 -Output "%CD%/.build/Release"
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper configure FAILED
     exit /b 1
@@ -106,7 +106,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building 32-bit Wallpaper Engine Hook and injector ===
-cmake --build .build\wallpaper_hook32 --config Release --target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Directory .build\wallpaper_hook32 -Configuration Release -Targets SnowDesktopWallpaperHook32,SnowDesktopWallpaperInjector32
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper build FAILED
     exit /b 1
@@ -114,7 +114,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation arrange -Output "%CD%\.build\Release"
 if %ERRORLEVEL% NEQ 0 (
     echo Build output arrangement FAILED
     exit /b 1

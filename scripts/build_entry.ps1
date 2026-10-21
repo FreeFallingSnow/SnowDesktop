@@ -353,8 +353,9 @@ if($MyInvocation.InvocationName -ne '.') {
             if($EntryAction -eq 'ide') {
                 $preset=if($EntryConfiguration -eq 'Debug'){'debug'}else{'release'}
                 foreach($target in $EntryTargets){if($target -notmatch '^[A-Za-z0-9_.-]+$'){throw 'IDE targets must be literal target names.'}}
-                $pipeline='cmake --preset '+$preset+' && cmake --build --preset '+$preset
-                if($EntryTargets.Count){$pipeline+=' --target '+($EntryTargets -join ' ')}
+                $wrapper='"'+(Get-BuildPowerShell)+'" -NoProfile -File scripts\build_command.ps1'
+                $pipeline=$wrapper+' -Operation configure -Preset '+$preset+' && '+$wrapper+' -Operation build -Preset '+$preset
+                if($EntryTargets.Count){$pipeline+=' -Targets '+($EntryTargets -join ',')}
             } elseif($EntryAction -eq 'tests') {
                 $testScript=Join-Path $PSScriptRoot 'test_manager.ps1'
                 $invoke="& '"+$testScript.Replace("'","''")+"' -Mode '"+$EntryMode+"' -Filter '"+$EntryFilter.Replace("'","''")+"'"
