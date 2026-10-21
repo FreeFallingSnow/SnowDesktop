@@ -91,10 +91,11 @@ inline CollectionPresentation ResolveCollectionPresentation(
 }
 
 // The Show all cell carries the collection title, and titleless grids hide all
-// text, so only those presentations may omit the bottom-bar title and draw on
-// the complete frame. An ordinary final cell (exactly filled or sparse grid)
-// leaves the bottom title as the collection's only visible name.
-inline bool LargeFolderUsesFullFrameContent(
+// text, so only those presentations may omit the bottom-bar title. An ordinary
+// final cell (exactly filled or sparse grid) leaves the bottom title as the
+// collection's only visible name. The title bar overlays the content edge and
+// never changes the grid geometry.
+inline bool LargeFolderHidesBottomBarTitle(
     bool titleless, const CollectionPresentation& presentation)
 {
     return titleless || presentation.showAllButton;

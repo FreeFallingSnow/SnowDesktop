@@ -197,12 +197,9 @@ public:
     // A large-folder Collection draws its name inside the final grid cell once
     // that cell becomes the Show all mosaic. Only then may the chrome bottom
     // bar omit the title; otherwise the bottom title remains the collection's
-    // only visible name and its rename anchor.
+    // only visible name and its rename anchor. The bar overlays the content edge
+    // and never reserves height, so the grid keeps the complete frame.
     virtual bool HidesBottomBarTitle() const { return false; }
-    // Content uses the complete frame only when the inline grid owns the title
-    // or draws no text at all; the resolved condition is static so drags never
-    // resize the grid between the Show all and ordinary presentations.
-    virtual bool LargeFolderContentUsesFullFrame() const { return false; }
     RECT GetSingleCellIconRect() const;
     void DrawSingleCellContents(ID2D1DeviceContext* context, RECT body);
     RECT GetCollapseButtonRect() const;
@@ -575,7 +572,6 @@ public:
     RECT GetAllButtonRect() const;
     RECT GetTitleCellRect() const;
     bool HidesBottomBarTitle() const override;
-    bool LargeFolderContentUsesFullFrame() const override;
 
 private:
     RECT GetThumbnailIconRect(RECT rect) const;

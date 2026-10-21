@@ -4674,23 +4674,23 @@ int main(int argc, char** argv)
             denseFullCollectionDuringDrag.showAllButton &&
             denseFullCollectionDuringDrag.allButtonSlot == 8,
         "titleless dense Collections must apply the single-overflow rule to their resolved physical grid capacity without rebuilding slots");
-    Check(!localLayout::LargeFolderUsesFullFrameContent(
+    Check(!localLayout::LargeFolderHidesBottomBarTitle(
                 false, fullCollection) &&
-            !localLayout::LargeFolderUsesFullFrameContent(
+            !localLayout::LargeFolderHidesBottomBarTitle(
                 false, belowCollectionCapacity) &&
-            !localLayout::LargeFolderUsesFullFrameContent(
+            !localLayout::LargeFolderHidesBottomBarTitle(
                 false, denseFullCollection) &&
-            localLayout::LargeFolderUsesFullFrameContent(
+            localLayout::LargeFolderHidesBottomBarTitle(
                 false, overflowingCollection) &&
-            localLayout::LargeFolderUsesFullFrameContent(
+            localLayout::LargeFolderHidesBottomBarTitle(
                 false, fullCollectionDuringDrag) &&
-            localLayout::LargeFolderUsesFullFrameContent(
+            localLayout::LargeFolderHidesBottomBarTitle(
                 false, denseFullCollectionDuringDrag) &&
-            localLayout::LargeFolderUsesFullFrameContent(
+            localLayout::LargeFolderHidesBottomBarTitle(
                 true, fullCollection) &&
-            localLayout::LargeFolderUsesFullFrameContent(
+            localLayout::LargeFolderHidesBottomBarTitle(
                 true, overflowingCollection),
-        "only the Show all cell or a titleless grid may replace the bottom title; an ordinary final cell keeps it for the collection name and rename anchor");
+        "only the Show all cell or a titleless grid may replace the bottom title; an ordinary final cell keeps it for the collection name and rename anchor without reserving grid height");
     const auto compactCollection =
         localLayout::ResolveCollectionPresentation(
             5, 4, true, false);

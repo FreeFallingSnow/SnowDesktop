@@ -668,11 +668,10 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 RECT WidgetContainer::GetBodyRect() const
 {
     if (popupFrameActive_) return hostedFrame_;
-    // Large folders whose inline grid owns the title (Show all cell) or hides
-    // all text keep the complete frame; otherwise the bottom bar still carries
-    // the collection title and reserves its regular strip.
-    if (IsLargeFolderMode() && LargeFolderContentUsesFullFrame())
-        return GetLayoutFrameRect();
+    // Large folders keep the complete frame: their bottom title (when the
+    // inline grid does not own it) overlays the content edge on hover and must
+    // not shrink the grid.
+    if (IsLargeFolderMode()) return GetLayoutFrameRect();
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -3067,8 +3066,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     const bool largeFolder = IsLargeFolderMode();
     // Large folders omit the bottom title only while the inline Show all cell
-    // (or a titleless grid) already owns the name; an ordinary final cell
-    // keeps the bottom title as the collection's only visible name.
+    // (or a titleless grid) already owns the name; an ordinary final cell keeps
+    // the bottom title as the collection's only visible name. The bar overlays
+    // the content edge instead of reserving height.
     const bool bottomBarTitle = !HidesBottomBarTitle();
     const bool tinyCollection = data_->type == DesktopWidgetType::Collection &&
         data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;

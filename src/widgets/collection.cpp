@@ -108,9 +108,12 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     RECT content{};
     if (data->scrollContainerMode)
         content = CollectionScrollContentRect(widget);
+    else if (snowdesktop::widget_item_layout::CollectionUsesFullFrame(
+            data->scrollContainerMode,
+            data->gridSpan.columns, data->gridSpan.rows))
+        // Large folders have no title bar; fixed rows use the complete frame.
+        content = widget->GetFrameRect();
     else
-        // Large folders resolve the complete frame or the bottom-bar body
-        // inside GetBodyRect; both draw and hit testing share that geometry.
         content = widget->GetBodyRect();
     const auto metrics = CollectionVisualMetrics(widget);
     const auto spacing = data->scrollContainerMode
@@ -998,20 +1001,10 @@ bool Collection::HidesBottomBarTitle() const
     // Match the drawn presentation: a compatible drag temporarily turns the
     // final cell of an exactly filled grid into the Show all mosaic, which
     // owns the title again, so the bottom bar must not repeat it meanwhile.
-    return snowdesktop::widget_item_layout::LargeFolderUsesFullFrameContent(
+    return snowdesktop::widget_item_layout::LargeFolderHidesBottomBarTitle(
         CollectionTitlelessActive(this),
         GetCollectionPresentation(this,
             app_->CanCurrentDragUseCollectionPopup()));
-}
-
-bool Collection::LargeFolderContentUsesFullFrame() const
-{
-    if (!IsLargeFolderMode() || !data_ || !app_) return false;
-    // Resolve the layout without the transient drag presentation so the grid
-    // never resizes when a drag swaps the final item for the Show all mosaic.
-    return snowdesktop::widget_item_layout::LargeFolderUsesFullFrameContent(
-        CollectionTitlelessActive(this),
-        GetCollectionPresentation(this, false));
 }
 
 /**
