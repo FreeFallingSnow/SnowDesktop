@@ -37,10 +37,11 @@ try {
   const installed=root.plugin(plugin);await installed;
   const retained=props.remote.snapshot;
   const success=await props.remote.snapshot();
+  const detail=await props.remote.read('/api/batches/'+'a'.repeat(32));
   connection.fail=true;
   const offline=await props.remote.snapshot();
   await installed.dispose();
   let withdrawn;
   try{const result=await retained();withdrawn=result.ok===false;}catch{withdrawn=true;}
-  console.log(JSON.stringify({version,success,offline:{ok:offline.ok,code:offline.error?.code},withdrawn,calls}));
+  console.log(JSON.stringify({version,success,detail,offline:{ok:offline.ok,code:offline.error?.code},withdrawn,calls}));
 } finally {await root.fiber.dispose();}

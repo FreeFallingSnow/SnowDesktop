@@ -12,9 +12,10 @@ const remoteInitializers=[];
 class SnapshotService extends TypertRemoteService{
  constructor(ctx,bridge){super(ctx,'snowCollaboration');this.bridge=bridge;for(const initialize of remoteInitializers)initialize.call(this);}
  async snapshot(){return JSON.stringify(await this.bridge.snapshot());}
+ async read(route){return JSON.stringify(await this.bridge.read(route));}
 }
 // Equivalent to the public stage-3 @Remote decorator in a plain-JS bundle.
-Remote(SnapshotService.prototype.snapshot,{kind:'method',name:'snapshot',static:false,private:false,addInitializer(fn){remoteInitializers.push(fn);}});
+for(const name of ['snapshot','read'])Remote(SnapshotService.prototype[name],{kind:'method',name,static:false,private:false,addInitializer(fn){remoteInitializers.push(fn);}});
 
 export function apply(ctx,config){
  const bridge=new CollaborationBridge(config.repositoryRoot,{port:config.dashboardPort});

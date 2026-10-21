@@ -79,7 +79,9 @@ export class CollaborationBridge{
   const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
   return this.call('task-stage',task.id,['-TaskRevision',String(task.revision),'-TaskPhase',task.phase,'-Progress',text.slice(0,2000)]);
  }
- async snapshot(){
+ async snapshot(){return this.read('/api/status');}
+ async read(route){
+  if(typeof route!=='string'||!(/^(?:\/api\/status|\/api\/batches\/[a-f0-9]{32}|\/api\/retries\/[a-f0-9]{32}\/(?:build_dashboard|build_dashboard_browser)\/[23]\/log)$/.test(route)))throw new Error('Unsupported read-only dashboard route');
   const receiptFile=path.join(this.root,'.build/dashboard/server-'+this.port+'.json');
   const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8').replace(/^\uFEFF/,''));
   const base='http://127.0.0.1:'+this.port;
@@ -90,7 +92,7 @@ export class CollaborationBridge{
   };
   const health=await read('/api/health');
   if(health.service!=='SnowDesktop build dashboard'||health.instance!==receipt.instance||health.fixture!==false||receipt.fixture!==false)throw new Error('Dashboard listener identity did not match this checkout');
-  return read('/api/status');
+  return read(route);
  }
  async operate(agentId,args){
   const id=taskId(agentId),action=args.action;

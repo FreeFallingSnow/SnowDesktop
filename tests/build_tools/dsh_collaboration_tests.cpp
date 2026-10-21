@@ -7,6 +7,7 @@ void run_tests(const fs::path& repo) {
     const auto script=c.root/L"exercise.mjs";
     write(script,R"JS(import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import {pathToFileURL} from 'node:url';
 const [moduleFile,root,mode]=process.argv.slice(2);
 const {CollaborationBridge,taskId}=await import(pathToFileURL(moduleFile));
@@ -32,6 +33,19 @@ if(mode==='open'){
  try{await bridge.verifyWrite(agent,path.join(root,'src/link/keep.txt'));result={denied:false};}catch(error){result={denied:true,error:String(error.message)};}
 }else if(mode==='bad-command'){
  try{await bridge.call('recover',id);result={rejected:false};}catch(error){result={rejected:true,error:String(error.message)};}
+}else if(mode==='dashboard'){
+ const calls=[];let mismatch=false;
+ const server=http.createServer((request,response)=>{calls.push(request.url);response.setHeader('Content-Type','application/json');response.end(JSON.stringify(request.url==='/api/health'?{service:'SnowDesktop build dashboard',instance:mismatch?'different':'fixture-identity',fixture:false}:{route:request.url,marker:'read-only-data'}));});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const port=server.address().port,directory=path.join(root,'.build/dashboard');fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'server-'+port+'.json'),JSON.stringify({instance:'fixture-identity',fixture:false}));
+  const reader=new CollaborationBridge(root,{port}),batch='/api/batches/'+'a'.repeat(32),retry='/api/retries/'+'a'.repeat(32)+'/build_dashboard/2/log';
+  const values=[await reader.snapshot(),await reader.read(batch),await reader.read(retry)];
+  const before=calls.length,denied=[];
+  for(const route of ['http://127.0.0.1:1/api/status','/api/status?x=1','/api/batches/../state.json','/api/retries/'+'a'.repeat(32)+'/build_run/2/log','/api/retries/'+'a'.repeat(32)+'/build_dashboard/1/log']){try{await reader.read(route);denied.push(false);}catch{denied.push(true);}}
+  const noRequests=calls.length===before;mismatch=true;let identityDenied=false;try{await reader.read(batch);}catch{identityDenied=true;}
+  result={values,denied,noRequests,identityDenied,calls};
+ }finally{await new Promise(resolve=>server.close(resolve));}
 }
 console.log(JSON.stringify(result));
 )JS");
@@ -48,6 +62,10 @@ console.log(JSON.stringify(result));
     require(granted.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="authorized write","Claimed write did not reach the real coordinator gate");
     require(node("outside").at("outside").kind==Json::Kind::Null&&!fs::exists(c.root.parent_path()/(c.root.filename().wstring()+L"-outside.txt")),"Plugin claimed authority outside its configured checkout");
     require(node("bad-command").at("rejected").boolean,"Plugin exposed peer recovery/withdrawal");
+    const auto dashboard=node("dashboard");
+    require(dashboard.at("values").items.size()==3&&dashboard.at("values").items[0].at("route").str()=="/api/status"&&dashboard.at("values").items[1].at("route").str()=="/api/batches/"+std::string(32,'a')&&dashboard.at("values").items[2].at("route").str().find("/build_dashboard/2/log")!=std::string::npos,"Production dashboard reader lost snapshot, history or retry-log routes");
+    for(const auto& denied:dashboard.at("denied").items)require(denied.boolean,"Dashboard reader accepted a non-allowlisted destination");
+    require(dashboard.at("denied").items.size()==5&&dashboard.at("noRequests").boolean&&dashboard.at("identityDenied").boolean&&dashboard.at("calls").items.size()==7,"Invalid routes reached HTTP or a mismatching listener served batch data");
     c.begin("peer");
     c.plan(id,batch,0,"none","","tool","src/a.txt");c.ready(id,batch);
     const auto before=read(c.root/L"src/a.txt");
@@ -123,13 +141,14 @@ console.log(JSON.stringify(result));
 const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution;
 let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
 const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return await response;}};
-const React={createElement:(type,props,...children)=>({type,props,children}),useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
+// Only the polling/disposal boundary is exercised by this carrier, never layout.
+const React={createElement:(type,props,...children)=>({type,props,children}),useRef:initial=>({current:initial}),useLayoutEffect(){},useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
 vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
 const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
 function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:()=>()=>{},bind:()=>key=>key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
 const first=context();const unmount=await plugin.apply(first.ctx);Panel(props);
 await new Promise(resolve=>setImmediate(resolve));
-const firstSnapshot=updates.find(value=>value.index===0)?.value;
+const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
 async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
 response={ok:false,error:{message:'controlled offline'}};await poll();
 const offline=updates.filter(value=>value.index===1).at(-1)?.value;
@@ -141,7 +160,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -165,8 +184,9 @@ void installed_sdk(const fs::path& repo){
     require(result.code==0,"Installed DSH SDK integration failed: "+result.out+result.err);
     const auto observed=Json::parse(result.out);
     require(observed.at("success").at("ok").boolean&&Json::parse(observed.at("success").at("value").str()).at("marker").str()=="actual-sdk","Actual Gateway result contract was not preserved");
+    require(observed.at("detail").at("ok").boolean,"Actual Gateway did not mount the additive read endpoint");
     require(!observed.at("offline").at("ok").boolean&&observed.at("offline").at("code").str()=="gateway/internal"&&observed.at("withdrawn").boolean,"Actual Gateway failed to fold an offline carrier or withdraw a retained method");
-    require(observed.at("calls").items.size()==2&&observed.at("calls").items[0].at("endpoint").str()=="snowCollaboration/snapshot"&&observed.at("calls").items[0].at("args").fields.empty(),"SDK mounted the wrong endpoint or supplied unexpected mutable arguments");
+    require(observed.at("calls").items.size()==3&&observed.at("calls").items[0].at("endpoint").str()=="snowCollaboration/snapshot"&&observed.at("calls").items[0].at("args").fields.empty()&&observed.at("calls").items[1].at("endpoint").str()=="snowCollaboration/read"&&observed.at("calls").items[1].at("args").at("route").str()=="/api/batches/"+std::string(32,'a'),"SDK mounted the wrong endpoint or changed the fixed snapshot/named read argument contracts");
     std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results and disposal (carrier only, not UI acceptance)\n";
 }
 }
