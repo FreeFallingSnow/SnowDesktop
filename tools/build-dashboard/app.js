@@ -211,7 +211,9 @@ function renderRunRecords(snapshot,batch){
   if(run.error)detail(box,"运行错误",run.error,"bad");if(run.waitingFor)detail(box,"等待原因",run.waitingFor,"warn");
   detail(box,"Run",run.id+(run.batchId?" · 批次 "+run.batchId.slice(0,8):""));detail(box,"执行者",(run.ownerPid?"PID "+run.ownerPid+" · ":"")+label(run.ownerState));
   for(const stage of run.stages||[])detail(box,label(stage.name),preciseTime(stage.elapsedSeconds)+(stage.completedUtc?"":" · "+(run.completedUtc?"未完成":"进行中")));
-  const resource=run.resources||{};detail(box,"Job CPU / 峰值内存",preciseTime(resource.cpuSeconds)+" / "+(typeof resource.peakJobMemoryBytes==="number"?(resource.peakJobMemoryBytes/1048576).toFixed(1)+" MiB":"未记录"));
+  const resource=run.resources||{},resourceState={sampling:"采集中",complete:"完整",incomplete:"不完整（仅有过程采样）",unrecorded:"未采集",unavailable:"统计不可用",unknown:"状态未记录"}[resource.status]||"状态未记录";
+  detail(box,"资源统计",resourceState+(resource.sampledUtc?" · "+time(resource.sampledUtc):""),["incomplete","unavailable"].includes(resource.status)?"warn":"");
+  detail(box,"Job CPU / 峰值内存"+(resource.status==="incomplete"?"（最后采样）":""),preciseTime(resource.cpuSeconds)+" / "+(typeof resource.peakJobMemoryBytes==="number"?(resource.peakJobMemoryBytes/1048576).toFixed(1)+" MiB":"未记录"));
   detail(box,"编译发起单元",run.compiler?.attemptedUnits==null?"未采集":run.compiler.attemptedUnits+" · "+(run.compiler.complete?"采集完成":"部分观测")+(run.compiler.unknownTasks?" · "+run.compiler.unknownTasks+" 项任务未确认":""));
   if(run.phaseSummary?.length){
    const table=element("table",null,"result-table"),head=element("tr"),body=element("tbody");for(const title of ["阶段","任务","累计任务时间"])head.append(element("th",title));const thead=element("thead");thead.append(head);table.append(thead,body);

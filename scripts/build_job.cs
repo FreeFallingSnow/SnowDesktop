@@ -87,6 +87,29 @@ namespace SnowDesktop.Build
             try { return File.ReadAllText(cancelPath, Encoding.UTF8).Trim() == cancelNonce; }
             catch (IOException) { return false; }
         }
+        const int ResourcePublicationBudgetMilliseconds = 1000;
+        static void PublishResourceFile(string temporary)
+        {
+            Stopwatch waiting = Stopwatch.StartNew();
+            for (;;)
+            {
+                try
+                {
+                    if (File.Exists(metricsPath)) File.Replace(temporary, metricsPath, null);
+                    else File.Move(temporary, metricsPath);
+                    return;
+                }
+                catch (IOException error)
+                {
+                    int native = error.HResult & 0xffff;
+                    // ReplaceFile error1175 retains both original names. The
+                    // partial-move errors1176/1177 are deliberately not retried.
+                    if ((native != 32 && native != 33 && native != 1175) ||
+                        waiting.ElapsedMilliseconds >= ResourcePublicationBudgetMilliseconds) throw;
+                    System.Threading.Thread.Sleep(20);
+                }
+            }
+        }
         static void Sample(IntPtr job, int pid, Stopwatch elapsed, bool finished, bool cancelled)
         {
             if (metricsPath == null) return;
@@ -108,7 +131,7 @@ namespace SnowDesktop.Build
             try
             {
                 File.WriteAllText(temporary, json, new UTF8Encoding(false));
-                if (File.Exists(metricsPath)) File.Replace(temporary, metricsPath, null); else File.Move(temporary, metricsPath);
+                PublishResourceFile(temporary);
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
@@ -218,7 +241,12 @@ namespace SnowDesktop.Build
                     if (elapsed.Elapsed.TotalSeconds >= nextSample || wait == 0)
                     {
                         try { Sample(job, process.pid, elapsed, wait == 0, cancelled); }
-                        catch (IOException error) { if (!metricWarning) Console.Error.WriteLine("Run resource sample unavailable: " + error.Message); metricWarning = true; }
+                        catch (IOException error)
+                        {
+                            if (wait == 0 || !metricWarning)
+                                Console.Error.WriteLine((wait == 0 ? "Terminal" : "Run") + " resource sample unavailable: " + error.Message);
+                            metricWarning = true;
+                        }
                         nextSample = elapsed.Elapsed.TotalSeconds + 1;
                     }
                     if (wait == 0) break;

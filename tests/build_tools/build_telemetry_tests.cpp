@@ -2,6 +2,7 @@
 #include <iostream>
 using namespace build_test;
 void configuration_cache_tests(const fs::path& repo,bool omitHeaderIdentity);
+void resource_publication_tests(const fs::path& repo,bool formerBehavior);
 namespace {
 void test(const fs::path& repo,bool withoutLogger=false) {
     const auto label="allocation-collision-"+std::to_string(GetTickCount64());
@@ -91,4 +92,12 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
     std::cout<<"PASS actual leased CMake/MSBuild phases, two translation units, no-op build and one-unit increment\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--configuration-cache"){configuration_cache_tests(repo,false);return;}if(argc>2&&std::string(argv[2])=="--configuration-header-control"){configuration_cache_tests(repo,true);return;}test(repo,argc>2&&std::string(argv[2])=="--without-logger");});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2){
+        const std::string mode=argv[2];
+        if(mode=="--configuration-cache"){configuration_cache_tests(repo,false);return;}
+        if(mode=="--configuration-header-control"){configuration_cache_tests(repo,true);return;}
+        if(mode=="--resource-publication"||mode=="--resource-single-attempt"){resource_publication_tests(repo,mode=="--resource-single-attempt");return;}
+    }
+    test(repo,argc>2&&std::string(argv[2])=="--without-logger");
+});}

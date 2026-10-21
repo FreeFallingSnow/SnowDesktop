@@ -337,6 +337,22 @@ class Store:
                 summary["incomplete"] = summary["running"]
                 summary["running"] = 0
         resources = read_json(directory, run_id + ".resources.json") or {}
+        accounting = resources.get("accountingAvailable")
+        resource_view = {**{k: number(resources.get(k)) if accounting is not False else None for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")},
+                         "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True,
+                         "accountingAvailable": accounting if isinstance(accounting, bool) else None}
+        if not resources:
+            resource_view["status"] = "unrecorded"
+        elif accounting is False:
+            resource_view["status"] = "unavailable"
+        elif accounting is not True:
+            resource_view["status"] = "unknown"
+        elif resource_view["cpuSeconds"] is None or resource_view["peakJobMemoryBytes"] is None:
+            resource_view["status"] = "unavailable"
+        elif resource_view["finished"]:
+            resource_view["status"] = "complete"
+        else:
+            resource_view["status"] = "incomplete" if terminal or status == "interrupted" else "sampling"
         waits = record.get("waitIntervals") or []
         log_key = run_id + ".stdout.log"
         log_root = directory
@@ -356,7 +372,7 @@ class Store:
                 "stages": [{**{k: stage.get(k) for k in ("id", "name", "startedUtc", "completedUtc", "exitCode")}, "elapsedSeconds": number(stage.get("elapsedSeconds"))} for stage in (record.get("stages") or [])[:40]],
                 "waitIntervals": [{**{k: interval.get(k) for k in ("resource", "startedUtc", "completedUtc")}, "reason": redact(interval.get("reason", "")), "elapsedSeconds": number(interval.get("elapsedSeconds"))} for interval in waits[:100]],
                 "waitIntervalsTruncated": record.get("waitIntervalsTruncated") is True,
-                "resources": {**{k: number(resources.get(k)) for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")}, "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True},
+                "resources": resource_view,
                 "phaseSummary": list(summaries.values()), "segments": segments[-80:], "segmentCount": len(segments), "segmentsOmitted": max(0, len(segments)-80),
                 "compiler": {"collectorCount": collectors, "attemptedUnits": units if collectors else None, "unknownTasks": unknown_units,
                              "complete": bool(terminal and collectors and finished_collectors == collectors and not unknown_units and not unfinished and not limited and not pending_line)},

@@ -82,7 +82,14 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_state_transaction_tests.cpp "tools;core;integration" 60)
     snowdesktop_add_native_tool_test(SnowDesktopBuildTelemetryTests build_telemetry
         build_tools/build_telemetry_tests.cpp "tools;integration" 180)
-    target_sources(SnowDesktopBuildTelemetryTests PRIVATE tests/build_tools/build_configuration_tests.cpp)
+    target_sources(SnowDesktopBuildTelemetryTests PRIVATE
+        tests/build_tools/build_configuration_tests.cpp
+        tests/build_tools/build_resource_publication_tests.cpp)
+    add_test(NAME build_resource_publication COMMAND SnowDesktopBuildTelemetryTests
+        "${CMAKE_CURRENT_SOURCE_DIR}" --resource-publication)
+    set_tests_properties(build_resource_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
     add_test(NAME build_configuration COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --configuration-cache)
     set_tests_properties(build_configuration PROPERTIES TIMEOUT 180 LABELS "tools;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
