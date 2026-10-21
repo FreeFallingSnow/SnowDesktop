@@ -2557,5 +2557,14 @@
   "settings.dock.summonOnAppMinimize": "Mostrar o Dock ao minimizar um aplicativo",
   "settings.dock.summonOnAppMinimize.description": "Quando desativado, o Dock aparece temporariamente apenas durante as animações personalizadas; as animações do sistema não o exibem.",
   "app.settings.beautify_file_thumbnails": "Embelezar miniaturas de arquivos",
-  "app.interact.list_columns": "Colunas da lista"
+  "app.interact.list_columns": "Colunas da lista",
+  "app.settings.widgets_permission_native_execute": "Executar programas auxiliares nativos",
+  "app.widget_permission.native_program": "Programa auxiliar",
+  "app.widget_permission.native_purpose": "Finalidade declarada pelo desenvolvedor",
+  "app.widget_permission.native_operations": "Operações declaradas pelo desenvolvedor",
+  "app.widget_permission.native_reason": "Motivo da solicitação de acesso",
+  "app.widget_permission.native_denied": "Comportamento se o acesso for negado",
+  "app.widget_permission.native_warning": "O programa auxiliar é executado com as permissões do usuário atual do Windows. Ele pode acessar arquivos, redes e dispositivos e iniciar outros programas. A finalidade declarada não é uma restrição imposta pelo sistema. Revogar o acesso não desfaz ações já realizadas.",
+  "app.widget_permission.native_acknowledge": "Confio na origem deste componente e compreendo as permissões do programa auxiliar.",
+  "app.widget_permission.native_countdown": "Aplicar (disponível em %s s)"
 }

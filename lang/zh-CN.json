@@ -2557,5 +2557,14 @@
   "settings.dock.summonOnAppMinimize": "应用最小化时唤起 Dock",
   "settings.dock.summonOnAppMinimize.description": "关闭后，仅在自定义动画播放时临时唤起 Dock；系统默认动画不会唤起。",
   "app.settings.beautify_file_thumbnails": "对文件缩略图美化",
-  "app.interact.list_columns": "列表列数"
+  "app.interact.list_columns": "列表列数",
+  "app.settings.widgets_permission_native_execute": "运行原生辅助程序",
+  "app.widget_permission.native_program": "辅助程序",
+  "app.widget_permission.native_purpose": "开发者声明的用途",
+  "app.widget_permission.native_operations": "开发者声明的操作",
+  "app.widget_permission.native_reason": "申请原因",
+  "app.widget_permission.native_denied": "拒绝后的表现",
+  "app.widget_permission.native_warning": "辅助程序将以当前 Windows 用户权限运行，可以访问文件、网络和设备，并启动其他程序。开发者声明的用途不构成系统强制限制。撤销授权无法回滚已经发生的操作。",
+  "app.widget_permission.native_acknowledge": "我信任此组件的来源，并理解辅助程序的权限范围",
+  "app.widget_permission.native_countdown": "应用（%s 秒后可用）"
 }

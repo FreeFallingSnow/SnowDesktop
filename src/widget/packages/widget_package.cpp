@@ -948,6 +948,13 @@ PackageManifest LocalizedManifest(PackageManifest manifest,
         };
         translate(manifest.previewIntroductionKey,
             manifest.previewIntroduction);
+        for (auto& helper : manifest.nativeHelpers)
+        {
+            translate(helper.purposeKey, helper.purpose);
+            translate(helper.operationsKey, helper.operations);
+            translate(helper.reasonKey, helper.reason);
+            translate(helper.deniedKey, helper.denied);
+        }
         for (const auto& [storageKey, localizationKey] :
             manifest.previewStorageKeys)
         {
@@ -1015,6 +1022,24 @@ bool IsSha256(std::string_view value)
         {
             return std::isxdigit(ch) != 0;
         });
+}
+
+bool IsNativeExecutable(const std::filesystem::path& path)
+{
+    // Inspect PE headers as data; validation must never load a component image.
+    std::ifstream input(path, std::ios::binary);
+    std::array<unsigned char, 64> dos{};
+    if (!input.read(reinterpret_cast<char*>(dos.data()), dos.size()) || dos[0] != 'M' || dos[1] != 'Z') return false;
+    std::uint32_t offset = 0;
+    for (unsigned index = 0; index < 4; ++index)
+        offset |= static_cast<std::uint32_t>(dos[60 + index]) << (index * 8);
+    if (offset < dos.size() || offset > kMaxExtractedBytes - 24) return false;
+    input.seekg(offset);
+    std::array<unsigned char, 24> pe{};
+    if (!input.read(reinterpret_cast<char*>(pe.data()), pe.size()) ||
+        pe[0] != 'P' || pe[1] != 'E' || pe[2] || pe[3]) return false;
+    const unsigned flags = pe[22] | (static_cast<unsigned>(pe[23]) << 8);
+    return (flags & 0x0002) != 0 && (flags & 0x2000) == 0;
 }
 
 bool IsNewerSemVer(std::string_view candidate, std::string_view current)
@@ -1259,6 +1284,26 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale)
 {
     return LocalizedManifest(std::move(manifest), requestedLocale);
+}
+
+std::string PackagePermissionScopeFingerprint(const PackageManifest& manifest)
+{
+    auto permissions = manifest.permissions;
+    if (!manifest.nativeHelpers.empty())
+        permissions.push_back("native-content:" + manifest.nativeContentFingerprint);
+    return WidgetPermissionBroker::ScopeFingerprint(permissions,
+        manifest.optionalPermissions, manifest.networkDomains);
+}
+
+std::string PackagePermissionReviewFingerprint(const InstalledPackage& package)
+{
+    const auto scope = PackagePermissionScopeFingerprint(package.manifest);
+    if (package.manifest.nativeHelpers.empty()) return scope;
+    const std::vector<std::string> identity{
+        "scope:" + scope, "id:" + package.manifest.id,
+        "version:" + package.manifest.version, "provider:" + package.source.providerId,
+        "item:" + package.source.externalItemId };
+    return WidgetPermissionBroker::ScopeFingerprint(identity, {});
 }
 
 bool IsExecutablePackageContract(int schemaVersion, int apiVersion) noexcept
@@ -1784,6 +1829,66 @@ bool WidgetPackageValidator::ReadManifest(
             manifest.locales.emplace(locale, std::move(localized));
         }
     }
+    if (const auto* helpers = root.Find("nativeHelpers"))
+    {
+        if (!helpers->IsObject() || helpers->object.empty() || helpers->object.size() > 4)
+            report.Add(ValidationSeverity::Error, "manifest.nativeHelpers", manifestPath,
+                "nativeHelpers must contain one to four named helpers");
+        else for (const auto& [id, value] : helpers->object)
+        {
+            NativeHelper helper;
+            helper.id = id;
+            bool valid = IsResourceName(id) && id.size() <= 64 && value.IsObject();
+            valid = ReadString(value, "path", helper.path) && valid;
+            valid = ReadString(value, "sha256", helper.sha256) && valid;
+            valid = ReadString(value, "purposeKey", helper.purposeKey) && valid;
+            valid = ReadString(value, "operationsKey", helper.operationsKey) && valid;
+            valid = ReadString(value, "reasonKey", helper.reasonKey) && valid;
+            valid = ReadString(value, "deniedKey", helper.deniedKey) && valid;
+            valid = valid && IsSafeRelativePath(Utf8ToWide(helper.path)) &&
+                Lower(std::filesystem::path(Utf8ToWide(helper.path)).extension().string()) == ".exe" &&
+                IsSha256(helper.sha256) && helper.sha256 == Lower(helper.sha256);
+            for (const auto& [key, unused] : value.object)
+            {
+                (void)unused;
+                if (key != "path" && key != "sha256" && key != "purposeKey" &&
+                    key != "operationsKey" && key != "reasonKey" && key != "deniedKey") valid = false;
+            }
+            for (const auto* key : { &helper.purposeKey, &helper.operationsKey,
+                    &helper.reasonKey, &helper.deniedKey })
+            {
+                if (key->empty() || key->size() > 256) valid = false;
+                for (const auto& [locale, metadata] : manifest.locales)
+                {
+                    (void)locale;
+                    const auto translation = metadata.strings.find(*key);
+                    if (translation == metadata.strings.end() || translation->second.empty() ||
+                        translation->second.size() > 4096 || translation->second.find('\0') != std::string::npos) valid = false;
+                }
+            }
+            if (!manifest.locales.contains("en-US") && !manifest.locales.contains("en")) valid = false;
+            if (!valid)
+                report.Add(ValidationSeverity::Error, "manifest.nativeHelper", manifestPath,
+                    "helper requires a safe .exe path, lowercase SHA-256, and four translated explanation keys: " + id);
+            manifest.nativeHelpers.push_back(std::move(helper));
+        }
+        std::sort(manifest.nativeHelpers.begin(), manifest.nativeHelpers.end(),
+            [](const auto& a, const auto& b) { return a.id < b.id; });
+        manifest = LocalizedManifest(std::move(manifest), "en-US");
+        const auto declared = DeclaredPermissions(manifest);
+        if (std::find(declared.begin(), declared.end(), "native.execute") == declared.end() ||
+            std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+                "task.native.request") == manifest.requiredFeatures.end())
+            report.Add(ValidationSeverity::Error, "manifest.nativeContract", manifestPath,
+                "nativeHelpers requires native.execute and required feature task.native.request");
+    }
+    else
+    {
+        const auto declared = DeclaredPermissions(manifest);
+        if (std::find(declared.begin(), declared.end(), "native.execute") != declared.end())
+            report.Add(ValidationSeverity::Error, "manifest.nativeContract", manifestPath,
+                "native.execute requires nativeHelpers");
+    }
     const bool currentContract =
         manifest.schemaVersion == kPackageSchemaVersion &&
         manifest.apiVersion == kHostApiVersion;
@@ -1946,6 +2051,49 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
     }
     PackageManifest manifest;
     ReadManifest(root / L"widget.json", manifest, report);
+    struct NativeValidationLock
+    {
+        std::vector<HANDLE> handles;
+        ~NativeValidationLock() { for (const auto handle : handles) CloseHandle(handle); }
+        bool Pin(const std::filesystem::path& path, bool directory)
+        {
+            const auto handle = CreateFileW(path.c_str(), directory ? FILE_READ_ATTRIBUTES : GENERIC_READ,
+                directory ? FILE_SHARE_READ | FILE_SHARE_WRITE : FILE_SHARE_READ,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT |
+                    (directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL), nullptr);
+            if (handle == INVALID_HANDLE_VALUE) return false;
+            handles.push_back(handle);
+            BY_HANDLE_FILE_INFORMATION info{};
+            return GetFileInformationByHandle(handle, &info) &&
+                !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+                static_cast<bool>(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == directory;
+        }
+    } nativeLock;
+    if (!manifest.nativeHelpers.empty())
+    {
+        const auto absoluteRoot = std::filesystem::absolute(root, ec);
+        bool locked = !ec && nativeLock.Pin(absoluteRoot.root_path(), true);
+        auto directory = absoluteRoot.root_path();
+        for (const auto& part : absoluteRoot.relative_path())
+        {
+            directory /= part;
+            if (locked) locked = nativeLock.Pin(directory, true);
+        }
+        if (locked) locked = nativeLock.Pin(absoluteRoot / L"widget.json", false);
+        if (!locked)
+            report.Add(ValidationSeverity::Error, "package.nativeIdentity", root,
+                "cannot lock native component metadata and directory identity");
+        else
+        {
+            // Metadata and its content hash must describe the same immutable
+            // bytes, even while an author is updating a development package.
+            report = {};
+            manifest = {};
+            ReadManifest(absoluteRoot / L"widget.json", manifest, report);
+        }
+        ec.clear();
+    }
+    std::vector<std::string> nativeContent;
 
     for (std::filesystem::recursive_directory_iterator it(root,
         std::filesystem::directory_options::none, ec), end;
@@ -2003,11 +2151,28 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             report.Add(ValidationSeverity::Error, "package.previewSize", relative,
                 "preview exceeds 2 MiB");
         const std::string extension = Lower(path.extension().string());
-        if (extension == ".dll" || extension == ".exe" || extension == ".com" ||
+        const auto native = std::find_if(manifest.nativeHelpers.begin(), manifest.nativeHelpers.end(),
+            [&](const auto& helper) { return relative == Utf8ToWide(helper.path); });
+        if (extension == ".exe" && native != manifest.nativeHelpers.end())
+        {
+            const auto hash = WidgetPackageManager::Sha256File(path);
+            if (hash.empty() || hash != native->sha256 || !IsNativeExecutable(path))
+                report.Add(ValidationSeverity::Error, "package.nativeHash", relative,
+                    "native helper must be a PE executable matching its declared SHA-256");
+        }
+        else if (extension == ".dll" || extension == ".exe" || extension == ".com" ||
             extension == ".bat" || extension == ".cmd" || extension == ".ps1" ||
             extension == ".msi" || extension == ".scr")
             report.Add(ValidationSeverity::Error, "package.executable", relative,
                 "native libraries and executable files are forbidden");
+        if (!manifest.nativeHelpers.empty() && report.Ok())
+        {
+            const auto hash = WidgetPackageManager::Sha256File(path);
+            if (hash.empty())
+                report.Add(ValidationSeverity::Error, "package.nativeContent", relative,
+                    "cannot fingerprint native component content");
+            else nativeContent.push_back(PathUtf8(relative) + ":" + hash);
+        }
     }
     if (ec)
         report.Add(ValidationSeverity::Error, "package.enumerate", root,
@@ -2060,6 +2225,12 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             root / L"widget.json",
             "a package cannot declare more than 8 fonts");
     }
+    for (const auto& helper : manifest.nativeHelpers)
+        if (!std::filesystem::is_regular_file(root / Utf8ToWide(helper.path), ec))
+            report.Add(ValidationSeverity::Error, "package.nativeMissing", helper.path,
+                "declared native helper is missing");
+    if (!manifest.nativeHelpers.empty() && report.Ok())
+        manifest.nativeContentFingerprint = WidgetPermissionBroker::ScopeFingerprint(nativeContent, {});
     if (outputManifest) *outputManifest = std::move(manifest);
     return report;
 }
@@ -2539,10 +2710,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                 decision->second.requestedNetworkDomains)
             : decision->second.requestedScopeFingerprint;
         const std::string declaredScopeFingerprint =
-            WidgetPermissionBroker::ScopeFingerprint(
-                package.manifest.permissions,
-                package.manifest.optionalPermissions,
-                package.manifest.networkDomains);
+            PackagePermissionScopeFingerprint(package.manifest);
         if (requestedPermissions != declaredPermissions ||
             requestedOptionalPermissions !=
                 declaredOptionalPermissions ||
@@ -2638,7 +2806,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                 package.active = builtin ||
                     developmentOverrides_.contains(package.manifest.id);
                 package.selected = package.active;
-                if (development && package.permissionState == PermissionDecisionState::LegacyImplicit &&
+                if ((development || !package.manifest.nativeHelpers.empty()) && package.permissionState == PermissionDecisionState::LegacyImplicit &&
                     !PermissionsRequiringConsent(DeclaredPermissions(package.manifest)).empty())
                 {
                     package.permissionState = PermissionDecisionState::Pending;
@@ -2958,14 +3126,8 @@ bool WidgetPackageManager::RefreshChangedPermissionScope(
         return false;
     }
 
-    const std::string knownScope = WidgetPermissionBroker::ScopeFingerprint(
-        package->manifest.permissions,
-        package->manifest.optionalPermissions,
-        package->manifest.networkDomains);
-    const std::string diskScope = WidgetPermissionBroker::ScopeFingerprint(
-        diskManifest.permissions,
-        diskManifest.optionalPermissions,
-        diskManifest.networkDomains);
+    const std::string knownScope = PackagePermissionScopeFingerprint(package->manifest);
+    const std::string diskScope = PackagePermissionScopeFingerprint(diskManifest);
     if (knownScope == diskScope)
     {
         error.clear();
@@ -3560,8 +3722,9 @@ bool WidgetPackageManager::SetPermissionDecision(
     const std::string& packageId, PermissionDecisionState state,
     const std::vector<std::string>& grantedPermissions,
     const std::vector<std::string>& grantedNetworkDomains,
-    std::string& error)
+    std::string& error, bool nativeAcknowledged, std::string_view reviewedNativeIdentity)
 {
+    error.clear();
     std::optional<InstalledPackage> package = Resolve(packageId);
     if (!package)
     {
@@ -3625,6 +3788,22 @@ bool WidgetPackageManager::SetPermissionDecision(
         return false;
     }
 
+    if (state == PermissionDecisionState::Granted &&
+        std::find(grantedPermissions.begin(), grantedPermissions.end(), "native.execute") != grantedPermissions.end())
+    {
+        if (!nativeAcknowledged || reviewedNativeIdentity.empty())
+        { error = "nativeConfirmationRequired"; return false; }
+        PackageManifest currentManifest;
+        if (!validator_.ValidateDirectory(package->root, &currentManifest).Ok() ||
+            currentManifest.nativeHelpers.empty() || currentManifest.id != packageId ||
+            currentManifest.version != package->manifest.version)
+        { error = "nativeContentChanged"; return false; }
+        auto current = *package;
+        current.manifest = std::move(currentManifest);
+        if (PackagePermissionReviewFingerprint(current) != reviewedNativeIdentity)
+        { error = "nativeContentChanged"; return false; }
+        package->manifest = std::move(current.manifest);
+    }
     PermissionDecisionRecord record;
     record.packageId = packageId;
     record.source = package->source;
@@ -3634,10 +3813,7 @@ bool WidgetPackageManager::SetPermissionDecision(
         package->manifest.optionalPermissions;
     record.requestedNetworkDomains = package->manifest.networkDomains;
     record.requestedScopeFingerprint =
-        WidgetPermissionBroker::ScopeFingerprint(
-            record.requestedPermissions,
-            record.requestedOptionalPermissions,
-            record.requestedNetworkDomains);
+        PackagePermissionScopeFingerprint(package->manifest);
     record.grantedPermissions = grantedPermissions;
     record.grantedNetworkDomains = grantedNetworkDomains;
     const std::string key = packageId + "\n" +

@@ -55,6 +55,8 @@ SD_IPC_FIELDS(winui::WidgetRuntimeDiagnosticSnapshot,
 SD_IPC_FIELDS(winui::WidgetAgentSkillTargetSnapshot,
     v.kind, v.id, v.targetPath, v.state,
     v.installedRevision, v.bundledRevision, v.selected, v.installed);
+SD_IPC_FIELDS(winui::WidgetNativeHelperSnapshot,
+    v.id, v.path, v.sha256, v.purpose, v.operations, v.reason, v.denied);
 SD_IPC_FIELDS(winui::InstalledWidgetPackageSnapshot,
     v.packageId, v.name, v.description, v.version,
     v.author, v.sourceId, v.sourceName, v.sourceExternalItemId,
@@ -64,15 +66,15 @@ SD_IPC_FIELDS(winui::InstalledWidgetPackageSnapshot,
     v.developmentOverrideActive, v.canCreateDevelopmentProject, v.canInstallDevelopmentSnapshot, v.canPublishDevelopmentPackage,
     v.restorableVersions, v.permissionState, v.canRevokePermissions, v.permissions,
     v.declaredNetworkDomains, v.grantedNetworkDomains, v.invalidSources, v.workshopInstallFailures,
-    v.instances, v.canExportDevelopmentPackage);
+    v.instances, v.canExportDevelopmentPackage, v.nativeHelpers);
 SD_IPC_FIELDS(winui::WidgetsPageHostOperationResult,
     v.succeeded, v.changed, v.message);
 SD_IPC_FIELDS(winui::WidgetPermissionEditorRequest,
     v.packageId, v.packageName, v.version, v.sourceId,
     v.sourceExternalItemId, v.scopeFingerprint, v.permissionState, v.canRevoke,
-    v.permissions, v.declaredNetworkDomains);
+    v.permissions, v.declaredNetworkDomains, v.nativeHelpers, v.author);
 SD_IPC_FIELDS(winui::WidgetPermissionEditorResult,
-    v.action, v.grantedPermissions, v.grantedNetworkDomains);
+    v.action, v.grantedPermissions, v.grantedNetworkDomains, v.nativeAcknowledged);
 SD_IPC_FIELDS(winui::WidgetCatalogItemSnapshot,
     v.sourceId, v.externalItemId, v.packageId, v.name,
     v.description, v.version, v.author, v.installed,
@@ -96,7 +98,7 @@ SD_IPC_FIELDS(winui::WidgetsPageRequest,
     v.command, v.taskId, v.searchRevision, v.query,
     v.packageId, v.sourceId, v.externalItemId, v.version,
     v.scopeFingerprint, v.enabled, v.permissionState, v.grantedPermissions,
-    v.grantedNetworkDomains, v.agentSkillTargetMask);
+    v.grantedNetworkDomains, v.agentSkillTargetMask, v.nativeAcknowledged);
 SD_IPC_FIELDS(winui::GeneralStartupConflict,
     v.kind, v.ownerCommand);
 SD_IPC_FIELDS(winui::LayoutBackupEntry,

@@ -2557,5 +2557,14 @@
   "settings.dock.summonOnAppMinimize": "앱 최소화 시 Dock 표시",
   "settings.dock.summonOnAppMinimize.description": "끄면 사용자 지정 애니메이션이 재생되는 동안에만 Dock을 일시적으로 표시합니다. 시스템 기본 애니메이션에서는 표시하지 않습니다.",
   "app.settings.beautify_file_thumbnails": "파일 미리 보기 꾸미기",
-  "app.interact.list_columns": "목록 열 수"
+  "app.interact.list_columns": "목록 열 수",
+  "app.settings.widgets_permission_native_execute": "네이티브 보조 프로그램 실행",
+  "app.widget_permission.native_program": "보조 프로그램",
+  "app.widget_permission.native_purpose": "개발자가 명시한 용도",
+  "app.widget_permission.native_operations": "개발자가 명시한 작업",
+  "app.widget_permission.native_reason": "접근 권한 요청 사유",
+  "app.widget_permission.native_denied": "접근 거부 시 동작",
+  "app.widget_permission.native_warning": "보조 프로그램은 현재 Windows 사용자의 권한으로 실행됩니다. 파일, 네트워크 및 장치에 접근하고 다른 프로그램을 시작할 수 있습니다. 명시된 용도는 시스템에서 강제하는 제한이 아닙니다. 권한을 취소해도 이미 수행한 작업은 되돌릴 수 없습니다.",
+  "app.widget_permission.native_acknowledge": "이 구성 요소의 출처를 신뢰하며 보조 프로그램의 접근 권한 범위를 이해합니다.",
+  "app.widget_permission.native_countdown": "적용(%s초 후 사용 가능)"
 }

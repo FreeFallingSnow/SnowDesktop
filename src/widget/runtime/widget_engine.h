@@ -43,6 +43,7 @@
 #include "widget_lua_lifecycle.h"
 #include "widget/data/widget_data_broker.h"
 #include "widget/tasks/widget_task_broker.h"
+#include "widget/tasks/widget_native_task_executor.h"
 #include "widget/tasks/widget_location_task_executor.h"
 #include "widget/tasks/widget_notification_runtime.h"
 #include "widget/tasks/widget_notification_schedule_store.h"
@@ -1232,13 +1233,15 @@ public:
         snowdesktop::widget::PermissionDecisionState state,
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
-        std::string& error);
+        std::string& error, bool nativeAcknowledged = false,
+        std::string_view reviewedNativeIdentity = {});
     bool ApplyWidgetPermissionDecision(
         const std::wstring& packageId,
         snowdesktop::widget::PermissionDecisionState state,
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
-        std::string& error);
+        std::string& error, bool nativeAcknowledged = false,
+        std::string_view reviewedNativeIdentity = {});
     static std::optional<snowdesktop::widget::PackageSourceRef>
         GetWidgetPackageSource(const std::wstring& packageId);
     static bool IsWidgetPackageAvailable(const std::wstring& packageId);
@@ -1915,6 +1918,8 @@ private:
         snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
         notificationScheduleStore_;
     std::filesystem::path notificationSchedulePath_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetNativeTaskExecutor> nativeTaskExecutor_;
+    std::unordered_map<std::uint64_t, std::string> nativeTaskCompletions_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
     std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<

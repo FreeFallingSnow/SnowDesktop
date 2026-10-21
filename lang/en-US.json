@@ -2557,5 +2557,14 @@
   "settings.dock.summonOnAppMinimize": "Summon Dock when an app is minimized",
   "settings.dock.summonOnAppMinimize.description": "When off, custom animations reveal the Dock only until they finish; system animations do not reveal it.",
   "app.settings.beautify_file_thumbnails": "Beautify file thumbnails",
-  "app.interact.list_columns": "List columns"
+  "app.interact.list_columns": "List columns",
+  "app.settings.widgets_permission_native_execute": "Run native helper programs",
+  "app.widget_permission.native_program": "Helper program",
+  "app.widget_permission.native_purpose": "Developer-stated purpose",
+  "app.widget_permission.native_operations": "Developer-stated operations",
+  "app.widget_permission.native_reason": "Reason for requesting access",
+  "app.widget_permission.native_denied": "Behavior if access is denied",
+  "app.widget_permission.native_warning": "The helper runs with the current Windows user’s permissions. It can access files, networks and devices, and start other programs. Its stated purpose is not a system-enforced restriction. Revoking access cannot undo actions already performed.",
+  "app.widget_permission.native_acknowledge": "I trust this component’s source and understand the helper’s access.",
+  "app.widget_permission.native_countdown": "Apply (available in %s s)"
 }

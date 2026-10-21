@@ -2557,5 +2557,14 @@
   "settings.dock.summonOnAppMinimize": "アプリの最小化時に Dock を表示",
   "settings.dock.summonOnAppMinimize.description": "オフの場合、カスタムアニメーションの再生中のみ Dock を一時的に表示します。システム標準のアニメーションでは表示しません。",
   "app.settings.beautify_file_thumbnails": "ファイルのサムネイルを美化",
-  "app.interact.list_columns": "リストの列数"
+  "app.interact.list_columns": "リストの列数",
+  "app.settings.widgets_permission_native_execute": "ネイティブ補助プログラムの実行",
+  "app.widget_permission.native_program": "補助プログラム",
+  "app.widget_permission.native_purpose": "開発者が申告した用途",
+  "app.widget_permission.native_operations": "開発者が申告した操作",
+  "app.widget_permission.native_reason": "アクセスを申請する理由",
+  "app.widget_permission.native_denied": "アクセスを拒否した場合の動作",
+  "app.widget_permission.native_warning": "補助プログラムは現在の Windows ユーザーの権限で実行されます。ファイル、ネットワーク、デバイスにアクセスし、他のプログラムを起動できます。申告された用途は、システムによる制限ではありません。アクセスを取り消しても、実行済みの操作は元に戻せません。",
+  "app.widget_permission.native_acknowledge": "このコンポーネントの入手元を信頼し、補助プログラムの権限範囲を理解しています。",
+  "app.widget_permission.native_countdown": "適用（%s 秒後に利用可能）"
 }

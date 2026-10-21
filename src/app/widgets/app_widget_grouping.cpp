@@ -9,6 +9,7 @@
 #include <commctrl.h>
 #include <objbase.h>
 
+#include <algorithm>
 #include <set>
 #include <limits>
 #include <thread>
@@ -17,6 +18,16 @@
 
 namespace
 {
+bool NeedsNativeHelperConsent(const snowdesktop::widget::InstalledPackage& package)
+{
+    if (package.manifest.nativeHelpers.empty()) return false;
+    if (package.permissionState != snowdesktop::widget::PermissionDecisionState::Granted) return true;
+    const bool required = std::find(package.manifest.permissions.begin(), package.manifest.permissions.end(),
+        "native.execute") != package.manifest.permissions.end();
+    return required && std::find(package.grantedPermissions.begin(), package.grantedPermissions.end(),
+        "native.execute") == package.grantedPermissions.end();
+}
+
 const wchar_t* WidgetPermissionLabel(std::string_view permission)
 {
     if (const char* key = snowdesktop::widget::
@@ -1628,6 +1639,14 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
     if (packageId.empty()) return;
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
+    if (NeedsNativeHelperConsent(*package))
+    {
+        auto route = snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
+        route.itemKey = packageId;
+        ShowSettingsWindow(std::move(route));
+        return;
+    }
     const auto requiredConsentPermissions =
         snowdesktop::widget::PermissionsRequiringConsent(
             package->manifest.permissions);
@@ -1730,6 +1749,14 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
     }
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
+    if (NeedsNativeHelperConsent(*package))
+    {
+        auto route = snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
+        route.itemKey = packageId;
+        ShowSettingsWindow(std::move(route));
+        return;
+    }
     const auto requiredConsentPermissions =
         snowdesktop::widget::PermissionsRequiringConsent(
             package->manifest.permissions);

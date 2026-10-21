@@ -3351,3 +3351,119 @@ only secondary dates. Disabling annotations never changes events.
 `glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
 blur and edge reflections. Use the tool bundled with a supporting host; older
 tools reject this appearance. Lua API and schema versions remain unchanged.
+
+
+## Native EXE helpers (feature `task.native.request`)
+
+This additive API retains `apiVersion: 2`. A component using it must declare
+`task.native.request` in `requiredFeatures` and `native.execute` in either
+`permissions` or `optionalPermissions`. Older hosts reject the required feature
+or the executable package. Publish a supporting host before publishing components
+that require it; the application version alone does not identify support.
+
+Lua keeps its existing sandbox. Native code runs only in a declared package EXE,
+with the current Windows user's permissions. The host never loads component DLLs
+or runs shell commands/scripts. Package DLLs and undeclared EXEs remain forbidden;
+use a self-contained EXE or an already-installed system runtime. This feature is
+not a security sandbox for the approved EXE and does not grant administrator rights.
+
+Declare one to four helpers in the manifest's `nativeHelpers` object:
+
+```json
+"nativeHelpers": {
+  "battery": {
+    "path": "bin/battery-helper.exe",
+    "sha256": "<64 lowercase hexadecimal characters from the actual EXE>",
+    "purposeKey": "native.purpose",
+    "operationsKey": "native.operations",
+    "reasonKey": "native.reason",
+    "deniedKey": "native.denied"
+  }
+}
+```
+
+All four keys must have nonempty translations (at most 4096 UTF-8 bytes each)
+in every declared component locale, including an English `en-US` or `en`
+fallback. Explain the purpose, actual operations, why host APIs are insufficient,
+and behavior after refusal. The host resolves them through component localization
+and separately shows its own localized full-trust warning, executable paths and
+SHA-256 values. Declared purpose is not an enforced restriction on the EXE.
+
+Users grant access in the host permission editor. Granting `native.execute`
+requires a separate unchecked acknowledgment and a 10-second delay starting when
+the dialog opens. A package subscription or development override does not approve
+native execution. Authorization is bound to the package source, permissions and
+validated contents of every package file. The host revalidates this reviewed
+identity when the user submits approval; changed content or source is rejected.
+Same-version content changes invalidate it. Executable hashes are checked again before launch, and the image is held open
+against modification/deletion for the managed invocation. Revocation cannot undo
+past file, network or device operations.
+
+```lua
+local taskId, err = task.start("native.request", {
+    helper = "battery",
+    operation = "read",
+    payload = "{}",
+    timeoutMs = 15000,
+})
+```
+
+Each task creates one process and handles one request. Helper IDs contain 1-64
+lowercase ASCII letters, digits, `_` or `-`, starting with a letter. Operation
+names accept 1-64 ASCII letters, digits, `.`, `_`, or `-`. `payload` is a JSON object
+string, at most 8192 bytes; pretty-printed whitespace is compacted. `timeoutMs`
+is an integer from 1000 to 60000 (default 15000). One request per component
+instance and at most eight managed requests across the engine can run concurrently.
+Preview, dry loading, lint, quality checks and author tests never launch helpers;
+preview execution completes with `previewUnavailable`.
+
+The host starts the exact declared EXE with the sole fixed argument
+`--snowdesktop-native-v1`. Communication uses private inherited stdin/stdout pipe
+handles. No network listener is created. stdout is reserved for UTF-8 JSON Lines;
+flush every frame. stderr is drained separately, capped at 16 KiB and not exposed
+to Lua or automatically logged. The child inherits only the three standard pipe
+handles, not other host handles. The EXE must not request elevation.
+
+Protocol v1 exchange (each object occupies one line):
+
+```json
+{"version":1,"kind":"hello","protocol":"snowdesktop-native"}
+```
+
+The host sends hello first; the helper replies with the same object within three
+seconds, also respecting the request deadline. The host then sends:
+
+```json
+{"version":1,"kind":"request","id":"1","operation":"read","payload":{}}
+```
+
+The helper may emit events, followed by exactly one final result or error:
+
+```json
+{"version":1,"kind":"event","id":"1","value":{"status":"reading"}}
+{"version":1,"kind":"result","id":"1","value":{"percent":73,"charging":false}}
+```
+
+```json
+{"version":1,"kind":"error","id":"1","code":"deviceUnavailable"}
+```
+
+Each frame is limited to 16 KiB, JSON depth to 16, JSON nodes to 2048, stdout to
+256 KiB and events to 16 per request. All response/event IDs must be `"1"`.
+Protocol versions and message kinds are checked; arbitrary commands from the
+helper are never interpreted by the host.
+
+Events arrive as `event.kind == "native.event"` with `taskId` and decoded `value`.
+The final `task.complete` has `task == "native.request"`; successful `value` is the
+decoded result JSON. JSON null follows existing Lua nil conversion rules.
+Helper error frames currently yield `nativeHelperError` without exposing stderr.
+Other stable errors include `nativeLaunchFailed`, `unknownHelper`,
+`nativeContentChanged`, `nativeProtocolError`, `nativeOutputLimit`, `nativeExited`,
+`nativeTimeout`, `previewUnavailable`, `permissionRevoked`, and `canceled`.
+
+After a final frame, the host sends `{"version":1,"kind":"stop"}`, allows a brief
+cooperative exit, then cleans up the request's Job Object. Cancellation, timeout,
+component disposal, permission revocation and host shutdown also clean up managed
+processes. The job manages at most eight processes per request and is a lifecycle
+mechanism, not an isolation boundary against malicious same-user programs.
+A helper crash or protocol failure does not load helper code into the host.

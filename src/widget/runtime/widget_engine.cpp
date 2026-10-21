@@ -3387,9 +3387,10 @@ static bool ReadInteractionValue(lua_State* state, int index,
     return true;
 }
 
-// Values originate from the bounded native device providers, never Lua input.
+// Values originate from bounded host providers or validated helper messages.
 static void PushSystemControlJson(lua_State* state, const JsonValue& value)
 {
+    luaL_checkstack(state, 3, "JSON value exceeds Lua stack capacity");
     switch (value.type)
     {
     case JsonValue::Type::Null: lua_pushnil(state); break;
@@ -5269,7 +5270,33 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         }
     }
 
-    if (taskName == "location.current")
+    if (taskName == "native.request")
+    {
+        if (!hasArguments) return luaL_error(state, "task.start: native.request requires arguments");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING)
+                return luaL_error(state, "task.start: native.request keys must be strings");
+            size_t length = 0;
+            const char* key = lua_tolstring(state, -2, &length);
+            const std::string field(key, length);
+            if (field == "timeoutMs" && lua_isinteger(state, -1))
+                arguments[field] = std::to_string(lua_tointeger(state, -1));
+            else if ((field == "helper" || field == "operation" || field == "payload") && lua_type(state, -1) == LUA_TSTRING)
+            {
+                const char* value = lua_tolstring(state, -1, &length);
+                if (length > 8192) return luaL_error(state, "task.start: native.request value is too large");
+                arguments[field] = std::string(value, length);
+            }
+            else return luaL_error(state, "task.start: native.request received an invalid argument");
+            lua_pop(state, 1);
+        }
+        snowdesktop::widget_runtime::NativeRequestOptions options;
+        if (!snowdesktop::widget_runtime::ParseNativeRequestOptions(arguments, options))
+            return luaL_error(state, "task.start: invalid native.request arguments");
+    }
+    else if (taskName == "location.current")
     {
         if (hasArguments)
         {
@@ -12346,6 +12373,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 void WidgetEngine::BeginTaskShutdown()
 {
     if (taskBroker_) taskBroker_->Shutdown();
+    nativeTaskExecutor_.reset();
     systemControlTasks_.reset();
 }
 
@@ -12370,6 +12398,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     if (previewOnly_)
     {
+        nativeTaskExecutor_.reset();
         locationTaskExecutor_.reset();
         mediaTaskExecutor_.reset();
         audioOutputTaskExecutor_.reset();
@@ -12381,6 +12410,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     else
     {
+        nativeTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetNativeTaskExecutor>();
+        nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         locationTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetLocationTaskExecutor>();
         locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         mediaTaskExecutor_ = std::make_unique<
@@ -12589,6 +12620,33 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    if (nativeTaskExecutor_)
+        for (auto& message : nativeTaskExecutor_->DrainMessages())
+        {
+            const auto snapshot = taskBroker_->Snapshot(message.id);
+            if (!snapshot) continue;
+            if (message.final)
+            {
+                if (message.ok && !snapshot->cancelRequested)
+                    nativeTaskCompletions_.insert_or_assign(message.id, std::move(message.json));
+                (void)taskBroker_->Complete(message.id, message.ok, std::move(message.error));
+                continue;
+            }
+            if (snapshot->cancelRequested) continue;
+            auto owner = std::find_if(widgets_.begin(), widgets_.end(), [&](const auto& widget) {
+                return widget.runtimeToken == snapshot->ownerToken;
+            });
+            if (owner == widgets_.end() || !owner->permissions.contains("native.execute")) continue;
+            JsonValue frame;
+            if (!ParseJson(message.json, frame) || !frame.Find("value")) continue;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, false);
+            (void)InvokeLifecycleEvent(*owner, "native.event", [&](lua_State* state) {
+                lua_pushinteger(state, static_cast<lua_Integer>(message.id));
+                lua_setfield(state, -2, "taskId");
+                PushSystemControlJson(state, *frame.Find("value"));
+                lua_setfield(state, -2, "value");
+            });
+        }
     if (locationTaskExecutor_)
         for (auto& completion : locationTaskExecutor_->DrainCompletions())
         {
@@ -12778,6 +12836,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
+            nativeTaskCompletions_.erase(action.id);
             if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
             locationTaskCompletions_.erase(action.id);
             if (action.name == "location.current") (void)taskBroker_->Complete(action.id, false);
@@ -12835,6 +12895,23 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "native.request")
+        {
+            snowdesktop::widget_runtime::NativeRequestOptions options;
+            const auto package = GetWidgetPackage(Utf8ToWideLocal(owner->packageId));
+            if (!snowdesktop::widget_runtime::ParseNativeRequestOptions(action.arguments, options))
+                (void)taskBroker_->Complete(action.id, false, "invalidArguments");
+            else if (action.preview)
+                (void)taskBroker_->Complete(action.id, false, "previewUnavailable");
+            else if (!package || package->permissionState != snowdesktop::widget::PermissionDecisionState::Granted ||
+                !owner->permissions.contains("native.execute") ||
+                !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(package->grantedPermissions, "native.execute"))
+                (void)taskBroker_->Complete(action.id, false, "permissionRevoked");
+            else if (!nativeTaskExecutor_ || !nativeTaskExecutor_->Start(action.id, package->root,
+                    snowdesktop::widget::PackagePermissionScopeFingerprint(package->manifest), std::move(options)))
+                (void)taskBroker_->Complete(action.id, false, "taskExecutorUnavailable");
+            continue;
+        }
         if (action.name == "location.current")
         {
             snowdesktop::widget_runtime::LocationOptions options;
@@ -14711,6 +14788,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             [&completion](const LuaWidget& candidate) {
                 return candidate.runtimeToken == completion.ownerToken;
             });
+        const auto nativeCompletion = nativeTaskCompletions_.find(completion.id);
+        JsonValue nativeFrame;
+        if (completion.name == "native.request" && completion.ok)
+        {
+            if (nativeCompletion == nativeTaskCompletions_.end() ||
+                !ParseJson(nativeCompletion->second, nativeFrame) || !nativeFrame.Find("value") ||
+                widget == widgets_.end() || !widget->permissions.contains("native.execute"))
+            { completion.ok = false; completion.error = "taskResultUnavailable"; }
+        }
+        nativeTaskCompletions_.erase(completion.id);
         const auto searchCompletion =
             appSearchCompletions_.find(completion.id);
         const auto itemSearchCompletion =
@@ -15055,7 +15142,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, &filesystemPickerNames, filesystemDataTask,
-                filesystemTaskResult](lua_State* eventState) {
+                filesystemTaskResult, &nativeFrame](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -15066,7 +15153,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "ok");
                 if (completion.ok)
                 {
-                    if (completion.name == "app.search" || itemSearchTask)
+                    if (completion.name == "native.request")
+                        PushSystemControlJson(eventState, *nativeFrame.Find("value"));
+                    else if (completion.name == "app.search" || itemSearchTask)
                     {
                         lua_createtable(eventState, 0, 4);
                         lua_createtable(eventState,
@@ -15404,6 +15493,8 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     for (const std::uint64_t taskId : widget.taskIds)
     {
         (void)taskBroker_->Cancel(taskId, reason);
+        if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(taskId);
+        nativeTaskCompletions_.erase(taskId);
         if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
         locationTaskCompletions_.erase(taskId);
         if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
@@ -15628,6 +15719,8 @@ void WidgetEngine::Shutdown()
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
+    nativeTaskExecutor_.reset();
+    nativeTaskCompletions_.clear();
     locationTaskExecutor_.reset();
     locationTaskCompletions_.clear();
     mediaTaskExecutor_.reset();
@@ -21416,6 +21509,7 @@ void WidgetEngine::OnAudioAnalysisWake()
 void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 {
     taskWakeCallback_ = std::move(callback);
+    if (nativeTaskExecutor_) nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (filesystemTaskExecutor_)
         filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
@@ -26386,6 +26480,8 @@ WidgetEngine::RuntimeStartTask(
     std::unordered_map<std::string, std::string> arguments)
 {
     using snowdesktop::widget_runtime::TaskStartOptions;
+    if (name == "native.request" && snowdesktop::widget_runtime::IsDryLoad())
+        return { 0, "previewUnavailable" };
     if (!taskBroker_)
         return { 0, "task broker is not initialized" };
     const auto loaded = std::find_if(widgets_.begin(), widgets_.end(),
@@ -32696,7 +32792,7 @@ bool WidgetEngine::SetWidgetPermissionDecision(
     snowdesktop::widget::PermissionDecisionState state,
     const std::vector<std::string>& grantedPermissions,
     const std::vector<std::string>& grantedNetworkDomains,
-    std::string& error)
+    std::string& error, bool nativeAcknowledged, std::string_view reviewedNativeIdentity)
 {
     const std::string requestedId = WidgetWideToUtf8(packageId);
     if (requestedId.empty())
@@ -32706,7 +32802,7 @@ bool WidgetEngine::SetWidgetPermissionDecision(
     }
     return GetWidgetPackageManager().SetPermissionDecision(
         requestedId, state, grantedPermissions,
-        grantedNetworkDomains, error);
+        grantedNetworkDomains, error, nativeAcknowledged, reviewedNativeIdentity);
 }
 
 bool WidgetEngine::ApplyWidgetPermissionDecision(
@@ -32714,10 +32810,10 @@ bool WidgetEngine::ApplyWidgetPermissionDecision(
     snowdesktop::widget::PermissionDecisionState state,
     const std::vector<std::string>& grantedPermissions,
     const std::vector<std::string>& grantedNetworkDomains,
-    std::string& error)
+    std::string& error, bool nativeAcknowledged, std::string_view reviewedNativeIdentity)
 {
     if (!SetWidgetPermissionDecision(packageId, state,
-            grantedPermissions, grantedNetworkDomains, error))
+            grantedPermissions, grantedNetworkDomains, error, nativeAcknowledged, reviewedNativeIdentity))
         return false;
     const std::string requestedId = WidgetWideToUtf8(packageId);
     const std::unordered_set<std::string> effectivePermissions =

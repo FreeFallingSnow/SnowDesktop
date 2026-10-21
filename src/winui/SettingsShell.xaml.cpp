@@ -3962,6 +3962,18 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
         completed)
 {
     auto lifetime = get_strong();
+    mux::DispatcherTimer nativeTimer;
+    std::vector<std::function<void()>> nativeRevokers;
+    struct NativeDialogCleanup
+    {
+        mux::DispatcherTimer timer;
+        std::vector<std::function<void()>>& revokers;
+        ~NativeDialogCleanup()
+        {
+            try { timer.Stop(); } catch (...) {}
+            for (auto& revoke : revokers) { try { revoke(); } catch (...) {} }
+        }
+    } nativeCleanup{ nativeTimer, nativeRevokers };
     try
     {
         if (activeDialog_)
@@ -3982,7 +3994,7 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
                 "app.settings.widgets_revoke_permissions"));
         }
         dialog.CloseButtonText(Localize("app.settings.cancel"));
-        dialog.DefaultButton(muxc::ContentDialogButton::Primary);
+        dialog.DefaultButton(request.nativeHelpers.empty() ? muxc::ContentDialogButton::Primary : muxc::ContentDialogButton::None);
 
         muxc::StackPanel content;
         content.Spacing(8.0);
@@ -4052,6 +4064,87 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
                 content.Children().Append(item);
             }
         }
+        muxc::CheckBox nativeAcknowledgment;
+        const auto started = std::make_shared<std::chrono::steady_clock::time_point>();
+        std::function<void()> updateNativeGate;
+        if (!request.nativeHelpers.empty())
+        {
+            muxc::TextBlock identity;
+            identity.Text(request.author + L" · " + request.version + L" · " + request.sourceId + L" · " + request.sourceExternalItemId);
+            identity.TextWrapping(mux::TextWrapping::Wrap);
+            content.Children().Append(identity);
+            for (const auto& helper : request.nativeHelpers)
+            {
+                const auto appendExplanation = [&](std::string_view key, const std::wstring& value) {
+                    appendHeading(key);
+                    muxc::TextBlock text;
+                    text.Text(value);
+                    text.TextWrapping(mux::TextWrapping::Wrap);
+                    text.IsTextSelectionEnabled(true);
+                    content.Children().Append(text);
+                };
+                appendExplanation("app.widget_permission.native_program", helper.path + L"\nSHA-256: " + helper.sha256);
+                appendExplanation("app.widget_permission.native_purpose", helper.purpose);
+                appendExplanation("app.widget_permission.native_operations", helper.operations);
+                appendExplanation("app.widget_permission.native_reason", helper.reason);
+                appendExplanation("app.widget_permission.native_denied", helper.denied);
+            }
+            muxc::InfoBar warning;
+            warning.IsOpen(true);
+            warning.IsClosable(false);
+            warning.Severity(muxc::InfoBarSeverity::Warning);
+            warning.Message(Localize("app.widget_permission.native_warning"));
+            content.Children().Append(warning);
+            muxc::TextBlock acknowledgmentText;
+            acknowledgmentText.Text(Localize("app.widget_permission.native_acknowledge"));
+            acknowledgmentText.TextWrapping(mux::TextWrapping::Wrap);
+            nativeAcknowledgment.Content(acknowledgmentText);
+            nativeAcknowledgment.IsChecked(false);
+            muxa::AutomationProperties::SetName(nativeAcknowledgment, Localize("app.widget_permission.native_acknowledge"));
+            content.Children().Append(nativeAcknowledgment);
+            updateNativeGate = [this, dialog, editors, nativeAcknowledgment, started] {
+                const bool selected = std::any_of(editors.begin(), editors.end(), [](const auto& entry) {
+                    const auto checked = entry.second.IsChecked();
+                    return entry.first == L"native.execute" && checked && checked.Value();
+                });
+                const auto now = std::chrono::steady_clock::now();
+                const auto elapsed = *started == std::chrono::steady_clock::time_point{} ? 0LL :
+                    std::chrono::duration_cast<std::chrono::seconds>(now - *started).count();
+                const auto remaining = std::max(0LL, 10LL - elapsed);
+                const auto acknowledged = nativeAcknowledgment.IsChecked();
+                dialog.IsPrimaryButtonEnabled(!selected || (remaining == 0 && acknowledged && acknowledged.Value()));
+                auto label = Localize("app.settings.apply");
+                if (selected && remaining > 0)
+                {
+                    label = Localize("app.widget_permission.native_countdown");
+                    const auto marker = label.find(L"%s");
+                    if (marker != std::wstring::npos) label.replace(marker, 2, std::to_wstring(remaining));
+                }
+                dialog.PrimaryButtonText(label);
+            };
+            nativeTimer.Interval(std::chrono::milliseconds(200));
+            const auto tick = nativeTimer.Tick([updateNativeGate](const auto&, const auto&) { updateNativeGate(); });
+            nativeRevokers.push_back([nativeTimer, tick] { nativeTimer.Tick(tick); });
+            const auto opened = dialog.Opened([started, nativeTimer, updateNativeGate](const auto&, const auto&) {
+                *started = std::chrono::steady_clock::now();
+                nativeTimer.Start();
+                updateNativeGate();
+            });
+            nativeRevokers.push_back([dialog, opened] { dialog.Opened(opened); });
+            const auto observe = [&](muxc::CheckBox check) {
+                const auto checked = check.Checked([updateNativeGate](const auto&, const auto&) { updateNativeGate(); });
+                const auto unchecked = check.Unchecked([updateNativeGate](const auto&, const auto&) { updateNativeGate(); });
+                nativeRevokers.push_back([check, checked, unchecked] { check.Checked(checked); check.Unchecked(unchecked); });
+            };
+            observe(nativeAcknowledgment);
+            for (const auto& entry : editors) if (entry.first == L"native.execute") observe(entry.second);
+            const auto clicked = dialog.PrimaryButtonClick([updateNativeGate, dialog](const auto&, const muxc::ContentDialogButtonClickEventArgs& args) {
+                updateNativeGate();
+                if (!dialog.IsPrimaryButtonEnabled()) args.Cancel(true);
+            });
+            nativeRevokers.push_back([dialog, clicked] { dialog.PrimaryButtonClick(clicked); });
+            updateNativeGate();
+        }
         muxc::ScrollViewer scroller;
         scroller.MaxHeight(560.0);
         scroller.VerticalScrollBarVisibility(
@@ -4060,6 +4153,7 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
         dialog.Content(scroller);
 
         const auto result = co_await dialog.ShowAsync();
+        nativeTimer.Stop();
         if (activeDialog_ == dialog)
             activeDialog_ = nullptr;
         if (closed_ || generation != navigation_.Generation() ||
@@ -4071,6 +4165,13 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
         {
             answer.action =
                 snowdesktop::winui::WidgetPermissionEditorAction::Apply;
+            if (!request.nativeHelpers.empty())
+            {
+                const auto checked = nativeAcknowledgment.IsChecked();
+                answer.nativeAcknowledged = checked && checked.Value() &&
+                    *started != std::chrono::steady_clock::time_point{} &&
+                    std::chrono::steady_clock::now() - *started >= std::chrono::seconds(10);
+            }
             for (const auto& [permissionId, check] : editors)
             {
                 const auto checked = check.IsChecked();
@@ -4097,6 +4198,7 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
     }
     catch (...)
     {
+        nativeTimer.Stop();
         activeDialog_ = nullptr;
         if (!closed_ && generation == navigation_.Generation() &&
             navigation_.Route() == route && completed)

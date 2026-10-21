@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -86,6 +87,13 @@ struct PreviewVariant
     std::unordered_map<std::string, std::string> storageKeys;
 };
 
+struct NativeHelper
+{
+    std::string id, path, sha256;
+    std::string purposeKey, operationsKey, reasonKey, deniedKey;
+    std::string purpose, operations, reason, denied;
+};
+
 struct PackageManifest
 {
     int schemaVersion = 0;
@@ -124,7 +132,12 @@ struct PackageManifest
     std::unordered_map<std::string, PackageResource> resources;
     snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
     std::unordered_map<std::string, LocalizedMetadata> locales;
+    std::vector<NativeHelper> nativeHelpers;
+    // Derived by directory validation; never accepted from the manifest.
+    std::string nativeContentFingerprint;
 };
+
+std::string PackagePermissionScopeFingerprint(const PackageManifest& manifest);
 
 PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale);
@@ -241,6 +254,8 @@ struct InstalledPackage
     // recovery candidates, not a locally installed source reservation.
     bool unregistered = false;
 };
+
+std::string PackagePermissionReviewFingerprint(const InstalledPackage& package);
 
 // Private host registry metadata, independent of the public package manifest.
 using SteamLibrarySubscriptions =
@@ -389,7 +404,8 @@ public:
         PermissionDecisionState state,
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
-        std::string& error);
+        std::string& error, bool nativeAcknowledged = false,
+        std::string_view reviewedNativeIdentity = {});
     bool CreateDevelopmentProject(const std::string& packageId,
         std::filesystem::path& projectRoot, std::string& error);
     bool SetDevelopmentOverride(const std::string& packageId, bool active,

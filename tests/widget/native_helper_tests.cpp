@@ -1,0 +1,215 @@
+#include "widget/tasks/widget_native_task_executor.h"
+#include "widget/packages/widget_package.h"
+#include "common/json_value.h"
+#include "test_temporary_directory.h"
+
+#include <windows.h>
+#include <chrono>
+#include <condition_variable>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <stdexcept>
+
+namespace
+{
+using namespace snowdesktop::widget;
+using namespace snowdesktop::widget_runtime;
+void Require(bool condition, const char* message)
+{ if (!condition) throw std::runtime_error(message); }
+void Write(const std::filesystem::path& path, const std::string& text)
+{
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream << text;
+    Require(static_cast<bool>(stream), "fixture write succeeds");
+}
+int Helper()
+{
+    std::string line;
+    if (!std::getline(std::cin, line)) return 1;
+    JsonValue hello;
+    if (!ParseJson(line, hello) || !hello.Find("protocol")) return 2;
+    std::cout << R"({"version":1,"kind":"hello","protocol":"snowdesktop-native"})" << std::endl;
+    if (!std::getline(std::cin, line)) return 3;
+    JsonValue request;
+    if (!ParseJson(line, request) || !request.Find("operation") || !request.Find("payload")) return 4;
+    const auto operation = request.Find("operation")->string;
+    if (operation == "bad")
+        std::cout << R"({"version":9,"kind":"result","id":"1","value":false})" << std::endl;
+    else if (operation == "large")
+        std::cout << std::string(20000, 'x') << std::endl;
+    else
+    {
+        std::cout << "{\"version\":1,\"kind\":\"event\",\"id\":\"1\",\"value\":{\"pid\":" << GetCurrentProcessId() << ",\"percent\":0}}" << std::endl;
+        if (operation == "hang")
+        { std::getline(std::cin, line); return 0; }
+        if (operation == "failure")
+            std::cout << R"({"version":1,"kind":"error","id":"1","code":"deviceUnavailable"})" << std::endl;
+        else
+            std::cout << R"({"version":1,"kind":"result","id":"1","value":{"percent":73,"charging":false}})" << std::endl;
+    }
+    std::getline(std::cin, line);
+    return 0;
+}
+struct Runner
+{
+    std::mutex mutex;
+    std::condition_variable ready;
+    unsigned revision = 0;
+    WidgetNativeTaskExecutor executor;
+    Runner()
+    {
+        executor.SetCompletionCallback([this] {
+            std::lock_guard lock(mutex);
+            ++revision;
+            ready.notify_one();
+        });
+    }
+    std::vector<NativeTaskMessage> Wait(bool untilFinal = true)
+    {
+        std::vector<NativeTaskMessage> output;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        unsigned seen = 0;
+        for (;;)
+        {
+            // Do not hold the callback mutex while acquiring executor state.
+            auto messages = executor.DrainMessages();
+            bool finished = false;
+            for (auto& message : messages)
+            {
+                finished = finished || message.final || !untilFinal;
+                output.push_back(std::move(message));
+            }
+            if (finished) return output;
+            std::unique_lock lock(mutex);
+            Require(ready.wait_until(lock, deadline, [&] { return revision != seen; }), "native task completes within a bounded wait");
+            seen = revision;
+        }
+    }
+};
+void Tests()
+{
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto root = temporary.path / L"测试 helper package";
+    std::filesystem::create_directories(root);
+    wchar_t executable[32768]{};
+    const auto length = GetModuleFileNameW(nullptr, executable, 32768);
+    Require(length > 0 && length < 32768, "fixture finds its own executable");
+    std::filesystem::copy_file(executable, root / L"helper.exe");
+    const auto hash = WidgetPackageManager::Sha256File(root / L"helper.exe");
+    const auto manifestText = [&] {
+        return std::string(R"({"schemaVersion":2,"apiVersion":2,"id":"1c60540b-d29b-4938-916c-e998f830de40","slug":"native-test","version":"1.0.0","name":"Native test","entry":"main.lua","permissions":["native.execute"],"requiredFeatures":["task.native.request"],"nativeHelpers":{"battery":{"path":"helper.exe","sha256":")") + hash +
+            R"(","purposeKey":"purpose","operationsKey":"operations","reasonKey":"reason","deniedKey":"denied"}},"locales":{"en-US":{"purpose":"Show charge","operations":"Read device status","reason":"Native device access","denied":"No data"},"ja-JP":{"purpose":"電量表示","operations":"デバイス状態の取得","reason":"デバイスへのアクセス","denied":"データなし"}}})";
+    };
+    Write(root / L"main.lua", "return widget.define({model={}})");
+    Write(root / L"widget.json", manifestText());
+    WidgetPackageValidator validator;
+    PackageManifest manifest;
+    auto report = validator.ValidateDirectory(root, &manifest);
+    if (!report.Ok()) std::cerr << report.ToJson() << '\n';
+    Require(report.Ok() && manifest.nativeHelpers.size() == 1, "declared EXE with complete localized explanation validates");
+    Require(LocalizePackageManifest(manifest, "ja-JP").nativeHelpers.front().purpose == "電量表示", "native consent text uses component localization");
+    const auto fingerprint = PackagePermissionScopeFingerprint(manifest);
+
+    Write(root / L"undeclared.exe", "not executable");
+    Require(!validator.ValidateDirectory(root).Ok(), "undeclared EXE is rejected");
+    std::filesystem::remove(root / L"undeclared.exe");
+    Write(root / L"plugin.dll", "not a DLL");
+    Require(!validator.ValidateDirectory(root).Ok(), "DLL extension remains forbidden");
+    std::filesystem::remove(root / L"plugin.dll");
+    auto missingTranslation = manifestText();
+    const auto key = missingTranslation.find("\"purpose\":\"Show charge\"");
+    missingTranslation.replace(key, std::string("\"purpose\":\"Show charge\"").size(), "\"other\":\"Show charge\"");
+    Write(root / L"widget.json", missingTranslation);
+    Require(!validator.ValidateDirectory(root).Ok(), "untranslated native consent key is rejected");
+    Write(root / L"widget.json", manifestText());
+
+    NativeRequestOptions parsed;
+    Require(!ParseNativeRequestOptions({{"helper","../helper"},{"operation","read"}}, parsed), "helper ID cannot be a path");
+    Require(!ParseNativeRequestOptions({{"helper","battery"},{"operation","read"},{"command","cmd.exe"}}, parsed), "arbitrary command argument is rejected");
+    Require(ParseNativeRequestOptions({{"helper","battery"},{"operation","read"},{"payload","{\n\"x\":\"a b\"\n}"}}, parsed) && parsed.payload == "{\"x\":\"a b\"}", "pretty JSON compacts without changing string content");
+    {
+        Runner runner;
+        Require(runner.executor.Start(1, root, fingerprint, {"battery","read", "{\n\"x\":1\n}", 3000}), "real helper starts");
+        const auto messages = runner.Wait();
+        Require(messages.size() == 2 && !messages.front().final && messages.back().final && messages.back().ok,
+            "real pipe handshake, request, event, result and shutdown succeed");
+        JsonValue frame;
+        Require(ParseJson(messages.back().json, frame) && frame.Find("value")->Find("percent")->number == 73,
+            "result comes from the actual helper protocol");
+    }
+    for (const auto& name : {"bad", "large", "failure", "hang"})
+    {
+        Runner runner;
+        Require(runner.executor.Start(2, root, fingerprint, {"battery",name,"{}",1000}), "negative fixture starts");
+        const auto messages = runner.Wait();
+        const auto& final = messages.back();
+        Require(final.final && !final.ok, "malformed, excessive, failed and timed-out helpers cannot succeed");
+        if (std::string(name) == "hang") Require(final.error == "nativeTimeout", "non-responsive helper times out");
+    }
+    {
+        Runner runner;
+        Require(runner.executor.Start(3, root, fingerprint, {"battery","hang","{}",5000}), "cancel fixture starts");
+        const auto initial = runner.Wait(false);
+        JsonValue frame;
+        Require(!initial.front().final && ParseJson(initial.front().json, frame), "helper reports a live process");
+        const DWORD pid = static_cast<DWORD>(frame.Find("value")->Find("pid")->number);
+        HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        Require(process != nullptr, "test observes helper process");
+        Require(runner.executor.Cancel(3), "cancel reaches the real running operation");
+        const auto messages = runner.Wait();
+        Require(messages.back().error == "canceled", "canceled task cannot report success");
+        Require(WaitForSingleObject(process, 1000) == WAIT_OBJECT_0, "cancel terminates the managed helper");
+        CloseHandle(process);
+    }
+    Write(root / L"main.lua", "return widget.define({model={changed=true}})");
+    Require(validator.ValidateDirectory(root, &manifest).Ok() && PackagePermissionScopeFingerprint(manifest) != fingerprint,
+        "same-version script changes invalidate native authorization identity");
+    {
+        Runner runner;
+        Require(runner.executor.Start(4, root, fingerprint, {"battery","read","{}",3000}), "stale content validation queues");
+        const auto messages = runner.Wait();
+        Require(messages.size() == 1 && messages.back().error == "nativeContentChanged", "changed package cannot launch under old approval");
+    }
+
+    PackagePaths paths;
+    paths.builtin = temporary.path / L"builtin";
+    paths.development = temporary.path / L"dev";
+    paths.installed = temporary.path / L"installed";
+    paths.staging = temporary.path / L"staging";
+    paths.quarantine = temporary.path / L"quarantine";
+    paths.migrations = temporary.path / L"migrations";
+    paths.registry = temporary.path / L"packages.json";
+    std::filesystem::create_directories(paths.development);
+    std::filesystem::copy(root, paths.development / L"native", std::filesystem::copy_options::recursive);
+    WidgetPackageManager manager(paths);
+    std::string error;
+    Require(manager.Initialize(error), "native package manager initializes");
+    auto package = manager.Resolve(manifest.id);
+    Require(package && package->permissionState == PermissionDecisionState::Pending, "native development package requires explicit consent");
+    Require(!manager.SetPermissionDecision(manifest.id, PermissionDecisionState::Granted, {"native.execute"}, {}, error) &&
+        error == "nativeConfirmationRequired", "legacy permission flows cannot grant native execution");
+    const auto review = PackagePermissionReviewFingerprint(*package);
+    auto otherSource = *package;
+    otherSource.source.providerId = "other-source";
+    Require(!manager.SetPermissionDecision(manifest.id, PermissionDecisionState::Granted, {"native.execute"}, {}, error, true,
+        PackagePermissionReviewFingerprint(otherSource)) && error == "nativeContentChanged", "review is bound to the actual package source");
+    Require(manager.SetPermissionDecision(manifest.id, PermissionDecisionState::Granted, {"native.execute"}, {}, error, true, review), "fixture records explicit strong approval");
+    Require(manager.Resolve(manifest.id)->permissionState == PermissionDecisionState::Granted, "unchanged content retains approval");
+    Write(paths.development / L"native" / L"main.lua", "return widget.define({model={again=true}})");
+    Require(!manager.SetPermissionDecision(manifest.id, PermissionDecisionState::Granted, {"native.execute"}, {}, error, true, review) &&
+        error == "nativeContentChanged", "content changes during the consent dialog cannot acquire the old approval");
+    bool scopeChanged = false;
+    Require(manager.RefreshChangedPermissionScope(manifest.id, scopeChanged, error) && scopeChanged &&
+        manager.Resolve(manifest.id)->permissionState == PermissionDecisionState::Pending,
+        "same-version package update returns to pending consent");
+    Write(root / L"helper.exe", "changed executable");
+    Require(!validator.ValidateDirectory(root).Ok(), "tampered EXE hash is rejected");
+}
+}
+int main(int argc, char** argv)
+{
+    if (argc == 2 && std::string(argv[1]) == "--snowdesktop-native-v1") return Helper();
+    try { Tests(); std::cout << "native helper integration tests passed\n"; return 0; }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+}

@@ -596,6 +596,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/api/widget_calendar_query_options.cpp
     src/widget/api/widget_calendar_query_options.h
     src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_native_task_executor.cpp
     src/widget/tasks/widget_location_task_executor.cpp
     src/widget/tasks/widget_notification_runtime.cpp
     src/widget/tasks/widget_notification_schedule_store.cpp
@@ -2272,6 +2273,21 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src tools/snowwidget
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
         LABELS authoring contract data permission security widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetNativeHelperTests
+        widget_native_helper
+        SOURCES
+            tests/widget/native_helper_tests.cpp
+            src/widget/tasks/widget_native_task_executor.cpp
+            src/widget/packages/widget_package.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
+            src/data/atomic_file.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES bcrypt ole32
+        LABELS integration security permission widget)
 
     # Keep file-export validation independent from installation-review fixtures.
     add_test(NAME widget_package_file_export

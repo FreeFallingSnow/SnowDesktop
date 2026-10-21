@@ -1440,10 +1440,12 @@ struct WidgetsPagePresenter::Impl
         WidgetPermissionEditorRequest editor;
         editor.packageId = package.packageId;
         editor.packageName = package.name;
+        editor.author = package.author;
         editor.version = package.version;
         editor.sourceId = package.sourceId;
         editor.sourceExternalItemId = package.sourceExternalItemId;
         editor.scopeFingerprint = package.permissionScopeFingerprint;
+        editor.nativeHelpers = package.nativeHelpers;
         editor.permissionState = package.permissionState;
         editor.canRevoke = package.canRevokePermissions;
         editor.permissions = package.permissions;
@@ -1487,6 +1489,7 @@ struct WidgetsPagePresenter::Impl
                     : WidgetPackagePermissionState::Granted;
                 command.grantedPermissions =
                     std::move(result.grantedPermissions);
+                command.nativeAcknowledged = result.nativeAcknowledged;
                 command.grantedNetworkDomains =
                     std::move(result.grantedNetworkDomains);
                 invoke(requestGeneration, std::move(command));
