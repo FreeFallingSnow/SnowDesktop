@@ -15,6 +15,9 @@ namespace snowdesktop::collection_titleless_rules
 {
 
 inline constexpr float kMinimumIconScale = 0.8f;
+// Prefer the normal floor; only a visibly unbalanced grid may shrink further
+// to fit another row or column. Keep even that fallback legible.
+inline constexpr float kMinimumBalancedIconScale = 2.0f / 3.0f;
 
 struct DenseLayout
 {
@@ -108,6 +111,19 @@ inline std::vector<int> ResolveVisualGaps(
     }
     gaps.push_back(std::max(1, extent) - previousEnd);
     return gaps;
+}
+
+inline int VisualGapSpread(int width, int height,
+    int columns, int rows, int iconSize, int outerPadding)
+{
+    auto gaps = ResolveVisualGaps(
+        width, columns, iconSize, outerPadding);
+    const auto verticalGaps = ResolveVisualGaps(
+        height, rows, iconSize, outerPadding);
+    gaps.insert(gaps.end(), verticalGaps.begin(), verticalGaps.end());
+    const auto [minimum, maximum] =
+        std::minmax_element(gaps.begin(), gaps.end());
+    return *maximum - *minimum;
 }
 
 inline std::optional<int> ResolveCommonOuterPadding(
@@ -309,6 +325,58 @@ inline DenseLayout ResolveDenseLayout(
             result.rows = rows;
             result.iconSize = iconSize;
             result.outerPadding = padding.value_or(0);
+        }
+    }
+
+    // An 80% floor can strand two columns on opposite sides of a short frame,
+    // or leave wide horizontal gutters between tightly packed vertical rows.
+    // Reflow those cases using the largest icon that balances the actual
+    // visual gaps, rather than importing the ordinary grid's title-era gaps.
+    if (VisualGapSpread(width, height,
+            result.columns, result.rows, result.iconSize,
+            result.outerPadding) > std::max(1, result.iconSize / 4))
+    {
+        const int balancedMinimumIconSize = std::max(1,
+            static_cast<int>(std::ceil(
+                baseIconSize * kMinimumBalancedIconScale)));
+        const int balancedMaximumColumns = std::max(baseColumns,
+            width / (balancedMinimumIconSize + horizontalInset * 2));
+        const int balancedMaximumRows = std::max(baseRows,
+            height / (balancedMinimumIconSize + verticalInset * 2));
+        const int minimumCapacity = result.columns * result.rows;
+        bool foundBalanced = false;
+        for (int columns = baseColumns;
+             columns <= balancedMaximumColumns; ++columns)
+        {
+            for (int rows = baseRows; rows <= balancedMaximumRows; ++rows)
+            {
+                const int capacity = columns * rows;
+                if (capacity < minimumCapacity) continue;
+                int iconSize = std::min({ baseIconSize,
+                    width / columns - horizontalInset * 2,
+                    height / rows - verticalInset * 2 });
+                for (; iconSize >= balancedMinimumIconSize; --iconSize)
+                {
+                    if (foundBalanced &&
+                        (iconSize < result.iconSize ||
+                         (iconSize == result.iconSize &&
+                          capacity <= result.columns * result.rows)))
+                        break;
+                    const auto padding = ResolveCommonOuterPadding(
+                        width, height, columns, rows, iconSize);
+                    if (!padding || VisualGapSpread(width, height,
+                            columns, rows, iconSize, *padding) >
+                                std::max(1, iconSize / 4))
+                        continue;
+                    foundBalanced = true;
+                    result.columns = columns;
+                    result.rows = rows;
+                    result.iconSize = iconSize;
+                    result.minimumIconSize = balancedMinimumIconSize;
+                    result.outerPadding = *padding;
+                    break;
+                }
+            }
         }
     }
 

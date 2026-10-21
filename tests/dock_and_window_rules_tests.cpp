@@ -4271,6 +4271,41 @@ int main(int argc, char** argv)
             hasEvenInternalDistribution(densePortrait, true) &&
             hasEvenInternalDistribution(densePortrait, false),
         "dense compact grids must use one visual padding on all four edges and distribute each axis remainder evenly");
+    // A narrow frame must trade a little icon size for another column instead
+    // of exposing an icon-wide gutter (162x112 previously had a 52px gap).
+    for (const int scale : { 1, 2, 3 })
+    {
+        for (const int height : { 112, 246 })
+        {
+            const auto narrow = titleless::ResolveDenseLayout(
+                RECT{ 13, 17, 13 + 162 * scale, 17 + height * scale },
+                2, height == 112 ? 1 : 2,
+                64 * scale, 2 * scale, 2 * scale, 1.0f);
+            auto gaps = denseVisualGaps(narrow, true);
+            const auto verticalGaps = denseVisualGaps(narrow, false);
+            gaps.insert(gaps.end(), verticalGaps.begin(), verticalGaps.end());
+            const auto [minimum, maximum] =
+                std::minmax_element(gaps.begin(), gaps.end());
+            Check(narrow.columns >= 3 &&
+                    narrow.iconSize < 52 * scale &&
+                    narrow.iconSize >= narrow.minimumIconSize &&
+                    *minimum >= 0 &&
+                    *maximum - *minimum <= narrow.iconSize / 4 &&
+                    hasUnifiedOuterPadding(narrow),
+                "narrow titleless Collections must shrink and reflow icons instead of retaining a wide gutter at any DPI");
+            const auto presentation = localLayout::ResolveCollectionPresentation(
+                15, static_cast<size_t>(narrow.columns * narrow.rows),
+                false, false);
+            const RECT lastSlot = localLayout::ItemRect(narrow.geometry,
+                presentation.showAllButton ? presentation.allButtonSlot :
+                    presentation.visibleItemCount - 1);
+            Check(lastSlot.left >= narrow.geometry.viewport.left &&
+                    lastSlot.top >= narrow.geometry.viewport.top &&
+                    lastSlot.right <= narrow.geometry.viewport.right &&
+                    lastSlot.bottom <= narrow.geometry.viewport.bottom,
+                "the reflowed titleless grid must keep its final item or overflow target inside the frame");
+        }
+    }
     const auto denseSingleColumn = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 60, 150 }, 1, 2,
         50, 2, 2, 1.0f);
