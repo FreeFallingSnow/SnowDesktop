@@ -39,10 +39,11 @@ $wrapped=New-Object Exception('wrapper',$other)
     write(root/L"released.ps1",". (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')\n$lease=Open-EntryStateTransaction $PSScriptRoot -TimeoutMilliseconds 150\n$lease.Dispose()\n@{acquired=$true}|ConvertTo-Json\n",true);
     require(bridge.call(root/L"released.ps1",{}).at("acquired").boolean,"Released transaction remained unavailable");
 }
-void batch_contention(const fs::path& repo,bool reservation,bool former=false,bool cancel=false){
+void batch_contention(const fs::path& repo,bool reservation,bool former=false,bool cancel=false,bool formerCancellation=false){
     Coordinator c(repo,reservation?"state-lock-reservation":"state-lock-admission",true);
     const auto batch=c.begin("runner").at("batchId").str();c.plan("runner",batch,0,"selected","Alpha","tool");
     auto source=read(c.scripts/L"build_run.ps1");
+    if(formerCancellation)replace(source,"$queuedCancellation=$true;break","$record.status='cancelled';$queuedCancellation=$true;break");
     const std::string gate=R"PS([IO.File]::WriteAllText((Join-Path $root 'transaction-paused'),'paused')
         $pause=[Diagnostics.Stopwatch]::StartNew()
         while([IO.File]::Exists((Join-Path $root 'hold-transaction'))){
@@ -80,7 +81,13 @@ void batch_contention(const fs::path& repo,bool reservation,bool former=false,bo
         }
     }
     require(c.calls()==0&&caller.running(),"Contended state transaction started work or abandoned its caller");
-    lock.release();const auto completed=caller.wait(30);
+    lock.release();
+    if(cancel){
+        until([&]{view=Json::parse(read(c.stateRoot/L"runs"/wide(id+".json")));return view.at("status").str()=="cancelled"||view.at("status").str()=="failed";},15);
+        require(view.at("status").str()=="cancelled"&&fs::exists(c.stateRoot/wide(batch+".json"))&&c.state().at("current").kind==Json::Kind::Null,
+                "Queued cancellation failed to publish and retire its batch: "+view.dump());
+    }
+    const auto completed=caller.wait(15);
     require(completed.code==(cancel?4:0),"State contention did not finish with its expected result: "+completed.out+completed.err);
     const auto result=c.result(batch);
     require(result.at("outcome").str()==(cancel?"cancelled":"passed")&&c.calls()==(cancel?0:1)&&c.state().at("current").kind==Json::Kind::Null,
@@ -93,7 +100,11 @@ void test(const fs::path& repo){
     const auto control=run({executable().wstring(),repo.wstring(),L"--former-admission"},root,25);
     require(control.code==1&&control.err.find("Transient state read failed instead of queueing")!=std::string::npos,
             "Former wrapped-exception handling did not reach its business failure: "+control.out+control.err);
+    const auto cancelRoot=temporary("former-queued-cancellation-control");
+    const auto cancelControl=run({executable().wstring(),repo.wstring(),L"--former-cancellation"},cancelRoot,25);
+    require(cancelControl.code==1&&cancelControl.err.find("Queued cancellation failed to publish and retire its batch")!=std::string::npos,
+            "Former early cancellation publication did not reach its business failure: "+cancelControl.out+cancelControl.err);
     std::cout<<"PASS PS7/PS5 bounded transaction classification, real batch reservation/admission, queued cancellation and former-behavior failure\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--former-admission"){batch_contention(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--former-admission"){batch_contention(repo,false,true);return;}if(argc>2&&std::string(argv[2])=="--former-cancellation"){batch_contention(repo,false,false,true,true);return;}test(repo);});}

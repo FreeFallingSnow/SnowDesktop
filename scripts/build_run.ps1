@@ -258,9 +258,9 @@ try {
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$null,'Process')
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
         $queueNotice=[Diagnostics.Stopwatch]::StartNew()
-        $waitInterval=$null;$waitClock=$null
+        $waitInterval=$null;$waitClock=$null;$queuedCancellation=$false
         while(-not $entry){
-            if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$record.status='cancelled';break}
+            if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$queuedCancellation=$true;break}
             try {$entry=if($request.action -eq 'batch'){Enter-BatchRun $request}else{Enter-BuildEntry $root}}
             catch {
                 if($_.Exception.Message -notmatch '^Shared output (busy:|lease/transaction is busy;)'){throw}
@@ -277,6 +277,9 @@ try {
             }
         }
         if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds;Write-RunRecord $record}
+        # Persist completed queue timing while the executor is still active.
+        # A terminal status is published only after batch retirement below.
+        if($queuedCancellation){$record.status='cancelled';$record.waitingFor=''}
         if($entry){
             $record.waitingFor=''
             Complete-RunStage $record $queue 0
