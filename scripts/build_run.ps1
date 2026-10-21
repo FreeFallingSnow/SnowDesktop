@@ -26,9 +26,23 @@ $directory=Join-Path $root '.build/collaboration/runs'
 
 function Run-Path([string]$Id,[string]$Suffix){return Join-Path $directory ($Id+$Suffix)}
 function Read-RunJson([string]$Path){
-    $file=Get-Item -LiteralPath $Path -ErrorAction Stop
-    if($file.Length -gt 1MB){throw 'Run metadata exceeds its size budget.'}
-    return Read-EntryJson $Path
+    # Read size and content through one shared handle. A provider stat followed
+    # by a second open can straddle an atomic replacement of this same Run.
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        $stream=$null;$reader=$null
+        try {
+            $stream=[IO.File]::Open($Path,'Open','Read',([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            if($stream.Length -gt 1MB){throw 'Run metadata exceeds its size budget.'}
+            $reader=New-Object IO.StreamReader($stream,[Text.Encoding]::UTF8)
+            return $reader.ReadToEnd()|ConvertFrom-Json
+        } catch [IO.IOException] {
+            $native=$_.Exception.HResult -band 0xffff
+            if($native -notin 2,3,32,33 -or $clock.Elapsed.TotalSeconds -ge 1){throw}
+            # A bounded observation retry never relaunches or cancels execution.
+            Start-Sleep -Milliseconds 20
+        } finally {if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}}
+    }
 }
 function Write-RunJson($Value,[string]$Path){
     $temporary=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'

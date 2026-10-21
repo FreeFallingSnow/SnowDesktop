@@ -40,7 +40,10 @@ void run_tests(const fs::path& repo){
         const std::vector<std::string> post={"event-post","reader","-Target","waiter","-EventKey","requirement-1","-EventKind","requirements","-Importance","urgent","-Text","Review changed requirement","-RequirementsRevision","2"};
         auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty()&&event.at("recipients").items.size()==1&&event.at("recipients").items[0].str()=="waiter","Persistence claimed delivery or singleton recipient lost array identity");
         require(presence.call(post).at("sequence").integer()==event.at("sequence").integer(),"Retried event was duplicated");
-        require(complete(*waiter,6).at("registrationRetained").boolean&&presence.state().at("current").dump()==before,"Urgent wait return changed registration or execution");
+        require(complete(*waiter,6).at("registrationRetained").boolean,"Urgent wait did not retain registration");
+        const auto after=presence.state().at("current").dump();
+        write(presence.stateRoot/L"urgent-before.json",before);write(presence.stateRoot/L"urgent-after.json",after);
+        require(after==before,"Urgent wait return changed registration or execution\nBefore: "+before+"\nAfter: "+after);
         presence.call({"event-ack","reader-while-building","-Sequence","1"},2);
         auto received=presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","adapter"});
         require(received.at("receipts").items.size()==1&&received.at("receipts").items[0].at("level").str()=="adapter","Adapter receipt became agent acknowledgement");
