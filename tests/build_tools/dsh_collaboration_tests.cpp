@@ -126,7 +126,7 @@ const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return
 const React={createElement:(type,props,...children)=>({type,props,children}),useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
 vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
 const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
-function context(rejectSlot=false){const effects=[];const ctx={remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:()=>()=>{},bind:()=>key=>key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
+function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:()=>()=>{},bind:()=>key=>key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
 const first=context();const unmount=await plugin.apply(first.ctx);Panel(props);
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value;
@@ -158,5 +158,16 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     require(!manifest.has("scripts")&&manifest.at("dsh").at("client").at("platform").str()=="web","Plugin added install scripts or changed target surface");
     std::cout<<"PASS production DSH bridge: early presence, denied writes, claimed/reopened paths and retired grants; Host loading and overlay require DSH acceptance\n";
 }
+void installed_sdk(const fs::path& repo){
+    const auto engine=fs::path(environment(L"LOCALAPPDATA"))/L"Programs/DeepSeek Harness/DeepSeek Harness.exe";
+    require(fs::is_regular_file(engine),"Installed DSH SDK unavailable; this explicit manual test requires DeepSeek Harness");
+    const auto result=run({engine.wstring(),L"--expose-internals",(repo/L"tests/build_tools/fixtures/dsh_sdk_client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},repo,30,{{L"ELECTRON_RUN_AS_NODE",L"1"}});
+    require(result.code==0,"Installed DSH SDK integration failed: "+result.out+result.err);
+    const auto observed=Json::parse(result.out);
+    require(observed.at("success").at("ok").boolean&&Json::parse(observed.at("success").at("value").str()).at("marker").str()=="actual-sdk","Actual Gateway result contract was not preserved");
+    require(!observed.at("offline").at("ok").boolean&&observed.at("offline").at("code").str()=="gateway/internal"&&observed.at("withdrawn").boolean,"Actual Gateway failed to fold an offline carrier or withdraw a retained method");
+    require(observed.at("calls").items.size()==2&&observed.at("calls").items[0].at("endpoint").str()=="snowCollaboration/snapshot"&&observed.at("calls").items[0].at("args").fields.empty(),"SDK mounted the wrong endpoint or supplied unexpected mutable arguments");
+    std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results and disposal (carrier only, not UI acceptance)\n";
 }
-int main(int argc,char** argv){return test_main(argc,argv,run_tests);}
+}
+int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--installed-sdk"?installed_sdk:run_tests);}

@@ -45,7 +45,9 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   const unmount=await ctx.remote.$mount(contribution);
   try{
    ctx.effect(()=>ctx.locale.register(NS,dictionaries),'snowdesktop collaboration dictionaries');const t=ctx.locale.bind(NS);
-   ctx.slots.inject('shell.overlay',()=>ctx.slots.register({name:'shell.overlay',id:'snowdesktop-collaboration.panel',locale:NS,inject:()=>({remote:ctx.remote.snowCollaboration,t})},Panel));
+   await ctx.inject(['slots','remote.snowCollaboration'],scope=>{
+    scope.slots.inject('shell.overlay',()=>scope.slots.register({name:'shell.overlay',id:'snowdesktop-collaboration.panel',locale:NS,inject:()=>({remote:scope.remote.snowCollaboration,t})},Panel));
+   });
   }catch(error){await unmount();throw error;}
   return unmount;
  }};

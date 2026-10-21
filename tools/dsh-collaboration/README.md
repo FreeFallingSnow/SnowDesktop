@@ -22,7 +22,9 @@
 
 ## 任务和消息
 
-Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
+Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再在显式注入该 namespace 的子作用域注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
+
+`dsh_installed_sdk` 是显式手动工具测试，要求本机安装 DSH，使用其实际 Cordis、Typert registry 和 Gateway Client 验证动态注入、返回分支与卸载；没有用户 profile 或模型请求。它不属于默认 `tools` 集合，也不替代实际界面验收。
 
 所有登记通知和协调事件消息必须携带插件自有的 `source.kind`，并使用 `form: notice` 和有界摘要。DSH 的 `createUserMessage` 不会补全来源；缺少来源既会中断下一步模型请求，也会使持久日志无法重新加载。两种通知均通过同一构造函数创建，回归检查同时覆盖注入与序列化后的消费。
 

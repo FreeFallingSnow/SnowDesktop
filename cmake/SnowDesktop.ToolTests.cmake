@@ -64,6 +64,9 @@ if(BUILD_TESTING AND WIN32)
         build_collaboration_tests.cpp "tools;core;contract;build" 180)
     snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
         build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 90)
+    add_test(NAME dsh_installed_sdk COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --installed-sdk)
+    set_tests_properties(dsh_installed_sdk PROPERTIES TIMEOUT 60 LABELS "manual;integration;tools"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
         build_tools/build_run_tests.cpp "tools;core;integration" 180)
 endif()
