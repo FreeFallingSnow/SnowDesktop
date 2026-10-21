@@ -300,7 +300,7 @@ try {
                         if(@($ledger.events).Count -ge 4096){throw 'Event ledger is full; preserve unconsumed events and archive through a reviewed migration.'}
                         $recipients=if($Target -eq '*'){@($ledger.tasks | Where-Object {$_.phase -notin 'completed','cancelled'} | ForEach-Object {$_.id})}else{@((Find-VisibleTask $ledger $Target).id)}
                         $ledger.sequence=[long]$ledger.sequence+1
-                        $event=[pscustomobject]@{sequence=$ledger.sequence;key=$EventKey;sender=$Participant;target=$Target;recipients=$recipients;kind=$EventKind;importance=$Importance;text=$Text;
+                        $event=[pscustomobject]@{sequence=$ledger.sequence;key=$EventKey;sender=$Participant;target=$Target;recipients=@($recipients);kind=$EventKind;importance=$Importance;text=$Text;
                             requirementsRevision=$RequirementsRevision;createdUtc=[DateTime]::UtcNow.ToString('o');receipts=@();delivery='persisted'}
                         $ledger.events=@($ledger.events)+@($event)
                     }
@@ -321,7 +321,7 @@ try {
                     [pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}|ConvertTo-Json -Depth 20;exit 0
                 }
             }
-            if($Command -in 'finish','wait' -and ($hasFinishedCurrentBatch -or $Command -eq 'wait')) {
+            if($Command -in 'finish','wait' -and $current -and $current.id -eq $Batch -and ($hasFinishedCurrentBatch -or $Command -eq 'wait')) {
                 $ledger=Get-Field $state 'taskLedger'
                 if($ledger){
                     $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
@@ -346,7 +346,9 @@ try {
                 $gitProbe=Try-Lease 'git.lock';if(-not $gitProbe){throw 'A Git transaction is running; retry after its receipt is durable.'};$gitProbe.Dispose()
             }
             $result = if ($Batch) { Read-Result $Batch } else { $null }
-            if ($Command -in 'finish','wait' -and $null -ne $result) {
+            if ($Command -eq 'event-wait') { # Its bounded observation loop resumes after releasing metadata, below.
+            }
+            elseif ($Command -in 'finish','wait' -and $null -ne $result) {
                 if ($null -ne $current -and $current.id -ne $Batch -and
                     @($current.participants | Where-Object id -eq $Participant).Count -gt 0) {
                     throw 'This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.'

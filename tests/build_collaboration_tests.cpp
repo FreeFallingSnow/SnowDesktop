@@ -38,7 +38,7 @@ void run_tests(const fs::path& repo){
         until([&]{return presence.state().at("current").at("participants").items[0].at("state").str()=="finished";});
         const auto before=presence.state().at("current").dump();
         const std::vector<std::string> post={"event-post","reader","-Target","waiter","-EventKey","requirement-1","-EventKind","requirements","-Importance","urgent","-Text","Review changed requirement","-RequirementsRevision","2"};
-        auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty(),"Persistence claimed delivery");
+        auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty()&&event.at("recipients").items.size()==1&&event.at("recipients").items[0].str()=="waiter","Persistence claimed delivery or singleton recipient lost array identity");
         require(presence.call(post).at("sequence").integer()==event.at("sequence").integer(),"Retried event was duplicated");
         require(complete(*waiter,6).at("registrationRetained").boolean&&presence.state().at("current").dump()==before,"Urgent wait return changed registration or execution");
         presence.call({"event-ack","reader-while-building","-Sequence","1"},2);
@@ -48,7 +48,9 @@ void run_tests(const fs::path& repo){
         presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","agent"});
         auto timed=presence.call({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","1"});
         require(timed.at("timedOut").boolean&&timed.at("events").items.empty(),"Bounded idle wait returned false messages");
+        auto messageWait=presence.start({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","5"});
         auto broadcast=presence.call({"event-post","reader","-EventKey","broadcast-1","-Text","Project progress"});
+        require(complete(*messageWait).at("events").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),"Message wait failed to release metadata for broadcast writer");
         presence.call({"task-open","late-reader"});
         require(presence.call({"event-read","late-reader"}).at("events").items.empty(),"Broadcast silently changed recipient scope");
         presence.call({"task-close","waiter","-TaskRevision","1","-TaskPhase","completed"},2);
