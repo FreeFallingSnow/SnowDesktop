@@ -94,9 +94,21 @@ void tool_plan(const fs::path& repo,bool oldBehavior=false){
     require(result.at("outcome").str()=="passed"&&!result.at("testingPlan").at("buildRequired").boolean&&result.at("testingPlan").at("mode").str()=="selected","Tool tests were skipped or escalated to a host build");
 }
 
-void test(const fs::path& repo) {
-    {
+void durable_cancel(const fs::path& repo,bool oldObservation=false) {
         Coordinator c(repo,"durable-batch",true);setup_run(c,repo);
+        // The result must be durable before retiring metadata, so existence is
+        // not the Run's completion signal. Hold that real publication window.
+        auto manager=read(c.scripts/L"build_manager.ps1");
+        replace(manager,"    $State.current = $null\n    Write-AtomicJson $State $statePath",R"PS(    [IO.File]::WriteAllText((Join-Path $stateRoot 'publication-paused'),'paused')
+    $pause=[Diagnostics.Stopwatch]::StartNew()
+    while([IO.File]::Exists((Join-Path $stateRoot 'hold-publication'))){
+        if($pause.Elapsed.TotalSeconds -gt 10){throw 'Publication fixture gate not released'}
+        Start-Sleep -Milliseconds 20
+    }
+    $State.current = $null
+    Write-AtomicJson $State $statePath)PS");
+        write(c.scripts/L"build_manager.ps1",manager,true);
+        write(c.stateRoot/L"hold-publication","hold");
         const auto batch=c.begin("runner").at("batchId").str();c.begin("peer");
         require(c.state().at("current").at("protocolVersion").integer()==3,"New production batch did not choose durable execution");
         for(const std::string task:{"runner","peer"})write(c.root/wide(task+"-finish.ps1"),"& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait "+task+" -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
@@ -111,13 +123,31 @@ void test(const fs::path& repo) {
         c.call({"event-post","runner","-Target",view.at("task").str(),"-EventKind","requirements","-Importance","urgent","-Text","review before continuing","-EventKey","durable-test"});
         require(command(c,id,{L"-Command",L"wait",L"-Seconds",L"1"}).code==6&&owner_alive(view.at("record").at("owner")),"Urgent observation cancelled or hid the active batch");
         require(command(c,id,{L"-Command",L"cancel",L"-Task",wide(view.at("task").str())}).code==0,"Explicit batch cancellation failed");
-        until([&]{return fs::exists(c.stateRoot/wide(batch+".json"));});
+        until([&]{return fs::exists(c.stateRoot/L"publication-paused");});
+        require(fs::exists(c.stateRoot/wide(batch+".json"))&&c.state().at("current").at("id").str()==batch&&!status(c,id).at("terminal").boolean,"Publication fixture did not expose a durable result before retirement");
+        const bool oldCompleted=c.state().at("current").kind==Json::Kind::Null;
+        fs::remove(c.stateRoot/L"hold-publication");
+        // Observe the existing executor's terminal record, never restart it or
+        // infer completion from the earlier immutable batch-result file.
+        until([&]{return Json::parse(read(c.stateRoot/L"runs"/wide(id+".json"))).at("status").str()=="cancelled";},20);
+        if(oldObservation)require(oldCompleted,"Early result-file observation preceded batch retirement");
         const auto result=c.result(batch);
         require(result.at("outcome").str()=="cancelled"&&result.at("runId").str()==id&&c.state().at("current").kind==Json::Kind::Null,"Batch did not publish one shared cancellation after lease release");
+        const auto firstResult=c.call({"wait","runner","-Batch",batch,"-Revision","0"},4);
+        const auto secondResult=c.call({"wait","peer","-Batch",batch,"-Revision","0"},4);
+        require(equivalent_results(result,firstResult)&&equivalent_results(firstResult,secondResult),"Cancelled participants received different shared results");
         HANDLE lease=CreateFileW((c.stateRoot/L"build.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
         require(lease!=INVALID_HANDLE_VALUE,"Shared batch result preceded output lease release");CloseHandle(lease);
         await_dead(Json::parse(read(c.root/L"child.json")));await_dead(Json::parse(read(c.root/L"grandchild.json")));
         std::cout<<"PASS concurrent durable finishers, observer loss, urgent return, explicit cancellation and shared terminal release\n";
+}
+void test(const fs::path& repo) {
+    durable_cancel(repo);
+    {
+        const auto controlRoot=temporary("early-result-control");
+        const auto control=run({executable().wstring(),repo.wstring(),L"--early-result-control"},controlRoot,35);
+        require(control.code==1&&control.err.find("Early result-file observation preceded batch retirement")!=std::string::npos,"Controlled publication window did not reject the former observation: "+control.out+control.err);
+        std::cout<<"PASS controlled publication window rejects premature retirement observation\n";
     }
     {
         tool_plan(repo);
@@ -235,4 +265,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}test(repo);});}
