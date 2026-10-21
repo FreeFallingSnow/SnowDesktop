@@ -1,5 +1,12 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,NS='snowdesktop-collaboration';
+ const React=require('react'),h=React.createElement,NS='snowdesktop-collaboration',z=require('zod').z;
+ // The Gateway consumes this public contribution shape. Mounting is explicit;
+ // api-remotes only mounts the application's own generated contributions.
+ const contribution={package:'@local/snowdesktop-collaboration',descriptors:[{
+  id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',
+  description:'Read the identity-checked local collaboration dashboard snapshot.',invocation:{kind:'direct'},parameters:[],
+  result:{mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#snapshot:result',create:()=>z.string(),jsonSchema:{type:'string'}}
+ }]};
  const dictionaries={
   zh:{title:'SnowDesktop 协作',collapse:'收起',expand:'展开',position:'移动位置',connecting:'读取中',connected:'已连接',disconnected:'连接不可用',noBatch:'暂无活动批次',tasks:'任务',blockers:'阻塞',progress:'最近进展',tests:'测试',executed:'已执行',selected:'已选',passed:'通过',failed:'失败',notRun:'未运行',messages:'待确认消息',received:'适配器收到',acknowledged:'智能体确认',persisted:'已保存',emptyTasks:'暂无活动任务',emptyMessages:'暂无未确认的紧急消息',unknown:'未记录',source:'来自本机只读面板',more:'显示全部',less:'只看最近',investigating:'调查中',editing:'编辑中',waiting:'等待中',awaiting_input:'等待用户',blocked:'有阻塞',validating:'验证中',building:'构建 / 测试中',completed:'任务结束',cancelled:'任务取消',checking:'轻量检查中'},
   en:{title:'SnowDesktop collaboration',collapse:'Collapse',expand:'Expand',position:'Move panel',connecting:'Loading',connected:'Connected',disconnected:'Unavailable',noBatch:'No active batch',tasks:'Tasks',blockers:'Blockers',progress:'Latest progress',tests:'Tests',executed:'Executed',selected:'Selected',passed:'Passed',failed:'Failed',notRun:'Not run',messages:'Unacknowledged messages',received:'Adapter received',acknowledged:'Agent acknowledged',persisted:'Saved',emptyTasks:'No active tasks',emptyMessages:'No unacknowledged urgent messages',unknown:'Not recorded',source:'Local read-only dashboard',more:'Show all',less:'Show recent',investigating:'Investigating',editing:'Editing',waiting:'Waiting',awaiting_input:'Awaiting input',blocked:'Blocked',validating:'Validating',building:'Building / testing',completed:'Completed',cancelled:'Cancelled',checking:'Lightweight checks'}
@@ -9,7 +16,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  function Panel({remote,t}){
   const [snapshot,setSnapshot]=React.useState(null),[error,setError]=React.useState(''),[view,setView]=React.useState(loadView),[all,setAll]=React.useState(false);
   React.useEffect(()=>{let alive=true,timer;
-   const poll=async()=>{try{const data=JSON.parse(await remote.snapshot());if(alive){setSnapshot(data);setError('');}}catch(reason){if(alive)setError(String(reason.message||reason));}finally{if(alive)timer=setTimeout(poll,3000);}};
+   const poll=async()=>{try{const result=await remote.snapshot();if(!result?.ok)throw result?.error||new Error('Snapshot response is unavailable');const data=JSON.parse(result.value);if(alive){setSnapshot(data);setError('');}}catch(reason){if(alive)setError(String(reason.message||reason));}finally{if(alive)timer=setTimeout(poll,3000);}};
    void poll();return()=>{alive=false;clearTimeout(timer);};
   },[remote]);
   const update=next=>setView(current=>{const value={...current,...next};try{localStorage.setItem('snow-collaboration-view.v1',JSON.stringify({schema:1,...value}));}catch{}return value;});
@@ -34,8 +41,12 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     ...(messages.length?messages.slice(-10).reverse().map(event=>h('article',{className:'snow-collab-row',key:event.sequence},h('strong',null,'#'+event.sequence+' '+event.sender+' → '+event.target),h('p',null,event.text),h('small',null,t('persisted')+' · '+t('received')+' '+event.adapterReceived+'/'+event.recipientCount+' · '+t('acknowledged')+' '+event.agentAcknowledged+'/'+event.recipientCount))):[h('p',{key:'no-message',className:'snow-collab-placeholder'},t('emptyMessages'))])
    ));
  }
- return{inject:['slots','locale','remote.snowCollaboration'],apply(ctx){
-  ctx.effect(()=>ctx.locale.register(NS,dictionaries),'snowdesktop collaboration dictionaries');const t=ctx.locale.bind(NS);
-  ctx.slots.inject('shell.overlay',()=>ctx.slots.register({name:'shell.overlay',id:'snowdesktop-collaboration.panel',locale:NS,inject:()=>({remote:ctx.remote.snowCollaboration,t})},Panel));
+ return{inject:['slots','locale','remote'],async apply(ctx){
+  const unmount=await ctx.remote.$mount(contribution);
+  try{
+   ctx.effect(()=>ctx.locale.register(NS,dictionaries),'snowdesktop collaboration dictionaries');const t=ctx.locale.bind(NS);
+   ctx.slots.inject('shell.overlay',()=>ctx.slots.register({name:'shell.overlay',id:'snowdesktop-collaboration.panel',locale:NS,inject:()=>({remote:ctx.remote.snowCollaboration,t})},Panel));
+  }catch(error){await unmount();throw error;}
+  return unmount;
  }};
 }});

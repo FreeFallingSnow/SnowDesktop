@@ -119,6 +119,39 @@ console.log(JSON.stringify(result));
     for(const auto& phase:{"ready","stale"})require(observed.at(phase).items[0].boolean&&observed.at(phase).items[1].boolean,"Host gate accepted a ready or superseded cached grant");
     require(observed.at("rebound").at("sentinel").str()=="fresh","Explicit Host reacquisition failed");
     require(observed.at("rendered").items[0].at("type").str()=="text"&&observed.at("tool").str()=="snow_collaboration","Plugin tool output violated the inspected content contract");
+    write(c.root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
+const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution;
+let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
+const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return await response;}};
+const React={createElement:(type,props,...children)=>({type,props,children}),useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
+const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
+function context(rejectSlot=false){const effects=[];const ctx={remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:()=>()=>{},bind:()=>key=>key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
+const first=context();const unmount=await plugin.apply(first.ctx);Panel(props);
+await new Promise(resolve=>setImmediate(resolve));
+const firstSnapshot=updates.find(value=>value.index===0)?.value;
+async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
+response={ok:false,error:{message:'controlled offline'}};await poll();
+const offline=updates.filter(value=>value.index===1).at(-1)?.value;
+response={ok:true,value:'invalid JSON'};await poll();
+const malformed=updates.filter(value=>value.index===1).at(-1)?.value;
+let finish;response=new Promise(resolve=>{finish=resolve;});const pending=poll();
+for(const cleanup of componentCleanup)cleanup();const beforeLate=updates.length;
+await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pending;
+let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
+for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
+const descriptor=contribution.descriptors[0];
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+)JS");
+    const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
+    require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
+    const auto clientObserved=Json::parse(client.out);
+    bool rootRemote=false,unavailableRemote=false;
+    for(const auto& value:clientObserved.at("inject").items){rootRemote|=value.str()=="remote";unavailableRemote|=value.str()=="remote.snowCollaboration";}
+    require(rootRemote&&!unavailableRemote&&clientObserved.at("events").items[0].str()=="mount"&&clientObserved.at("events").items[1].str()=="slot","Client waited on an unmounted namespace or registered its slot before mounting");
+    require(clientObserved.at("descriptor").at("id").str()=="@local/snowdesktop-collaboration#snowCollaboration/snapshot"&&clientObserved.at("descriptor").at("parameters").items.empty()&&clientObserved.at("descriptor").at("resultMode").str()=="strict"&&clientObserved.at("descriptor").at("resultType").str()=="string","Client snapshot Remote descriptor changed its read-only contract");
+    require(clientObserved.at("firstSnapshot").at("marker").str()=="known-good"&&clientObserved.at("offline").str()=="controlled offline"&&!clientObserved.at("malformed").str().empty()&&clientObserved.at("lastSnapshot").at("marker").str()=="known-good","Client failed RemoteResult decoding or lost the last snapshot after a carrier/data error");
+    require(!clientObserved.at("lateUpdated").boolean&&clientObserved.at("timers").integer()==0&&clientObserved.at("rejected").boolean&&clientObserved.at("events").items.back().str()=="unmount","Client updated after disposal, leaked a timer, or retained a failed mount");
     const auto manifest=Json::parse(read(repo/L"tools/dsh-collaboration/package.json"));
     for(const auto& file:{"index.js","core.js","client.js","typert.host.js","typert.remote-client.js","cordis.patch.yml","locale/en.json","locale/zh.json","icon.svg","README.md"})
         require(fs::is_regular_file(repo/L"tools/dsh-collaboration"/wide(file)),"Plugin package resource missing: "+std::string(file));
