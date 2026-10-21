@@ -20,7 +20,7 @@ namespace SnowDesktop.Build
             public DateTime Timestamp;
             public HashSet<string> Inputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> Invoked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            public bool InputsObserved, CommandObserved;
+            public bool InputsObserved, CommandObserved, Unexpanded;
         }
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CommandLineToArgvW(string command, out int count);
@@ -101,6 +101,33 @@ namespace SnowDesktop.Build
             catch(NotSupportedException) { return null; }
             catch(PathTooLongException) { return null; }
         }
+        static readonly HashSet<string> ValueOptions=new HashSet<string>(StringComparer.Ordinal)
+        {"/D","/U","/I","/FI","/Fo","/Fp","/Fd","/Fa","/Fe","/FR","/FU","/AI","/external:I","/sourceDependencies","/ifcOutput","/reference","/headerUnit","/scanDependencies"};
+        static readonly HashSet<string> SourceExtensions=new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {".c",".cc",".cpp",".cxx",".c++",".ixx",".cppm",".mpp",".m",".mm"};
+        static void Arguments(Operation op,string command,int depth)
+        {
+            int count;IntPtr argv=CommandLineToArgvW(command,out count);
+            if(argv==IntPtr.Zero){op.Unexpanded=true;return;}
+            bool skip=false;
+            try{
+                for(int i=0;i<count;i++){
+                    string arg=Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv,i*IntPtr.Size));
+                    if(skip){skip=false;continue;}
+                    if(String.IsNullOrEmpty(arg))continue;
+                    if(ValueOptions.Contains(arg)){skip=true;continue;}
+                    if(arg[0]=='@'){
+                        string response=Absolute(arg.Substring(1),op.Project);
+                        if(depth>=2||response==null||!File.Exists(response)||new FileInfo(response).Length>1024*1024){op.Unexpanded=true;continue;}
+                        Arguments(op,"cl "+File.ReadAllText(response),depth+1);continue;
+                    }
+                    if(arg.Length>3&&(arg.StartsWith("/Tc",StringComparison.Ordinal)||arg.StartsWith("/Tp",StringComparison.Ordinal)))arg=arg.Substring(3);
+                    else if(arg[0]=='/'||arg[0]=='-')continue;
+                    string file=Absolute(arg,op.Project);
+                    if(file!=null&&File.Exists(file)&&(SourceExtensions.Contains(Path.GetExtension(file))||op.Inputs.Contains(file)))op.Invoked.Add(file);
+                }
+            }finally{LocalFree(argv);}
+        }
         void Message(object sender, BuildMessageEventArgs value)
         {
             lock(sync)
@@ -116,19 +143,7 @@ namespace SnowDesktop.Build
                 var command=value as TaskCommandLineEventArgs;
                 if(command==null)return;
                 op.CommandObserved=true;
-                int count;IntPtr argv=CommandLineToArgvW(command.CommandLine,out count);
-                if(argv==IntPtr.Zero)return;
-                try
-                {
-                    for(int i=0;i<count;i++)
-                    {
-                        string arg=Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv,i*IntPtr.Size));
-                        if(String.IsNullOrEmpty(arg)||arg[0]=='/'||arg[0]=='-'||arg[0]=='@')continue;
-                        string file=Absolute(arg,op.Project);
-                        if(file!=null&&op.Inputs.Contains(file))op.Invoked.Add(file);
-                    }
-                }
-                finally{LocalFree(argv);}
+                Arguments(op,command.CommandLine,0);
             }
         }
         void Finish(object sender, TaskFinishedEventArgs value)
@@ -136,10 +151,13 @@ namespace SnowDesktop.Build
             lock(sync)
             {
                 Operation op;string key=Context(value.BuildEventContext);if(!active.TryGetValue(key,out op))return;
-                bool known=op.Name=="compile"&&op.InputsObserved&&op.CommandObserved&&(op.Inputs.Count==0||op.Invoked.Count>0);
+                // Native VC tasks need not emit structured Sources events.
+                // Count actual compiler source arguments; a no-op CL task has
+                // no command. Unexpanded response/module cases remain unknown.
+                bool known=op.Name=="compile"&&(!op.CommandObserved||(!op.Unexpanded&&op.Invoked.Count>0));
                 double elapsed=(Stopwatch.GetTimestamp()-op.Tick)/(double)Stopwatch.Frequency;
                 double wall=(value.Timestamp.ToUniversalTime()-op.Timestamp).TotalSeconds;
-                Write("end",",\"id\":"+Json(op.Id)+",\"name\":"+Json(op.Name)+",\"elapsedSeconds\":"+elapsed.ToString("R",CultureInfo.InvariantCulture)+",\"sourceElapsedSeconds\":"+(wall>=0?wall.ToString("R",CultureInfo.InvariantCulture):"null")+",\"exitCode\":"+(value.Succeeded?"0":"1")+",\"compilerInputs\":"+(op.InputsObserved?op.Inputs.Count.ToString(CultureInfo.InvariantCulture):"null")+",\"attemptedUnits\":"+(known?op.Invoked.Count.ToString(CultureInfo.InvariantCulture):"null")+",\"unitCountKnown\":"+(known?"true":"false")+",\"measurement\":\"central logger monotonic event receipt interval\"");
+                Write("end",",\"id\":"+Json(op.Id)+",\"name\":"+Json(op.Name)+",\"elapsedSeconds\":"+elapsed.ToString("R",CultureInfo.InvariantCulture)+",\"sourceElapsedSeconds\":"+(wall>=0?wall.ToString("R",CultureInfo.InvariantCulture):"null")+",\"exitCode\":"+(value.Succeeded?"0":"1")+",\"compilerInputs\":"+(op.InputsObserved?op.Inputs.Count.ToString(CultureInfo.InvariantCulture):"null")+",\"attemptedUnits\":"+(known?op.Invoked.Count.ToString(CultureInfo.InvariantCulture):"null")+",\"compilerCommandObserved\":"+(op.CommandObserved?"true":"false")+",\"unitCountKnown\":"+(known?"true":"false")+",\"measurement\":\"central logger monotonic event receipt interval\"");
                 active.Remove(key);
             }
         }

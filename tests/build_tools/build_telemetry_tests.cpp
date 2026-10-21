@@ -16,7 +16,7 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
     write(c.root/L"main.cpp","int worker(); int main(){return worker()==2?0:1;}\n");
     write(c.root/L"worker.cpp","int worker(){return 2;}\n");
     auto execute=[&]{
-        const auto submitted=run({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"start",L"-Task",L"observations",L"-Action",L"ide",L"-Targets",L"ObservedNative"},c.root,15);
+        const auto submitted=run({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"start",L"-Task",L"observations",L"-Action",L"ide",L"-Targets",L"ObservedNative"},c.root,15,{},true);
         require(submitted.code==0,"Observed build submission failed: "+submitted.out+submitted.err);
         const auto id=Json::parse(submitted.out).at("id").str();
         const auto waited=run({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"wait",L"-RunId",wide(id),L"-Seconds",L"60"},c.root,70);
@@ -35,7 +35,8 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
                 if(name=="configure")configured=true;
                 if(name=="link")linked=true;
                 if(name=="compile"){
-                    ++compiles;require(event.at("unitCountKnown").boolean,"Actual compiler source count was not captured: "+event.dump());
+                    require(event.at("unitCountKnown").boolean,"Actual compiler source count was not captured: "+event.dump());
+                    if(event.at("compilerCommandObserved").boolean)++compiles;
                     units+=event.at("attemptedUnits").integer();
                     require(event.at("elapsedSeconds").number>=0&&event.at("sourceElapsedSeconds").number>=0,"Native task duration is invalid");
                 }

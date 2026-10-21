@@ -60,7 +60,9 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
     if(-not (Test-EntryDelegation $Root)){throw 'Build observations require a live output credential.'}
     $presetIndex=[Array]::IndexOf($Arguments,'--preset')
     if($presetIndex -ge 0){
-        $configuration=Get-Content -LiteralPath (Join-Path $Root 'CMakePresets.json') -Raw|ConvertFrom-Json
+        $presetFile=Join-Path $Root 'CMakePresets.json'
+        if(-not [IO.File]::Exists($presetFile)){return $null}
+        $configuration=Get-Content -LiteralPath $presetFile -Raw|ConvertFrom-Json
         if(-not $configuration.PSObject.Properties['buildPresets']){return $null}
         $buildPreset=@($configuration.buildPresets|Where-Object name -eq $Arguments[$presetIndex+1])[0]
         $configurePreset=@($configuration.configurePresets|Where-Object name -eq $buildPreset.configurePreset)[0]
