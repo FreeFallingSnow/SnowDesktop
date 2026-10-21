@@ -52,6 +52,25 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
         require(units==expected&&(expected==0?compiles==0:linked),"Actual compiled-unit or incremental/link observation mismatch: expected "+std::to_string(expected)+", observed "+std::to_string(units)+" / "+view.at("stageEvents").dump());
     };
     counts(execute(),2);
+    // Restore the actual failing CMake cache form before the no-op build. The
+    // logger must resolve the location even with a pinned instance version.
+    // CMake retains this value when its current generator instance is reused.
+    const auto cachePath=c.root/L".build/cxx/CMakeCache.txt";
+    auto cache=read(cachePath);
+    const std::string prefix="CMAKE_GENERATOR_INSTANCE:INTERNAL=";
+    const auto instanceStart=cache.find(prefix);
+    require(instanceStart!=std::string::npos,"Configured VS instance is missing");
+    const auto valueStart=instanceStart+prefix.size();
+    const auto valueEnd=cache.find_first_of("\r\n",valueStart);
+    const auto instance=cache.substr(valueStart,valueEnd-valueStart);
+    const auto location=instance.substr(0,instance.find(",version="));
+    // Get the real installed IDE version rather than inventing a build number.
+    const auto version=run({powershell().wstring(),L"-NoProfile",L"-Command",
+        L"$v=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:SNOWDESKTOP_FIXTURE_VS_INSTANCE 'Common7/IDE/devenv.exe'));[Console]::Write($v.ProductVersion)"},
+        c.root,10,{{L"SNOWDESKTOP_FIXTURE_VS_INSTANCE",wide(location)}});
+    require(version.code==0&&!version.out.empty(),"Cannot read configured VS version: "+version.out+version.err);
+    cache.replace(valueStart,valueEnd-valueStart,location+",version="+version.out);
+    write(cachePath,cache,true);
     counts(execute(),0);
     write(c.root/L"worker.cpp","int worker(){return 3;}\n");
     counts(execute(),1);

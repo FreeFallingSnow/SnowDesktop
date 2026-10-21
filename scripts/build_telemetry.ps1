@@ -82,6 +82,9 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
         if($line -match '^CMAKE_GENERATOR_INSTANCE:INTERNAL=(.*)$'){$instance=$Matches[1]}
     }
     if($generator -notlike 'Visual Studio *'){return $null}
+    # CMake accepts location,version=... as an instance specification. Only the
+    # location is a filesystem directory; preserve commas within that location.
+    $instance=$instance -replace ',version=[^,]+$',''
     $framework=Join-Path $instance 'MSBuild/Current/Bin/Microsoft.Build.Framework.dll'
     $compiler=Join-Path $env:SystemRoot 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     if(-not [IO.File]::Exists($framework) -or -not [IO.File]::Exists($compiler)){throw 'Configured MSBuild logger compiler/reference is unavailable; preserve this Run for diagnosis.'}
