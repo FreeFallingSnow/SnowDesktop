@@ -37,7 +37,9 @@
 
 Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再在显式注入该 namespace 的子作用域注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
 
-`dsh_installed_sdk` 是显式手动工具测试，要求本机安装 DSH，使用其实际 Cordis、Typert registry 和 Gateway Client 验证动态注入、返回分支与卸载；没有用户 profile 或模型请求。它不属于默认 `tools` 集合，也不替代实际界面验收。
+`dsh_installed_sdk` 是显式手动工具测试，要求本机安装 DSH。它使用实际 Cordis、Typert registry 和 Gateway Client 验证动态注入、返回分支与卸载，并校验正常/严格输入投影；随后在独立临时 profile/home 中冷启动完整的 DSH base/web-app 与本插件，按桌面欢迎流程经实际 HTTP 调用 `settings/describe`，检查配置命名空间仍可用。隔离实例不读取用户 profile、凭据或会话，不发模型请求；无关的产品遥测在该夹具中关闭。它不属于默认 `tools` 集合，也不替代实际界面验收。
+
+Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使本机 DSH 的公共 Typert loader 整体注册失败，连带撤回 `settings/describe` 等已观察的严格定义，桌面启动将报 `desktop welcome: Web RPC failed`。新增参数同时提供普通及严格输入 codec；仅验证 Client mount/转发无法覆盖这两条 Host 路径。
 
 所有登记通知和协调事件消息必须携带插件自有的 `source.kind`，并使用 `form: notice` 和有界摘要。DSH 的 `createUserMessage` 不会补全来源；缺少来源既会中断下一步模型请求，也会使持久日志无法重新加载。两种通知均通过同一构造函数创建，回归检查同时覆盖注入与序列化后的消费。
 

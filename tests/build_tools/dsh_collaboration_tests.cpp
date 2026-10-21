@@ -187,6 +187,12 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("detail").at("ok").boolean,"Actual Gateway did not mount the additive read endpoint");
     require(!observed.at("offline").at("ok").boolean&&observed.at("offline").at("code").str()=="gateway/internal"&&observed.at("withdrawn").boolean,"Actual Gateway failed to fold an offline carrier or withdraw a retained method");
     require(observed.at("calls").items.size()==3&&observed.at("calls").items[0].at("endpoint").str()=="snowCollaboration/snapshot"&&observed.at("calls").items[0].at("args").fields.empty()&&observed.at("calls").items[1].at("endpoint").str()=="snowCollaboration/read"&&observed.at("calls").items[1].at("args").at("route").str()=="/api/batches/"+std::string(32,'a'),"SDK mounted the wrong endpoint or changed the fixed snapshot/named read argument contracts");
+    require(observed.at("projections").items.size()==4,"SDK did not exercise normal and strict input projections");
+    for(const auto& projection:observed.at("projections").items)require(!projection.has("error")&&projection.at("schema").at("type").str()=="object","Generated Host input codec failed normal or strict projection");
+    require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
+    bool locale=false,provider=false;
+    for(const auto& name:observed.at("cold").at("names").items){locale|=name.str()=="locale";provider|=name.str()=="llm-deepseek";}
+    require(locale&&provider,"Cold Host lost the welcome configuration namespaces");
     std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results and disposal (carrier only, not UI acceptance)\n";
 }
 }
