@@ -24,6 +24,11 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "resource.audio",
     "task.audio.playback",
     "audio.playback.events",
+    "audio.playback.metadata",
+    "audio.playback.systemMediaControls",
+    "audio.playback.rate",
+    "audio.playback.mode",
+    "audio.playback.formats.extended",
     "task.native.request",
     "task.native.watch",
     "animation.frame",
@@ -439,7 +444,7 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 74> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 76> kSystemTaskContracts = {{
     { "audio.play", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlayArguments", "SnowAudioPlayValue" },
     { "audio.pause", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
     { "audio.resume", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
@@ -447,6 +452,8 @@ constexpr std::array<SystemTaskContract, 74> kSystemTaskContracts = {{
     { "audio.seek", "task.audio.playback", "audio.playback", false, 8, "SnowAudioSeekArguments", "SnowAcceptedTaskValue" },
     { "audio.setVolume", "task.audio.playback", "audio.playback", false, 8, "SnowAudioVolumeArguments", "SnowAcceptedTaskValue" },
     { "audio.setLoop", "task.audio.playback", "audio.playback", false, 8, "SnowAudioLoopArguments", "SnowAcceptedTaskValue" },
+    { "audio.setPlaybackRate", "audio.playback.rate", "audio.playback", false, 8, "SnowAudioRateArguments", "SnowAcceptedTaskValue" },
+    { "audio.setPlaybackMode", "audio.playback.mode", "audio.playback", false, 8, "SnowAudioModeArguments", "SnowAcceptedTaskValue" },
     { "native.request", "task.native.request", "native.execute",
         false, 1, "SnowNativeRequestArguments", "SnowNativeTaskValue" },
     { "native.watch", "task.native.watch", "native.execute",

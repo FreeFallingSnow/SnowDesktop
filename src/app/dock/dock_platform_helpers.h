@@ -591,18 +591,8 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 
 inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
 {
-    if (!window || !IsWindow(window))
-        return false;
     return snowdesktop::dock_window_rules::
-        IsTaskbarDocumentProxyCandidateEligible(
-            GetAncestor(window, GA_ROOT) == window,
-            IsWindowVisible(window) != FALSE,
-            GetWindow(window, GW_OWNER) != nullptr,
-            GetWindowTextLengthW(window) > 0,
-            GetWindowLongPtrW(window, GWL_STYLE),
-            GetWindowLongPtrW(window, GWL_EXSTYLE),
-            snowdesktop::dock_window_rules::
-                IsTaskWindowExplicitlyExcluded(window));
+        IsTaskbarDocumentProxyCandidate(window);
 }
 
 inline int DockRestoreShowCommand(HWND window)

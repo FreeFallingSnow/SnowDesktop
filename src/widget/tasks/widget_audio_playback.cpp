@@ -1,10 +1,15 @@
 #include "widget_audio_playback.h"
+#include "widget/runtime/widget_runtime_image.h"
+#include "widget/packages/widget_audio_format.h"
 
 #include <windows.h>
 #include <shcore.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.FileProperties.h>
+#include <winrt/Windows.Graphics.Imaging.h>
+#include <winrt/Windows.Media.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <algorithm>
@@ -24,16 +29,53 @@ namespace snowdesktop::widget_runtime
 {
 namespace
 {
+// Local property/thumbnail operations must not indefinitely block other voices
+// or shutdown. Optional metadata failure never prevents audio playback.
+template<class Operation> auto AwaitLocal(Operation operation)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (operation.Status() == winrt::Windows::Foundation::AsyncStatus::Started &&
+        std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (operation.Status() == winrt::Windows::Foundation::AsyncStatus::Started)
+    {
+        operation.Cancel();
+        throw winrt::hresult_canceled();
+    }
+    return operation.GetResults();
+}
+std::string AudioTag(const winrt::hstring& value)
+{
+    std::wstring text(value.c_str(), (std::min)(std::size_t{1024}, static_cast<std::size_t>(value.size())));
+    if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) text.pop_back();
+    return winrt::to_string(text);
+}
+
 class WindowsAudioPlayer final : public WidgetAudioPlayer
 {
     struct Terminal { std::atomic<int> value{0}; };
+    struct Commands
+    {
+        std::mutex mutex;
+        std::vector<AudioPlaybackCommand> pending;
+        void Push(AudioPlaybackCommand command)
+        {
+            std::lock_guard lock(mutex);
+            if (pending.size() < 32) pending.push_back(std::move(command));
+        }
+    };
     std::vector<HANDLE> pinned_;
+    std::filesystem::path path_;
     winrt::Windows::Media::Playback::MediaPlayer player_{nullptr};
     winrt::Windows::Media::Core::MediaSource source_{nullptr};
     winrt::Windows::Storage::Streams::IRandomAccessStream stream_{nullptr};
     std::shared_ptr<Terminal> terminal_ = std::make_shared<Terminal>();
+    std::shared_ptr<Commands> commands_ = std::make_shared<Commands>();
+    winrt::Windows::Storage::FileProperties::StorageItemThumbnail thumbnail_{nullptr};
+    AudioPlaybackState metadata_;
+    winrt::event_token nextToken_{}, previousToken_{}, shuffleToken_{}, repeatToken_{}, rateToken_{};
 public:
-    explicit WindowsAudioPlayer(const std::filesystem::path& path)
+    explicit WindowsAudioPlayer(const std::filesystem::path& path) : path_(path)
     {
         try
         {
@@ -64,10 +106,11 @@ public:
             winrt::check_hresult(CreateRandomAccessStreamOnFile(path.c_str(),
                 static_cast<DWORD>(winrt::Windows::Storage::FileAccessMode::Read),
                 winrt::guid_of<winrt::Windows::Storage::Streams::IRandomAccessStream>(), winrt::put_abi(stream_)));
-            auto extension = path.extension().wstring();
-            std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+            const auto extension = path.extension().wstring();
+            const auto* format = widget::FindWidgetAudioFormat(std::wstring_view(extension));
+            if (!format) throw std::runtime_error("unsupportedFormat");
             source_ = winrt::Windows::Media::Core::MediaSource::CreateFromStream(stream_,
-                extension == L".mp3" ? L"audio/mpeg" : L"audio/wav");
+                winrt::hstring(format->contentType));
             player_ = winrt::Windows::Media::Playback::MediaPlayer();
             player_.CommandManager().IsEnabled(false);
             player_.AutoPlay(false);
@@ -80,11 +123,117 @@ public:
     ~WindowsAudioPlayer() override { Close(); }
     void Close() noexcept
     {
+        try
+        {
+            if (player_)
+            {
+                const auto commands = player_.CommandManager();
+                commands.IsEnabled(false);
+                if (nextToken_.value) commands.NextReceived(nextToken_);
+                if (previousToken_.value) commands.PreviousReceived(previousToken_);
+                if (shuffleToken_.value) commands.ShuffleReceived(shuffleToken_);
+                if (repeatToken_.value) commands.AutoRepeatModeReceived(repeatToken_);
+                if (rateToken_.value) commands.RateReceived(rateToken_);
+            }
+        }
+        catch (...) {}
         try { if (player_) player_.Close(); } catch (...) {}
         try { if (source_) source_.Close(); } catch (...) {}
         try { if (stream_) stream_.Close(); } catch (...) {}
+        try { if (thumbnail_) thumbnail_.Close(); } catch (...) {}
         for (HANDLE file : pinned_) CloseHandle(file);
         pinned_.clear();
+    }
+    void Configure(bool readMetadata, bool systemMediaControls) override
+    {
+        using namespace winrt::Windows;
+        if (readMetadata || systemMediaControls)
+        {
+            metadata_.title = winrt::to_string(path_.stem().wstring());
+            try
+            {
+                const auto file = AwaitLocal(Storage::StorageFile::GetFileFromPathAsync(path_.wstring()));
+                const auto properties = AwaitLocal(file.Properties().GetMusicPropertiesAsync());
+                if (!properties.Title().empty()) metadata_.title = AudioTag(properties.Title());
+                metadata_.artist = AudioTag(properties.Artist());
+                metadata_.album = AudioTag(properties.Album());
+                thumbnail_ = AwaitLocal(file.GetThumbnailAsync(Storage::FileProperties::ThumbnailMode::MusicView, 512,
+                    Storage::FileProperties::ThumbnailOptions::None));
+                if (thumbnail_ && thumbnail_.Type() == Storage::FileProperties::ThumbnailType::Image &&
+                    thumbnail_.Size() > 0 && thumbnail_.Size() <= 4 * 1024 * 1024)
+                {
+                    using namespace Graphics::Imaging;
+                    const auto decoder = AwaitLocal(BitmapDecoder::CreateAsync(thumbnail_));
+                    const auto sourceWidth = decoder.PixelWidth(), sourceHeight = decoder.PixelHeight();
+                    if (sourceWidth && sourceHeight && sourceWidth <= 16384 && sourceHeight <= 16384)
+                    {
+                        const double scale = (std::min)(1.0, 512.0 / (std::max)(sourceWidth, sourceHeight));
+                        BitmapTransform transform;
+                        transform.ScaledWidth((std::max)(1u, static_cast<unsigned>(std::lround(sourceWidth * scale))));
+                        transform.ScaledHeight((std::max)(1u, static_cast<unsigned>(std::lround(sourceHeight * scale))));
+                        const auto pixels = AwaitLocal(decoder.GetPixelDataAsync(BitmapPixelFormat::Bgra8,
+                            BitmapAlphaMode::Premultiplied, transform, ExifOrientationMode::IgnoreExifOrientation,
+                            ColorManagementMode::DoNotColorManage)).DetachPixelData();
+                        auto image = std::make_shared<WidgetRuntimeImagePixels>();
+                        image->width = transform.ScaledWidth(); image->height = transform.ScaledHeight();
+                        image->stride = image->width * 4;
+                        image->bgraPremultiplied.assign(pixels.begin(), pixels.end());
+                        if (IsValidWidgetRuntimeImage(*image, 512))
+                        {
+                            metadata_.artworkToken = MakeWidgetRuntimeImageToken("audio", *image);
+                            metadata_.artwork = std::move(image);
+                        }
+                    }
+                }
+            }
+            catch (...) {} // Missing/invalid tags and artwork are optional.
+        }
+        if (!systemMediaControls) return;
+        const Media::Playback::MediaPlaybackItem item(source_);
+        const auto properties = item.GetDisplayProperties();
+        properties.Type(Media::MediaPlaybackType::Music);
+        properties.MusicProperties().Title(winrt::to_hstring(metadata_.title));
+        properties.MusicProperties().Artist(winrt::to_hstring(metadata_.artist));
+        properties.MusicProperties().AlbumTitle(winrt::to_hstring(metadata_.album));
+        if (metadata_.artwork && thumbnail_)
+            properties.Thumbnail(Storage::Streams::RandomAccessStreamReference::CreateFromStream(thumbnail_));
+        item.ApplyDisplayProperties(properties);
+        player_.Source(item);
+        const auto manager = player_.CommandManager();
+        using Media::Playback::MediaCommandEnablingRule;
+        manager.NextBehavior().EnablingRule(MediaCommandEnablingRule::Always);
+        manager.PreviousBehavior().EnablingRule(MediaCommandEnablingRule::Always);
+        manager.ShuffleBehavior().EnablingRule(MediaCommandEnablingRule::Always);
+        manager.AutoRepeatModeBehavior().EnablingRule(MediaCommandEnablingRule::Always);
+        manager.RateBehavior().EnablingRule(MediaCommandEnablingRule::Always);
+        nextToken_ = manager.NextReceived([queue = commands_](const auto&, const auto& args) {
+            args.Handled(true); queue->Push({"next"});
+        });
+        previousToken_ = manager.PreviousReceived([queue = commands_](const auto&, const auto& args) {
+            args.Handled(true); queue->Push({"previous"});
+        });
+        shuffleToken_ = manager.ShuffleReceived([queue = commands_](const auto&, const auto& args) {
+            args.Handled(true); queue->Push({"setShuffle", args.IsShuffleRequested() ? 1.0 : 0.0});
+        });
+        repeatToken_ = manager.AutoRepeatModeReceived([queue = commands_](const auto&, const auto& args) {
+            args.Handled(true);
+            const auto mode = args.AutoRepeatMode();
+            queue->Push({"setRepeatMode", 0, mode == Media::MediaPlaybackAutoRepeatMode::Track ? "track" :
+                mode == Media::MediaPlaybackAutoRepeatMode::List ? "list" : "none"});
+        });
+        rateToken_ = manager.RateReceived([queue = commands_](const auto&, const auto& args) {
+            args.Handled(true); const auto rate = args.PlaybackRate();
+            if (std::isfinite(rate) && rate >= .25 && rate <= 4) queue->Push({"setPlaybackRate", rate});
+        });
+        manager.IsEnabled(true);
+        metadata_.systemMediaControls = true;
+    }
+    std::vector<AudioPlaybackCommand> DrainCommands() override
+    {
+        std::lock_guard lock(commands_->mutex);
+        std::vector<AudioPlaybackCommand> result;
+        result.swap(commands_->pending);
+        return result;
     }
     void Play() override
     {
@@ -100,10 +249,28 @@ public:
         session.Position(winrt::Windows::Foundation::TimeSpan(ms * 10000));
     }
     void SetVolume(double value) override { player_.Volume(value); }
-    void SetLoop(bool value) override { player_.IsLoopingEnabled(value); }
+    void SetLoop(bool value) override { SetPlaybackMode(metadata_.shuffle, value ? "track" : "none"); }
+    void SetPlaybackMode(bool shuffle, const std::string& repeatMode) override
+    {
+        player_.IsLoopingEnabled(repeatMode == "track");
+        metadata_.shuffle = shuffle; metadata_.repeatMode = repeatMode;
+        if (metadata_.systemMediaControls)
+        {
+            const auto controls = player_.SystemMediaTransportControls();
+            controls.ShuffleEnabled(shuffle);
+            using winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+            controls.AutoRepeatMode(repeatMode == "track" ? MediaPlaybackAutoRepeatMode::Track :
+                repeatMode == "list" ? MediaPlaybackAutoRepeatMode::List : MediaPlaybackAutoRepeatMode::None);
+        }
+    }
+    void SetPlaybackRate(double rate) override
+    {
+        player_.PlaybackSession().PlaybackRate(rate);
+        if (metadata_.systemMediaControls) player_.SystemMediaTransportControls().PlaybackRate(rate);
+    }
     AudioPlaybackState State() override
     {
-        AudioPlaybackState value;
+        AudioPlaybackState value = metadata_;
         const auto session = player_.PlaybackSession();
         using winrt::Windows::Media::Playback::MediaPlaybackState;
         const auto state = session.PlaybackState();
@@ -115,6 +282,8 @@ public:
         value.durationMs = (std::max)(std::int64_t{0}, session.NaturalDuration().count() / 10000);
         value.volume = player_.Volume();
         value.loop = player_.IsLoopingEnabled();
+        value.canSeek = session.CanSeek();
+        value.playbackRate = session.PlaybackRate();
         return value;
     }
 };
@@ -152,11 +321,15 @@ struct WidgetAudioPlayback::Impl
         {
             std::lock_guard lock(mutex);
             if (retired.contains(message.owner)) return;
+            if (!message.command.command.empty() &&
+                std::count_if(messages.begin(), messages.end(), [&](const auto& old) {
+                    return old.playbackId == message.playbackId && !old.command.command.empty();
+                }) >= 32) return;
             // Coalesce progress without losing terminal events or task results.
-            if (!message.taskId && message.state.status != "ended" && message.state.status != "error" &&
+            if (!message.taskId && message.command.command.empty() && message.state.status != "ended" && message.state.status != "error" &&
                 message.state.status != "stopped")
                 std::erase_if(messages, [&](const auto& old) {
-                    return !old.taskId && old.playbackId == message.playbackId &&
+                    return !old.taskId && old.command.command.empty() && old.playbackId == message.playbackId &&
                         old.state.status != "ended" && old.state.status != "error" && old.state.status != "stopped";
                 });
             messages.push_back(std::move(message));
@@ -214,7 +387,11 @@ struct WidgetAudioPlayback::Impl
                             [&](const auto& pair) { return pair.second.request.owner == request.owner; })) >= MaximumPerOwner)
                             throw std::runtime_error("quotaExceeded");
                         auto player = factory ? factory(request.path) : std::make_unique<WindowsAudioPlayer>(request.path);
-                        player->SetVolume(request.volume); player->SetLoop(request.loop); player->Play();
+                        player->Configure(request.readMetadata, request.systemMediaControls);
+                        player->SetVolume(request.volume);
+                        player->SetPlaybackMode(request.shuffle, request.loop ? "track" : request.repeatMode);
+                        player->SetPlaybackRate(request.playbackRate);
+                        player->Play();
                         message.playbackId = "audio-" + std::to_string(request.taskId);
                         players.emplace(message.playbackId, Entry{request, std::move(player), {}});
                     }
@@ -235,6 +412,8 @@ struct WidgetAudioPlayback::Impl
                         else if (request.action == "audio.seek") player->Seek(request.positionMs);
                         else if (request.action == "audio.setVolume") player->SetVolume(request.volume);
                         else if (request.action == "audio.setLoop") player->SetLoop(request.loop);
+                        else if (request.action == "audio.setPlaybackRate") player->SetPlaybackRate(request.playbackRate);
+                        else if (request.action == "audio.setPlaybackMode") player->SetPlaybackMode(request.shuffle, request.repeatMode);
                     }
                 }
                 catch (const std::runtime_error& error) { message.ok = false; message.state.error = error.what(); }
@@ -245,11 +424,20 @@ struct WidgetAudioPlayback::Impl
             {
                 auto& entry = item->second;
                 AudioPlaybackState state;
-                try { state = entry.player->State(); }
+                try
+                {
+                    state = entry.player->State();
+                    for (auto& command : entry.player->DrainCommands())
+                        if (entry.request.systemMediaControls)
+                            Publish({entry.request.owner, 0, item->first, true, {}, std::move(command)});
+                }
                 catch (...) { state.status = "error"; state.error = "audioPlaybackFailed"; }
                 const bool terminal = state.status == "ended" || state.status == "error";
                 if (terminal || state.status != entry.previous.status || state.positionMs != entry.previous.positionMs ||
-                    state.durationMs != entry.previous.durationMs || state.volume != entry.previous.volume || state.loop != entry.previous.loop)
+                    state.durationMs != entry.previous.durationMs || state.volume != entry.previous.volume || state.loop != entry.previous.loop ||
+                    state.playbackRate != entry.previous.playbackRate || state.shuffle != entry.previous.shuffle ||
+                    state.repeatMode != entry.previous.repeatMode || state.canSeek != entry.previous.canSeek ||
+                    state.title != entry.previous.title || state.artwork != entry.previous.artwork)
                     Publish({entry.request.owner, 0, item->first, !terminal || state.error.empty(), state});
                 entry.previous = state;
                 if (terminal) item = players.erase(item); else ++item;
@@ -266,18 +454,20 @@ WidgetAudioPlayback::~WidgetAudioPlayback() = default;
 bool WidgetAudioPlayback::SupportsAction(std::string_view name) noexcept
 {
     return name == "audio.play" || name == "audio.pause" || name == "audio.resume" || name == "audio.stop" ||
-        name == "audio.seek" || name == "audio.setVolume" || name == "audio.setLoop";
+        name == "audio.seek" || name == "audio.setVolume" || name == "audio.setLoop" ||
+        name == "audio.setPlaybackRate" || name == "audio.setPlaybackMode";
 }
 bool WidgetAudioPlayback::SupportedFile(const std::filesystem::path& path)
 {
-    auto extension = path.extension().wstring();
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-    return extension == L".mp3" || extension == L".wav";
+    const auto extension = path.extension().wstring();
+    return widget::FindWidgetAudioFormat(std::wstring_view(extension)) != nullptr;
 }
 bool WidgetAudioPlayback::Validate(const AudioPlaybackRequest& request) noexcept
 {
     return request.taskId && request.owner && SupportsAction(request.action) &&
         std::isfinite(request.volume) && request.volume >= 0 && request.volume <= 1 &&
+        std::isfinite(request.playbackRate) && request.playbackRate >= .25 && request.playbackRate <= 4 &&
+        (request.repeatMode == "none" || request.repeatMode == "track" || request.repeatMode == "list") &&
         request.positionMs >= 0 && request.positionMs <= INT64_MAX / 10000 &&
         (request.action == "audio.play" ? !request.path.empty() :
             request.playbackId.starts_with("audio-") && request.playbackId.size() <= 64);

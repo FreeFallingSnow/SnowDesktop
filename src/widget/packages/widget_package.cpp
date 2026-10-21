@@ -1,6 +1,7 @@
 #include "widget_package.h"
 #include "widget_package_read.h"
 #include "widget_catalog_refresh.h"
+#include "widget_audio_format.h"
 
 #include "common/json_value.h"
 #include "data/atomic_file.h"
@@ -406,9 +407,7 @@ bool ResourceContentIsValid(const std::filesystem::path& path,
             (extension == ".otf" && data.compare(0, 4, "OTTO") == 0);
     }
     if (resource.type == "audio")
-        return extension == ".wav" ? data.size() >= 44 && data.compare(0, 4, "RIFF") == 0 && data.compare(8, 4, "WAVE") == 0 :
-            extension == ".mp3" && data.size() >= 4 && (data.compare(0, 3, "ID3") == 0 ||
-                (static_cast<unsigned char>(data[0]) == 0xff && (static_cast<unsigned char>(data[1]) & 0xe0) == 0xe0));
+        return WidgetAudioContentIsValid(extension, data);
     if (resource.type != "image") return false;
     if (extension == ".png")
     {
@@ -1770,7 +1769,7 @@ bool WidgetPackageValidator::ReadManifest(
                     ? (extension == ".png" || extension == ".jpg" ||
                         extension == ".jpeg" || extension == ".bmp" ||
                         extension == ".gif" || extension == ".ico")
-                    : resource.type == "audio" ? (extension == ".wav" || extension == ".mp3")
+                    : resource.type == "audio" ? FindWidgetAudioFormat(std::string_view(extension)) != nullptr
                     : (extension == ".ttf" || extension == ".otf");
                 if (!IsSafeRelativePath(resourcePath) || !extensionValid)
                 {

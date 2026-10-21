@@ -2082,11 +2082,11 @@ API/schema 仍为 v2；依赖组件必须声明这些 requiredFeatures 和 `minH
 同版本早期构建也可能缺少能力；旧宿主会拒绝新增 audio 资源类型，不能仅靠 Lua
 feature 检测让含该资源的包在旧宿主加载。官方社区组件须在支持宿主发布后再发布。
 
-包内 MP3/WAV 在 `resources` 声明 `{type="audio",path="assets/sound.wav"}`，
+包内音频在 `resources` 声明 `{type="audio",path="assets/sound.wav"}`，
 沿用包内安全路径、32 个资源、每资源 8 MiB 和包总大小限制。
 入口求值时 `resource.audio("sound")` 创建不透明句柄；`resource.status` 的 ready
 表示声明已解析，不代表音频已解码。文件打开、解码和播放在独立工作线程进行，
-错误通过任务或播放状态回传，不阻塞渲染。播放只支持本地 MP3/WAV，不访问网络。
+错误通过任务或播放状态回传，不阻塞渲染。播放只访问本地文件，不访问网络。基础格式为 MP3/WAV；扩展格式见下文。
 
 ```lua
 local sound = resource.audio("sound")
@@ -2128,6 +2128,43 @@ task.start("audio.stop", {playbackId=model.playbackId})
 `reparsePointDenied`、`notFile`、`seekOutOfRange`、`quotaExceeded`、
 `audioPlaybackUnavailable`、`audioPlaybackFailed`、`audioDecodeFailed`、`canceled`。
 提示音应默认关闭并提供设置开关；拒绝播放权限时计时、计数等主功能应继续可用。
+
+声明 `audio.playback.formats.extended` 后可依赖宿主识别 FLAC、M4A/M4B（AAC 或 ALAC）、
+AAC/ADTS、WMA、Ogg/OGA、Opus，文件选择与包内音频资源使用相同的格式表和容器头校验。
+实际解码依赖 Windows 原生媒体能力；Ogg/Opus 等可能需要系统媒体扩展，损坏文件、受 DRM
+保护或系统不支持的编码仍可能失败。不会自动下载安装解码器。包内资源仍受 8 MiB 上限约束。
+
+音乐播放器可按需声明四项新增 feature：`audio.playback.metadata`、
+`audio.playback.systemMediaControls`、`audio.playback.rate`、`audio.playback.mode`。
+API 仍为 v2；宿主 1.0.12.0 的早期构建可能尚无这些能力，组件应声明 requiredFeatures
+或提供能力检测降级。官方社区播放器应在支持宿主发布后再发布。
+
+`audio.play` 可选 `readMetadata=true` 读取标签标题、艺术家、专辑和封面；可选
+`systemMediaControls=true` 为本路播放创建 Windows SMTC 会话，也读取本地标签供系统显示。
+两者均默认 false，短提示音无需创建系统媒体会话。标签缺失或读取失败不影响播放，标题回退为
+不含扩展名的文件名；封面不存在、过大或无法解码时 `artwork` 为空，不返回文件路径。
+封面编码最多 4 MiB，源边长最多 16384，输出最长边 512，复用实例隔离的运行时图片缓存，
+可以直接用于 `view.image`。元数据与封面读取在音频工作线程执行，各异步步骤有 2 秒时限。
+
+`audio.play` 还支持 `playbackRate`（有限数 0.25–4，默认 1）、`shuffle`（布尔，默认 false）、
+`repeatMode`（`none/track/list`，默认 none）。`repeatMode` 与旧参数 `loop` 互斥；
+旧 `loop=true` 仍表示原生单曲循环。新增控制任务：
+
+```lua
+task.start("audio.setPlaybackRate", {playbackId=id, playbackRate=1.5})
+task.start("audio.setPlaybackMode", {playbackId=id, shuffle=true, repeatMode="list"})
+```
+
+`track` 在原生播放器循环当前音频；`shuffle/list` 同步 SMTC 状态，随机选曲和列表推进由组件实现。
+`audio.state` 增加 `title/artist/album/artwork/playbackRate/shuffle/repeatMode/systemMediaControls/canSeek`。
+`canSeek` 反映当前原生媒体能否跳转，未知时长或不支持跳转时组件应禁用进度操作。
+系统播放、暂停和进度控制由原生播放器处理，再通过状态事件同步组件。
+系统切歌、随机、循环和倍速请求通过 `audio.command` 传回当前实例，包含 `playbackId` 和
+`command=next/previous/setShuffle/setRepeatMode/setPlaybackRate`；后三种请求分别带
+`shuffle/repeatMode/playbackRate`。组件应执行自己的选曲或对应控制任务，再更新自身模型。
+命令有界排队，不与进度合并，不赋予可信手势；必须匹配当前播放 ID，忽略旧曲目迟到事件。
+停止、自然结束、错误、卸载、撤权和关闭时销毁对应 SMTC 会话。
+
 
 #### 设备与电源写任务（宿主 1.0.8.0 起）
 

@@ -678,7 +678,7 @@
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
 ---@field items? SnowFilesystemPickerTaskValue[] fileDrop selections: opaque read handles, basenames and kinds; no absolute paths.
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'native.event'|'audio.state'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'native.event'|'audio.state'|'audio.command'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -738,7 +738,7 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field task? 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'|string
+---@field task? 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'audio.setPlaybackRate'|'audio.setPlaybackMode'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'|string
 ---@field ok? boolean
 ---@field value? SnowAudioPlayValue|SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowNativeTaskValue|SnowLocationTaskValue|SnowStateValue
 ---@field error? string
@@ -748,6 +748,16 @@
 ---@field durationMs? integer Audio duration in milliseconds, zero until known.
 ---@field volume? number Playback volume in 0..1.
 ---@field loop? boolean Whether this playback loops.
+---@field command? 'next'|'previous'|'setShuffle'|'setRepeatMode'|'setPlaybackRate' System request for audio.command, without a trusted gesture.
+---@field title? string Audio tag title or basename fallback.
+---@field artist? string
+---@field album? string
+---@field artwork? SnowImageResource Audio embedded cover when available.
+---@field playbackRate? number Audio playback rate in 0.25..4.
+---@field shuffle? boolean
+---@field repeatMode? 'none'|'track'|'list'
+---@field systemMediaControls? boolean
+---@field canSeek? boolean Whether native seeking is currently available.
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
 ---@field currentRevision? integer Latest revision returned by a failed calendar update conflict.
@@ -2117,6 +2127,11 @@ function data.subscribe(topic, options) end
 ---@field name? string Direct child filename for a folder handle; no paths.
 ---@field volume? number 0..1, defaults to 1; affects only this playback.
 ---@field loop? boolean Defaults to false.
+---@field readMetadata? boolean Read optional local tags/cover; requires audio.playback.metadata; defaults false.
+---@field systemMediaControls? boolean Publish this player to Windows SMTC; requires audio.playback.systemMediaControls; defaults false.
+---@field playbackRate? number 0.25..4, default 1; requires audio.playback.rate.
+---@field shuffle? boolean SMTC shuffle state; component implements ordering; defaults false; requires audio.playback.mode.
+---@field repeatMode? 'none'|'track'|'list' Default none. Mutually exclusive with loop. Track loops natively; list advancement belongs to component. Requires audio.playback.mode.
 ---@class SnowAudioPlayValue
 ---@field playbackId string Opaque playback ID; scoped to current VM.
 ---@class SnowAudioPlaybackArguments
@@ -2127,6 +2142,18 @@ function data.subscribe(topic, options) end
 ---@field volume number 0..1
 ---@class SnowAudioLoopArguments: SnowAudioPlaybackArguments
 ---@field loop boolean
+---@class SnowAudioRateArguments: SnowAudioPlaybackArguments
+---@field playbackRate number Finite 0.25..4.
+---@class SnowAudioModeArguments: SnowAudioPlaybackArguments
+---@field shuffle boolean
+---@field repeatMode 'none'|'track'|'list'
+---@class SnowAudioCommandEvent
+---@field kind 'audio.command'
+---@field playbackId string
+---@field command 'next'|'previous'|'setShuffle'|'setRepeatMode'|'setPlaybackRate'
+---@field shuffle? boolean Present for setShuffle.
+---@field repeatMode? 'none'|'track'|'list' Present for setRepeatMode.
+---@field playbackRate? number Present for setPlaybackRate.
 ---@class SnowAudioStateEvent
 ---@field kind 'audio.state'
 ---@field playbackId string
@@ -2136,13 +2163,23 @@ function data.subscribe(topic, options) end
 ---@field volume number
 ---@field loop boolean
 ---@field error string Empty unless playback failed.
+---@field title string Tag title or basename without extension when metadata requested, otherwise empty.
+---@field artist string Empty when unavailable.
+---@field album string Empty when unavailable.
+---@field artwork? SnowImageResource Bounded VM-owned runtime image, nil when absent/undecodable.
+---@field playbackRate number
+---@field shuffle boolean
+---@field repeatMode 'none'|'track'|'list'
+---@field canSeek boolean Whether native seeking is currently available.
+---@field systemMediaControls boolean
 
 ---@class snow.task
 task = {}
 
 ---Start an asynchronous one-shot task. Search, notification, calendar
 ---create/update, and network tasks do not require a gesture. Launch, open,
----reveal, refresh, media/audio controls, shell.openUri, and calendar removal do.
+---reveal, refresh, system media controls, shell.openUri, and calendar removal do.
+---VM-owned audio playback controls do not require a gesture.
 ---Filesystem pickers also require the current trusted user gesture.
 ---Runtime rejections return nil plus a stable error code.
 ---@overload fun(name: 'audio.play', arguments: SnowAudioPlayArguments): taskId: integer?, error: string?
@@ -2150,6 +2187,8 @@ task = {}
 ---@overload fun(name: 'audio.seek', arguments: SnowAudioSeekArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.setVolume', arguments: SnowAudioVolumeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.setLoop', arguments: SnowAudioLoopArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.setPlaybackRate', arguments: SnowAudioRateArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.setPlaybackMode', arguments: SnowAudioModeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous', arguments?: SnowMediaSessionArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'media.seek', arguments: SnowMediaSeekArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'media.setRate', arguments: SnowMediaRateArguments): taskId: integer?, error: string?
@@ -2211,7 +2250,7 @@ task = {}
 ---@overload fun(name: 'native.watch', arguments: SnowNativeWatchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'
+---@param name 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'audio.setPlaybackRate'|'audio.setPlaybackMode'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error

@@ -10,6 +10,13 @@
 
 namespace snowdesktop::widget_runtime
 {
+struct WidgetRuntimeImagePixels;
+struct AudioPlaybackCommand
+{
+    std::string command;
+    double value = 0;
+    std::string repeatMode;
+};
 struct AudioPlaybackState
 {
     std::string status = "loading";
@@ -18,6 +25,14 @@ struct AudioPlaybackState
     std::int64_t durationMs = 0;
     double volume = 1;
     bool loop = false;
+    bool canSeek = false;
+    bool systemMediaControls = false;
+    double playbackRate = 1;
+    bool shuffle = false;
+    std::string repeatMode = "none";
+    std::string title, artist, album;
+    std::string artworkToken;
+    std::shared_ptr<const WidgetRuntimeImagePixels> artwork;
 };
 
 // Backend instances are created, accessed and destroyed only on the audio worker.
@@ -30,6 +45,10 @@ public:
     virtual void Seek(std::int64_t positionMs) = 0;
     virtual void SetVolume(double volume) = 0;
     virtual void SetLoop(bool loop) = 0;
+    virtual void Configure(bool /*readMetadata*/, bool /*systemMediaControls*/) {}
+    virtual std::vector<AudioPlaybackCommand> DrainCommands() { return {}; }
+    virtual void SetPlaybackRate(double /*rate*/) {}
+    virtual void SetPlaybackMode(bool /*shuffle*/, const std::string& repeatMode) { SetLoop(repeatMode == "track"); }
     virtual AudioPlaybackState State() = 0;
 };
 
@@ -45,6 +64,11 @@ struct AudioPlaybackRequest
     std::int64_t positionMs = 0;
     double volume = 1;
     bool loop = false;
+    bool readMetadata = false;
+    bool systemMediaControls = false;
+    double playbackRate = 1;
+    bool shuffle = false;
+    std::string repeatMode = "none";
 };
 
 struct AudioPlaybackMessage
@@ -54,6 +78,7 @@ struct AudioPlaybackMessage
     std::string playbackId;
     bool ok = true;
     AudioPlaybackState state;
+    AudioPlaybackCommand command; // never coalesced with state updates
 };
 
 class WidgetAudioPlayback

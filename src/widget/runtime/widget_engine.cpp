@@ -12946,6 +12946,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (const auto value = get("positionMs"); !value.empty())
                 (void)std::from_chars(value.data(), value.data() + value.size(), request.positionMs);
             request.loop = get("loop") == "1";
+            request.readMetadata = get("readMetadata") == "1";
+            request.systemMediaControls = get("systemMediaControls") == "1";
+            request.shuffle = get("shuffle") == "1";
+            if (const auto value = get("repeatMode"); !value.empty()) request.repeatMode = value;
+            if (const auto value = get("playbackRate"); !value.empty())
+                (void)std::from_chars(value.data(), value.data() + value.size(), request.playbackRate);
             std::string error;
             if (!owner->permissions.contains("audio.playback")) error = "permissionRevoked";
             else if (action.name == "audio.play")
@@ -15577,7 +15583,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
             if (owner == widgets_.end() || !owner->permissions.contains("audio.playback")) continue;
             snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, false);
-            (void)InvokeLifecycleEvent(*owner, "audio.state", [&](lua_State* state) {
+            (void)InvokeLifecycleEvent(*owner, message.command.command.empty() ? "audio.state" : "audio.command", [&](lua_State* state) {
                 lua_pushstring(state, message.playbackId.c_str()); lua_setfield(state, -2, "playbackId");
                 lua_pushstring(state, message.state.status.c_str()); lua_setfield(state, -2, "status");
                 lua_pushstring(state, message.state.error.c_str()); lua_setfield(state, -2, "error");
@@ -15585,6 +15591,35 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_pushinteger(state, message.state.durationMs); lua_setfield(state, -2, "durationMs");
                 lua_pushnumber(state, message.state.volume); lua_setfield(state, -2, "volume");
                 lua_pushboolean(state, message.state.loop); lua_setfield(state, -2, "loop");
+                lua_pushboolean(state, message.state.canSeek); lua_setfield(state, -2, "canSeek");
+                lua_pushnumber(state, message.state.playbackRate); lua_setfield(state, -2, "playbackRate");
+                lua_pushboolean(state, message.state.shuffle); lua_setfield(state, -2, "shuffle");
+                lua_pushstring(state, message.state.repeatMode.c_str()); lua_setfield(state, -2, "repeatMode");
+                lua_pushboolean(state, message.state.systemMediaControls); lua_setfield(state, -2, "systemMediaControls");
+                lua_pushstring(state, message.state.title.c_str()); lua_setfield(state, -2, "title");
+                lua_pushstring(state, message.state.artist.c_str()); lua_setfield(state, -2, "artist");
+                lua_pushstring(state, message.state.album.c_str()); lua_setfield(state, -2, "album");
+                if (message.state.artwork)
+                {
+                    const auto token = RegisterRuntimeImageSource(d2dState_, owner->widgetId,
+                        message.state.artworkToken, message.state.artwork, "audio");
+                    if (!token.empty())
+                    {
+                        snowdesktop::widget_runtime::PushResourceHandle(state,
+                            snowdesktop::widget_runtime::LuaResourceType::Image, token);
+                        lua_setfield(state, -2, "artwork");
+                    }
+                }
+                if (!message.command.command.empty())
+                {
+                    lua_pushstring(state, message.command.command.c_str()); lua_setfield(state, -2, "command");
+                    if (message.command.command == "setPlaybackRate")
+                    { lua_pushnumber(state, message.command.value); lua_setfield(state, -2, "playbackRate"); }
+                    if (message.command.command == "setShuffle")
+                    { lua_pushboolean(state, message.command.value != 0); lua_setfield(state, -2, "shuffle"); }
+                    if (message.command.command == "setRepeatMode")
+                    { lua_pushstring(state, message.command.repeatMode.c_str()); lua_setfield(state, -2, "repeatMode"); }
+                }
             });
     }
 

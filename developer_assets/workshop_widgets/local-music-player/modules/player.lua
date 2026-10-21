@@ -1,13 +1,16 @@
 local M = {}
+M.extensions = {"mp3","wav","flac","m4a","m4b","aac","adts","wma","ogg","oga","opus"}
+local formats = {}
+for _, extension in ipairs(M.extensions) do formats[extension] = true end
 local function audioFile(name)
     local extension = type(name) == "string" and name:lower():match("%.([^%.]+)$")
-    return extension == "mp3" or extension == "wav"
+    return formats[extension] == true
 end
 M.audioFile = audioFile
 
 function M.new(api)
     local p = { tracks = {}, sources = {}, pending = {}, scans = {}, releases = {}, index = 0,
-        status = "stopped", position = 0, duration = 0, volume = 0.65,
+        status = "stopped", position = 0, duration = 0, canSeek = false, volume = 1, playbackRate = 1, shuffle = false, repeatMode = "none", nextKey = 0, bag = {}, history = {},
         repeatTrack = false, repeatList = false, generation = 0, error = nil }
     function p:start(name, args, context)
         local id, err = api.start(name, args)
@@ -16,7 +19,7 @@ function M.new(api)
         return id
     end
     function p:save()
-        api.save(self.sources)
+        if api.save(self.sources, self.tracks) == false then self.error = "playlistSaveFailed" end
     end
     function p:pumpRelease()
         for _, context in pairs(self.pending) do
@@ -39,8 +42,14 @@ function M.new(api)
         for _, track in ipairs(self.tracks) do
             if track.handle == handle and track.child == child then return end
         end
-        self.tracks[#self.tracks + 1] = { handle = handle, name = name, child = child }
+        self.nextKey = self.nextKey + 1
+        self.tracks[#self.tracks + 1] = { handle = handle, name = name, child = child, key = "track."..self.nextKey }
+        self.bag = {}; self.shuffleExhausted = false
         if self.index == 0 then self.index = 1 end
+    end
+    function p:restore(sources, tracks)
+        self.sources = sources
+        for _, track in ipairs(tracks) do self:append(track.handle, track.name, track.child) end
     end
     function p:pump()
         if self.scanning or #self.scans == 0 then return end
@@ -68,7 +77,7 @@ function M.new(api)
     end
     function p:pick(folder)
         self:start(folder and "filesystem.pickFolder" or "filesystem.pickOpen",
-            folder and { access = "read", multiple = true } or { extensions = { "mp3", "wav" }, multiple = true },
+            folder and { access = "read", multiple = true } or { extensions = M.extensions, multiple = true },
             { kind = "pick", generation = self.generation })
     end
     function p:stop()
@@ -80,9 +89,14 @@ function M.new(api)
         self:stop()
         local track = self.tracks[index]
         if not track then return end
-        self.index = index; self.duration = 0; self.error = nil; self.status = "loading"
+        for i=#self.bag,1,-1 do if self.bag[i] == track then table.remove(self.bag,i) end end
+        self.index = index; self.duration = 0; self.canSeek = false; self.error = nil; self.status = "loading"
+        self.title = nil; self.artist = nil; self.album = nil; self.artwork = nil
+        if self.history[#self.history] ~= track then self.history[#self.history + 1] = track end
+        if #self.history > 2000 then table.remove(self.history, 1) end
         self.playingTask = self:start("audio.play", { handle = track.handle, name = track.child,
-            volume = self.volume, loop = self.repeatTrack }, { kind = "play", generation = self.generation })
+            volume = self.volume, playbackRate = self.playbackRate, shuffle = self.shuffle, repeatMode = self.repeatMode,
+            readMetadata = true, systemMediaControls = true }, { kind = "play", generation = self.generation })
         if not self.playingTask then self.status = "error" end
     end
     function p:toggle()
@@ -90,20 +104,90 @@ function M.new(api)
             self:start(self.status == "paused" and "audio.resume" or "audio.pause", { playbackId = self.playbackId })
         elseif self.status ~= "loading" then self:play(math.max(1, self.index)) end
     end
-    function p:step(delta)
+    function p:step(delta, natural)
         if #self.tracks == 0 then return end
-        self:play((math.max(1, self.index) - 1 + delta) % #self.tracks + 1)
+        if self.shuffle then
+            local nextTrack
+            if delta < 0 and #self.history > 1 then
+                table.remove(self.history)
+                nextTrack = table.remove(self.history)
+            else
+                if #self.bag == 0 then
+                    if natural and self.shuffleExhausted and self.repeatMode == "none" then return end
+                    for _, track in ipairs(self.tracks) do
+                        if track ~= self.tracks[self.index] or #self.tracks == 1 then self.bag[#self.bag+1] = track end
+                    end
+                    self.shuffleExhausted = true
+                end
+                nextTrack = table.remove(self.bag, math.random(#self.bag))
+            end
+            for index, track in ipairs(self.tracks) do if track == nextTrack then self:play(index); return end end
+        else
+            local index = self.index + delta
+            if natural and index > #self.tracks and self.repeatMode == "none" then return end
+            self:play((index - 1) % #self.tracks + 1)
+        end
+    end
+    function p:setMode(shuffle, repeatMode)
+        self.shuffle = shuffle == true
+        self.repeatMode = repeatMode == "track" and "track" or repeatMode == "list" and "list" or "none"
+        self.repeatTrack = self.repeatMode == "track"; self.repeatList = self.repeatMode == "list"
+        self.bag = {}; self.shuffleExhausted = false
+        if self.playbackId then self:start("audio.setPlaybackMode", {playbackId=self.playbackId,
+            shuffle=self.shuffle, repeatMode=self.repeatMode}) end
+        if api.preferences then api.preferences(self) end
+    end
+    function p:setRate(value)
+        self.playbackRate = math.max(0.25, math.min(4, value))
+        if self.playbackId then self:start("audio.setPlaybackRate", {playbackId=self.playbackId, playbackRate=self.playbackRate}) end
+        if api.preferences then api.preferences(self) end
+    end
+    function p:command(event)
+        if event.playbackId ~= self.playbackId then return end
+        if event.command == "next" then self:step(1)
+        elseif event.command == "previous" then self:step(-1)
+        elseif event.command == "setShuffle" then self:setMode(event.shuffle, self.repeatMode)
+        elseif event.command == "setRepeatMode" then self:setMode(self.shuffle, event.repeatMode)
+        elseif event.command == "setPlaybackRate" then self:setRate(event.playbackRate) end
+    end
+    function p:move(from, to)
+        from = math.floor(from); to = math.floor(to)
+        if not self.tracks[from] or not self.tracks[to] or from == to then return end
+        local current = self.tracks[self.index]
+        table.insert(self.tracks, to, table.remove(self.tracks, from))
+        for index, track in ipairs(self.tracks) do if track == current then self.index = index end end
+        self:save()
+    end
+    function p:remove(index)
+        local track = self.tracks[index]
+        if not track then return end
+        local active = index == self.index and (self.playbackId ~= nil or self.playingTask ~= nil)
+        local current = self.tracks[self.index]
+        if index == self.index then self:stop(); self.title=nil; self.artist=nil; self.album=nil; self.artwork=nil; self.duration=0 end
+        table.remove(self.tracks, index)
+        self.index = #self.tracks > 0 and math.min(index, #self.tracks) or 0
+        for i, item in ipairs(self.tracks) do if item == current then self.index = i end end
+        self.bag = {}; self.history = {}; self.shuffleExhausted = false
+        local used = false
+        for _, item in ipairs(self.tracks) do if item.handle == track.handle then used = true end end
+        if not used and not self.scanning then
+            for i=#self.sources,1,-1 do
+                if self.sources[i].handle == track.handle then table.remove(self.sources, i) end
+            end
+            self:release(track.handle)
+        end
+        self:save()
+        if active and self.index > 0 then self:play(self.index) end
     end
     function p:setVolume(value)
         self.volume = math.max(0, math.min(1, value))
         if self.playbackId then self:start("audio.setVolume", { playbackId = self.playbackId, volume = self.volume }) end
     end
     function p:setLoop(value)
-        self.repeatTrack = value
-        if self.playbackId then self:start("audio.setLoop", { playbackId = self.playbackId, loop = value }) end
+        self:setMode(self.shuffle, value and "track" or "none")
     end
     function p:seek(fraction)
-        if self.playbackId and self.duration > 0 then
+        if self.playbackId and self.duration > 0 and self.canSeek then
             self:start("audio.seek", { playbackId = self.playbackId,
                 positionMs = math.floor(self.duration * math.max(0, math.min(1, fraction))) })
         end
@@ -111,7 +195,8 @@ function M.new(api)
     function p:clear()
         self:stop(); self.generation = self.generation + 1
         local sources = self.sources; self.sources = {}; self.tracks = {}; self.scans = {}; self.scanning = nil
-        self.index = 0; self.duration = 0; self.error = nil; self:save()
+        self.index = 0; self.duration = 0; self.error = nil; self.title=nil; self.artist=nil; self.album=nil; self.artwork=nil
+        self.bag={}; self.history={}; self.shuffleExhausted=false; self:save()
         for _, source in ipairs(sources) do self:release(source.handle) end
     end
     function p:complete(event)
@@ -142,7 +227,7 @@ function M.new(api)
                     self.scans[#self.scans + 1] = { handle = scan.handle, offset = event.value.nextOffset }
                 end
             end
-            self:pump()
+            self:pump(); self:save()
         elseif context.kind == "pick" and event.ok then self:ingest(event.value.items or {event.value}) end
         if not event.ok and event.error ~= "canceled" and event.error ~= "userCanceled" and context.kind ~= "release" then
             self.error = event.error
@@ -152,10 +237,16 @@ function M.new(api)
     function p:audio(event)
         if event.playbackId ~= self.playbackId then return end
         self.status = event.status; self.position = event.positionMs; self.duration = event.durationMs
+        self.canSeek = event.canSeek ~= false
+        self.title = event.title ~= "" and event.title or nil
+        self.artist = event.artist ~= "" and event.artist or nil
+        self.album = event.album ~= "" and event.album or nil
+        self.artwork = event.artwork
+        if event.volume then self.volume = event.volume end
+        if event.playbackRate then self.playbackRate = event.playbackRate end
         if event.status == "ended" then
             self.playbackId = nil
-            if self.index < #self.tracks then self:play(self.index + 1)
-            elseif self.repeatList and #self.tracks > 0 then self:play(1) end
+            self:step(1, true)
         elseif event.status == "error" then self.playbackId = nil; self.error = event.error
         elseif event.status == "stopped" then self.playbackId = nil end
     end

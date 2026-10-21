@@ -35,16 +35,27 @@ inline bool ReadAudioPlaybackArguments(lua_State* state, const std::string& acti
             valid = value && size > 0 && size <= 1024 && std::string_view(value, size).find('\0') == std::string_view::npos;
             if (valid) result[key] = std::string(value, size);
         }
-        else if ((play || action == "audio.setVolume") && key == "volume")
+        else if (((play || action == "audio.setVolume") && key == "volume") ||
+            ((play || action == "audio.setPlaybackRate") && key == "playbackRate"))
         {
             const double value = lua_type(state, -1) == LUA_TNUMBER ? lua_tonumber(state, -1) : -1;
-            valid = std::isfinite(value) && value >= 0 && value <= 1;
+            valid = std::isfinite(value) && (key == "volume" ? value >= 0 && value <= 1 : value >= 0.25 && value <= 4);
             if (valid) { char buffer[64]; const auto converted = std::to_chars(buffer, buffer + 64, value); result[key] = std::string(buffer, converted.ptr); }
         }
-        else if ((play || action == "audio.setLoop") && key == "loop")
+        else if (((play || action == "audio.setLoop") && key == "loop") ||
+            (play && (key == "readMetadata" || key == "systemMediaControls")) ||
+            ((play || action == "audio.setPlaybackMode") && key == "shuffle"))
         {
             valid = lua_isboolean(state, -1);
             if (valid) result[key] = lua_toboolean(state, -1) ? "1" : "0";
+        }
+        else if ((play || action == "audio.setPlaybackMode") && key == "repeatMode")
+        {
+            size_t size = 0;
+            const char* value = lua_type(state, -1) == LUA_TSTRING ? lua_tolstring(state, -1, &size) : nullptr;
+            const auto mode = value ? std::string_view(value, size) : std::string_view{};
+            valid = mode == "none" || mode == "track" || mode == "list";
+            if (valid) result[key] = mode;
         }
         else if (action == "audio.seek" && key == "positionMs")
         {
@@ -56,11 +67,14 @@ inline bool ReadAudioPlaybackArguments(lua_State* state, const std::string& acti
         if (!valid) { lua_pop(state, 1); return false; }
     }
     if (play)
-        return (result.contains("resource") != result.contains("handle")) &&
+        return !(result.contains("loop") && result.contains("repeatMode")) &&
+            (result.contains("resource") != result.contains("handle")) &&
             (!result.contains("name") || (result.contains("handle") && WidgetFilesystemTaskExecutor::IsDirectChildName(result.at("name"))));
     return result.contains("playbackId") && result.at("playbackId").starts_with("audio-") && result.at("playbackId").size() <= 64 &&
         (action != "audio.seek" || result.contains("positionMs")) &&
         (action != "audio.setVolume" || result.contains("volume")) &&
-        (action != "audio.setLoop" || result.contains("loop"));
+        (action != "audio.setLoop" || result.contains("loop")) &&
+        (action != "audio.setPlaybackRate" || result.contains("playbackRate")) &&
+        (action != "audio.setPlaybackMode" || (result.contains("shuffle") && result.contains("repeatMode")));
 }
 }
