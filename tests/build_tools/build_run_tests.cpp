@@ -80,11 +80,13 @@ Json await_running(Coordinator& c,const std::string& id) {
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
 void old_entry_edit_control(const fs::path& repo){
     Coordinator c(repo,"old-entry-edit-control");setup_run(c,repo);
-    auto manager=read(c.scripts/L"build_manager.ps1");replace(manager,"Assert-OutputIdleForEdits $current # begin","# Former begin did not inspect an ordinary Run output lease");write(c.scripts/L"build_manager.ps1",manager,true);
+    auto manager=read(c.scripts/L"build_manager.ps1");
+    replace(manager,"if(-not $current -and $Command -in 'begin','repair') {","if($false) { # Controlled removal of the existing standalone Run edit gate");
+    write(c.scripts/L"build_manager.ps1",manager,true);
     ParentJob parent(c.root/L"launch-run.ps1",c.root,true);require(parent.wait()==0,"Entry/edit control could not launch");
     const auto id=Json::parse(read(c.root/L"submitted.json")).at("id").str();await_running(c,id);
     const auto attempted=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","pending-editor"});
-    require(attempted.code==2,"Active ordinary Run allowed a source-edit grant");
+    require(attempted.code==2,"Active ordinary Run allowed a source-edit grant; exit="+std::to_string(attempted.code)+" "+attempted.out+attempted.err);
 }
 void tool_plan(const fs::path& repo,bool oldBehavior=false){
     Coordinator c(repo,oldBehavior?"old-tool-plan":"tool-plan-no-host",true);
