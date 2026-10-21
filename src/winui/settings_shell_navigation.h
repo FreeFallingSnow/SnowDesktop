@@ -31,6 +31,8 @@ public:
     bool UpdateRoute(const SettingsRoute& route, std::uint64_t generation);
     void Restart() noexcept;
     [[nodiscard]] bool ConsumeHighlight() noexcept;
+    /** Consume a targeted permission dialog only after its package is ready. */
+    [[nodiscard]] bool ConsumePackagePermissionEditor(bool packageReady) noexcept;
     [[nodiscard]] bool ShowGuideReturn() const noexcept;
     void DismissGuideReturn() noexcept;
     void CancelHighlight() noexcept;
@@ -39,6 +41,7 @@ private:
     std::optional<SettingsRoute> route_;
     std::uint64_t generation_ = 0;
     bool highlightConsumed_ = false;
+    bool permissionEditorConsumed_ = false;
     bool returnDismissed_ = false;
 };
 

@@ -22,6 +22,7 @@ namespace
 constexpr std::uint32_t kCurrentApiVersion = 2;
 constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.native.request",
+    "task.native.watch",
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -435,9 +436,11 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 66> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 67> kSystemTaskContracts = {{
     { "native.request", "task.native.request", "native.execute",
         false, 1, "SnowNativeRequestArguments", "SnowNativeTaskValue" },
+    { "native.watch", "task.native.watch", "native.execute",
+        false, 1, "SnowNativeWatchArguments", "SnowNativeTaskValue" },
     { "location.current", "task.location.current", "location.read",
         true, 1, "SnowLocationArguments", "SnowLocationTaskValue" },
     { "network.request", "task.network.request", "network.internet",

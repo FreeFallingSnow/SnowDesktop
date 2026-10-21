@@ -5270,14 +5270,14 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         }
     }
 
-    if (taskName == "native.request")
+    if (taskName == "native.request" || taskName == "native.watch")
     {
-        if (!hasArguments) return luaL_error(state, "task.start: native.request requires arguments");
+        if (!hasArguments) return luaL_error(state, "task.start: native task requires arguments");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
             if (lua_type(state, -2) != LUA_TSTRING)
-                return luaL_error(state, "task.start: native.request keys must be strings");
+                return luaL_error(state, "task.start: native task keys must be strings");
             size_t length = 0;
             const char* key = lua_tolstring(state, -2, &length);
             const std::string field(key, length);
@@ -5286,15 +5286,15 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
             else if ((field == "helper" || field == "operation" || field == "payload") && lua_type(state, -1) == LUA_TSTRING)
             {
                 const char* value = lua_tolstring(state, -1, &length);
-                if (length > 8192) return luaL_error(state, "task.start: native.request value is too large");
+                if (length > 8192) return luaL_error(state, "task.start: native task value is too large");
                 arguments[field] = std::string(value, length);
             }
-            else return luaL_error(state, "task.start: native.request received an invalid argument");
+            else return luaL_error(state, "task.start: native task received an invalid argument");
             lua_pop(state, 1);
         }
         snowdesktop::widget_runtime::NativeRequestOptions options;
         if (!snowdesktop::widget_runtime::ParseNativeRequestOptions(arguments, options))
-            return luaL_error(state, "task.start: invalid native.request arguments");
+            return luaL_error(state, "task.start: invalid native task arguments");
     }
     else if (taskName == "location.current")
     {
@@ -12895,7 +12895,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
-        if (action.name == "native.request")
+        if (action.name == "native.request" || action.name == "native.watch")
         {
             snowdesktop::widget_runtime::NativeRequestOptions options;
             const auto package = GetWidgetPackage(Utf8ToWideLocal(owner->packageId));
@@ -12907,9 +12907,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 !owner->permissions.contains("native.execute") ||
                 !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(package->grantedPermissions, "native.execute"))
                 (void)taskBroker_->Complete(action.id, false, "permissionRevoked");
-            else if (!nativeTaskExecutor_ || !nativeTaskExecutor_->Start(action.id, package->root,
-                    snowdesktop::widget::PackagePermissionScopeFingerprint(package->manifest), std::move(options)))
-                (void)taskBroker_->Complete(action.id, false, "taskExecutorUnavailable");
+            else
+            {
+                options.streaming = action.name == "native.watch";
+                if (!nativeTaskExecutor_ || !nativeTaskExecutor_->Start(action.id, package->root,
+                        snowdesktop::widget::PackagePermissionScopeFingerprint(package->manifest), std::move(options)))
+                    (void)taskBroker_->Complete(action.id, false, "taskExecutorUnavailable");
+            }
             continue;
         }
         if (action.name == "location.current")
@@ -14790,7 +14794,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
         const auto nativeCompletion = nativeTaskCompletions_.find(completion.id);
         JsonValue nativeFrame;
-        if (completion.name == "native.request" && completion.ok)
+        if ((completion.name == "native.request" || completion.name == "native.watch") && completion.ok)
         {
             if (nativeCompletion == nativeTaskCompletions_.end() ||
                 !ParseJson(nativeCompletion->second, nativeFrame) || !nativeFrame.Find("value") ||
@@ -15153,7 +15157,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "ok");
                 if (completion.ok)
                 {
-                    if (completion.name == "native.request")
+                    if (completion.name == "native.request" || completion.name == "native.watch")
                         PushSystemControlJson(eventState, *nativeFrame.Find("value"));
                     else if (completion.name == "app.search" || itemSearchTask)
                     {
@@ -26480,7 +26484,7 @@ WidgetEngine::RuntimeStartTask(
     std::unordered_map<std::string, std::string> arguments)
 {
     using snowdesktop::widget_runtime::TaskStartOptions;
-    if (name == "native.request" && snowdesktop::widget_runtime::IsDryLoad())
+    if ((name == "native.request" || name == "native.watch") && snowdesktop::widget_runtime::IsDryLoad())
         return { 0, "previewUnavailable" };
     if (!taskBroker_)
         return { 0, "task broker is not initialized" };

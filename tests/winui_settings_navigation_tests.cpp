@@ -314,6 +314,29 @@ void TestNavigationFeedbackLifetime()
 
 int main()
 {
+    {
+        SettingsShellNavigationFeedback feedback;
+        auto route = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "untargeted permissions navigation never opens a dialog");
+        route.itemKey = L"package-a";
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(false), "pending package discovery does not consume the authorization request");
+        Check(feedback.ConsumePackagePermissionEditor(true), "the first ready package publication opens its authorization editor");
+        Check(!feedback.ConsumePackagePermissionEditor(true), "canceling a dialog cannot reopen it on layout or snapshot retries");
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "same-route snapshot refreshes do not create another dialog");
+        feedback.Restart();
+        Check(feedback.ConsumePackagePermissionEditor(true), "an explicit retry can request the same package again");
+        route.itemKey = L"package-b";
+        feedback.UpdateRoute(route, 1);
+        Check(feedback.ConsumePackagePermissionEditor(true), "a different package has an independent dialog request");
+        feedback.UpdateRoute(route, 2);
+        Check(feedback.ConsumePackagePermissionEditor(true), "a new settings session can request authorization again");
+        route.focusId = "widgets.installed";
+        feedback.UpdateRoute(route, 2);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "ordinary component navigation never starts authorization");
+    }
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
     TestRelocatedWidgetBehaviorNavigation();

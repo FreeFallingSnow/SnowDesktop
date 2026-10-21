@@ -27,6 +27,49 @@ struct Handle
     Handle& operator=(const Handle&) = delete;
     explicit operator bool() const { return value && value != INVALID_HANDLE_VALUE; }
 };
+struct DirectoryWatch
+{
+    Handle directory, changed{ CreateEventW(nullptr, TRUE, FALSE, nullptr) };
+    OVERLAPPED overlap{};
+    alignas(DWORD) std::array<unsigned char, 8192> buffer{};
+    BY_HANDLE_FILE_INFORMATION identity{};
+    bool armed = false;
+    ~DirectoryWatch()
+    {
+        if (armed)
+        {
+            CancelIoEx(directory.value, &overlap);
+            DWORD ignored = 0;
+            GetOverlappedResult(directory.value, &overlap, &ignored, TRUE);
+        }
+    }
+    bool Begin(const std::filesystem::path& root)
+    {
+        directory.value = CreateFileW(root.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OVERLAPPED, nullptr);
+        if (!directory || !changed || !GetFileInformationByHandle(directory.value, &identity) ||
+            !(identity.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+            (identity.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+        overlap.hEvent = changed.value;
+        armed = ReadDirectoryChangesW(directory.value, buffer.data(), static_cast<DWORD>(buffer.size()), TRUE,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_SIZE |
+                FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SECURITY,
+            nullptr, &overlap, nullptr) != FALSE;
+        return armed;
+    }
+    bool SameDirectory(const std::filesystem::path& root) const
+    {
+        Handle current(CreateFileW(root.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+        BY_HANDLE_FILE_INFORMATION info{};
+        return current && GetFileInformationByHandle(current.value, &info) &&
+            !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+            info.dwVolumeSerialNumber == identity.dwVolumeSerialNumber &&
+            info.nFileIndexHigh == identity.nFileIndexHigh && info.nFileIndexLow == identity.nFileIndexLow;
+    }
+};
 bool Identifier(std::string_view value)
 {
     return !value.empty() && value.size() <= 64 &&
@@ -199,15 +242,19 @@ struct WidgetNativeTaskExecutor::State
     std::vector<NativeTaskMessage> messages;
     std::function<void()> wake;
 
-    void Post(NativeTaskMessage message)
+    bool Post(NativeTaskMessage message)
     {
         std::lock_guard lock(mutex);
-        if (stopped) return;
+        if (stopped) return false;
+        if (!message.final && std::count_if(messages.begin(), messages.end(),
+                [&](const auto& queued) { return queued.id == message.id && !queued.final; }) >= 64)
+            return false;
         if (message.final)
             if (const auto found = operations.find(message.id); found != operations.end()) found->second->done = true;
         messages.push_back(std::move(message));
         // Callback only posts a host wake; serialized with teardown.
         if (wake) wake();
+        return true;
     }
 
     static NativeTaskMessage Run(std::uint64_t id, const std::filesystem::path& root,
@@ -216,7 +263,10 @@ struct WidgetNativeTaskExecutor::State
     {
         using namespace snowdesktop::widget;
         NativeTaskMessage result{ id, true, false, "nativeLaunchFailed", {} };
-        const auto deadline = GetTickCount64() + static_cast<ULONGLONG>(options.timeoutMs);
+        auto deadline = GetTickCount64() + static_cast<ULONGLONG>(options.timeoutMs);
+        DirectoryWatch directoryWatch;
+        if (options.streaming && !directoryWatch.Begin(root))
+        { result.error = "nativeContentChanged"; return result; }
         PackageManifest manifest;
         if (!WidgetPackageValidator{}.ValidateDirectory(root, &manifest).Ok() ||
             manifest.nativeContentFingerprint.empty() || PackagePermissionScopeFingerprint(manifest) != fingerprint)
@@ -224,6 +274,8 @@ struct WidgetNativeTaskExecutor::State
         const auto helper = std::find_if(manifest.nativeHelpers.begin(), manifest.nativeHelpers.end(),
             [&](const auto& value) { return value.id == options.helper; });
         if (helper == manifest.nativeHelpers.end()) { result.error = "unknownHelper"; return result; }
+        if (options.streaming && !directoryWatch.SameDirectory(root))
+        { result.error = "nativeContentChanged"; return result; }
         const auto executable = std::filesystem::absolute(root / Wide(helper->path));
         // Pin each ancestor against rename/reparse substitution before opening
         // the image. Locking only the EXE would still allow a parent to move.
@@ -291,23 +343,54 @@ struct WidgetNativeTaskExecutor::State
         { TerminateProcess(process.value, 1); WaitForSingleObject(process.value, 1000); return result; }
         struct ProcessCleanup
         {
-            HANDLE job, process;
-            ~ProcessCleanup() { TerminateJobObject(job, 1); WaitForSingleObject(process, 1000); }
-        } processCleanup{ job.value, process.value };
+            HANDLE job, process, input;
+            ~ProcessCleanup()
+            {
+                if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0)
+                {
+                    Handle stopping(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+                    if (stopping) (void)Send(input, R"({"version":1,"kind":"stop"})",
+                        stopping.value, GetTickCount64() + 200);
+                    WaitForSingleObject(process, 200);
+                }
+                TerminateJobObject(job, 1);
+                WaitForSingleObject(process, 1000);
+            }
+        } processCleanup{ job.value, process.value, input.host.value };
         for (auto* handle : { &input.child, &output.child, &diagnostic.child })
         { CloseHandle(handle->value); handle->value = nullptr; }
         if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) { result.error = "canceled"; return result; }
         if (GetTickCount64() >= deadline) { result.error = "nativeTimeout"; return result; }
         if (ResumeThread(thread.value) == static_cast<DWORD>(-1)) return result;
+        if (options.streaming)
+        {
+            // Launch identity is pinned above; a resident process must allow
+            // package replacement. Directory notifications retire it on changes.
+            directories.clear();
+            CloseHandle(image.value);
+            image.value = nullptr;
+        }
         result.error = "nativeProtocolError";
         const auto handshakeDeadline = std::min(deadline, GetTickCount64() + 3000);
         if (!Send(input.host.value, R"({"version":1,"kind":"hello","protocol":"snowdesktop-native"})", cancel, handshakeDeadline)) return result;
         std::string pending;
         std::size_t totalBytes = 0, diagnostics = 0, events = 0;
+        auto windowStarted = GetTickCount64();
+        auto nextIdentityCheck = windowStarted;
         bool hello = false, finished = false;
         while (!finished)
         {
             if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) { result.error = "canceled"; return result; }
+            const auto now = GetTickCount64();
+            if (options.streaming)
+            {
+                if (WaitForSingleObject(directoryWatch.changed.value, 0) == WAIT_OBJECT_0 ||
+                    (now >= nextIdentityCheck && !directoryWatch.SameDirectory(root)))
+                { result.error = "nativeContentChanged"; return result; }
+                if (now >= nextIdentityCheck) nextIdentityCheck = now + 1000;
+                if (now - windowStarted >= 1000)
+                { windowStarted = now; totalBytes = diagnostics = events = 0; }
+            }
             if (GetTickCount64() >= (hello ? deadline : handshakeDeadline))
             { result.error = "nativeTimeout"; return result; }
             for (int channel = 0; channel < 2; ++channel)
@@ -347,7 +430,8 @@ struct WidgetNativeTaskExecutor::State
                         if (!StringField(frame, "kind", "hello") || !StringField(frame, "protocol", "snowdesktop-native")) return result;
                         hello = true;
                         const std::string request = "{\"version\":1,\"kind\":\"request\",\"id\":\"1\",\"operation\":\"" +
-                            options.operation + "\",\"payload\":" + options.payload + "}";
+                            options.operation + "\",\"payload\":" + options.payload +
+                            (options.streaming ? ",\"stream\":true}" : "}");
                         if (!Send(input.host.value, request, cancel, deadline)) return result;
                     }
                     else
@@ -355,8 +439,15 @@ struct WidgetNativeTaskExecutor::State
                         if (!StringField(frame, "id", "1")) return result;
                         if (StringField(frame, "kind", "event") && frame.Find("value"))
                         {
-                            if (++events > 16) { result.error = "nativeOutputLimit"; return result; }
-                            state->Post({ id, false, true, {}, std::move(line) });
+                            if (++events > (options.streaming ? 32u : 16u) ||
+                                !state->Post({ id, false, true, {}, std::move(line) }))
+                            { result.error = "nativeOutputLimit"; return result; }
+                            if (options.streaming) deadline = GetTickCount64() + 30000;
+                        }
+                        else if (options.streaming && StringField(frame, "kind", "heartbeat"))
+                        {
+                            if (++events > 32) { result.error = "nativeOutputLimit"; return result; }
+                            deadline = GetTickCount64() + 30000;
                         }
                         else if (StringField(frame, "kind", "result") && frame.Find("value"))
                         { result.ok = true; result.error.clear(); result.json = std::move(line); finished = true; }
@@ -367,14 +458,10 @@ struct WidgetNativeTaskExecutor::State
                 }
                 if (pending.size() > MaximumMessage) { result.error = "nativeOutputLimit"; return result; }
             }
-            if (!finished) WaitForSingleObject(cancel, 10);
+            if (!finished) WaitForSingleObject(cancel, options.streaming ? 50 : 10);
         }
         // Give a cooperative helper a brief shutdown window; the job guarantees
         // cleanup of the request's remaining managed descendants on every exit.
-        const auto stopDeadline = std::min(deadline, GetTickCount64() + 200);
-        (void)Send(input.host.value, R"({"version":1,"kind":"stop"})", cancel, stopDeadline);
-        HANDLE waits[]{ cancel, process.value };
-        WaitForMultipleObjects(2, waits, FALSE, 200);
         return result;
     }
 };
@@ -403,6 +490,7 @@ bool WidgetNativeTaskExecutor::Start(std::uint64_t id, std::filesystem::path roo
             {"payload", options.payload}, {"timeoutMs", std::to_string(options.timeoutMs)}}, validated) ||
         !id || authorizedFingerprint.empty()) return false;
     auto operation = std::make_shared<State::Operation>();
+    validated.streaming = options.streaming;
     if (!operation->cancel) return false;
     std::lock_guard lock(state_->mutex);
     if (state_->stopped || state_->operations.size() >= 8 || state_->operations.contains(id)) return false;

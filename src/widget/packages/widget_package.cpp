@@ -1877,10 +1877,12 @@ bool WidgetPackageValidator::ReadManifest(
         manifest = LocalizedManifest(std::move(manifest), "en-US");
         const auto declared = DeclaredPermissions(manifest);
         if (std::find(declared.begin(), declared.end(), "native.execute") == declared.end() ||
-            std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
-                "task.native.request") == manifest.requiredFeatures.end())
+            (std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+                "task.native.request") == manifest.requiredFeatures.end() &&
+             std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+                "task.native.watch") == manifest.requiredFeatures.end()))
             report.Add(ValidationSeverity::Error, "manifest.nativeContract", manifestPath,
-                "nativeHelpers requires native.execute and required feature task.native.request");
+                "nativeHelpers requires native.execute and required feature task.native.request or task.native.watch");
     }
     else
     {

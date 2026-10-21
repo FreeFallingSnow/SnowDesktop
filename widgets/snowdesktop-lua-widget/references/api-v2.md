@@ -3356,7 +3356,7 @@ tools reject this appearance. Lua API and schema versions remain unchanged.
 ## Native EXE helpers (feature `task.native.request`)
 
 This additive API retains `apiVersion: 2`. A component using it must declare
-`task.native.request` in `requiredFeatures` and `native.execute` in either
+`task.native.request` or `task.native.watch` in `requiredFeatures` and `native.execute` in either
 `permissions` or `optionalPermissions`. Older hosts reject the required feature
 or the executable package. Publish a supporting host before publishing components
 that require it; the application version alone does not identify support.
@@ -3395,8 +3395,8 @@ the dialog opens. A package subscription or development override does not approv
 native execution. Authorization is bound to the package source, permissions and
 validated contents of every package file. The host revalidates this reviewed
 identity when the user submits approval; changed content or source is rejected.
-Same-version content changes invalidate it. Executable hashes are checked again before launch, and the image is held open
-against modification/deletion for the managed invocation. Revocation cannot undo
+Same-version content changes invalidate it. Executable hashes are checked again before launch; `native.request` holds the image open
+against modification/deletion for its managed invocation. Revocation cannot undo
 past file, network or device operations.
 
 ```lua
@@ -3467,3 +3467,64 @@ component disposal, permission revocation and host shutdown also clean up manage
 processes. The job manages at most eight processes per request and is a lifecycle
 mechanism, not an isolation boundary against malicious same-user programs.
 A helper crash or protocol failure does not load helper code into the host.
+
+### Resident helpers (`task.native.watch`)
+
+Use `task.start("native.watch", arguments)` for a resident, instance-owned helper.
+Its arguments match `native.request`; `timeoutMs` applies to validation, startup,
+handshake and the first event/heartbeat. The process then remains alive until the
+task is canceled, the component is disposed/disabled/reloaded, consent is revoked,
+the package changes, the helper exits, or the host shuts down. Hiding a component
+does not itself end the watch. Each watch owns a separate process; it is not shared
+between component instances. At most one watch per instance and eight native
+tasks across the engine may run. Request and watch tasks have separate per-instance limits.
+
+The protocol and launch argument remain v1. A watch request adds `"stream":true`:
+
+```json
+{"version":1,"kind":"request","id":"1","operation":"watch","payload":{},"stream":true}
+```
+
+Send `event` frames with the latest readings; do not send `result` after each
+reading, because `result`/`error` ends the task. Send an event or this heartbeat
+at least once every 30 seconds after the first frame:
+
+```json
+{"version":1,"kind":"heartbeat","id":"1"}
+```
+
+Heartbeats are consumed by the host. Data still arrives as `native.event`, with
+the original watch `taskId`. A stopped or failed watch emits `task.complete`.
+There is no automatic restart; the component can offer an explicit retry after
+reporting the error. Always retain the returned task ID and use `task.cancel(id)`
+to stop a watch before explicitly replacing it. Disposal and host teardown also
+stop it without requiring component cleanup code.
+
+The 16 KiB frame, JSON depth/node limits still apply. For watches the byte and
+event budgets reset in one-second windows: stdout 256 KiB, stderr 16 KiB, and
+32 events/heartbeats. At most 64 undelivered events may be queued for one native
+task; excess output ends it with `nativeOutputLimit`. Initial silence uses the
+startup timeout; subsequent 30-second silence yields `nativeTimeout`.
+
+The host watches the package directory for writes/renames and checks its path
+identity once per second. Changes end the watch with `nativeContentChanged`.
+Launch-time image/directory pins are released after process startup so a resident
+helper does not retain the host's package-replacement locks. The running Windows
+image still follows normal OS file-sharing rules.
+
+On every exit path, including cancellation, the host first sends `stop` and allows
+a brief cooperative exit, then terminates any remaining managed processes through
+the Job Object. Revoking authorization cannot roll back completed operations.
+
+```lua
+-- In setup, once for this component instance (never from view/render):
+local watchId, err = task.start("native.watch", {
+    helper = "battery", operation = "watch", payload = "{}", timeoutMs = 5000,
+})
+-- Handle native.event for watchId to update the model without respawning the EXE.
+```
+
+Components requiring resident mode must declare `task.native.watch`; an older
+host which only supports `task.native.request` must reject that required feature.
+Publish the supporting host before distributing such a component. The Lua API
+version remains 2 and the distributed authoring Skill revision is 18.

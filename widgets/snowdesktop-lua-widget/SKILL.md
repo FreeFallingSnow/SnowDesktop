@@ -317,7 +317,8 @@ queries, write storage or rebuild invariant data on every frame.
 - Keep `permissions` empty unless a documented guarded API needs one. Reserved
   vocabulary does not make an API available.
 - Native helpers are limited to declared, hash-matched `.exe` files with
-  `native.execute` permission and the `task.native.request` required feature.
+  `native.execute` permission and a required `task.native.request` (one request)
+  or `task.native.watch` (resident stream) feature.
   Provide all four localized consent explanations and require the host's strong
   user authorization before execution. Lua remains sandboxed; use only the fixed
   helper protocol described under "Native EXE helpers" in `references/api-v2.md`.

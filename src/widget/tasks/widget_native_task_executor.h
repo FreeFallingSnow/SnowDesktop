@@ -14,6 +14,7 @@ struct NativeRequestOptions
 {
     std::string helper, operation, payload = "{}";
     int timeoutMs = 15000;
+    bool streaming = false; // Internal task mode; never accepted as a Lua argument.
 };
 bool ParseNativeRequestOptions(const std::unordered_map<std::string, std::string>& arguments,
     NativeRequestOptions& options);

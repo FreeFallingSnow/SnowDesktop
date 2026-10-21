@@ -34,6 +34,21 @@ int Helper()
     JsonValue request;
     if (!ParseJson(line, request) || !request.Find("operation") || !request.Find("payload")) return 4;
     const auto operation = request.Find("operation")->string;
+    if (operation == "watch-silent") { std::getline(std::cin, line); return 0; }
+    if (operation == "watch" || operation == "watch-crash" || operation == "watch-burst")
+    {
+        unsigned sequence = 0;
+        for (;;)
+        {
+            std::cout << "{\"version\":1,\"kind\":\"event\",\"id\":\"1\",\"value\":{\"pid\":" <<
+                GetCurrentProcessId() << ",\"sequence\":" << ++sequence << ",\"percent\":73}}" << std::endl;
+            if (operation == "watch-crash") return 12;
+            DWORD available = 0;
+            if (!PeekNamedPipe(GetStdHandle(STD_INPUT_HANDLE), nullptr, 0, nullptr, &available, nullptr)) return 13;
+            if (available) { std::getline(std::cin, line); return 0; }
+            if (operation != "watch-burst") Sleep(80);
+        }
+    }
     if (operation == "bad")
         std::cout << R"({"version":9,"kind":"result","id":"1","value":false})" << std::endl;
     else if (operation == "large")
@@ -110,6 +125,11 @@ void Tests()
     Require(report.Ok() && manifest.nativeHelpers.size() == 1, "declared EXE with complete localized explanation validates");
     Require(LocalizePackageManifest(manifest, "ja-JP").nativeHelpers.front().purpose == "電量表示", "native consent text uses component localization");
     const auto fingerprint = PackagePermissionScopeFingerprint(manifest);
+    auto watchManifest = manifestText();
+    watchManifest.replace(watchManifest.find("task.native.request"), std::string("task.native.request").size(), "task.native.watch");
+    Write(root / L"widget.json", watchManifest);
+    Require(validator.ValidateDirectory(root).Ok(), "watch-only required feature declares a valid native package");
+    Write(root / L"widget.json", manifestText());
 
     Write(root / L"undeclared.exe", "not executable");
     Require(!validator.ValidateDirectory(root).Ok(), "undeclared EXE is rejected");
@@ -161,6 +181,65 @@ void Tests()
         Require(messages.back().error == "canceled", "canceled task cannot report success");
         Require(WaitForSingleObject(process, 1000) == WAIT_OBJECT_0, "cancel terminates the managed helper");
         CloseHandle(process);
+    }
+    {
+        Runner runner;
+        Require(runner.executor.Start(10, root, fingerprint, {"battery","watch","{}",1000,true}), "resident helper starts");
+        HANDLE process = nullptr;
+        DWORD pid = 0;
+        std::size_t count = 0;
+        while (count < 20)
+        {
+            for (const auto& message : runner.Wait(false))
+            {
+                Require(!message.final, "stream remains active beyond one-shot event and lifetime limits");
+                JsonValue frame;
+                Require(ParseJson(message.json, frame), "resident event is JSON");
+                const auto currentPid = static_cast<DWORD>(frame.Find("value")->Find("pid")->number);
+                if (!pid) { pid = currentPid; process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid); }
+                Require(currentPid == pid, "all resident readings come from the same process");
+                ++count;
+            }
+        }
+        Require(process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT, "resident helper stays alive while subscribed");
+        Require(runner.executor.Cancel(10), "resident cancellation is accepted");
+        Require(runner.Wait().back().error == "canceled", "resident cancellation completes once");
+        DWORD exitCode = 1;
+        Require(WaitForSingleObject(process, 1000) == WAIT_OBJECT_0 && GetExitCodeProcess(process, &exitCode) && exitCode == 0,
+            "resident helper receives cooperative stop and exits normally");
+        CloseHandle(process);
+    }
+    {
+        HANDLE process = nullptr;
+        {
+            Runner runner;
+            Require(runner.executor.Start(11, root, fingerprint, {"battery","watch","{}",1000,true}), "shutdown fixture starts");
+            const auto messages = runner.Wait(false);
+            JsonValue frame;
+            Require(!messages.front().final && ParseJson(messages.front().json, frame), "shutdown fixture publishes a live PID");
+            process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(frame.Find("value")->Find("pid")->number));
+            Require(process != nullptr, "shutdown fixture process is observed");
+        }
+        Require(WaitForSingleObject(process, 1000) == WAIT_OBJECT_0, "executor shutdown leaves no resident process behind");
+        CloseHandle(process);
+    }
+    {
+        Runner runner;
+        Require(runner.executor.Start(12, root, fingerprint, {"battery","watch","{}",1000,true}), "package-change fixture starts");
+        Require(!runner.Wait(false).front().final, "package-change fixture starts streaming");
+        Write(root / L"main.lua", "return widget.define({model={watchChanged=true}})");
+        Require(runner.Wait().back().error == "nativeContentChanged", "a changed package immediately retires its resident helper");
+        Write(root / L"main.lua", "return widget.define({model={}})");
+    }
+    for (const auto& operation : {"watch-silent", "watch-crash", "watch-burst"})
+    {
+        Runner runner;
+        Require(runner.executor.Start(13, root, fingerprint, {"battery",operation,"{}",1000,true}), "resident failure fixture starts");
+        const auto messages = runner.Wait();
+        const auto expected = std::string(operation) == "watch-silent" ? "nativeTimeout" :
+            (std::string(operation) == "watch-crash" ? "nativeExited" : "nativeOutputLimit");
+        Require(messages.back().final && !messages.back().ok && messages.back().error == expected,
+            "resident startup timeout, crash and output flooding terminate predictably");
     }
     Write(root / L"main.lua", "return widget.define({model={changed=true}})");
     Require(validator.ValidateDirectory(root, &manifest).Ok() && PackagePermissionScopeFingerprint(manifest) != fingerprint,

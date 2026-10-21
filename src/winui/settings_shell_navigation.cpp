@@ -23,6 +23,7 @@ bool SettingsShellNavigationFeedback::UpdateRoute(
 void SettingsShellNavigationFeedback::Restart() noexcept
 {
     highlightConsumed_ = false;
+    permissionEditorConsumed_ = false;
     returnDismissed_ = false;
 }
 
@@ -31,6 +32,15 @@ bool SettingsShellNavigationFeedback::ConsumeHighlight() noexcept
     if (!route_ || route_->focusId.empty() || highlightConsumed_)
         return false;
     highlightConsumed_ = true;
+    return true;
+}
+
+bool SettingsShellNavigationFeedback::ConsumePackagePermissionEditor(bool packageReady) noexcept
+{
+    if (!packageReady || !route_ || permissionEditorConsumed_ ||
+        route_->page != SettingsPage::Widgets || route_->focusId != "widgets.permissions" ||
+        route_->itemKey.empty()) return false;
+    permissionEditorConsumed_ = true;
     return true;
 }
 

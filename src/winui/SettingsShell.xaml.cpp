@@ -1532,6 +1532,10 @@ bool SettingsShell::ApplyWidgetsPageSnapshot(
                     UpdateAvailable;
         });
     SetAgentSkillUpdateAvailable(updateAvailable);
+    // The first package publication can arrive after route/layout focus.
+    if (navigation_.Route().page == SettingsPage::Widgets &&
+        navigation_.Route().focusId == "widgets.permissions" && !navigation_.Route().itemKey.empty())
+        ScheduleFocus();
     return true;
 }
 
@@ -3418,6 +3422,19 @@ void SettingsShell::FocusPendingTarget()
         const auto offset = pageOffsets_.find(route.page);
         PageScrollViewer().ChangeView(nullptr, offset == pageOffsets_.end() ? 0.0 : offset->second, nullptr, true);
     }
+    if (route.page == SettingsPage::Widgets && widgetsPage_ &&
+        focusId == "widgets.permissions" && !route.itemKey.empty())
+    {
+        // Never move keyboard focus behind an open dialog. The route gate is
+        // consumed before ShowAsync so snapshot/layout retries cannot reopen it.
+        if (activeDialog_) return;
+        if (navigationFeedback_.ConsumePackagePermissionEditor(
+                IsLoaded() && widgetsPage_->CanOpenPackagePermissions(route.itemKey)))
+        {
+            widgetsPage_->OpenPackagePermissions(route.itemKey);
+            return;
+        }
+    }
     if (!focusId.empty())
     {
         snowdesktop::winui::SettingsFocusPrerequisite prerequisite;
@@ -4156,6 +4173,9 @@ winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
         nativeTimer.Stop();
         if (activeDialog_ == dialog)
             activeDialog_ = nullptr;
+        if (!closed_ && generation == navigation_.Generation() && navigation_.Route() == route)
+            (void)navigationFeedback_.ConsumePackagePermissionEditor(true);
+        ScheduleFocus();
         if (closed_ || generation != navigation_.Generation() ||
             navigation_.Route() != route || !completed)
             co_return;

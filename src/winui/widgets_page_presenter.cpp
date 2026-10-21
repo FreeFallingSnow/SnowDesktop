@@ -3691,6 +3691,20 @@ mux::FrameworkElement WidgetsPagePresenter::FocusPackagePermissions(std::wstring
     return impl_ ? impl_->FocusPackagePermissions(packageId) : nullptr;
 }
 
+bool WidgetsPagePresenter::CanOpenPackagePermissions(std::wstring_view packageId) const noexcept
+{
+    if (!impl_ || impl_->closed || !impl_->active || !impl_->hasRevision ||
+        !impl_->actions.editPermissions || !impl_->actions.invoke) return false;
+    const auto* package = impl_->FindPackage(packageId);
+    return package && package->valid && !package->permissions.empty();
+}
+
+void WidgetsPagePresenter::OpenPackagePermissions(std::wstring_view packageId)
+{
+    if (CanOpenPackagePermissions(packageId))
+        impl_->OpenPermissionEditor(*impl_->FindPackage(packageId));
+}
+
 mux::FrameworkElement WidgetsPagePresenter::DeveloperToolsFocusTarget(
     std::string_view focusId) const noexcept
 {
