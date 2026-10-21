@@ -602,6 +602,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_notification_schedule_store.cpp
     src/widget/tasks/widget_media_task_executor.cpp
     src/widget/tasks/widget_audio_output_task_executor.cpp
+    src/widget/tasks/widget_audio_playback.cpp
     src/widget/tasks/widget_system_control_tasks.cpp
     src/widget/tasks/widget_clipboard_task_executor.cpp
     src/widget/tasks/widget_filesystem_handle_store.cpp
@@ -1675,6 +1676,17 @@ if (BUILD_TESTING)
             src/widget/tasks/widget_audio_output_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
+        LABELS contract audio task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAudioPlaybackTests
+        widget_audio_playback
+        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/local-music-player/modules/player.lua"
+        SOURCES
+            tests/widget/widget_audio_playback_tests.cpp
+            src/widget/tasks/widget_audio_playback.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua windowsapp shcore ole32
         LABELS contract audio task lua widget)
 
     snowdesktop_add_test(

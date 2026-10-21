@@ -49,6 +49,7 @@
 #include "widget/tasks/widget_notification_schedule_store.h"
 #include "widget/tasks/widget_media_task_executor.h"
 #include "widget/tasks/widget_audio_output_task_executor.h"
+#include "widget/tasks/widget_audio_playback.h"
 #include "widget/tasks/widget_system_control_tasks.h"
 #include "widget/tasks/widget_clipboard_task_executor.h"
 #include "widget/tasks/widget_filesystem_handle_store.h"
@@ -1928,6 +1929,7 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>
         audioOutputTaskExecutor_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioPlayback> audioPlayback_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>
         clipboardTaskExecutor_;

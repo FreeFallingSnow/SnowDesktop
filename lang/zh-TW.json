@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "拒絕後的行為",
   "app.widget_permission.native_warning": "輔助程式將以目前 Windows 使用者權限執行，可以存取檔案、網路和裝置，並啟動其他程式。開發者聲明的用途不構成系統強制限制。撤銷授權無法復原已發生的操作。",
   "app.widget_permission.native_acknowledge": "我信任此元件的來源，並了解輔助程式的權限範圍",
-  "app.widget_permission.native_countdown": "套用（%s 秒後可用）"
+  "app.widget_permission.native_countdown": "套用（%s 秒後可用）",
+  "app.settings.widgets_permission_audio_playback": "播放元件音訊"
 }

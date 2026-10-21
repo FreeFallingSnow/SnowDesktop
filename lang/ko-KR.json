@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "접근 거부 시 동작",
   "app.widget_permission.native_warning": "보조 프로그램은 현재 Windows 사용자의 권한으로 실행됩니다. 파일, 네트워크 및 장치에 접근하고 다른 프로그램을 시작할 수 있습니다. 명시된 용도는 시스템에서 강제하는 제한이 아닙니다. 권한을 취소해도 이미 수행한 작업은 되돌릴 수 없습니다.",
   "app.widget_permission.native_acknowledge": "이 구성 요소의 출처를 신뢰하며 보조 프로그램의 접근 권한 범위를 이해합니다.",
-  "app.widget_permission.native_countdown": "적용(%s초 후 사용 가능)"
+  "app.widget_permission.native_countdown": "적용(%s초 후 사용 가능)",
+  "app.settings.widgets_permission_audio_playback": "구성 요소 오디오 재생"
 }

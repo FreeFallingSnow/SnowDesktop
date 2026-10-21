@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "Comportement en cas de refus",
   "app.widget_permission.native_warning": "Le programme auxiliaire s’exécute avec les autorisations de l’utilisateur Windows actuel. Il peut accéder aux fichiers, aux réseaux et aux appareils, et lancer d’autres programmes. L’usage déclaré ne constitue pas une restriction imposée par le système. Révoquer l’accès n’annule pas les actions déjà effectuées.",
   "app.widget_permission.native_acknowledge": "Je fais confiance à la source de ce composant et je comprends les droits d’accès du programme auxiliaire.",
-  "app.widget_permission.native_countdown": "Appliquer (disponible dans %s s)"
+  "app.widget_permission.native_countdown": "Appliquer (disponible dans %s s)",
+  "app.settings.widgets_permission_audio_playback": "Lire le son du composant"
 }

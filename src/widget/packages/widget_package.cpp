@@ -405,6 +405,10 @@ bool ResourceContentIsValid(const std::filesystem::path& path,
                 static_cast<unsigned char>(data[3]) == 0x00) ||
             (extension == ".otf" && data.compare(0, 4, "OTTO") == 0);
     }
+    if (resource.type == "audio")
+        return extension == ".wav" ? data.size() >= 44 && data.compare(0, 4, "RIFF") == 0 && data.compare(8, 4, "WAVE") == 0 :
+            extension == ".mp3" && data.size() >= 4 && (data.compare(0, 3, "ID3") == 0 ||
+                (static_cast<unsigned char>(data[0]) == 0xff && (static_cast<unsigned char>(data[1]) & 0xe0) == 0xe0));
     if (resource.type != "image") return false;
     if (extension == ".png")
     {
@@ -1752,11 +1756,11 @@ bool WidgetPackageValidator::ReadManifest(
                 ReadString(value, "type", resource.type);
                 ReadString(value, "path", resource.path);
                 ReadString(value, "license", resource.license);
-                if (resource.type != "image" && resource.type != "font")
+                if (resource.type != "image" && resource.type != "font" && resource.type != "audio")
                 {
                     report.Add(ValidationSeverity::Error,
                         "manifest.resourceType", manifestPath,
-                        "resource type must be image or font: " + name);
+                        "resource type must be image, font, or audio: " + name);
                 }
                 const std::filesystem::path resourcePath =
                     Utf8ToWide(resource.path);
@@ -1766,6 +1770,7 @@ bool WidgetPackageValidator::ReadManifest(
                     ? (extension == ".png" || extension == ".jpg" ||
                         extension == ".jpeg" || extension == ".bmp" ||
                         extension == ".gif" || extension == ".ico")
+                    : resource.type == "audio" ? (extension == ".wav" || extension == ".mp3")
                     : (extension == ".ttf" || extension == ".otf");
                 if (!IsSafeRelativePath(resourcePath) || !extensionValid)
                 {

@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "Comportamiento si se deniega el acceso",
   "app.widget_permission.native_warning": "El programa auxiliar se ejecuta con los permisos del usuario actual de Windows. Puede acceder a archivos, redes y dispositivos, e iniciar otros programas. La finalidad declarada no es una restricción impuesta por el sistema. Revocar el acceso no deshace las acciones ya realizadas.",
   "app.widget_permission.native_acknowledge": "Confío en el origen de este componente y comprendo los permisos del programa auxiliar.",
-  "app.widget_permission.native_countdown": "Aplicar (disponible en %s s)"
+  "app.widget_permission.native_countdown": "Aplicar (disponible en %s s)",
+  "app.settings.widgets_permission_audio_playback": "Reproducir audio del componente"
 }

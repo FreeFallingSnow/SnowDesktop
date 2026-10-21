@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 2,
   "entry": "main.lua",
-  "minHostVersion": "1.0.11.0",
+  "minHostVersion": "1.0.12.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Pomodoro",
   "nameKey": "lua_widget.pomodoro.name",
-  "version": "2.1.11",
+  "version": "2.1.12",
   "description": "A Pomodoro timer with focus and break cycles, pause and resume, and customizable durations and colors.",
   "descriptionKey": "lua_widget.pomodoro.description",
   "previewData": {
@@ -54,7 +54,8 @@
       "lua_widget.pomodoro.pause": "暂停计时",
       "lua_widget.pomodoro.stop": "停止计时",
       "lua_widget.pomodoro.skip": "跳过当前阶段",
-      "lua_widget.pomodoro.reset_count": "重置计数"
+      "lua_widget.pomodoro.reset_count": "重置计数",
+      "lua_widget.pomodoro.sound": "完成提示音"
     },
     "en-US": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -83,7 +84,8 @@
       "lua_widget.pomodoro.pause": "Pause Timer",
       "lua_widget.pomodoro.stop": "Stop Timer",
       "lua_widget.pomodoro.skip": "Skip Current Stage",
-      "lua_widget.pomodoro.reset_count": "Reset Count"
+      "lua_widget.pomodoro.reset_count": "Reset Count",
+      "lua_widget.pomodoro.sound": "Completion sound"
     },
     "zh-TW": {
       "lua_widget.pomodoro.name": "番茄鐘",
@@ -112,7 +114,8 @@
       "lua_widget.pomodoro.pause": "暫停計時",
       "lua_widget.pomodoro.stop": "停止計時",
       "lua_widget.pomodoro.skip": "跳過目前階段",
-      "lua_widget.pomodoro.reset_count": "重設計數"
+      "lua_widget.pomodoro.reset_count": "重設計數",
+      "lua_widget.pomodoro.sound": "完成提示音"
     },
     "ja-JP": {
       "lua_widget.pomodoro.name": "ポモドーロ",
@@ -141,7 +144,8 @@
       "lua_widget.pomodoro.pause": "タイマーを一時停止",
       "lua_widget.pomodoro.stop": "タイマーを停止",
       "lua_widget.pomodoro.skip": "現在のステージをスキップ",
-      "lua_widget.pomodoro.reset_count": "カウントのリセット"
+      "lua_widget.pomodoro.reset_count": "カウントのリセット",
+      "lua_widget.pomodoro.sound": "完了音"
     },
     "ko-KR": {
       "lua_widget.pomodoro.name": "포모도로",
@@ -170,7 +174,8 @@
       "lua_widget.pomodoro.pause": "타이머 일시 중지",
       "lua_widget.pomodoro.stop": "타이머 중지",
       "lua_widget.pomodoro.skip": "현재 단계 건너뛰기",
-      "lua_widget.pomodoro.reset_count": "재설정 횟수"
+      "lua_widget.pomodoro.reset_count": "재설정 횟수",
+      "lua_widget.pomodoro.sound": "완료 알림음"
     },
     "de-DE": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -199,7 +204,8 @@
       "lua_widget.pomodoro.pause": "Timer anhalten",
       "lua_widget.pomodoro.stop": "Timer stoppen",
       "lua_widget.pomodoro.skip": "Aktuelle Phase überspringen",
-      "lua_widget.pomodoro.reset_count": "Zähler zurücksetzen"
+      "lua_widget.pomodoro.reset_count": "Zähler zurücksetzen",
+      "lua_widget.pomodoro.sound": "Abschlusston"
     },
     "fr-FR": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -228,7 +234,8 @@
       "lua_widget.pomodoro.pause": "Mettre le minuteur en pause",
       "lua_widget.pomodoro.stop": "Arrêter la minuterie",
       "lua_widget.pomodoro.skip": "Passer l'étape actuelle",
-      "lua_widget.pomodoro.reset_count": "Réinitialiser le compte"
+      "lua_widget.pomodoro.reset_count": "Réinitialiser le compte",
+      "lua_widget.pomodoro.sound": "Son de fin"
     },
     "es-ES": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -257,7 +264,8 @@
       "lua_widget.pomodoro.pause": "Pausar temporizador",
       "lua_widget.pomodoro.stop": "Detener temporizador",
       "lua_widget.pomodoro.skip": "Saltar etapa actual",
-      "lua_widget.pomodoro.reset_count": "Restablecer recuento"
+      "lua_widget.pomodoro.reset_count": "Restablecer recuento",
+      "lua_widget.pomodoro.sound": "Sonido al terminar"
     },
     "es-419": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -286,7 +294,8 @@
       "lua_widget.pomodoro.pause": "Pausar temporizador",
       "lua_widget.pomodoro.stop": "Detener temporizador",
       "lua_widget.pomodoro.skip": "Saltar etapa actual",
-      "lua_widget.pomodoro.reset_count": "Restablecer recuento"
+      "lua_widget.pomodoro.reset_count": "Restablecer recuento",
+      "lua_widget.pomodoro.sound": "Sonido al terminar"
     },
     "pt-BR": {
       "lua_widget.pomodoro.name": "Pomodoro",
@@ -296,36 +305,43 @@
       "lua_widget.pomodoro.long_break_minutes": "Pausa longa",
       "lua_widget.pomodoro.long_break_interval": "Intervalo de pausa longo (Rodadas)",
       "lua_widget.pomodoro.work_color": "Cor do foco",
-    "lua_widget.pomodoro.break_color": "Cor da pausa",
+      "lua_widget.pomodoro.break_color": "Cor da pausa",
       "lua_widget.pomodoro.title_work": "Pomodoro - Foco",
-    "lua_widget.pomodoro.title_break": "Pomodoro — Pausa",
-    "lua_widget.pomodoro.title_paused": "Pomodoro — Pausado",
-    "lua_widget.pomodoro.work_complete": "Foco concluído! Hora de fazer uma pausa.",
-    "lua_widget.pomodoro.break_complete": "Pausa concluída. Pronto para a próxima sessão de foco.",
+      "lua_widget.pomodoro.title_break": "Pomodoro — Pausa",
+      "lua_widget.pomodoro.title_paused": "Pomodoro — Pausado",
+      "lua_widget.pomodoro.work_complete": "Foco concluído! Hora de fazer uma pausa.",
+      "lua_widget.pomodoro.break_complete": "Pausa concluída. Pronto para a próxima sessão de foco.",
       "lua_widget.pomodoro.work_skipped": "Foco ignorado. Iniciando uma pausa.",
       "lua_widget.pomodoro.break_skipped": "Pausa ignorada. Iniciando a próxima sessão de foco.",
       "lua_widget.pomodoro.state_work": "Focando",
       "lua_widget.pomodoro.state_break": "No intervalo",
       "lua_widget.pomodoro.state_paused": "Pausado",
       "lua_widget.pomodoro.state_idle": "Pronto",
-    "lua_widget.pomodoro.round_current": "· Rodada {0}/{1}",
+      "lua_widget.pomodoro.round_current": "· Rodada {0}/{1}",
       "lua_widget.pomodoro.round_completed": "· {0}/{1}",
-    "lua_widget.pomodoro.start": "Iniciar foco",
+      "lua_widget.pomodoro.start": "Iniciar foco",
       "lua_widget.pomodoro.resume": "Retomar temporizador",
       "lua_widget.pomodoro.pause": "Pausar temporizador",
       "lua_widget.pomodoro.stop": "Parar temporizador",
       "lua_widget.pomodoro.skip": "Pular estágio atual",
-      "lua_widget.pomodoro.reset_count": "Redefinir contagem"
+      "lua_widget.pomodoro.reset_count": "Redefinir contagem",
+      "lua_widget.pomodoro.sound": "Som de conclusão"
     }
   },
   "defaultSize": {
     "columns": 2,
     "rows": 2
   },
-  "resources": {},
+  "resources": {
+    "sound": {
+      "type": "audio",
+      "path": "assets/complete.wav"
+    }
+  },
   "permissions": [],
   "optionalPermissions": [
-    "notification.post"
+    "notification.post",
+    "audio.playback"
   ],
   "requiredFeatures": [
     "settings.duration",
@@ -342,10 +358,12 @@
     "view.statusVisuals",
     "view.text.flow",
     "view.theme.tokens",
-    "view.tree.core"
+    "view.tree.core",
+    "resource.audio"
   ],
   "optionalFeatures": [
     "task.notification.show",
-    "task.start"
+    "task.start",
+    "task.audio.playback"
   ]
 }

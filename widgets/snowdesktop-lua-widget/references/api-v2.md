@@ -2075,6 +2075,55 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
 
+#### 组件音频播放（宿主 1.0.12.0 增量能力）
+
+`resource.audio`、`task.audio.playback`、`audio.playback.events` 是独立 feature。
+API/schema 仍为 v2；依赖组件必须声明这些 requiredFeatures 和 `minHostVersion`。
+同版本早期构建也可能缺少能力；旧宿主会拒绝新增 audio 资源类型，不能仅靠 Lua
+feature 检测让含该资源的包在旧宿主加载。官方社区组件须在支持宿主发布后再发布。
+
+包内 MP3/WAV 在 `resources` 声明 `{type="audio",path="assets/sound.wav"}`，
+沿用包内安全路径、32 个资源、每资源 8 MiB 和包总大小限制。
+入口求值时 `resource.audio("sound")` 创建不透明句柄；`resource.status` 的 ready
+表示声明已解析，不代表音频已解码。文件打开、解码和播放在独立工作线程进行，
+错误通过任务或播放状态回传，不阻塞渲染。播放只支持本地 MP3/WAV，不访问网络。
+
+```lua
+local sound = resource.audio("sound")
+-- After audio.playback permission is granted, timer events may also play audio.
+local taskId, err = task.start("audio.play", {source=sound, volume=0.6, loop=false})
+-- Alternatively: {handle=userSelectedFile}, or {handle=selectedFolder,name="song.mp3"}.
+-- task.complete.value.playbackId is an opaque ID belonging to this VM.
+task.start("audio.pause", {playbackId=id})
+task.start("audio.resume", {playbackId=id})
+task.start("audio.seek", {playbackId=id, positionMs=30000})
+task.start("audio.setVolume", {playbackId=id, volume=0.5})
+task.start("audio.setLoop", {playbackId=id, loop=true})
+task.start("audio.stop", {playbackId=id})
+```
+
+全部任务要求 `audio.playback`，无需即时手势；用户选择的文件还要求
+`filesystem.userSelected.read` 和当前实例可读句柄。包资源 `source` 与文件 `handle`
+必须且只能提供一个；`name` 仅接受文件夹的直接子文件名，拒绝路径跳转、备用数据流
+和重解析点。宿主在整个播放期固定目录及文件，防止授权后路径替换。
+`volume` 为有限 0–1 数值，默认 1；`loop` 为布尔值，默认 false。
+组件音量不会修改系统端点或其他组件。每 VM 最多 8 路、宿主最多 32 路。
+
+播放任务成功返回 `{playbackId=...}`，其余成功返回 `{accepted=true}`；
+成功表示操作已提交，音频解码仍可能失败。`audio.state` 在 task.complete 后串行投递，
+含 `playbackId/status/positionMs/durationMs/volume/loop/error`；status 为
+`loading/playing/paused/ended/stopped/error`。位置使用毫秒，未知时长为 0。
+活动播放最多每 250 ms 合并一次进度，终态保留；回调不继承用户手势。
+自然结束和失败后自动释放，播放 ID 不能持久化。无限循环须显式停止。
+后台隐藏继续播放；卸载、禁用、热重载、撤权、关闭自动停止。释放来源文件句柄也会停止。
+预览仅返回确定性播放 ID，不打开文件、不发声、不产生真实进度。
+
+稳定错误包括 `invalidArguments`、`invalidPlayback`、`permissionDenied`、
+`permissionRevoked`、`invalidReference`、`unsupportedFormat`、`audioOpenFailed`、
+`reparsePointDenied`、`notFile`、`seekOutOfRange`、`quotaExceeded`、
+`audioPlaybackUnavailable`、`audioPlaybackFailed`、`audioDecodeFailed`、`canceled`。
+提示音应默认关闭并提供设置开关；拒绝播放权限时计时、计数等主功能应继续可用。
+
 #### 设备与电源写任务（宿主 1.0.8.0 起）
 
 以下十九项是 API v2 的增量任务，成功值统一为 `SnowAcceptedTaskValue`

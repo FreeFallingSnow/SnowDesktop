@@ -1,4 +1,4 @@
-#include "ui/render/app_font.h"
+﻿#include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"
 #include "common/background_work.h"
@@ -15,6 +15,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget/tasks/widget_audio_playback_lua.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/input/text_input_accessibility.h"
 namespace text_input = snowdesktop::text_input;
@@ -2539,7 +2540,7 @@ static std::optional<std::wstring> ResolveResourceHandlePath(
 {
     const auto* handle = TestResourceHandle(L, index);
     if (!handle || handle->type != expected) return std::nullopt;
-    const char* type = expected == LuaResourceType::Image ? "image" : "font";
+    const char* type = expected == LuaResourceType::Image ? "image" : expected == LuaResourceType::Audio ? "audio" : "font";
     const auto resource = CurrentPackageResource(L, handle->name, type);
     if (!resource) return std::nullopt;
     lua_getfield(L, LUA_REGISTRYINDEX, "__widget_resource_paths");
@@ -5355,6 +5356,11 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         snowdesktop::system_control::Request request;
         if (!snowdesktop::widget_runtime::MakeSystemControlRequest(taskName, arguments, request))
             return luaL_error(state, "task.start: invalid system control arguments");
+    }
+    else if (snowdesktop::widget_runtime::WidgetAudioPlayback::SupportsAction(taskName))
+    {
+        if (!snowdesktop::widget_runtime::ReadAudioPlaybackArguments(state, taskName, arguments))
+            return luaL_error(state, "task.start: invalid audio playback arguments");
     }
     else if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
             SupportsAction(taskName))
@@ -11645,6 +11651,20 @@ static int lua_ResourceExists(lua_State* L)
     return 1;
 }
 
+static int lua_ResourceAudio(lua_State* L)
+{
+    if (!ResourceCreationAllowed(L))
+        return ResourceApiError(L, "resource.audio", "loadPhaseRequired");
+    size_t length = 0;
+    const char* name = luaL_checklstring(L, 1, &length);
+    if (!length || length > 64 || std::string_view(name, length).find('\0') != std::string_view::npos)
+        return ResourceApiError(L, "resource.audio", "invalidName");
+    if (!CurrentPackageResourcePath(L, std::string(name, length), "audio"))
+        return ResourceApiError(L, "resource.audio", "notDeclared");
+    PushResourceHandle(L, LuaResourceType::Audio, std::string(name, length));
+    return 1;
+}
+
 static int lua_ResourceImage(lua_State* L)
 {
     if (!ResourceCreationAllowed(L))
@@ -11738,7 +11758,7 @@ static int lua_ResourceStatus(lua_State* L)
     if (!handle)
         return ResourceApiError(L, "resource.status", "invalidHandle");
     const char* type = handle->type == LuaResourceType::Image
-        ? "image" : "font";
+        ? "image" : handle->type == LuaResourceType::Audio ? "audio" : "font";
     auto* state = GetD2D(L);
     const bool runtimeImage = handle->type == LuaResourceType::Image &&
         snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name);
@@ -11761,7 +11781,7 @@ static int lua_ResourceStatus(lua_State* L)
         ready = handle->type == LuaResourceType::Image
             ? imageContentKey &&
                 state->packageImageCache.Find(*imageContentKey) != nullptr
-            : state->privateFonts.contains(*path);
+            : handle->type == LuaResourceType::Audio || state->privateFonts.contains(*path);
     }
     lua_createtable(L, 0, 3);
     lua_pushstring(L, ready ? "ready" : "error");
@@ -12372,6 +12392,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 
 void WidgetEngine::BeginTaskShutdown()
 {
+    audioPlayback_.reset();
     if (taskBroker_) taskBroker_->Shutdown();
     nativeTaskExecutor_.reset();
     systemControlTasks_.reset();
@@ -12379,6 +12400,7 @@ void WidgetEngine::BeginTaskShutdown()
 
 void WidgetEngine::InitializeWidgetTaskBroker()
 {
+    audioPlayback_.reset();
     systemControlTasks_.reset();
     using snowdesktop::widget_runtime::TaskDescriptor;
     taskBroker_ = std::make_unique<
@@ -12410,6 +12432,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     else
     {
+        audioPlayback_ = std::make_unique<snowdesktop::widget_runtime::WidgetAudioPlayback>();
+        audioPlayback_->SetWakeCallback(taskWakeCallback_);
         nativeTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetNativeTaskExecutor>();
         nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         locationTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetLocationTaskExecutor>();
@@ -12620,6 +12644,18 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    std::vector<snowdesktop::widget_runtime::AudioPlaybackMessage> audioEvents;
+    if (audioPlayback_)
+        for (auto& message : audioPlayback_->Drain())
+        {
+            if (message.taskId)
+            {
+                const auto snapshot = taskBroker_->Snapshot(message.taskId);
+                if (!snapshot || snapshot->cancelRequested) { audioPlayback_->Cancel(message.taskId); continue; }
+                (void)taskBroker_->Complete(message.taskId, message.ok, message.state.error);
+            }
+            else audioEvents.push_back(std::move(message));
+        }
     if (nativeTaskExecutor_)
         for (auto& message : nativeTaskExecutor_->DrainMessages())
         {
@@ -12836,6 +12872,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (audioPlayback_) audioPlayback_->Cancel(action.id);
             if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
             nativeTaskCompletions_.erase(action.id);
             if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
@@ -12895,6 +12932,51 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (snowdesktop::widget_runtime::WidgetAudioPlayback::SupportsAction(action.name))
+        {
+            using namespace snowdesktop::widget_runtime;
+            AudioPlaybackRequest request;
+            request.taskId = action.id; request.owner = action.ownerToken; request.action = action.name;
+            const auto get = [&](const char* key) -> std::string {
+                const auto value = action.arguments.find(key); return value == action.arguments.end() ? std::string{} : value->second;
+            };
+            request.playbackId = get("playbackId");
+            if (const auto value = get("volume"); !value.empty())
+                (void)std::from_chars(value.data(), value.data() + value.size(), request.volume);
+            if (const auto value = get("positionMs"); !value.empty())
+                (void)std::from_chars(value.data(), value.data() + value.size(), request.positionMs);
+            request.loop = get("loop") == "1";
+            std::string error;
+            if (!owner->permissions.contains("audio.playback")) error = "permissionRevoked";
+            else if (action.name == "audio.play")
+            {
+                if (const auto resource = get("resource"); !resource.empty())
+                {
+                    const auto found = owner->manifest.resources.find(resource);
+                    if (found == owner->manifest.resources.end() || found->second.type != "audio") error = "invalidReference";
+                    else if (const auto path = ResolvePackageAssetWithinRoot(owner->packageRoot, Utf8ToWideLocal(found->second.path)))
+                        request.path = *path;
+                    else error = "invalidReference";
+                }
+                else
+                {
+                    request.sourceHandle = get("handle");
+                    const auto entry = filesystemHandleStore_ ? filesystemHandleStore_->Resolve(
+                        {WidgetWideToUtf8(owner->widgetId), owner->packageId}, request.sourceHandle) : std::nullopt;
+                    const auto name = get("name");
+                    if (!owner->permissions.contains("filesystem.userSelected.read")) error = "permissionRevoked";
+                    else if (!entry || entry->access == WidgetFilesystemHandleAccess::Write) error = "invalidReference";
+                    else if (name.empty() ? entry->kind != WidgetFilesystemHandleKind::File :
+                        entry->kind != WidgetFilesystemHandleKind::Folder || !WidgetFilesystemTaskExecutor::IsDirectChildName(name)) error = "invalidArguments";
+                    else request.path = name.empty() ? entry->path : entry->path / Utf8ToWideLocal(name);
+                }
+            }
+            if (action.preview) { (void)taskBroker_->Complete(action.id, true); continue; }
+            if (!error.empty()) { (void)taskBroker_->Complete(action.id, false, error); continue; }
+            if (!audioPlayback_ || !audioPlayback_->Submit(std::move(request)))
+                (void)taskBroker_->Complete(action.id, false, "audioPlaybackUnavailable");
+            continue;
+        }
         if (action.name == "native.request" || action.name == "native.watch")
         {
             snowdesktop::widget_runtime::NativeRequestOptions options;
@@ -14499,6 +14581,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 const bool revoked = filesystemHandleStore_->Revoke(
                     { action.instanceId, owner->packageId },
                     handle->second, revokeError);
+                if (revoked && audioPlayback_) audioPlayback_->RevokeFile(action.ownerToken, handle->second);
                 (void)taskBroker_->Complete(action.id, revoked,
                     revoked ? std::string{} :
                         (revokeError.empty()
@@ -15159,6 +15242,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 {
                     if (completion.name == "native.request" || completion.name == "native.watch")
                         PushSystemControlJson(eventState, *nativeFrame.Find("value"));
+                    else if (completion.name == "audio.play")
+                    {
+                        lua_createtable(eventState, 0, 1);
+                        const std::string playbackId = "audio-" + std::to_string(completion.id);
+                        lua_pushstring(eventState, playbackId.c_str()); lua_setfield(eventState, -2, "playbackId");
+                    }
                     else if (completion.name == "app.search" || itemSearchTask)
                     {
                         lua_createtable(eventState, 0, 4);
@@ -15481,11 +15570,30 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 filesystemTaskCompletions_.end())
             filesystemTaskCompletions_.erase(filesystemTaskCompletion);
     }
+    for (const auto& message : audioEvents)
+    {
+            auto owner = std::find_if(widgets_.begin(), widgets_.end(), [&](const auto& candidate) {
+                return candidate.runtimeToken == message.owner;
+            });
+            if (owner == widgets_.end() || !owner->permissions.contains("audio.playback")) continue;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, false);
+            (void)InvokeLifecycleEvent(*owner, "audio.state", [&](lua_State* state) {
+                lua_pushstring(state, message.playbackId.c_str()); lua_setfield(state, -2, "playbackId");
+                lua_pushstring(state, message.state.status.c_str()); lua_setfield(state, -2, "status");
+                lua_pushstring(state, message.state.error.c_str()); lua_setfield(state, -2, "error");
+                lua_pushinteger(state, message.state.positionMs); lua_setfield(state, -2, "positionMs");
+                lua_pushinteger(state, message.state.durationMs); lua_setfield(state, -2, "durationMs");
+                lua_pushnumber(state, message.state.volume); lua_setfield(state, -2, "volume");
+                lua_pushboolean(state, message.state.loop); lua_setfield(state, -2, "loop");
+            });
+    }
+
 }
 
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
 {
+    if (audioPlayback_) audioPlayback_->ForgetOwner(widget.runtimeToken);
     if (notificationCenter_)
         notificationCenter_->RemoveOwner(
             widget.runtimeToken, notifyCallback_);
@@ -15727,6 +15835,7 @@ void WidgetEngine::Shutdown()
     nativeTaskCompletions_.clear();
     locationTaskExecutor_.reset();
     locationTaskCompletions_.clear();
+    audioPlayback_.reset();
     mediaTaskExecutor_.reset();
     audioOutputTaskExecutor_.reset();
     clipboardTaskExecutor_.reset();
@@ -21513,6 +21622,7 @@ void WidgetEngine::OnAudioAnalysisWake()
 void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 {
     taskWakeCallback_ = std::move(callback);
+    if (audioPlayback_) audioPlayback_->SetWakeCallback(taskWakeCallback_);
     if (nativeTaskExecutor_) nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (filesystemTaskExecutor_)
@@ -26610,6 +26720,7 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
     const bool canceled = taskBroker_->Cancel(taskId);
+    if (canceled && audioPlayback_) audioPlayback_->Cancel(taskId);
     if (canceled && locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
     if (canceled) locationTaskCompletions_.erase(taskId);
     if (canceled && systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
@@ -31719,7 +31830,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(value, "type", resource.type);
             readString(value, "path", resource.path);
             readString(value, "license", resource.license);
-            if ((resource.type == "image" || resource.type == "font") &&
+            if ((resource.type == "image" || resource.type == "font" || resource.type == "audio") &&
                 !resource.path.empty())
                 manifest.resources.emplace(name, std::move(resource));
         }

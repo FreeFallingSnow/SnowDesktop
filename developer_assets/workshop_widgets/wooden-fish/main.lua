@@ -1,3 +1,5 @@
+local sound = resource.audio("sound")
+
 local woodenFishImage = resource.image("wooden-fish")
 local malletImage = resource.image("mallet")
 
@@ -15,6 +17,7 @@ local MAX_COUNT = 999999999
 
 local settings = {
     fields = {
+        { key = "soundEnabled", label = l10n.tr("lua_widget.wooden_fish.sound"), type = "bool", default = false },
         {
             key = "customTextEnabled",
             label = l10n.tr("lua_widget.wooden_fish.custom_text"),
@@ -64,6 +67,18 @@ local palettes = {
         feedback = 0xB45309,
     },
 }
+
+local function soundEnabled()
+    local value = storage.get("soundEnabled")
+    return value == true or value == 1 or value == "1" or value == "true"
+end
+
+local function playSound()
+    if soundEnabled() and widget.hasFeature("task.audio.playback") and widget.hasPermission("audio.playback") then
+        local id, err = task.start("audio.play", { source = sound, volume = 0.65 })
+        if not id then widget.log("warn", "audio.play: " .. tostring(err)) end
+    end
+end
 
 local function foregroundPalette()
     local theme = widget.theme()
@@ -347,10 +362,17 @@ local function event(_context, model, value)
             model.todayCount = math.min(MAX_COUNT, model.todayCount + 1)
             model.countsDirty = true
         end
+        playSound()
         startFeedback(model)
         schedule.after("wooden-fish.persist", 350, {
             whenHidden = "continue",
         })
+        widget.invalidate()
+        return
+    end
+
+    if value.kind == "action" and value.id == "wooden-fish.sound" then
+        storage.set("soundEnabled", not soundEnabled())
         widget.invalidate()
         return
     end
@@ -403,6 +425,7 @@ end
 local function menu(_context, _model, request)
     if request.id ~= "wooden-fish.menu" then return nil end
     return ui.menu({
+        { id = "wooden-fish.sound", label = l10n.tr("lua_widget.wooden_fish.sound"), checked = soundEnabled() },
         {
             id = "wooden-fish.reset",
             label = l10n.tr("lua_widget.wooden_fish.reset"),

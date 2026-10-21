@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "拒绝后的表现",
   "app.widget_permission.native_warning": "辅助程序将以当前 Windows 用户权限运行，可以访问文件、网络和设备，并启动其他程序。开发者声明的用途不构成系统强制限制。撤销授权无法回滚已经发生的操作。",
   "app.widget_permission.native_acknowledge": "我信任此组件的来源，并理解辅助程序的权限范围",
-  "app.widget_permission.native_countdown": "应用（%s 秒后可用）"
+  "app.widget_permission.native_countdown": "应用（%s 秒后可用）",
+  "app.settings.widgets_permission_audio_playback": "播放组件音频"
 }

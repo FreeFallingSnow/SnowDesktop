@@ -7,6 +7,8 @@ namespace snowdesktop::widget
 namespace
 {
 constexpr std::array kPermissionDescriptors = {
+    WidgetPermissionDescriptor{ "audio.playback", PermissionRiskClass::ExternalCommunication,
+        "app.settings.widgets_permission_audio_playback" },
     WidgetPermissionDescriptor{ "native.execute", PermissionRiskClass::Modification,
         "app.settings.widgets_permission_native_execute" },
     WidgetPermissionDescriptor{ "audio.devices.read", PermissionRiskClass::SystemStatus,

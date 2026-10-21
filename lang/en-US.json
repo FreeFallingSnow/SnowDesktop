@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "Behavior if access is denied",
   "app.widget_permission.native_warning": "The helper runs with the current Windows user’s permissions. It can access files, networks and devices, and start other programs. Its stated purpose is not a system-enforced restriction. Revoking access cannot undo actions already performed.",
   "app.widget_permission.native_acknowledge": "I trust this component’s source and understand the helper’s access.",
-  "app.widget_permission.native_countdown": "Apply (available in %s s)"
+  "app.widget_permission.native_countdown": "Apply (available in %s s)",
+  "app.settings.widgets_permission_audio_playback": "Play component audio"
 }

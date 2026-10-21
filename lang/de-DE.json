@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "Verhalten bei verweigertem Zugriff",
   "app.widget_permission.native_warning": "Das Hilfsprogramm wird mit den Berechtigungen des aktuellen Windows-Benutzers ausgeführt. Es kann auf Dateien, Netzwerke und Geräte zugreifen und andere Programme starten. Der angegebene Zweck ist keine vom System erzwungene Einschränkung. Das Entziehen des Zugriffs macht bereits ausgeführte Aktionen nicht rückgängig.",
   "app.widget_permission.native_acknowledge": "Ich vertraue der Quelle dieser Komponente und verstehe die Zugriffsrechte des Hilfsprogramms.",
-  "app.widget_permission.native_countdown": "Anwenden (in %s s verfügbar)"
+  "app.widget_permission.native_countdown": "Anwenden (in %s s verfügbar)",
+  "app.settings.widgets_permission_audio_playback": "Komponenten-Audio abspielen"
 }

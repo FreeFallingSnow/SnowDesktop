@@ -2566,5 +2566,6 @@
   "app.widget_permission.native_denied": "アクセスを拒否した場合の動作",
   "app.widget_permission.native_warning": "補助プログラムは現在の Windows ユーザーの権限で実行されます。ファイル、ネットワーク、デバイスにアクセスし、他のプログラムを起動できます。申告された用途は、システムによる制限ではありません。アクセスを取り消しても、実行済みの操作は元に戻せません。",
   "app.widget_permission.native_acknowledge": "このコンポーネントの入手元を信頼し、補助プログラムの権限範囲を理解しています。",
-  "app.widget_permission.native_countdown": "適用（%s 秒後に利用可能）"
+  "app.widget_permission.native_countdown": "適用（%s 秒後に利用可能）",
+  "app.settings.widgets_permission_audio_playback": "コンポーネントの音声を再生"
 }
