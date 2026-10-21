@@ -41,6 +41,7 @@ public:
     }
     ~ParentJob(){close();if(process_)CloseHandle(process_);}
     void close(){if(job_){CloseHandle(job_);job_=nullptr;}}
+    bool running() const {return WaitForSingleObject(process_,0)==WAIT_TIMEOUT;}
     int wait() const {until([&]{return WaitForSingleObject(process_,0)==WAIT_OBJECT_0;},20);DWORD code=0;require(GetExitCodeProcess(process_,&code)!=FALSE,"Launcher exit missing");return static_cast<int>(code);}
 };
 
@@ -76,6 +77,65 @@ Json await_running(Coordinator& c,const std::string& id) {
     until([&]{return fs::exists(c.root/L"build-started")&&fs::exists(c.root/L"child.json")&&fs::exists(c.root/L"grandchild.json");},20);
     auto view=status(c,id);require(view.at("status").str()=="running"&&view.at("ownerState").str()=="alive","Run executor not alive");
     c.workers.push_back(view.at("record").at("owner"));return view;
+}
+void request_publication(const fs::path& repo,bool oldPublication=false){
+    for(const bool legacy:{false,true}){
+        Coordinator c(repo,legacy?"request-publication-ps5":"request-publication-core");setup_run(c,repo);
+        auto source=read(c.scripts/L"build_run.ps1");
+        if(oldPublication)replace(source,"$temporary=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'","$temporary=$path");
+        replace(source,"$stream=[IO.File]::Open($temporary,'CreateNew','Write','None')",R"PS($stream=[IO.File]::Open($temporary,'CreateNew','Write','None')
+        [IO.File]::WriteAllText((Join-Path $root 'request-held'),'opened')
+        while([IO.File]::Exists((Join-Path $root 'hold-publication'))){[Threading.Thread]::Sleep(20)}
+)PS");
+        write(c.scripts/L"build_run.ps1",source,true);c.gate("hold-publication");
+        // Capture JSON with an explicit UTF8 writer in either real engine.
+        write(c.root/L"publish.ps1","$ErrorActionPreference='Stop'\n$value=& "+ps_literal(c.scripts/L"build_run.ps1")+" -Command start -Task runner -Action release\n$code=$LASTEXITCODE\n[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'submitted.json'),($value -join [Environment]::NewLine),[Text.UTF8Encoding]::new($false))\nexit $code\n",true);
+        auto launcher=c.root/L"publish.ps1";
+        if(legacy){
+            launcher=c.root/L"publish-ps5.ps1";
+            write(launcher,"$env:SNOWDESKTOP_ENTRY_POWERSHELL="+ps_literal(powershell(true))+"\n& "+ps_literal(powershell(true))+" -NoProfile -File "+ps_literal(c.root/L"publish.ps1")+"\nexit $LASTEXITCODE\n",true);
+        }
+        ParentJob parent(launcher,c.root,true);
+        until([&]{return fs::exists(c.root/L"request-held")||!parent.running();},20);
+        require(fs::exists(c.root/L"request-held"),"Publication producer failed before held window: "+read(c.root/L"native-launcher.err"));
+        const auto requests=[&]{std::vector<fs::path> files;for(const auto& file:fs::directory_iterator(c.stateRoot/L"runs"))if(file.path().filename().wstring().ends_with(L".request.json"))files.push_back(file.path());return files;};
+        require(requests().empty(),"Final Run request was visible before its bytes were complete");
+        c.gate("hold-publication",false);
+        require(parent.wait()==0,"Publication launcher failed: "+read(c.root/L"native-launcher.err"));
+        const auto submitted=Json::parse(read(c.root/L"submitted.json"));
+        const auto id=submitted.at("id").str();const auto visible=requests();
+        require(visible.size()==1&&visible[0].filename()==wide(id+".request.json"),"Request publication lost its unique final identity");
+        const auto bytes=read(visible[0]);const auto request=Json::parse(bytes);
+        require(request.at("schemaVersion").integer()==1&&request.at("id").str()==id&&request.at("task").str()=="runner"&&request.at("nonce").str().size()==32,"Published request was incomplete or changed its existing wire contract");
+        auto view=await_running(c,id);parent.close();
+        require(owner_alive(view.at("record").at("owner")),"Publishing parent lost the admitted durable executor");
+        require(command(c,id,{L"-Command",L"cancel",L"-Task",L"runner"}).code==0,"Published fixture cancellation was rejected");
+        require(command(c,id,{L"-Command",L"wait",L"-Seconds",L"10"}).code==4&&read(visible[0])==bytes,"Cancellation changed immutable published request bytes");
+        std::cout<<"PASS held request publication and immutable admitted execution "<<(legacy?"PS5":"Core")<<'\n';
+    }
+    {
+        Coordinator c(repo,"request-publication-abort");setup_run(c,repo);c.gate("hold-publication");
+        auto source=read(c.scripts/L"build_run.ps1");
+        replace(source,"$stream=[IO.File]::Open($temporary,'CreateNew','Write','None')",R"PS($stream=[IO.File]::Open($temporary,'CreateNew','Write','None')
+        [IO.File]::WriteAllText((Join-Path $root 'request-held'),'opened')
+        while([IO.File]::Exists((Join-Path $root 'hold-publication'))){[Threading.Thread]::Sleep(20)}
+)PS");
+        write(c.scripts/L"build_run.ps1",source,true);ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
+        until([&]{return fs::exists(c.root/L"request-held")||!parent.running();},20);
+        require(fs::exists(c.root/L"request-held"),"Aborted producer did not enter the held publication window");
+        parent.close();require(parent.wait()!=0,"Closing the controlled pre-admission Job did not stop its producer");
+        for(const auto& file:fs::directory_iterator(c.stateRoot/L"runs"))require(!file.path().filename().wstring().ends_with(L".request.json"),"Stopped producer left a discoverable partial request");
+        require(c.calls()==0&&!fs::exists(c.root/L"build-started"),"Pre-publication termination started execution");
+    }
+    {
+        Coordinator c(repo,"request-publication-collision");setup_run(c,repo);
+        const auto id=std::string(32,'c');const auto request=c.stateRoot/L"runs"/wide(id+".request.json");
+        const auto existing=Json::object({{"id",id},{"marker","preexisting immutable request"}}).dump();write(request,existing);
+        auto source=read(c.scripts/L"build_run.ps1");replace(source,"$id=[Guid]::NewGuid().ToString('N')","$id='"+id+"'");write(c.scripts/L"build_run.ps1",source,true);
+        ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
+        require(parent.wait()!=0&&read(request)==existing&&c.calls()==0&&!fs::exists(c.root/L"build-started"),"Publication overwrote an existing request or admitted execution after collision");
+    }
+    std::cout<<"PASS request producer termination and create-only collision\n";
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
 void old_entry_edit_control(const fs::path& repo){
@@ -293,4 +353,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}

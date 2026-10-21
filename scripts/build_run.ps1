@@ -52,6 +52,18 @@ function Write-RunJson($Value,[string]$Path){
         if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,$temporary+'.bak')}else{[IO.File]::Move($temporary,$Path)}
     } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
 }
+function Write-NewRunRequest($Request){
+    $path=Run-Path $Request.id '.request.json'
+    $temporary=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
+    $bytes=[Text.Encoding]::UTF8.GetBytes(($Request|ConvertTo-Json -Depth 12))
+    try {
+        $stream=[IO.File]::Open($temporary,'CreateNew','Write','None')
+        try {$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        # Same-directory publication is create-only. A reader can discover the
+        # final name only after its complete bytes have been flushed and closed.
+        [IO.File]::Move($temporary,$path)
+    } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+}
 function Run-OwnerState($Owner){
     if(-not $Owner){return 'none'}
     try {$process=Get-Process -Id $Owner.pid -ErrorAction Stop; if($process.StartTime.ToUniversalTime().Ticks.ToString() -eq $Owner.startTicks){return 'alive'};return 'exited'}
@@ -157,8 +169,7 @@ try {
             $current|Add-Member NoteProperty runId $id
         }
         # Identity is fresh. Request publication is create-only, never a mutable plan.
-        $stream=[IO.File]::Open((Run-Path $id '.request.json'),'CreateNew','Write','Read')
-        try {$bytes=[Text.Encoding]::UTF8.GetBytes(($request|ConvertTo-Json -Depth 12));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        Write-NewRunRequest $request
         Write-RunRecord $record
         if($Action -eq 'batch'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
         } finally {if($batchTransaction){$batchTransaction.Dispose()}}
