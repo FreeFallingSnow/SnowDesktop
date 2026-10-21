@@ -70,7 +70,7 @@ fs.mkdirSync(path.join(repository,'scripts'),{recursive:true});fs.mkdirSync(path
 fs.writeFileSync(path.join(repository,'scripts/build_manager.ps1'),'# No coordinator operations in this empty startup fixture\n');
 fs.writeFileSync(path.join(profile,'package.json'),JSON.stringify({name:'dsh-cold-start-fixture',private:true,dependencies:{'@local/snowdesktop-collaboration':'link:'+path.dirname(process.argv[2])},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@local/snowdesktop-collaboration']}}}));
 fs.writeFileSync(path.join(profile,'cordis.yml'),'[]\n');
-fs.writeFileSync(path.join(profile,'cordis.patch.yml'),JSON.stringify([{override:[{id:'snowdesktop-collaboration',config:{repositoryRoot:repository,dashboardPort:18765,wakeResidentAgents:false}},{id:'desktop-product-telemetry',disabled:true},{id:'product-analytics',disabled:true}]}]));
+fs.writeFileSync(path.join(profile,'cordis.patch.yml'),JSON.stringify([{id:'snowdesktop-collaboration',config:{repositoryRoot:repository,dashboardPort:18765,wakeResidentAgents:false}},{id:'desktop-product-telemetry',disabled:true},{id:'product-analytics',disabled:true}]));
 let app,cold;
 const originalWrite=process.stdout.write;
 const bootOutput=[];
@@ -86,7 +86,7 @@ try{
  const method='settings/describe',rpcId='cold-start-welcome';
  const response=await fetch(new URL('/api/'+method,address),{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({type:'client-request',rpcId,method,payload:{args:{}}})});
  const envelope=await response.json();
- cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns)};
+ cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:app.ctx.get('snowCollaboration')?.bridge.root===repository};
 }catch(error){cold={ok:false,error:String(error.stack||error),bootOutput};}
 finally{
  try{if(app)await app.shutdown.shutdown(0);}finally{

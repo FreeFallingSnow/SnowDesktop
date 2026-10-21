@@ -190,6 +190,7 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("projections").items.size()==4,"SDK did not exercise normal and strict input projections");
     for(const auto& projection:observed.at("projections").items)require(!projection.has("error")&&projection.at("schema").at("type").str()=="object","Generated Host input codec failed normal or strict projection");
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
+    require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration");
     bool locale=false,provider=false;
     for(const auto& name:observed.at("cold").at("names").items){locale|=name.str()=="locale";provider|=name.str()=="llm-deepseek";}
     require(locale&&provider,"Cold Host lost the welcome configuration namespaces");
