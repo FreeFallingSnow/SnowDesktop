@@ -5,6 +5,7 @@ import ctypes
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -102,19 +103,54 @@ def owner_state(owner):
     except (KeyError, ValueError, OSError):
         return "unknown"
 
-def age(value):
+def timestamp(value):
     try:
+        # PowerShell records seven fractional digits; Python 3.8 accepts six.
+        value = re.sub(r"(\.\d{6})\d+(?=Z|[+-]\d{2}:\d{2}$)", r"\1", value)
         parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return max(0, int((dt.datetime.now(dt.timezone.utc) - parsed).total_seconds()))
-    except (ValueError, TypeError):
+        return parsed if parsed.tzinfo is not None else None
+    except (ValueError, TypeError, AttributeError):
         return None
+
+def age(value, observed=None):
+    parsed = timestamp(value)
+    end = timestamp(observed) if observed else dt.datetime.now(dt.timezone.utc)
+    return max(0, int((end - parsed).total_seconds())) if parsed and end else None
+
+def coverage_view(coverage):
+    selected = coverage.get("selected") or []
+    results = {}
+    for item in coverage.get("completed") or []:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            results[item["name"]] = item
+    counts = collections.Counter(item.get("status", "unknown") for item in results.values())
+    passed = sum(counts[x] for x in ("passed", "passed-after-retry"))
+    failed = sum(counts[x] for x in ("failed", "exhausted-failed"))
+    not_run = {name for name, item in results.items() if item.get("status") in ("not-run", "notrun", "environment-blocked")}
+    for task in coverage.get("tasks") or []:
+        if task.get("status") in ("not-run", "notrun", "environment-blocked"):
+            not_run.update(name for name in task.get("requested", []) if name not in results)
+    completed = []
+    for name, item in list(results.items())[:300]:
+        try:
+            seconds = float(item["seconds"])
+            if not math.isfinite(seconds) or seconds < 0:
+                seconds = None
+        except (KeyError, TypeError, ValueError):
+            seconds = None
+        completed.append({"name": redact(name), "status": redact(item.get("status", "unknown")), "seconds": seconds})
+    return {"selectedCount": len(selected), "completed": completed,
+            "summary": {"selected": len(selected), "executed": passed + failed, "passed": passed, "failed": failed,
+                        "notRun": len(not_run), "skipped": counts["skipped"], "flaky": counts["passed-after-retry"],
+                        "unreported": len(set(selected) - set(results) - not_run)},
+            "completedTruncated": len(results) > len(completed)}
 
 def identity(value):
     if not isinstance(value, dict):
         return None
     return {k: value.get(k) for k in ("algorithm", "digest", "fileCount", "head")}
 
-def task_view(entry):
+def task_view(entry, observed=None):
     check = entry.get("check") or {}
     state = entry.get("state", "unknown")
     check_status = check.get("status", "not-recorded")
@@ -124,8 +160,10 @@ def task_view(entry):
         "attention" if state == "finished" and check_status in ("failed", "invalidated", "interrupted") else (
         "waiting" if state == "finished" else state))
     plan = entry.get("testPlan") or {}
-    seconds = age(entry.get("registeredUtc"))
+    seconds = age(entry.get("registeredUtc"), observed)
     return {"id": redact(entry.get("id", "unknown")), "state": state, "display": display,
+            "name": redact(entry.get("displayName") or entry.get("id", "unknown")),
+            "registeredUtc": entry.get("registeredUtc"),
             "editRevision": entry.get("editRevision", 0), "ageSeconds": seconds,
             "stale": seconds is not None and seconds > 86400,
             "reopenedUtc": entry.get("reopenedUtc"), "finishedUtc": entry.get("finishedUtc"),
@@ -134,6 +172,7 @@ def task_view(entry):
             "unclaimedPeers": entry.get("unclaimedPeers", [])[:80],
             "withdrawalReason": redact(entry.get("withdrawalReason") or ""),
             "check": {"status": check_status, "source": check.get("source"),
+                      "startedUtc": check.get("startedUtc"), "completedUtc": check.get("completedUtc"),
                       "editRevision": check.get("editRevision"), "reason": redact(check.get("reason", "")),
                       "inputStart": identity(check.get("inputStart")), "inputEnd": identity(check.get("inputEnd")),
                       "issues": [redact(x) for x in (check.get("summary") or {}).get("issues", [])[:40]]},
@@ -223,7 +262,7 @@ class Store:
         if coverage and coverage.get("batchId") != batch_id:
             raise ValueError("Coverage batch mismatch")
         issues = read_json(self.root, batch_id + ".issues.json") or {}
-        tasks = [task_view(x) for x in data.get("participants", [])[:80]]
+        tasks = [task_view(x, data.get("completedUtc") if result else None) for x in data.get("participants", [])[:80]]
         if result:
             for task in tasks:
                 task["stale"] = False
@@ -242,6 +281,7 @@ class Store:
                               "owners": [{k: x.get(k) for k in ("pid", "name", "kind")} for x in (data.get("preflight") or {}).get("owners", [])[:20]],
                               "observedUtc": (data.get("preflight") or {}).get("observedUtc")},
                 "coverage": {"mode": coverage.get("mode"), "status": coverage.get("status", "not-recorded"),
+                             **coverage_view(coverage),
                              "selected": coverage.get("selected", [])[:300],
                              "tasks": [{k: x.get(k) for k in ("participant", "requested", "status", "failed", "reason")} for x in coverage.get("tasks", [])[:80]],
                              "error": redact(coverage.get("error", ""))},
@@ -307,7 +347,8 @@ class Store:
                     continue
                 data = read_json(self.root, file.name) or {}
                 if data.get("batchId") == file.stem:
-                    history.append({k: data.get(k) for k in ("batchId", "outcome", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")})
+                    history.append({**{k: data.get(k) for k in ("batchId", "outcome", "createdUtc", "buildStartedUtc", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")},
+                                    "participants": [redact(x.get("displayName") or x.get("id", "unknown")) for x in data.get("participants", [])[:8]]})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
                           "current": active, "history": history, "waits": self.waits(),
                           "limitation": "Only registered cooperating tasks are visible. Stale age is diagnostic; it never completes an editor. Build and link stages are inferred from logs; counts remain unknown until reported."}

@@ -1,5 +1,9 @@
 # 本地协作构建看板
 
+页面以任务列表和待处理项为主。任务可按名称、文件、测试与状态筛选，直接显示等待原因、检查时间和计划摘要；长路径与证据按需展开。执行区分别显示已选、已执行、通过、失败、未运行、跳过、无结果记录和重试后通过，不能用已选数量代替执行结果。逐测试结果附实际耗时；尚未采集的编译分段时间不估算。
+
+日志支持文本与错误/警告筛选，范围仅为当前保留的尾部。历史可按结果筛选，登记撤回且没有执行开始记录时显示“登记撤回 · 未构建”。自动刷新保留筛选、详情、日志暂停和滚动位置；任务筛选也随本地偏好保存，日志正文不进入本地存储。
+
 直接打开 **http://127.0.0.1:8765/**。`scripts\build.bat` 的写/执行协作命令自动确保服务运行（status 仅只读，不启动服务）；关闭网页不会停止构建。服务没有登录启动项，电脑重启后第一次协作命令会重新启动它。
 
 看板只监听 `127.0.0.1`，复用现有 Python 3.8+ 标准库。没有依赖安装、外部托管、下载、自动浏览器弹窗或防火墙修改。
@@ -27,14 +31,11 @@ scripts\build-dashboard.bat start --port 8766
 ## 验证
 
 ```bat
-python tests\build_dashboard_tests.py
-python tests\build_dashboard_tests.py --browser
-python tests\build_workflow_tests.py
-python tests\build_plan_execution_tests.py
-powershell.exe -NoProfile -File tests\build_collaboration_tests.ps1
+scripts\test.bat name "^build_dashboard$"
+scripts\test.bat name "^build_dashboard_browser$"
 ```
 
-HTTP/浏览器用临时独立夹具、独立端口和醒目的“模拟数据”标志，不写真实登记。浏览器检查复用已安装 Edge 和 Node 22 的内建 CDP WebSocket；使用独立 headless profile，不控制用户已打开的浏览器或桌面。覆盖等待、检查、运行、通过、失败、陈旧登记、中断和长日志；截图与夹具证据保存在打印出的临时目录。
+测试由现有 C++ 原生驱动执行。上面的标准选择入口用于没有活动协作批次时；协作期间在本任务计划中声明 build_dashboard、build_dashboard_browser 并等待共同结果，不绕过共享构建权限。浏览器条目需要显式选择，使用已安装 Edge 的独立 headless profile，不控制用户浏览器。HTTP 和浏览器使用独立端口及醒目标明的模拟数据，覆盖文件共享、元数据与日志边界、实际测试计数、PowerShell 七位 UTC 小数时间戳、筛选和查看偏好、长等待列表与窄窗口；截图和证据保存在驱动输出的夹具目录。
 
 原 PowerShell 看板启动器在开发中被安全软件以 `HEUR:TrojanDownloader/PS.NetLoader.ae` 删除，未恢复、未加入白名单。最终入口改为 `manage.py`，没有 PowerShell 网络请求和启动器；没有更改防护设置。该事件不被当作“已证明误报”。
 
