@@ -109,7 +109,7 @@ function Enter-BatchRun($Request){
         return [pscustomobject]@{lease=$lease;oldToken=$old}
     } catch {
         if($lease){$lease.Dispose()}
-        if($_.Exception -is [IO.IOException]){throw 'Shared output lease/transaction is busy; the frozen Run is queued.'}
+        if(Test-EntrySharingViolation $_.Exception){throw 'Shared output lease/transaction is busy; the frozen Run is queued.'}
         throw
     } finally {if($metadata){$metadata.Dispose()}}
 }
@@ -142,7 +142,7 @@ try {
         $batchTransaction=$null
         try {
         if($Action -eq 'batch'){
-            $batchTransaction=[IO.File]::Open((Join-Path $root '.build/collaboration/state.lock'),'OpenOrCreate','ReadWrite','None')
+            $batchTransaction=Open-EntryStateTransaction $root
             $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
             $current=$state.current
             if(-not $current -or $current.id -ne $Batch -or $current.phase -ne 'building' -or $current.protocolVersion -lt 3 -or

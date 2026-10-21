@@ -234,6 +234,26 @@ function Start-EntryCredential([string]$Root,[string]$BatchId='') {
     [Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$token,'Process')
     return $old
 }
+function Test-EntrySharingViolation([Exception]$Exception) {
+    # Static .NET calls may wrap IOException in MethodInvocationException.
+    # Retry only Windows sharing/lock violations, never other I/O failures.
+    while($Exception){
+        if($Exception -is [IO.IOException] -and ($Exception.HResult -band 0xffff) -in 32,33){return $true}
+        $Exception=$Exception.InnerException
+    }
+    return $false
+}
+function Open-EntryStateTransaction([string]$Root,[ValidateRange(0,30000)][int]$TimeoutMilliseconds=30000) {
+    $timer=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        try {return [IO.File]::Open((Join-Path $Root '.build/collaboration/state.lock'),'OpenOrCreate','ReadWrite','None')}
+        catch {
+            if(-not (Test-EntrySharingViolation $_.Exception)){throw}
+            if($timer.ElapsedMilliseconds -ge $TimeoutMilliseconds){throw 'Shared output lease/transaction is busy; state reservation timed out; no Run was submitted.'}
+            Start-Sleep -Milliseconds 50
+        }
+    }
+}
 function Enter-BuildEntry([string]$Root) {
     if(Test-EntryDelegation $Root){return $null}
     if([Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')){throw 'Invalid/stale execution credential; no shared output or process action was started.'}
@@ -249,7 +269,7 @@ function Enter-BuildEntry([string]$Root) {
         return [pscustomobject]@{lease=$lease;oldToken=$old}
     } catch {
         if($lease){$lease.Dispose()}
-        if($_.Exception -is [IO.IOException]){throw 'Shared output lease/transaction is busy; no configure, build, arrangement or process action started. Read scripts/build.bat status and retry after the owner finishes.'}
+        if(Test-EntrySharingViolation $_.Exception){throw 'Shared output lease/transaction is busy; no configure, build, arrangement or process action started. Read scripts/build.bat status and retry after the owner finishes.'}
         throw
     } finally {if($metadata){$metadata.Dispose()}}
 }

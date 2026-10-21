@@ -411,6 +411,10 @@ scripts\build.bat event-ack target-task -Sequence 1 -AckLevel agent
 
 ### 运行时依赖
 
+持久 Run 仅将 Windows 共享/锁冲突（32/33，包括 PowerShell 包装的异常）识别为短暂占用。
+批次请求预留状态事务最多等待 30 秒；执行器入场时保留队列与取消能力。其他 I/O 或权限错误直接报错，
+不会因异常包装误判为排队，也不会因一次短暂状态读取而使整批失败。
+
 基础 plan/claim/ready-and-wait/status/repair 只需 PowerShell，不需要安装 Python。
 所有批处理入口、CMake 和构建子进程优先使用 PowerShell 7，未安装时回退系统 Windows PowerShell 5.1。
 `SNOWDESKTOP_ENTRY_POWERSHELL` 保存该次执行所选的绝对路径，子进程沿用它；可显式设为系统 5.1 路径做兼容检查。
