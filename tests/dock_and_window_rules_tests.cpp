@@ -4674,6 +4674,23 @@ int main(int argc, char** argv)
             denseFullCollectionDuringDrag.showAllButton &&
             denseFullCollectionDuringDrag.allButtonSlot == 8,
         "titleless dense Collections must apply the single-overflow rule to their resolved physical grid capacity without rebuilding slots");
+    Check(!localLayout::LargeFolderUsesFullFrameContent(
+                false, fullCollection) &&
+            !localLayout::LargeFolderUsesFullFrameContent(
+                false, belowCollectionCapacity) &&
+            !localLayout::LargeFolderUsesFullFrameContent(
+                false, denseFullCollection) &&
+            localLayout::LargeFolderUsesFullFrameContent(
+                false, overflowingCollection) &&
+            localLayout::LargeFolderUsesFullFrameContent(
+                false, fullCollectionDuringDrag) &&
+            localLayout::LargeFolderUsesFullFrameContent(
+                false, denseFullCollectionDuringDrag) &&
+            localLayout::LargeFolderUsesFullFrameContent(
+                true, fullCollection) &&
+            localLayout::LargeFolderUsesFullFrameContent(
+                true, overflowingCollection),
+        "only the Show all cell or a titleless grid may replace the bottom title; an ordinary final cell keeps it for the collection name and rename anchor");
     const auto compactCollection =
         localLayout::ResolveCollectionPresentation(
             5, 4, true, false);

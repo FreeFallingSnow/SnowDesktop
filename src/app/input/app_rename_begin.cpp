@@ -175,8 +175,11 @@ void DesktopApp::BeginRenameSelected(
                     desktopIconTitle = wc->IsSingleCellIconMode();
                     leftAligned = !desktopIconTitle && !wc->UsesTopTitleBar();
                     const auto* collection = dynamic_cast<const Collection*>(wc);
-                    if (collection && collection->IsLargeFolderMode())
+                    if (collection && collection->HidesBottomBarTitle())
                     {
+                        // The Show all cell or a titleless dense grid carries
+                        // the collection name; an ordinary final cell keeps the
+                        // standard bottom-bar rename position instead.
                         frame = collection->GetTitleCellRect();
                         handle = GetItemRenameRect(frame,
                             ResolveItemTitleLines(collection->GetWidgetData()));

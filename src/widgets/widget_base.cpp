@@ -668,7 +668,11 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 RECT WidgetContainer::GetBodyRect() const
 {
     if (popupFrameActive_) return hostedFrame_;
-    if (IsLargeFolderMode()) return GetLayoutFrameRect();
+    // Large folders whose inline grid owns the title (Show all cell) or hides
+    // all text keep the complete frame; otherwise the bottom bar still carries
+    // the collection title and reserves its regular strip.
+    if (IsLargeFolderMode() && LargeFolderContentUsesFullFrame())
+        return GetLayoutFrameRect();
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -3062,6 +3066,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     const bool largeFolder = IsLargeFolderMode();
+    // Large folders omit the bottom title only while the inline Show all cell
+    // (or a titleless grid) already owns the name; an ordinary final cell
+    // keeps the bottom title as the collection's only visible name.
+    const bool bottomBarTitle = !HidesBottomBarTitle();
     const bool tinyCollection = data_->type == DesktopWidgetType::Collection &&
         data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const bool persistentBottomBar = tinyCollection ||
@@ -3072,7 +3080,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    const bool showGradient = !largeFolder &&
+    const bool showGradient = bottomBarTitle &&
         (persistentBottomBar || !data_->bottomBarHover || hovered);
     if (showGradient)
     {
@@ -3119,9 +3127,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
-    // Large folders use their final grid cell for the title. Only the resize
-    // dot overlays their content on hover, without a duplicate title bar.
-    const bool showHandle = largeFolder ? hovered :
+    // Large folders without a bottom title show only the resize dot over their
+    // content on hover. Otherwise the regular title-bar rules apply, so an
+    // exactly filled collection keeps its bottom title and rename anchor.
+    const bool showHandle = largeFolder && !bottomBarTitle ? hovered :
         persistentBottomBar || !data_->bottomBarHover || hovered;
 
     if (showHandle)
@@ -3132,7 +3141,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const std::wstring displayTitle = demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (!largeFolder && !displayTitle.empty() && data_->showTitle)
+        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
