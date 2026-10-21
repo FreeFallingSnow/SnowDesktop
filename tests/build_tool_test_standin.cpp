@@ -16,7 +16,7 @@ int execute(const std::vector<std::string>& args) {
     if(contains(args,"--selected-probe")){auto selected=argument(args,"--selected-probe");append(root/L"executed.txt",selected+"\n");return selected=="Gamma"?23:selected=="Beta"&&fs::exists(root/L"fail-beta")?31:0;}
     if(name=="python") {
         auto mode=utf8(environment(L"SNOWDESKTOP_STANDIN_MODE"));
-        if(contains(args,"-c"))return mode=="old"?78:0;
+        if(contains(args,"-c")){if(mode=="dashboard")append(root/L"python-probe.count","once\n");return mode=="old"?78:0;}
         append(root/L"enhancement.count","once\n");
         if(mode=="watch") {Json forwarded=Json::array({});for(size_t i=1;i<args.size();++i)forwarded.items.push_back(args[i]);std::cout<<forwarded.dump();return 23;}
         return 19;

@@ -187,6 +187,12 @@ v1 活动批次继续使用原 `begin/finish/status/recover` 合同；v2 必须�
 
 ## 阶段与资源观测
 
+自动看板确保先核对本检出的实例回执和有界 loopback 健康响应；已匹配时不再探测或启动 Python。
+没有看板管理入口的隔离夹具跳过这项可选能力，不影响基本协调。服务正常启动后记录本检出的
+首选端口，后续写/执行入口沿用；主工作区和隔离检出可分别选择端口，status 保持只读。
+身份不同、服务停止或偏好无效时不视作健康，不关闭未知监听者；管理和寿命边界见
+`tools/build-dashboard/README.md`。
+
 标准 Release、Debug、IDE 与测试入口复用 `build_command.ps1` / `build_telemetry.ps1`。
 配置、目标构建、整理和测试执行分别记录单调时钟区间；Run 的排队与管线也有独立区间。
 首次观察到 shared-output busy 至取得执行权或原因变化的区间保存在 `waitIntervals`，包含重试和退避，

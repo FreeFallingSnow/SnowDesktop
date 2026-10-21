@@ -15,7 +15,18 @@ scripts\build-dashboard.bat start
 scripts\build-dashboard.bat start --port 8766
 ```
 
-双击 `scripts\build-dashboard.bat` 也可启动。端口冲突时拒绝启动，不终止未知监听者；协作构建不会因为看板不可用而失败。手动停止只通过已核对实例 nonce 的本地请求文件通知自身服务，完全独立于构建进程。自动入口使用默认端口；另一个端口需手动选择。
+双击 `scripts\build-dashboard.bat` 也可启动。端口冲突时拒绝启动，不终止未知监听者；协作构建不会因为看板不可用而失败。手动停止只通过已核对实例 nonce 的本地请求文件通知自身服务，完全独立于构建进程。
+
+成功启动或确认已有服务后，将首选端口原子保存到本检出的 `.build/dashboard/preferred-port.json`；
+后续自动入口和未指定 `--port` 的管理命令使用该端口，没有记录时仍使用 8765。隔离检出应先显式
+选择自己的空闲端口，避免在主面板停用时占用它的端口。无效或链接的偏好记录不会静默换回另一端口；
+保留记录并显式选择 `--port`。status 不写回偏好，网页查看偏好仍只保存在浏览器。
+
+协调入口先用新鲜回执与固定 loopback 健康响应核对实例，整个 HTTP 请求最多 750 毫秒、响应最多
+4 KiB，禁用代理、重定向和默认凭据。匹配时不启动 Python；没有看板入口文件时也不探测 Python。
+回执异常、实例不同或服务停止时仍进入原管理入口，不停止未知服务。Windows 启动尝试使用当前
+Job 允许的 breakaway，调用方退出后服务可继续运行；父 Job 拒绝时保留其限制，服务寿命仍受该 Job 约束。
+这不改变编译进程的私有 Job、取消和输出租约。
 
 ## 数据与限制
 
@@ -37,7 +48,7 @@ scripts\test.bat name "^build_dashboard_browser$"
 
 测试由现有 C++ 原生驱动执行。上面的标准选择入口用于没有活动协作批次时；协作期间在本任务计划中声明 build_dashboard、build_dashboard_browser 并等待共同结果，不绕过共享构建权限。浏览器条目需要显式选择，使用已安装 Edge 的独立 headless profile，不控制用户浏览器。HTTP 和浏览器使用独立端口及醒目标明的模拟数据，覆盖文件共享、元数据与日志边界、实际测试计数、PowerShell 七位 UTC 小数时间戳、筛选和查看偏好、长等待列表与窄窗口；截图和证据保存在驱动输出的夹具目录。
 
-原 PowerShell 看板启动器在开发中被安全软件以 `HEUR:TrojanDownloader/PS.NetLoader.ae` 删除，未恢复、未加入白名单。最终入口改为 `manage.py`，没有 PowerShell 网络请求和启动器；没有更改防护设置。该事件不被当作“已证明误报”。
+原 PowerShell 看板启动器在开发中被安全软件以 `HEUR:TrojanDownloader/PS.NetLoader.ae` 删除，未恢复、未加入白名单。启动入口仍为 `manage.py`；协调器的新增健康检查仅请求固定 loopback 地址，不下载或执行网络内容，没有更改防护设置。历史事件不被当作“已证明误报”。
 
 界面使用亮色主题，页面与标签图标复用 `assets/icon/icon.png` 的实际软件图标。等待与构建不调用大模型；桌面回合完成通知由 Work 设置管理，本地批次完成不会自动唤醒原对话。
 

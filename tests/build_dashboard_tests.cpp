@@ -30,6 +30,64 @@ public:
     void reload(){auto previous=evaluate("performance.timeOrigin").number;send("Page.reload");until([&]{try{return evaluate("performance.timeOrigin").number!=previous&&evaluate("document.readyState").str()=="complete";}catch(...){return false;}},15);connected();}
 };
 void refresh(){std::this_thread::sleep_for(std::chrono::milliseconds(2100));}
+void dashboard_startup(const fs::path& repo,bool formerBehavior=false,bool formerLaunch=false){
+    auto root=temporary("dashboard-startup");
+    copy(repo,root,{"scripts/build_runtime.ps1","tools/build-dashboard/manage.py","tools/build-dashboard/server.py"});
+    if(formerBehavior){auto source=read(root/L"scripts/build_runtime.ps1");replace(source,"if(Test-BuildDashboardHealthy $Root $Port){return}","# Former behavior always probes and invokes Python");write(root/L"scripts/build_runtime.ps1",source,true);}
+    if(formerLaunch){auto source=read(root/L"tools/build-dashboard/manage.py");replace(source,"creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB","creationflags=flags");write(root/L"tools/build-dashboard/manage.py",source);}
+    const int port=free_port();
+    const auto receiptPath=root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json");
+    Json serverOwner;
+    struct Cleanup {Json& process;~Cleanup(){try{if(process.kind==Json::Kind::Object)stop_owner(process);}catch(...){}}} cleanup{serverOwner};
+    {
+        Child launcher({production_python().wstring(),(root/L"tools/build-dashboard/manage.py").wstring(),L"start",L"--root",root.wstring(),L"--port",std::to_wstring(port)},root,{},false,false,true);
+        const auto result=launcher.wait(15);require(result.code==0,"Managed dashboard startup failed: "+result.out+result.err);
+        serverOwner=owner(static_cast<DWORD>(Json::parse(read(receiptPath)).at("pid").integer()));
+    }
+    HANDLE process=OpenProcess(SYNCHRONIZE,FALSE,static_cast<DWORD>(serverOwner.at("pid").integer()));
+    require(process!=nullptr,"Dashboard stopped when its caller Job closed");
+    const bool survived=WaitForSingleObject(process,500)==WAIT_TIMEOUT;CloseHandle(process);
+    require(survived&&owner_alive(serverOwner),"Dashboard stopped when its caller Job closed");
+    const auto receipt=Json::parse(read(receiptPath));
+    require(!receipt.at("fixture").boolean,"Startup fixture must exercise a real non-fixture identity");
+    fs::create_directories(root/L"bin");fs::copy_file(standin(),root/L"bin/python.exe");
+    Env env={{L"PATH",(root/L"bin").wstring()+L";"+(fs::path(environment(L"SystemRoot"))/L"System32").wstring()},{L"SNOWDESKTOP_STANDIN_MODE",L"dashboard"}};
+    write(root/L"scripts/probe.ps1",". $PSScriptRoot/build_runtime.ps1\nEnsure-BuildDashboard -Port "+std::to_string(port)+"\n",true);
+    write(root/L"scripts/preferred.ps1",". $PSScriptRoot/build_runtime.ps1\nEnsure-BuildDashboard\n",true);
+    Bridge bridge(repo,root);
+    const auto ensure=[&]{const auto result=bridge.invoke(root/L"scripts/probe.ps1",{},env);require(result.code==0,"Dashboard startup invocation failed: "+result.out+result.err);};
+    for(int i=0;i<3;++i)ensure();
+    const auto preferred=Json::parse(read(root/L".build/dashboard/preferred-port.json"));
+    require(preferred.at("port").integer()==port,"Managed port preference lost its isolated listener");
+    const auto implicit=bridge.invoke(root/L"scripts/preferred.ps1",{},env);require(implicit.code==0,"Preferred dashboard lookup failed: "+implicit.err);
+    const auto preferencePath=root/L".build/dashboard/preferred-port.json";
+    const auto preferenceBytes=read(preferencePath);
+    const auto observed=run({production_python().wstring(),(root/L"tools/build-dashboard/manage.py").wstring(),L"status",L"--root",root.wstring()},root,10);
+    require(observed.code==0&&Json::parse(observed.out).at("port").integer()==port&&read(preferencePath)==preferenceBytes,"Readonly status lost or changed the saved port");
+    write(preferencePath,"{invalid");const auto invalidPreference=bridge.invoke(root/L"scripts/preferred.ps1",{},env);
+    require(invalidPreference.code==0&&invalidPreference.err.find("Optional local dashboard unavailable")!=std::string::npos,"Invalid preference silently selected a different port");
+    atomic(preferencePath,preferenceBytes);
+    require(!fs::exists(root/L"python-probe.count")&&!fs::exists(root/L"enhancement.count"),"Healthy dashboard unnecessarily started Python");
+    auto wrong=receipt;wrong["instance"]=std::string(32,'0');atomic(receiptPath,wrong.dump());ensure();
+    require(read(root/L"python-probe.count")=="once\n"&&read(root/L"enhancement.count")=="once\n","Mismatched nonce was silently accepted instead of using the normal manager");
+    require(Json::parse(http(port,"/api/health").body).at("instance").str()==receipt.at("instance").str(),"Unknown listener was stopped/replaced");
+    wrong=receipt;wrong["fixture"]=true;atomic(receiptPath,wrong.dump());ensure();
+    require(read(root/L"enhancement.count")=="once\nonce\n","Fixture receipt was accepted as a production instance");
+    write(receiptPath,std::string(4097,' '));ensure();
+    require(read(root/L"enhancement.count")=="once\nonce\nonce\n","Oversized receipt was accepted or startup fallback was skipped");
+    const auto beforeProbe=read(root/L"python-probe.count"),beforeStart=read(root/L"enhancement.count");
+    fs::rename(root/L"tools/build-dashboard/manage.py",root/L"tools/build-dashboard/manage.retained.py");ensure();
+    require(read(root/L"python-probe.count")==beforeProbe&&read(root/L"enhancement.count")==beforeStart,"Missing dashboard entry unnecessarily probed Python");
+    fs::rename(root/L"tools/build-dashboard/manage.retained.py",root/L"tools/build-dashboard/manage.py");
+    atomic(receiptPath,receipt.dump());stop_owner(serverOwner);const auto started=std::chrono::steady_clock::now();ensure();
+    require(read(root/L"enhancement.count")=="once\nonce\nonce\nonce\n"&&std::chrono::steady_clock::now()-started<std::chrono::seconds(5),"Stale receipt prevented bounded normal startup fallback");
+    const auto controlRoot=temporary("old-dashboard-startup-parent");
+    const auto control=run({executable().wstring(),repo.wstring(),L"--old-dashboard-startup"},controlRoot,25);
+    require(control.code==1&&control.err.find("Healthy dashboard unnecessarily started Python")!=std::string::npos,"Former startup behavior escaped the Python-process assertion: "+control.out+control.err);
+    const auto lifetime=run({executable().wstring(),repo.wstring(),L"--old-dashboard-lifetime"},controlRoot,25);
+    require(lifetime.code==1&&lifetime.err.find("Dashboard stopped when its caller Job closed")!=std::string::npos,"Former launch behavior escaped the caller-Job lifetime assertion: "+lifetime.out+lifetime.err);
+    std::cout<<"PASS managed dashboard survives caller Job, remembers its port, avoids Python on fresh identity, and rejects invalid identities; former controls fail\n";
+}
 Json task(const std::string& name="task-a",const std::string& date="2026-10-02T10:00:00Z"){return Json::object({{"id",name},{"state","finished"},{"editRevision",1},{"registeredUtc",date},{"reopenedUtc",date},{"testPlan",Json::object({{"scope","module"},{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha"})},{"reason","fixture scoped input"}})},{"ownedFiles",Json::array({"src/fixture.cpp"})}});}
 void dashboard(const fs::path& repo,bool browser){
     auto root=temporary("dashboard");auto state=root/L".build/collaboration";fs::create_directories(state);int port=free_port();std::string bid(32,'d'),largeId(32,'a'),child(32,'e'),ticket(32,'f');
@@ -132,4 +190,4 @@ void dashboard(const fs::path& repo,bool browser){
     auto info=Json::parse(read(root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json")));write(root/L".build/dashboard"/wide("stop-"+info.at("instance").str()+".request"),info.at("instance").str());require(server.wait(8).code==0,"Verified nonce stop failed");std::cout<<"PASS readonly dashboard HTTP, native metadata failures, bounded history/logs, wait/repair/retry evidence"<<(browser?" and real browser":"")<<"\n";
 }
 }
-int main(int argc,char** argv){try{require(argc>=2,"Repository argument required");dashboard(wide(argv[1]),argc>=3&&std::string(argv[2])=="--browser");return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return std::string(error.what())=="RESOURCE-RACE-75"?75:1;}}
+int main(int argc,char** argv){try{require(argc>=2,"Repository argument required");const auto repo=fs::path(wide(argv[1]));const bool browser=argc>=3&&std::string(argv[2])=="--browser",former=argc>=3&&std::string(argv[2])=="--old-dashboard-startup",lifetime=argc>=3&&std::string(argv[2])=="--old-dashboard-lifetime";if(former||lifetime){dashboard_startup(repo,former,lifetime);return 0;}if(!browser)dashboard_startup(repo);dashboard(repo,browser);return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return std::string(error.what())=="RESOURCE-RACE-75"?75:1;}}
