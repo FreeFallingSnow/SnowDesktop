@@ -192,10 +192,12 @@
             InputSafetyImport gui("GetGUIThreadInfo", reinterpret_cast<ULONG_PTR>(&InputSafetyGui));
             InputSafetyImport attach("AttachThreadInput", reinterpret_cast<ULONG_PTR>(&InputSafetyAttach), true);
             inputSafetyAttachCalls = 0;
-            const bool focused = app->FocusKeyboardWindow(popupWindow, true, L"Input safety denied activation");
+            const bool focused = app->FocusKeyboardWindow(dockWindow, true, L"Input safety denied activation");
             check(!focused && inputSafetyAttachCalls == 0, "denied host activation must return without attaching a foreign input queue");
+            (void)app->FocusKeyboardWindow(popupWindow, true, L"Unavailable popup activation");
+            check(!IsWindowVisible(popupWindow), "activation must not revive a popup whose presentation is unavailable");
             inputSafetyAllowForeground = true;
-            check(app->FocusKeyboardWindow(popupWindow, true, L"Input safety permitted activation") && inputSafetyAttachCalls == 0,
+            check(app->FocusKeyboardWindow(dockWindow, true, L"Input safety permitted activation") && inputSafetyAttachCalls == 0,
                 "a permitted foreground request must retain the ordinary successful focus route");
             inputSafetyAllowForeground = false;
         }

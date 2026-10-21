@@ -419,6 +419,11 @@ bool DesktopApp::FocusKeyboardWindow(
     HWND activationWindow = GetAncestor(target, GA_ROOT);
     if (!activationWindow)
         activationWindow = target;
+    // Only the popup presenter may reveal this host after a usable frame.
+    // Generic Shell/focus requests must not revive a closed or failed popup.
+    if (activationWindow == floatingPopupHwnd_ &&
+        !IsWindowVisible(activationWindow))
+        return false;
     const DWORD currentThread = GetCurrentThreadId();
 
     struct FocusObservation

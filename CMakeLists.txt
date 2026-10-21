@@ -2895,13 +2895,19 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
     add_test(NAME native_popup_display_menu
         COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
+    add_test(NAME native_input_safety
+        COMMAND SnowDesktopNativeDragIntegrationTests --input-safety)
     set_tests_properties(native_list_title_hover native_list_title_font_isolation native_popup_display_menu PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;widget;rendering")
+    set_tests_properties(native_input_safety PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 60 LABELS "integration;interaction;rendering")
 
     # Every mode in this fixture uses its own process, GUID storage/profile and
-    # message-only HWND. It never starts the desktop host, clipboard service or
-    # persistent Dock windows. Shell file operations touch only owned paths.
+    # message-only HWND, except input safety uses native windows on an inactive
+    # private Win32 desktop. None starts the desktop host or clipboard service;
+    # Shell file operations touch only owned paths.
     # Derive the set from registrations so new modes inherit this isolation
     # contract without maintaining another list of test names.
     get_property(SNOWDESKTOP_NATIVE_DRAG_TESTS DIRECTORY PROPERTY TESTS)
