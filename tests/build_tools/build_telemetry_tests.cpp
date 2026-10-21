@@ -14,6 +14,7 @@ void test(const fs::path& repo,bool withoutLogger=false) {
     c.call({"task-open","observations","-TaskName","native phase observations"});
     write(c.root/L"CMakeLists.txt",R"CMAKE(cmake_minimum_required(VERSION 3.24)
 project(ObservedNative LANGUAGES CXX)
+file(WRITE "${CMAKE_BINARY_DIR}/vs-version.txt" "${CMAKE_VS_VERSION_BUILD_NUMBER}")
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
 add_executable(ObservedNative main.cpp worker.cpp)
 target_compile_options(ObservedNative PRIVATE /W4 /WX)
@@ -27,7 +28,14 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
         const auto id=Json::parse(submitted.out).at("id").str();
         const auto waited=run({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"wait",L"-RunId",wide(id),L"-Seconds",L"60"},c.root,70);
         const auto view=Json::parse(waited.out);
-        require(waited.code==0&&view.at("status").str()=="passed","Real observed build failed: "+waited.out+waited.err);
+        std::string diagnostics;
+        if(waited.code!=0||view.at("status").str()!="passed")
+            for(const auto& event:view.at("stageEvents").items)
+                if(event.has("logPath")&&!event.at("logPath").str().empty()){
+                    const auto path=fs::path(wide(event.at("logPath").str()));
+                    if(fs::exists(path)){const auto content=read(path);diagnostics+=content.substr(content.size()>12000?content.size()-12000:0);}
+                }
+        require(waited.code==0&&view.at("status").str()=="passed","Real observed build failed: "+waited.out+waited.err+diagnostics);
         require(view.at("stageError").str().empty(),"Stage stream failed to read: "+view.at("stageError").str());
         return view;
     };
@@ -63,15 +71,14 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
     const auto valueEnd=cache.find_first_of("\r\n",valueStart);
     const auto instance=cache.substr(valueStart,valueEnd-valueStart);
     const auto location=instance.substr(0,instance.find(",version="));
-    // Get the real installed IDE version rather than inventing a build number.
-    const auto version=run({powershell().wstring(),L"-NoProfile",L"-Command",
-        L"$v=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:SNOWDESKTOP_FIXTURE_VS_INSTANCE 'Common7/IDE/devenv.exe'));[Console]::Write($v.ProductVersion)"},
-        c.root,10,{{L"SNOWDESKTOP_FIXTURE_VS_INSTANCE",wide(location)}});
-    require(version.code==0&&!version.out.empty(),"Cannot read configured VS version: "+version.out+version.err);
+    // Use CMake's selected installation version, including Build Tools installs
+    // that have no devenv.exe.
+    const auto version=read(c.root/L".build/cxx/vs-version.txt");
+    require(!version.empty(),"CMake did not report the selected VS installation version");
     auto presets=Json::parse(read(c.root/L"CMakePresets.json"));
     auto& configure=presets["configurePresets"].items.front();
     configure["binaryDir"]="${sourceDir}/.build/versioned-cxx";
-    configure["cacheVariables"]=Json::object({{"CMAKE_GENERATOR_INSTANCE",location+",version="+version.out}});
+    configure["cacheVariables"]=Json::object({{"CMAKE_GENERATOR_INSTANCE",location+",version="+version}});
     write(c.root/L"CMakePresets.json",presets.dump());
     counts(execute(),2);
     counts(execute(),0);

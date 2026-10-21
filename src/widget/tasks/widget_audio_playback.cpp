@@ -17,7 +17,6 @@
 #include <chrono>
 #include <cmath>
 #include <cwctype>
-#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <stdexcept>
@@ -297,6 +296,13 @@ public:
 
 struct WidgetAudioPlayback::Impl
 {
+    struct WorkSignal
+    {
+        HANDLE handle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        WorkSignal() { if (!handle) throw std::runtime_error("audioWorkerUnavailable"); }
+        ~WorkSignal() { CloseHandle(handle); }
+        void Notify() const noexcept { SetEvent(handle); }
+    };
     struct Entry
     {
         AudioPlaybackRequest request;
@@ -304,7 +310,7 @@ struct WidgetAudioPlayback::Impl
         AudioPlaybackState previous;
     };
     std::mutex mutex;
-    std::condition_variable condition;
+    WorkSignal workSignal;
     std::deque<AudioPlaybackRequest> pending;
     std::vector<AudioPlaybackMessage> messages;
     std::unordered_set<std::uint64_t> retired, canceled;
@@ -318,7 +324,7 @@ struct WidgetAudioPlayback::Impl
     ~Impl()
     {
         { std::lock_guard lock(mutex); stopping = true; }
-        condition.notify_one();
+        workSignal.Notify();
         worker.join();
     }
     void Publish(AudioPlaybackMessage message)
@@ -354,22 +360,32 @@ struct WidgetAudioPlayback::Impl
             // its notifications outside our lock, including queued next/prev
             // commands and session cleanup, while bounding each polling pass.
             MSG nativeMessage{};
+            bool dispatched = false;
             for (unsigned count = 0; count < 64 &&
                 PeekMessageW(&nativeMessage, nullptr, 0, 0, PM_REMOVE); ++count)
             {
+                dispatched = true;
                 TranslateMessage(&nativeMessage);
                 DispatchMessageW(&nativeMessage);
             }
             std::deque<AudioPlaybackRequest> work;
             std::unordered_set<std::uint64_t> dead, cancel;
             std::vector<std::pair<std::uint64_t, std::string>> files;
+            bool shouldWait = false;
             {
-                std::unique_lock lock(mutex);
-                if (pending.empty() && !ownersChanged && canceled.empty() && revoked.empty())
-                {
-                    if (players.empty()) condition.wait(lock, [&] { return stopping || !pending.empty() || ownersChanged || !canceled.empty() || !revoked.empty(); });
-                    else condition.wait_for(lock, std::chrono::milliseconds(250));
-                }
+                std::lock_guard lock(mutex);
+                shouldWait = !stopping && !dispatched && pending.empty() &&
+                    !ownersChanged && canceled.empty() && revoked.empty();
+            }
+            if (shouldWait)
+            {
+                const DWORD result = MsgWaitForMultipleObjectsEx(1, &workSignal.handle,
+                    players.empty() ? INFINITE : 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                if (result == WAIT_OBJECT_0 + 1) continue;
+                if (result == WAIT_FAILED) WaitForSingleObject(workSignal.handle, 250);
+            }
+            {
+                std::lock_guard lock(mutex);
                 if (stopping) break;
                 work.swap(pending);
                 dead = retired;
@@ -494,23 +510,23 @@ bool WidgetAudioPlayback::Submit(AudioPlaybackRequest request)
     { std::lock_guard lock(impl_->mutex);
       if (impl_->stopping || impl_->retired.contains(request.owner) || impl_->pending.size() >= 128) return false;
       impl_->pending.push_back(std::move(request)); }
-    impl_->condition.notify_one(); return true;
+    impl_->workSignal.Notify(); return true;
 }
 void WidgetAudioPlayback::Cancel(std::uint64_t id)
 {
     { std::lock_guard lock(impl_->mutex); impl_->canceled.insert(id); }
-    impl_->condition.notify_one();
+    impl_->workSignal.Notify();
 }
 void WidgetAudioPlayback::ForgetOwner(std::uint64_t owner)
 {
     { std::lock_guard lock(impl_->mutex); impl_->retired.insert(owner); impl_->ownersChanged = true;
       std::erase_if(impl_->messages, [owner](const auto& item) { return item.owner == owner; }); }
-    impl_->condition.notify_one();
+    impl_->workSignal.Notify();
 }
 void WidgetAudioPlayback::RevokeFile(std::uint64_t owner, std::string handle)
 {
     { std::lock_guard lock(impl_->mutex); impl_->revoked.emplace_back(owner, std::move(handle)); }
-    impl_->condition.notify_one();
+    impl_->workSignal.Notify();
 }
 void WidgetAudioPlayback::SetWakeCallback(std::function<void()> callback)
 {

@@ -79,7 +79,7 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
     $generator='';$instance=''
     foreach($line in [IO.File]::ReadLines($cache)){
         if($line -match '^CMAKE_GENERATOR:INTERNAL=(.*)$'){$generator=$Matches[1]}
-        if($line -match '^CMAKE_GENERATOR_INSTANCE:INTERNAL=(.*)$'){$instance=$Matches[1]}
+        if($line -match '^CMAKE_GENERATOR_INSTANCE:[^=]+=(.*)$'){$instance=$Matches[1]}
     }
     if($generator -notlike 'Visual Studio *'){return $null}
     # CMake accepts location,version=... as an instance specification. Only the

@@ -308,8 +308,9 @@ void RealSystemMedia(const std::filesystem::path& path)
     {
         WidgetAudioPlayback service;
         AudioPlaybackRequest play{1, 1, "audio.play", {}, path};
+        std::uint64_t serial = 1;
         play.volume = 0; play.loop = true; play.readMetadata = true; play.systemMediaControls = true;
-        const auto started = Complete(service, play);
+        auto started = Complete(service, play);
         if (!started.ok) throw std::runtime_error("SMTC fixture starts muted: " + started.state.error);
         bool metadata = false;
         Check(Wait([&] {
@@ -328,12 +329,13 @@ void RealSystemMedia(const std::filesystem::path& path)
         using namespace winrt::Windows::Media::Control;
         const auto manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
         GlobalSystemMediaTransportControlsSession session{nullptr};
-        Check(Wait([&] {
+        const auto findSession = [&] { Check(Wait([&] {
             for (const auto& candidate : manager.GetSessions())
                 if (candidate.TryGetMediaPropertiesAsync().get().Title() == L"SnowDesktop Audio Fixture 20261021")
                     session = candidate;
             return session != nullptr;
-        }), "own tagged fixture is discoverable in Windows SMTC");
+        }), "own tagged fixture is discoverable in Windows SMTC"); };
+        findSession();
         const auto media = session.TryGetMediaPropertiesAsync().get();
         Check(media.Artist() == L"Audio Regression" && media.AlbumTitle() == L"Local File Tests",
             "SMTC receives local artist and album tags");
@@ -360,14 +362,38 @@ void RealSystemMedia(const std::filesystem::path& path)
                 return found;
             }), "system command delivered to component queue");
         };
+        const auto switchTrack = [&] {
+            // Consume navigation by really replacing the voice, as the Lua
+            // player does. Subsequent controls must target the new session.
+            session = nullptr;
+            const auto stopped = Complete(service, {++serial, 1, "audio.stop", started.playbackId});
+            Check(stopped.ok, "component consumes navigation by stopping the old track");
+            Check(Wait([&] {
+                for (const auto& candidate : manager.GetSessions())
+                    if (candidate.TryGetMediaPropertiesAsync().get().Title() == L"SnowDesktop Audio Fixture 20261021") return false;
+                return true;
+            }), "old navigation session is retired");
+            play.taskId = ++serial;
+            started = Complete(service, play);
+            Check(started.ok, "component starts the selected track");
+            bool playing = false;
+            Check(Wait([&] {
+                for (const auto& item : service.Drain())
+                    if (item.playbackId == started.playbackId && item.state.status == "playing") playing = true;
+                return playing;
+            }), "selected track reaches playing state");
+            findSession();
+        };
         command("next", [&] { return session.TrySkipNextAsync(); });
+        switchTrack();
         command("previous", [&] { return session.TrySkipPreviousAsync(); });
+        switchTrack();
         command("setShuffle", [&] { return session.TryChangeShuffleActiveAsync(true); });
         command("setRepeatMode", [&] { return session.TryChangeAutoRepeatModeAsync(winrt::Windows::Media::MediaPlaybackAutoRepeatMode::List); });
         command("setPlaybackRate", [&] { return session.TryChangePlaybackRateAsync(1.5); });
-        auto control = AudioPlaybackRequest{2, 1, "audio.setPlaybackRate", started.playbackId}; control.playbackRate = 1.5;
+        auto control = AudioPlaybackRequest{++serial, 1, "audio.setPlaybackRate", started.playbackId}; control.playbackRate = 1.5;
         Check(Complete(service, control).ok, "component applies speed");
-        control.taskId = 3; control.action = "audio.setPlaybackMode"; control.shuffle = true; control.repeatMode = "list";
+        control.taskId = ++serial; control.action = "audio.setPlaybackMode"; control.shuffle = true; control.repeatMode = "list";
         Check(Complete(service, control).ok, "component applies playback mode");
         bool synchronized = false;
         Check(Wait([&] {
