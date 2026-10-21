@@ -309,7 +309,7 @@ void RealSystemMedia(const std::filesystem::path& path)
         AudioPlaybackRequest play{1, 1, "audio.play", {}, path};
         play.volume = 0; play.loop = true; play.readMetadata = true; play.systemMediaControls = true;
         const auto started = Complete(service, play);
-        Check(started.ok, "SMTC fixture starts muted");
+        if (!started.ok) throw std::runtime_error("SMTC fixture starts muted: " + started.state.error);
         bool metadata = false;
         Check(Wait([&] {
             for (const auto& item : service.Drain())

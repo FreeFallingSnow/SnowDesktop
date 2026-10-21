@@ -116,7 +116,9 @@ public:
             player_.AutoPlay(false);
             player_.MediaEnded([terminal = terminal_](const auto&, const auto&) { terminal->value = 1; });
             player_.MediaFailed([terminal = terminal_](const auto&, const auto&) { terminal->value = 2; });
-            player_.Source(source_);
+            // Bind once in Configure. Assigning a raw source first creates an
+            // implicit playback item; wrapping that same source again for SMTC
+            // would fail because the source is already in use.
         }
         catch (...) { Close(); throw; }
     }
@@ -188,7 +190,11 @@ public:
             }
             catch (...) {} // Missing/invalid tags and artwork are optional.
         }
-        if (!systemMediaControls) return;
+        if (!systemMediaControls)
+        {
+            player_.Source(source_);
+            return;
+        }
         const Media::Playback::MediaPlaybackItem item(source_);
         const auto properties = item.GetDisplayProperties();
         properties.Type(Media::MediaPlaybackType::Music);

@@ -140,9 +140,11 @@ local function panel(_context,model)
         children[#children+1]=view.slider({key="music.volume",width="fill",height=row,min=0,max=1,step=0.01,value=p.volume,
             events={change={id="volume"},pointerUp={id="volume.commit"}},style={foreground=accent},accessibility={label=l10n.tr("music.volume")}})
         children[#children+1]=label("mode.label",l10n.tr("music.mode"))
+        local modeLabels={sequential=l10n.tr("music.sequential"),["repeat"]=l10n.tr("music.repeat"),
+            loop=l10n.tr("music.loop"),shuffle=l10n.tr("music.shuffle")}
         for _, keys in ipairs({{"sequential","repeat"},{"loop","shuffle"}}) do
             local buttons={}
-            for _, key in ipairs(keys) do buttons[#buttons+1]=button("mode."..key,l10n.tr("music."..key),row,
+            for _, key in ipairs(keys) do buttons[#buttons+1]=button("mode."..key,modeLabels[key],row,
                 modeKey(p)==key and accent or primary) end
             children[#children+1]=view.row({key="mode."..keys[1],width="fill",height=row,gap=row*0.2,children=buttons})
         end
@@ -218,7 +220,7 @@ local function event(_context,model,e)
         elseif e.id=="volume.commit" then p:setVolume(p.volume);storage.set("volume",p.volume)
         elseif e.id=="playlist" or e.id=="options" then
             model.panelKind=e.id;model.drag=nil
-            widget.openPanel({title=l10n.tr("music."..e.id),width=540,height=520})
+            widget.openPanel({title=e.id=="playlist" and l10n.tr("music.playlist") or l10n.tr("music.options"),width=540,height=520})
         elseif e.id=="mode.sequential" then p:setMode(false,"none")
         elseif e.id=="mode.repeat" then p:setMode(false,"list")
         elseif e.id=="mode.loop" then p:setMode(false,"track")
