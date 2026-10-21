@@ -12,6 +12,8 @@ endforeach()
 set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL "" FORCE)
 set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL "" FORCE)
 set(WEBP_LINK_STATIC ON CACHE BOOL "" FORCE)
+option(SNOWDESKTOP_CACHE_WEBP_PROBES "Reuse unchanged native MSVC WebP SIMD checks" ON)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowDesktop.WebPProbeCache.cmake")
 add_subdirectory(third_party/libwebp EXCLUDE_FROM_ALL)
 if(MSVC)
     # The host and native tests use the static CRT. Apply it to the upstream

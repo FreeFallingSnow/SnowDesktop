@@ -218,6 +218,11 @@ Job CPU、峰值 Job 内存、进程与 I/O 来自该 Run 私有 Job 的采样�
 
 ## 耦合运行性能调试
 
+原生 MSVC 构建默认复用 WebP SIMD 编译探测。缓存绑定编译/链接工具、配置及选项、环境中的工具链身份和
+探测头文件内容；默认与附加标志分别记录。头文件或编译参数变化会重新编译探测程序。自定义工具链、
+导入库或额外链接配置保留上游检查。`-DSNOWDESKTOP_CACHE_WEBP_PROBES=OFF` 可用于同输入的无缓存对照。
+这只省去重复的能力探测，不跳过 CMake 配置、共享执行权检查或测试选择。
+
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
