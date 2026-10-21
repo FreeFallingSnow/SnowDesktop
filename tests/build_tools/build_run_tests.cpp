@@ -94,8 +94,13 @@ void tool_plan(const fs::path& repo,bool oldBehavior=false){
     require(result.at("outcome").str()=="passed"&&!result.at("testingPlan").at("buildRequired").boolean&&result.at("testingPlan").at("mode").str()=="selected","Tool tests were skipped or escalated to a host build");
 }
 
-void durable_cancel(const fs::path& repo,bool oldObservation=false) {
+void durable_cancel(const fs::path& repo,bool oldObservation=false,bool oldPublication=false) {
         Coordinator c(repo,"durable-batch",true);setup_run(c,repo);
+        if(oldPublication){
+            auto source=read(c.scripts/L"build_run.ps1");
+            replace(source,"$publicationCode=$LASTEXITCODE","if($LASTEXITCODE -ne 0){throw 'Batch result publication failed; preserve state and inspect status/recover.'}\n                $publicationCode=$LASTEXITCODE");
+            write(c.scripts/L"build_run.ps1",source,true);
+        }
         // The result must be durable before retiring metadata, so existence is
         // not the Run's completion signal. Hold that real publication window.
         auto manager=read(c.scripts/L"build_manager.ps1");
@@ -128,7 +133,9 @@ void durable_cancel(const fs::path& repo,bool oldObservation=false) {
         fs::remove(c.stateRoot/L"hold-publication");
         // Observe the existing executor's terminal record, never restart it or
         // infer completion from the earlier immutable batch-result file.
-        until([&]{return Json::parse(read(c.stateRoot/L"runs"/wide(id+".json"))).at("status").str()=="cancelled";},20);
+        Json terminal;
+        until([&]{terminal=Json::parse(read(c.stateRoot/L"runs"/wide(id+".json")));const auto state=terminal.at("status").str();return state=="cancelled"||state=="failed"||state=="passed"||state=="invalidated"||state=="interrupted";},20);
+        require(terminal.at("status").str()=="cancelled","Cancelled batch disagrees with terminal Run: "+terminal.dump());
         if(oldObservation)require(oldCompleted,"Early result-file observation preceded batch retirement");
         const auto result=c.result(batch);
         require(result.at("outcome").str()=="cancelled"&&result.at("runId").str()==id&&c.state().at("current").kind==Json::Kind::Null,"Batch did not publish one shared cancellation after lease release");
@@ -147,6 +154,10 @@ void test(const fs::path& repo) {
         const auto control=run({executable().wstring(),repo.wstring(),L"--early-result-control"},controlRoot,35);
         require(control.code==1&&control.err.find("Early result-file observation preceded batch retirement")!=std::string::npos,"Controlled publication window did not reject the former observation: "+control.out+control.err);
         std::cout<<"PASS controlled publication window rejects premature retirement observation\n";
+        const auto publicationRoot=temporary("old-cancel-publication-control");
+        const auto publication=run({executable().wstring(),repo.wstring(),L"--old-cancel-publication"},publicationRoot,35);
+        require(publication.code==1&&publication.err.find("Cancelled batch disagrees with terminal Run")!=std::string::npos&&publication.err.find("Batch result publication failed")!=std::string::npos,"Restored nonzero publication rejection was not caught: "+publication.out+publication.err);
+        std::cout<<"PASS restored cancellation publication rejection fails the Run/batch consistency assertion\n";
     }
     {
         tool_plan(repo);
@@ -264,4 +275,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}

@@ -303,8 +303,18 @@ try {
         if($ownsRun -and $request.action -eq 'batch'){
             try {
                 $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') publish-run $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId -Reason $record.error -WaitSeconds 30
-                if($LASTEXITCODE -ne 0){throw 'Batch result publication failed; preserve state and inspect status/recover.'}
+                $publicationCode=$LASTEXITCODE
                 $batchResult=Read-EntryJson (Join-Path $root ('.build/collaboration/'+$request.batch+'.json'))
+                $retiredState=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+                # publish-run returns the batch outcome, including cancellation
+                # and failed tests. Validate the retired identity and that code,
+                # rather than treating every legitimate nonzero result as failure.
+                if(-not $batchResult -or -not $retiredState -or $batchResult.schemaVersion -ne 1 -or
+                    $batchResult.repositoryRoot -ne $root -or $batchResult.batchId -ne $request.batch -or
+                    $batchResult.runId -ne $RunId -or $publicationCode -ne $batchResult.exitCode -or
+                    ($retiredState.current -and $retiredState.current.id -eq $request.batch)){
+                    throw 'Batch result publication failed; preserve state and inspect status/recover.'
+                }
                 $record.status=if($batchResult.outcome -eq 'skipped'){'passed'}else{$batchResult.outcome}
                 $record.exitCode=$batchResult.exitCode;$record.error=$batchResult.error
             } catch {$record.status='failed';$record.exitCode=2;$record.error+=' '+$_.Exception.Message}
