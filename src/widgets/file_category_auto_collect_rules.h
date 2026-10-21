@@ -17,19 +17,65 @@ inline bool Matches(const DesktopWidget& widget, std::wstring_view category)
             widget.autoCollectCategoryIds.end();
 }
 
-inline void ToggleCategory(DesktopWidget& widget, const std::wstring& category)
+// The collection menu behaves like a checkbox list in both scopes. Clearing
+// one option while the empty All scope is active expands that scope first, so
+// the clicked category is the one removed instead of the only one retained.
+inline void ToggleCategory(DesktopWidget& widget, const std::wstring& category,
+    const std::vector<std::wstring>& availableCategories)
 {
     auto& selected = widget.autoCollectCategoryIds;
-    if (!widget.autoCollect || selected.empty())
+    if (!widget.autoCollect)
     {
         selected = {category};
         widget.autoCollect = true;
+        return;
+    }
+    if (selected.empty())
+    {
+        for (const auto& available : availableCategories)
+            if (available != L"all" && available != category)
+                selected.push_back(available);
+        if (selected.empty()) widget.autoCollect = false;
         return;
     }
     const auto found = std::find(selected.begin(), selected.end(), category);
     if (found == selected.end()) selected.push_back(category);
     else selected.erase(found);
     if (selected.empty()) widget.autoCollect = false;
+}
+
+// Whether another automatic collector owns the category. A category belongs to
+// at most one collector, so items that no longer match this component's scope
+// are handed to that owner instead of being evicted to the free desktop.
+inline bool IsCategoryClaimedElsewhere(const std::vector<DesktopWidget>& widgets,
+    size_t selfIndex, std::wstring_view category)
+{
+    for (size_t index = 0; index < widgets.size(); ++index)
+    {
+        if (index == selfIndex) continue;
+        const auto& widget = widgets[index];
+        if (widget.type != DesktopWidgetType::FileCategories ||
+            !widget.autoCollect)
+            continue;
+        if (Matches(widget, category)) return true;
+    }
+    return false;
+}
+
+// Decides whether an item that is currently collected must leave the component.
+// Items stay when the only change is this component's category scope; they are
+// released only when they can no longer be collected at all or another
+// component now owns their category.
+inline bool ShouldReleaseCollectedItem(const DesktopWidget& widget,
+    bool collectable, bool unclassifiedShortcut, std::wstring_view category,
+    const std::vector<DesktopWidget>& widgets, size_t selfIndex)
+{
+    if (!collectable) return true;
+    // Wait for the target classification of a new link; it is still a member.
+    if (unclassifiedShortcut) return false;
+    if (!widget.autoCollect) return false;
+    if (Matches(widget, category)) return false;
+    return IsCategoryClaimedElsewhere(widgets, selfIndex, category);
 }
 
 inline void ReleasePreviousSelection(DesktopWidget& widget)

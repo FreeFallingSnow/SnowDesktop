@@ -320,21 +320,38 @@ int wmain(int argc, wchar_t** argv)
     Check(!collection::MoveTab(order, L"all", L"missing"), "an invalid target cannot discard a tab");
 
     namespace autoCollect = snowdesktop::file_category_auto_collect_rules;
+    const std::vector<std::wstring> available{L"all", L"images", L"documents", L"custom-work", L"others"};
     DesktopWidget scope;
     Check(autoCollect::Matches(scope, L"images") && autoCollect::Matches(scope, L"custom-new"),
         "legacy empty selection includes all current and future categories");
-    autoCollect::ToggleCategory(scope, L"images");
+    autoCollect::ToggleCategory(scope, L"images", available);
     Check(scope.autoCollect && autoCollect::Matches(scope, L"images") &&
         !autoCollect::Matches(scope, L"documents"),
         "selecting a category from All starts an explicit selection");
-    autoCollect::ToggleCategory(scope, L"documents");
-    autoCollect::ToggleCategory(scope, L"images");
+    autoCollect::ToggleCategory(scope, L"documents", available);
+    autoCollect::ToggleCategory(scope, L"images", available);
     Check(scope.autoCollect && scope.autoCollectCategoryIds == std::vector<std::wstring>{L"documents"},
         "category selection supports adding and removing individual categories");
-    autoCollect::ToggleCategory(scope, L"documents");
+    autoCollect::ToggleCategory(scope, L"documents", available);
     Check(!scope.autoCollect, "removing the last category disables automatic collection");
 
-    const std::vector<std::wstring> available{L"all", L"images", L"documents", L"custom-work", L"others"};
+    DesktopWidget allScope;
+    allScope.type = DesktopWidgetType::FileCategories;
+    allScope.autoCollect = true;
+    autoCollect::ToggleCategory(allScope, L"images", available);
+    Check(allScope.autoCollect && !autoCollect::Matches(allScope, L"images") &&
+        autoCollect::Matches(allScope, L"documents") &&
+        autoCollect::Matches(allScope, L"custom-work") &&
+        autoCollect::Matches(allScope, L"others") &&
+        !autoCollect::Matches(allScope, L"custom-new") &&
+        std::find(allScope.autoCollectCategoryIds.begin(),
+            allScope.autoCollectCategoryIds.end(), L"all") ==
+            allScope.autoCollectCategoryIds.end(),
+        "clearing a category in the All scope removes that category instead of keeping only it");
+    autoCollect::ToggleCategory(allScope, L"images", available);
+    Check(allScope.autoCollect && autoCollect::Matches(allScope, L"images"),
+        "the same category can be added back after clearing it in the All scope");
+
     std::vector<DesktopWidget> collectors(4);
     for (size_t index = 0; index < collectors.size(); ++index)
     {
@@ -353,13 +370,13 @@ int wmain(int argc, wchar_t** argv)
         "different components keep disjoint enabled categories");
     collectors[1].autoCollectCategoryIds.push_back(L"custom-work");
     autoCollect::EnforceExclusiveSelection(collectors, 1, available);
-    autoCollect::ToggleCategory(collectors[2], L"custom-work");
+    autoCollect::ToggleCategory(collectors[2], L"custom-work", available);
     autoCollect::EnforceExclusiveSelection(collectors, 2, available);
     Check(collectors[1].autoCollect &&
         collectors[1].autoCollectCategoryIds == std::vector<std::wstring>{L"images"} &&
         collectors[2].autoCollectCategoryIds == std::vector<std::wstring>({L"documents", L"custom-work"}),
         "transferring a custom category keeps the previous owner's remaining categories enabled");
-    autoCollect::ToggleCategory(collectors[3], L"images");
+    autoCollect::ToggleCategory(collectors[3], L"images", available);
     collectors[1].itemKeys = {L"PHOTO.PNG"};
     collectors[1].missingItems.push_back({L"MISSING-PHOTO.PNG", {}, 0});
     const auto displaced = autoCollect::EnforceExclusiveSelection(collectors, 3, available);
@@ -380,6 +397,48 @@ int wmain(int argc, wchar_t** argv)
     Check(autoCollect::EnforceExclusiveSelection(collectors, 1, available).empty() &&
         collectors[0].itemKeys == std::vector<std::wstring>{L"MANUALLY-KEPT"},
         "inactive components keep their contents and repeated enforcement is stable");
+
+    std::vector<DesktopWidget> claims(2);
+    for (auto& widget : claims)
+        widget.type = DesktopWidgetType::FileCategories;
+    claims[0].autoCollect = true;
+    claims[0].autoCollectCategoryIds = {L"images"};
+    Check(autoCollect::IsCategoryClaimedElsewhere(claims, 1, L"images") &&
+        !autoCollect::IsCategoryClaimedElsewhere(claims, 1, L"documents") &&
+        !autoCollect::IsCategoryClaimedElsewhere(claims, 0, L"images"),
+        "category ownership ignores the component itself and respects explicit scopes");
+    claims[1].autoCollect = true;
+    claims[1].autoCollectCategoryIds.clear();
+    Check(autoCollect::IsCategoryClaimedElsewhere(claims, 0, L"anything-future"),
+        "an All-scope collector owns categories added later as well");
+
+    DesktopWidget retained;
+    retained.type = DesktopWidgetType::FileCategories;
+    retained.autoCollect = true;
+    retained.autoCollectCategoryIds = {L"images"};
+    std::vector<DesktopWidget> owners{retained};
+    Check(!autoCollect::ShouldReleaseCollectedItem(retained, true, false, L"images",
+            owners, 0) &&
+        !autoCollect::ShouldReleaseCollectedItem(retained, true, false, L"documents",
+            owners, 0),
+        "changing the automatic collection scope keeps already collected items");
+    Check(autoCollect::ShouldReleaseCollectedItem(retained, false, false, L"images",
+            owners, 0),
+        "an item that cannot be collected any more still leaves the component");
+    Check(!autoCollect::ShouldReleaseCollectedItem(retained, true, true, L"documents",
+            owners, 0),
+        "a link waiting for its target classification stays collected");
+    DesktopWidget taker;
+    taker.type = DesktopWidgetType::FileCategories;
+    taker.autoCollect = true;
+    taker.autoCollectCategoryIds = {L"documents"};
+    owners.push_back(taker);
+    Check(autoCollect::ShouldReleaseCollectedItem(retained, true, false, L"documents",
+            owners, 0),
+        "a category taken over by another collector is handed over instead of kept");
+    Check(!autoCollect::ShouldReleaseCollectedItem(retained, true, false, L"images",
+            owners, 0),
+        "the component's own categories are never released for handover");
 
     namespace emptyGroup = snowdesktop::empty_group_drop_rules;
     for (const auto groupType : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})

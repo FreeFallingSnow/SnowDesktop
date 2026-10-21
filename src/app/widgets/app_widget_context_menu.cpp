@@ -943,10 +943,97 @@ void DesktopApp::ShowWidgetContextMenu(
         shellRequest.background = true;
         shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     }
+    // Toggling an auto-collect option is a continuous configuration step: keep
+    // the submenu open, refresh its check marks in place, and apply the
+    // resulting collection/layout work once the menu session ends.
+    bool autoCollectPending = false;
+    const auto applyAutoCollectMenuCommand = [&](UINT menuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& items) -> bool {
+        if (effectiveSourceIndex >= widgets_.size() ||
+            widgets_[effectiveSourceIndex].type != DesktopWidgetType::FileCategories)
+            return false;
+        auto& source = widgets_[effectiveSourceIndex];
+        if (menuCommand == kContextWidgetAutoCollectAll)
+        {
+            source.autoCollect = true;
+            source.autoCollectCategoryIds.clear();
+        }
+        else if (menuCommand == kContextWidgetToggleAutoCollect)
+        {
+            source.autoCollect = false;
+        }
+        else if (menuCommand >= kContextWidgetAutoCollectCategoryFirst &&
+            menuCommand <= kContextWidgetAutoCollectCategoryLast)
+        {
+            const size_t categoryIndex =
+                menuCommand - kContextWidgetAutoCollectCategoryFirst;
+            if (categoryIndex >= autoCollectCategories.size()) return false;
+            snowdesktop::file_category_auto_collect_rules::ToggleCategory(
+                source, autoCollectCategories[categoryIndex],
+                GetCategoryOrder(categorySettings_));
+        }
+        else
+            return false;
+
+        autoCollectPending = true;
+        for (auto& item : items)
+        {
+            const bool holdsAutoCollect = std::any_of(
+                item.children.begin(), item.children.end(),
+                [](const auto& child) {
+                    return child.command == kContextWidgetAutoCollectAll ||
+                        child.command == kContextWidgetToggleAutoCollect ||
+                        (child.command >= kContextWidgetAutoCollectCategoryFirst &&
+                            child.command <= kContextWidgetAutoCollectCategoryLast);
+                });
+            if (!holdsAutoCollect) continue;
+            for (auto& child : item.children)
+            {
+                if (child.command == kContextWidgetAutoCollectAll)
+                {
+                    child.checked = source.autoCollect &&
+                        source.autoCollectCategoryIds.empty();
+                }
+                else if (child.command == kContextWidgetToggleAutoCollect)
+                {
+                    child.checked = !source.autoCollect;
+                }
+                else if (child.command >= kContextWidgetAutoCollectCategoryFirst &&
+                    child.command <= kContextWidgetAutoCollectCategoryLast)
+                {
+                    const size_t categoryIndex =
+                        child.command - kContextWidgetAutoCollectCategoryFirst;
+                    child.checked = source.autoCollect &&
+                        categoryIndex < autoCollectCategories.size() &&
+                        snowdesktop::file_category_auto_collect_rules::Matches(
+                            source, autoCollectCategories[categoryIndex]);
+                }
+            }
+            item.label = statusLabel(_LW("app.interact.auto_collect"),
+                source.autoCollect ? _LW("app.interact.on")
+                                   : _LW("app.interact.off"));
+            break;
+        }
+        return true;
+    };
     UINT command = ShowModernMenu(
-        menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr, {}, {}, {}, &shellRequest);
+        menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr,
+        applyAutoCollectMenuCommand, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (autoCollectPending && effectiveSourceIndex < widgets_.size() &&
+        widgets_[effectiveSourceIndex].type == DesktopWidgetType::FileCategories)
+    {
+        // The submenu stays open for consecutive changes; collect and relayout
+        // once after the menu session so the desktop does not rebuild under it.
+        EnforceAutoCollectFileCategorySelection(effectiveSourceIndex);
+        ApplyAutoCollectFileCategoryWidgets();
+        LayoutItems();
+        RebuildContainersAndItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
 
     if (dockIconMenu && (command == kDockBeautifyIcon || command == kDockInheritIcon))
     {
@@ -1075,35 +1162,6 @@ void DesktopApp::ShowWidgetContextMenu(
     };
 
     bool needsDesktopFocus = true;
-    if (command == kContextWidgetAutoCollectAll ||
-        (command >= kContextWidgetAutoCollectCategoryFirst &&
-            command <= kContextWidgetAutoCollectCategoryLast))
-    {
-        if (effectiveSourceIndex < widgets_.size() &&
-            widgets_[effectiveSourceIndex].type == DesktopWidgetType::FileCategories)
-        {
-            auto& source = widgets_[effectiveSourceIndex];
-            if (command == kContextWidgetAutoCollectAll)
-            {
-                source.autoCollect = true;
-                source.autoCollectCategoryIds.clear();
-            }
-            else
-            {
-                const size_t categoryIndex = command - kContextWidgetAutoCollectCategoryFirst;
-                if (categoryIndex < autoCollectCategories.size())
-                    snowdesktop::file_category_auto_collect_rules::ToggleCategory(
-                        source, autoCollectCategories[categoryIndex]);
-            }
-            EnforceAutoCollectFileCategorySelection(effectiveSourceIndex);
-            ApplyAutoCollectFileCategoryWidgets();
-            LayoutItems();
-            RebuildContainersAndItems();
-            SaveLayoutSlots();
-            refreshOpenPopupDisplay();
-            InvalidateRect(hwnd_, nullptr, TRUE);
-        }
-    }
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
 
@@ -1279,16 +1337,6 @@ void DesktopApp::ShowWidgetContextMenu(
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
-    case kContextWidgetToggleAutoCollect:
-        if (effectiveSourceIndex >= widgets_.size() ||
-            widgets_[effectiveSourceIndex].type !=
-                DesktopWidgetType::FileCategories)
-            break;
-        widgets_[effectiveSourceIndex].autoCollect = false;
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        break;
     case kContextWidgetToggleDateGroup:
         widgets_[widgetIndex].dateHeaders = !widgets_[widgetIndex].dateHeaders;
         widgets_[widgetIndex].scrollOffset = 0;

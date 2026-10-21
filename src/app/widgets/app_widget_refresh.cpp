@@ -209,6 +209,12 @@ bool DesktopApp::EnforceAutoCollectFileCategorySelection(size_t activeWidgetInde
 bool DesktopApp::ApplyAutoCollectFileCategoryWidgets()
 {
     bool changed = false;
+    // Remember every collected membership so items that really leave a
+    // component can be re-placed instead of reviving their stale cell.
+    std::unordered_set<std::wstring> ownedBefore;
+    for (const auto& widget : widgets_)
+        for (const auto& key : widget.itemKeys)
+            if (!key.empty()) ownedBefore.insert(ToUpperInvariant(key));
     // Normalize persisted selections too, without switching off unrelated scopes.
     for (size_t i = 0; i < widgets_.size(); ++i)
         changed = EnforceAutoCollectFileCategorySelection(i) || changed;
@@ -225,6 +231,16 @@ bool DesktopApp::ApplyAutoCollectFileCategoryWidgets()
         if (widgets_[i].type == DesktopWidgetType::FileCategories &&
             widgets_[i].autoCollect)
             changed = CollectFileCategoryWidget(i, false) || changed;
+    if (!ownedBefore.empty())
+    {
+        RefreshCollectedKeysCache();
+        std::vector<std::wstring> released;
+        for (const auto& key : ownedBefore)
+            if (!collectedKeysCache_.contains(key))
+                released.push_back(key);
+        if (!released.empty())
+            changed = PlaceReleasedDesktopItems(released) || changed;
+    }
     return changed;
 }
 

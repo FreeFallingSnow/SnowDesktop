@@ -2518,6 +2518,12 @@ private:
     static bool IsGridAreaValid(const GridCell& cell, GridSpan span);
     /** @brief 重新布局被移位的桌面项。 */
     void RelayoutDisplacedItems();
+    /**
+     * @brief 把解除收纳的桌面项按新文件规则重新寻找桌面空位。
+     * @param keys 解除收纳的布局键（大小写不敏感）
+     * @return 至少一项改变了位置时返回 true
+     */
+    bool PlaceReleasedDesktopItems(const std::vector<std::wstring>& keys);
 
     // ── Drag helpers ───────────────────────────────────────
     /**

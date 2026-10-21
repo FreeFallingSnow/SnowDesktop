@@ -248,5 +248,167 @@ void DesktopApp::RelayoutDisplacedItems()
 }
 
 /**
+ * @brief 把解除收纳的桌面项按新文件规则重新寻找桌面空位。
+ *
+ * 被收纳期间项目保留着收纳前的网格键，期间新文件、组件或其他布局调整可能
+ * 已经占用该位置。解除收纳时不能直接沿用旧位置，而应在当前占用之外重新落位；
+ * 现有页面没有空位时沿用新文件的溢出页流程。
+ * @param keys 解除收纳的布局键（大小写不敏感）
+ * @return 至少处理了一项并需要重新布局时返回 true
+ */
+bool DesktopApp::PlaceReleasedDesktopItems(
+    const std::vector<std::wstring>& keys)
+{
+    if (keys.empty() || gridPages_.empty()) return false;
+
+    std::unordered_set<std::wstring> released;
+    released.reserve(keys.size());
+    for (const auto& key : keys)
+        if (!key.empty()) released.insert(ToUpperInvariant(key));
+    if (released.empty()) return false;
+
+    RefreshCollectedKeysCache();
+    std::unordered_set<std::wstring> usedSlots;
+    std::unordered_map<std::wstring, int> newPageSlots;
+    std::vector<DesktopItem*> displaced;
+    displaced.reserve(released.size());
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        if (released.contains(ToUpperInvariant(item.layoutKey)))
+        {
+            if (item.gridCell.pageId != kDockPageId)
+                displaced.push_back(&item);
+            continue;
+        }
+        if (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId)
+            continue;
+        if (const GridPage* page = FindGridPage(gridPages_, item.gridCell.pageId))
+        {
+            if (GridAreaFitsPage(*page, item.gridCell, item.gridSpan))
+                MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+            continue;
+        }
+        // Items on saved pages outside the current offset still own their cells.
+        const std::wstring& pageId = item.gridCell.pageId;
+        if (pageId.empty() || pageId == kDockPageId ||
+            !savedPageColumns_.contains(pageId) ||
+            !savedPageRows_.contains(pageId) ||
+            item.gridCell.column < 0 || item.gridCell.row < 0 ||
+            item.gridCell.column + item.gridSpan.columns >
+                savedPageColumns_.at(pageId) ||
+            item.gridCell.row + item.gridSpan.rows >
+                savedPageRows_.at(pageId))
+            continue;
+        MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+    }
+    if (displaced.empty()) return false;
+
+    const auto tryPlaceOnPage = [&](const std::wstring& pageId,
+                                     int columns, int rows, int& nextSlot,
+                                     GridSpan span, GridCell& found) -> bool {
+        const int capacity = std::max(1, columns * rows);
+        for (int slot = nextSlot; slot < capacity; ++slot)
+        {
+            GridCell candidate;
+            candidate.pageId = pageId;
+            candidate.column = slot / std::max(1, rows);
+            candidate.row = slot % std::max(1, rows);
+            if (candidate.column + span.columns <= columns &&
+                candidate.row + span.rows <= rows &&
+                !AreGridSlotsMarked(usedSlots, candidate, span))
+            {
+                found = candidate;
+                nextSlot = slot + 1;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    std::unordered_set<std::wstring> visiblePageIds;
+    visiblePageIds.reserve(gridPages_.size());
+    for (const auto& page : gridPages_)
+        visiblePageIds.insert(page.id);
+
+    const auto findFreeCellOrGrow = [&](GridSpan span, GridCell& result) -> bool {
+        if (TryFindFreeCell(span, usedSlots, result))
+            return true;
+
+        // Saved pages outside the current offset keep their previous placement.
+        for (const auto& pageId : savedPageIds_)
+        {
+            if (visiblePageIds.contains(pageId)) continue;
+            if (!savedPageColumns_.contains(pageId) ||
+                !savedPageRows_.contains(pageId))
+                continue;
+            int slot = 0;
+            if (tryPlaceOnPage(pageId, savedPageColumns_.at(pageId),
+                    savedPageRows_.at(pageId), slot, span, result))
+                return true;
+        }
+
+        // Reuse the overflow pages created earlier in this batch before adding
+        // another one.
+        for (auto& [pageId, nextSlot] : newPageSlots)
+        {
+            const auto columns = savedPageColumns_.find(pageId);
+            const auto rows = savedPageRows_.find(pageId);
+            if (columns == savedPageColumns_.end() ||
+                rows == savedPageRows_.end())
+                continue;
+            if (tryPlaceOnPage(pageId, columns->second, rows->second,
+                    nextSlot, span, result))
+                return true;
+        }
+
+        std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+        if (monitorOrder.empty() || monitorOrder.back() >= gridPages_.size())
+            return false;
+        const GridPage& lastPage = gridPages_[monitorOrder.back()];
+        if (span.columns < 1 || span.rows < 1 ||
+            span.columns > lastPage.columns || span.rows > lastPage.rows)
+            return false;
+
+        std::wstring newPageId = GeneratePageId();
+        if (newPageId.empty()) return false;
+        RememberSavedPageId(newPageId);
+        savedPageColumns_[newPageId] = lastPage.columns;
+        savedPageRows_[newPageId] = lastPage.rows;
+        result = {newPageId, 0, 0};
+        newPageSlots[newPageId] = 1;
+        return true;
+    };
+
+    bool changed = false;
+    for (DesktopItem* item : displaced)
+    {
+        GridSpan span = item->gridSpan;
+        if (item->largeIcon)
+            span = {std::max(1, item->largeIcon->columns),
+                std::max(1, item->largeIcon->rows)};
+        span.columns = std::max(1, span.columns);
+        span.rows = std::max(1, span.rows);
+        // A large icon larger than the target page cannot be assigned anywhere.
+        if (const GridPage* firstPage = GetFirstPageGridPage())
+        {
+            span.columns = std::min(span.columns, std::max(1, firstPage->columns));
+            span.rows = std::min(span.rows, std::max(1, firstPage->rows));
+        }
+
+        GridCell landing;
+        if (!findFreeCellOrGrow(span, landing))
+            continue;
+
+        changed = true;
+        item->gridCell = landing;
+        item->gridSpan = span;
+        item->slot = SlotFromCell(gridPages_, landing);
+        MarkGridArea(usedSlots, landing, span);
+    }
+    return changed;
+}
+
+/**
  * @brief 按名称对桌面图标排序（在每个页面内）。
  */

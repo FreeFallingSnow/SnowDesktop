@@ -480,6 +480,11 @@ bool FileCategories::CollectTopLevelDesktopItems()
 bool FileCategories::PruneUncollectableItems()
 {
     if (!data_ || !app_) return false;
+    const auto& widgets = app_->GetWidgets();
+    const auto self = std::find_if(widgets.begin(), widgets.end(),
+        [&](const DesktopWidget& widget) { return widget.id == data_->id; });
+    const size_t selfIndex = self == widgets.end()
+        ? widgets.size() : static_cast<size_t>(self - widgets.begin());
     const size_t oldSize = data_->itemKeys.size();
     data_->itemKeys.erase(
         std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
@@ -487,14 +492,17 @@ bool FileCategories::PruneUncollectableItems()
                 size_t itemIdx = app_->FindItemIndexByKey(key);
                 if (itemIdx == static_cast<size_t>(-1)) return false;
                 const auto& item = app_->GetDesktopItems()[itemIdx];
-                if (!IsCollectable(app_->GetCategorySettings(), item)) return true;
                 const auto extension = DesktopItemExtensionUpper(item);
-                if ((extension == L".LNK" || extension == L".URL") &&
-                    !item.shortcutTarget.classified)
-                    return false;
-                return data_->autoCollect &&
-                    !snowdesktop::file_category_auto_collect_rules::Matches(*data_,
-                        FileCategoryIdForItem(item, app_->GetCategorySettings()));
+                // Changing this component's category scope keeps existing
+                // members; only items that cannot be collected at all or were
+                // taken over by another automatic collector leave the list.
+                return snowdesktop::file_category_auto_collect_rules::
+                    ShouldReleaseCollectedItem(*data_,
+                        IsCollectable(app_->GetCategorySettings(), item),
+                        (extension == L".LNK" || extension == L".URL") &&
+                            !item.shortcutTarget.classified,
+                        FileCategoryIdForItem(item, app_->GetCategorySettings()),
+                        widgets, selfIndex);
             }),
         data_->itemKeys.end());
     if (data_->itemKeys.size() == oldSize) return false;
