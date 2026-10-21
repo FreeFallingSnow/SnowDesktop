@@ -5,6 +5,24 @@ import path from 'node:path';
 import {promisify} from 'node:util';
 
 const execFileAsync=promisify(execFile);
+function dashboardPortAt(root,configured){
+ if(configured!==8765)return configured;
+ const parts=['.build','dashboard','preferred-port.json'];let cursor=root;
+ for(let index=0;index<parts.length;index++){
+  cursor=path.join(cursor,parts[index]);let stat;
+  try{stat=fs.lstatSync(cursor);}catch(error){if(error.code==='ENOENT')return configured;throw error;}
+  if(stat.isSymbolicLink()||(index<2?!stat.isDirectory():!stat.isFile()))throw new Error('Dashboard port preference must stay in this checkout');
+ }
+ const fd=fs.openSync(cursor,'r');
+ try{
+  if(fs.fstatSync(fd).size>1024)throw new Error('Dashboard port preference exceeds byte budget');
+  const bytes=Buffer.alloc(1025),length=fs.readSync(fd,bytes,0,bytes.length,0);
+  if(length>1024)throw new Error('Dashboard port preference exceeds byte budget');
+  const preference=JSON.parse(bytes.subarray(0,length).toString('utf8').replace(/^\uFEFF/,''));
+  if(preference?.schemaVersion!==1||!Number.isInteger(preference.port)||preference.port<1024||preference.port>65535)throw new Error('Invalid dashboard port preference');
+  return preference.port;
+ }finally{fs.closeSync(fd);}
+}
 const allowedCommands=new Set(['task-open','task-stage','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','status']);
 export function taskId(agentId){return 'dsh-'+createHash('sha256').update(agentId).digest('hex').slice(0,24);}
 export function inside(root,target){const rel=path.relative(root,target);return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}
@@ -82,9 +100,10 @@ export class CollaborationBridge{
  async snapshot(){return this.read('/api/status');}
  async read(route){
   if(typeof route!=='string'||!(/^(?:\/api\/status|\/api\/batches\/[a-f0-9]{32}|\/api\/retries\/[a-f0-9]{32}\/(?:build_dashboard|build_dashboard_browser)\/[23]\/log)$/.test(route)))throw new Error('Unsupported read-only dashboard route');
-  const receiptFile=path.join(this.root,'.build/dashboard/server-'+this.port+'.json');
+  const port=dashboardPortAt(this.root,this.port);
+  const receiptFile=path.join(this.root,'.build/dashboard/server-'+port+'.json');
   const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8').replace(/^\uFEFF/,''));
-  const base='http://127.0.0.1:'+this.port;
+  const base='http://127.0.0.1:'+port;
   const read=async route=>{
    const response=await fetch(base+route,{signal:AbortSignal.timeout(3000),redirect:'error'});
    if(!response.ok)throw new Error('Dashboard HTTP '+response.status);

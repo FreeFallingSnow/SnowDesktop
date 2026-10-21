@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.2';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -160,7 +160,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   };
   const renderers={overview:overviewView,tasks:tasksView,validation:validationView,logs:logsView,messages:messagesView,history:historyView};
   const motionProps=kind=>({onPointerDown:event=>startMotion(event,kind),onPointerMove:moveMotion,onPointerUp:finishMotion,onPointerCancel:finishMotion,onLostPointerCapture:finishMotion});
-  return h('section',{ref:panel,className:'snow-collab',style:placement,'aria-label':t('title'),'data-version':'0.2.0',onKeyDown:event=>{if(event.key==='Escape'){update({collapsed:true});event.stopPropagation();}}},
+  return h('section',{ref:panel,className:'snow-collab',style:placement,'aria-label':t('title'),'data-version':VERSION,onKeyDown:event=>{if(event.key==='Escape'){update({collapsed:true});event.stopPropagation();}}},
    h('style',null,css),h('header',null,
     h('div',{className:'sc-handle',tabIndex:0,'aria-label':t('drag'),title:t('drag'),...motionProps('move'),onKeyDown:event=>moveKey(event)},
      h('span',{className:'sc-symbol','aria-hidden':true},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.6},h('path',{d:'M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9 5l3 3 3-3M9 19l3-3 3 3M5 10l4 .8L8 7M19 14l-4-.8 1 3.8M5 14l4-.8L8 17M19 10l-4 .8 1-3.8'}))),
@@ -171,7 +171,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     selected?h('div',{className:'sc-selection'},h('span',null,t('historical')+' · '+selected.slice(0,8)+(model?.selection!==selected?' · '+t('loading'):'')),button(t('back'),()=>selectBatch(null))):null,
     error?h('div',{className:'sc-callout bad',role:'status',style:{margin:'7px 15px 0'}},t('offline'),h('small',{style:{display:'block'}},error)):null,
     h('div',{className:'sc-body',role:'tabpanel',id:'sc-panel','aria-labelledby':'sc-tab-'+view.tab},renderers[view.tab]()),
-    h('footer',{className:'sc-connection'},h('span',{className:'sc-dot '+(error?'bad':snapshot?'good':'')}),h('span',null,t(error?'offline':snapshot?'connected':'loading')),h('time',{title:date(snapshot?.updatedUtc)},snapshot?.updatedUtc?new Date(snapshot.updatedUtc).toLocaleTimeString():'—'),h('span',null,'0.2.1')),
+    h('footer',{className:'sc-connection'},h('span',{className:'sc-dot '+(error?'bad':snapshot?'good':'')}),h('span',null,t(error?'offline':snapshot?'connected':'loading')),h('time',{title:date(snapshot?.updatedUtc)},snapshot?.updatedUtc?new Date(snapshot.updatedUtc).toLocaleTimeString():'—'),h('span',null,VERSION)),
     ...['n','e','s','w','ne','nw','sw'].map(edge=>h('div',{key:edge,className:'sc-resize '+edge,'aria-hidden':true,...motionProps(edge)})),
     h('button',{className:'sc-resize se',type:'button','aria-label':t('resize'),title:t('resize'),...motionProps('se'),onKeyDown:event=>moveKey(event,true)},h('svg',{width:14,height:14,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor',strokeWidth:1.5,'aria-hidden':true},h('path',{d:'M4 12l8-8M8 12l4-4M12 12h.1'}))))
   );

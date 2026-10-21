@@ -21,7 +21,7 @@
 
 ## 安装
 
-先确认 cordis.patch.yml 的 repositoryRoot 与 dashboardPort 是本仓库及其已核对面板端口。当前文件已配置本机的 `D:/Code/Other/SnowDesktop` 与 `8765`。
+先确认 cordis.patch.yml 的 repositoryRoot 指向目标仓库。0.2.2 在 dashboardPort 保留兼容默认值 `8765` 时，每次读取跟随该仓库 `.build/dashboard/preferred-port.json` 保存的首选端口；没有首选文件时仍使用 `8765`。显式配置其他端口时固定使用该端口。首选文件有大小、格式、端口范围和链接检查，异常时拒绝读取；切换端口后仍核对相同仓库的服务实例回执，不修改系统保留端口或停止其他监听者。当前 bundle 的配置为本机 `D:/Code/Other/SnowDesktop` 与兼容默认值 `8765`。
 
 在目标 DSH profile 内通过它自己的 `plugin_manager` 调用：
 

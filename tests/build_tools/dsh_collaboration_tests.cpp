@@ -2,7 +2,7 @@
 #include <iostream>
 using namespace build_test;
 namespace {
-void run_tests(const fs::path& repo) {
+void run_tests(const fs::path& repo,const fs::path& preferredModule={}) {
     Coordinator c(repo,"dsh-plugin");
     const auto script=c.root/L"exercise.mjs";
     write(script,R"JS(import fs from 'node:fs';
@@ -33,6 +33,30 @@ if(mode==='open'){
  try{await bridge.verifyWrite(agent,path.join(root,'src/link/keep.txt'));result={denied:false};}catch(error){result={denied:true,error:String(error.message)};}
 }else if(mode==='bad-command'){
  try{await bridge.call('recover',id);result={rejected:false};}catch(error){result={rejected:true,error:String(error.message)};}
+}else if(mode==='dashboard-preferred'){
+ const calls=[];let mismatch=false,fixture=false;
+ const servers=['first','second'].map(tag=>http.createServer((request,response)=>{calls.push({tag,route:request.url});response.setHeader('Content-Type','application/json');response.end(JSON.stringify(request.url==='/api/health'?{service:'SnowDesktop build dashboard',instance:mismatch?'different':tag,fixture}:{tag}));}));
+ await Promise.all(servers.map(server=>new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))));
+ const directory=path.join(root,'.build/dashboard'),preference=path.join(directory,'preferred-port.json'),ports=servers.map(server=>server.address().port);
+ fs.mkdirSync(directory,{recursive:true});
+ const save=port=>fs.writeFileSync(preference,JSON.stringify({schemaVersion:1,port}));
+ const reader=new CollaborationBridge(root);let followed,refreshed,error;
+ try{
+  servers.forEach((server,index)=>fs.writeFileSync(path.join(directory,'server-'+ports[index]+'.json'),JSON.stringify({instance:['first','second'][index],fixture:false})));
+  try{save(ports[0]);followed=(await reader.snapshot()).tag;save(ports[1]);refreshed=(await reader.snapshot()).tag;}catch(caught){error=String(caught.message);}
+  const explicit=(await new CollaborationBridge(root,{port:ports[0]}).snapshot()).tag;
+  const before=calls.length,denied=[];
+  for(const content of ['invalid JSON',JSON.stringify({schemaVersion:2,port:ports[0]}),JSON.stringify({schemaVersion:1,port:1023}),JSON.stringify({schemaVersion:1,port:String(ports[0])}),' '.repeat(1025)]){
+   fs.writeFileSync(preference,content);try{await reader.snapshot();denied.push(false);}catch{denied.push(true);}
+  }
+  const invalidNoRequests=calls.length===before;
+  const retained=directory+'-retained',external=path.join(root,'port-external');fs.mkdirSync(external);fs.renameSync(directory,retained);fs.symlinkSync(external,directory,'junction');
+  let junctionDenied=false;try{await reader.snapshot();}catch(caught){junctionDenied=String(caught.message).includes('must stay in this checkout');}finally{fs.unlinkSync(directory);fs.renameSync(retained,directory);}
+  fs.unlinkSync(preference);let defaultMissing=false;try{await reader.snapshot();}catch(caught){defaultMissing=caught.code==='ENOENT'&&caught.path===path.join(directory,'server-8765.json');}
+  save(ports[1]);mismatch=true;let identityDenied=false;const beforeIdentity=calls.length;try{await reader.snapshot();}catch(caught){identityDenied=String(caught.message).includes('identity did not match');}
+  const identityNoData=calls.length===beforeIdentity+1;mismatch=false;fixture=true;let fixtureDenied=false;try{await reader.snapshot();}catch(caught){fixtureDenied=String(caught.message).includes('identity did not match');}
+  result={followed,refreshed,error,explicit,denied,invalidNoRequests,junctionDenied,defaultMissing,identityDenied,identityNoData,fixtureDenied};
+ }finally{fs.unlinkSync(preference);await Promise.all(servers.map(server=>new Promise(resolve=>server.close(resolve))));}
 }else if(mode==='dashboard'){
  const calls=[];let mismatch=false;
  const server=http.createServer((request,response)=>{calls.push(request.url);response.setHeader('Content-Type','application/json');response.end(JSON.stringify(request.url==='/api/health'?{service:'SnowDesktop build dashboard',instance:mismatch?'different':'fixture-identity',fixture:false}:{route:request.url,marker:'read-only-data'}));});
@@ -50,10 +74,17 @@ if(mode==='open'){
 console.log(JSON.stringify(result));
 )JS");
     auto node=[&](const std::string& mode){
-        const auto result=run({L"node",script.wstring(),(repo/L"tools/dsh-collaboration/core.js").wstring(),c.root.wstring(),wide(mode)},c.root,30);
+        const auto module=mode=="dashboard-preferred"&&!preferredModule.empty()?preferredModule:repo/L"tools/dsh-collaboration/core.js";
+        const auto result=run({L"node",script.wstring(),module.wstring(),c.root.wstring(),wide(mode)},c.root,30);
         require(result.code==0,"Node plugin bridge failed: "+result.out+result.err);
         return Json::parse(result.out);
     };
+    const auto preferred=node("dashboard-preferred");
+    require(preferred.has("followed")&&preferred.at("followed").str()=="first"&&preferred.has("refreshed")&&preferred.at("refreshed").str()=="second","Default dashboard port did not follow this checkout's updated preference");
+    require(preferred.at("explicit").str()=="first"&&preferred.at("defaultMissing").boolean,"Explicit dashboard port or missing-preference compatibility changed");
+    require(preferred.at("denied").items.size()==5&&preferred.at("invalidNoRequests").boolean&&preferred.at("junctionDenied").boolean,"Invalid or linked preference reached a dashboard listener");
+    for(const auto& denied:preferred.at("denied").items)require(denied.boolean,"Malformed, out-of-range or oversized dashboard preference was accepted");
+    require(preferred.at("identityDenied").boolean&&preferred.at("identityNoData").boolean&&preferred.at("fixtureDenied").boolean,"Preferred port bypassed checkout listener identity checks");
     const auto opened=node("open");
     require(opened.at("current").kind==Json::Kind::Null&&!opened.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="original\n",
             "Investigation blocked a batch or an unregistered write mutated source");
@@ -146,7 +177,9 @@ const React={createElement:(type,props,...children)=>({type,props,children}),use
 vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
 const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
 function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:()=>()=>{},bind:()=>key=>key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
-const first=context();const unmount=await plugin.apply(first.ctx);Panel(props);
+const first=context();const unmount=await plugin.apply(first.ctx);const panel=Panel(props),versions=[];
+function displayedVersions(node){if(typeof node==='string'&&/^0\.\d+\.\d+$/.test(node))versions.push(node);if(node&&typeof node==='object')for(const child of node.children||[])displayedVersions(child);}
+displayedVersions(panel);const rootVersion=panel.props['data-version'];
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
 async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
@@ -160,7 +193,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -172,6 +205,7 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     require(clientObserved.at("firstSnapshot").at("marker").str()=="known-good"&&clientObserved.at("offline").str()=="controlled offline"&&!clientObserved.at("malformed").str().empty()&&clientObserved.at("lastSnapshot").at("marker").str()=="known-good","Client failed RemoteResult decoding or lost the last snapshot after a carrier/data error");
     require(!clientObserved.at("lateUpdated").boolean&&clientObserved.at("timers").integer()==0&&clientObserved.at("rejected").boolean&&clientObserved.at("events").items.back().str()=="unmount","Client updated after disposal, leaked a timer, or retained a failed mount");
     const auto manifest=Json::parse(read(repo/L"tools/dsh-collaboration/package.json"));
+    require(clientObserved.at("rootVersion").str()==manifest.at("version").str()&&clientObserved.at("versions").items.size()==1&&clientObserved.at("versions").items[0].str()==manifest.at("version").str(),"Loaded overlay identity and displayed version disagreed with the package");
     for(const auto& file:{"index.js","core.js","client.js","typert.host.js","typert.remote-client.js","cordis.patch.yml","locale/en.json","locale/zh.json","icon.svg","README.md"})
         require(fs::is_regular_file(repo/L"tools/dsh-collaboration"/wide(file)),"Plugin package resource missing: "+std::string(file));
     require(!manifest.has("scripts")&&manifest.at("dsh").at("client").at("platform").str()=="web","Plugin added install scripts or changed target surface");
@@ -197,4 +231,4 @@ void installed_sdk(const fs::path& repo){
     std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results and disposal (carrier only, not UI acceptance)\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--installed-sdk"?installed_sdk:run_tests);}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--installed-sdk")installed_sdk(repo);else run_tests(repo,argc>3&&std::string(argv[2])=="--preferred-port-control"?fs::path(wide(argv[3])):fs::path{});});}
