@@ -679,7 +679,7 @@ RECT WidgetContainer::GetBodyRect() const
  */
 RECT WidgetContainer::GetMoveHandleRect() const
 {
-    if (IsLargeFolderMode()) return {};
+    // Keep the bottom move target even when its title and gradient are hidden.
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).titleBar;
 }
