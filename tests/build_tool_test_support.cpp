@@ -136,7 +136,18 @@ std::string ps_literal(const std::string& value) {std::string out="'";for(char c
 std::string ps_literal(const fs::path& value) {return ps_literal(utf8(value.wstring()));}
 std::string base64(const std::string& value) {static const char* alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";std::string out;unsigned accumulator=0;int bits=0;for(unsigned char c:value){accumulator=(accumulator<<8)|c;bits+=8;while(bits>=6){bits-=6;out+=alphabet[(accumulator>>bits)&63];}}if(bits)out+=alphabet[(accumulator<<(6-bits))&63];while(out.size()%4)out+='=';return out;}
 std::string unbase64(const std::string& value) {std::string out;unsigned accumulator=0;int bits=0;for(char c:value){if(c=='=')break;const std::string alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";auto index=alphabet.find(c);require(index!=std::string::npos,"Invalid base64 response");accumulator=(accumulator<<6)|static_cast<unsigned>(index);bits+=6;if(bits>=8){bits-=8;out+=static_cast<char>((accumulator>>bits)&255);}}return out;}
-fs::path temporary(const std::string& label) {static std::atomic<unsigned> sequence=0;auto root=fs::temp_directory_path()/wide("SnowDesktop-native-"+label+"-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));require(fs::create_directory(root),"Temporary fixture already exists");std::wstring path(32768,0);DWORD size=GetLongPathNameW(root.c_str(),path.data(),static_cast<DWORD>(path.size()));require(size>0&&size<path.size(),"Cannot resolve fixture long path");path.resize(size);root=path;std::cout<<"Fixture: "<<utf8(root.wstring())<<std::endl;return root;}
+fs::path temporary(const std::string& label) {
+    static std::atomic<unsigned> sequence=0;fs::path root;
+    for(int attempt=0;attempt<64;++attempt){
+        const auto candidate=fs::temp_directory_path()/wide("SnowDesktop-native-"+label+"-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));
+        std::error_code error;const bool created=fs::create_directory(candidate,error);
+        require(!error||error==std::errc::file_exists,"Cannot create fixture directory: "+error.message());
+        if(created){root=candidate;break;}
+        // PID reuse must not delete or overwrite retained failure evidence.
+    }
+    require(!root.empty(),"Cannot allocate a unique fixture directory within its collision budget");
+    std::wstring path(32768,0);DWORD size=GetLongPathNameW(root.c_str(),path.data(),static_cast<DWORD>(path.size()));require(size>0&&size<path.size(),"Cannot resolve fixture long path");path.resize(size);root=path;std::cout<<"Fixture: "<<utf8(root.wstring())<<std::endl;return root;
+}
 fs::path executable() {std::wstring out(32768,0);DWORD size=GetModuleFileNameW(nullptr,out.data(),static_cast<DWORD>(out.size()));require(size>0,"Executable path unavailable");out.resize(size);return out;}
 fs::path powershell(bool legacy) {if(!legacy){auto pinned=environment(L"SNOWDESKTOP_ENTRY_POWERSHELL");if(!pinned.empty()&&fs::is_regular_file(pinned))return fs::path(pinned).make_preferred();auto core=fs::path(environment(L"ProgramFiles"))/L"PowerShell/7/pwsh.exe";if(fs::is_regular_file(core))return core.make_preferred();}auto fallback=fs::path(environment(L"SystemRoot"))/L"System32/WindowsPowerShell/v1.0/powershell.exe";require(fs::is_regular_file(fallback),"Windows PowerShell unavailable");return fallback.make_preferred();}
 fs::path production_python() {std::wstring path(32768,0);DWORD count=SearchPathW(nullptr,L"python.exe",nullptr,static_cast<DWORD>(path.size()),path.data(),nullptr);require(count>0&&count<path.size(),"Python is unavailable for the existing external production tool (the test driver is native C++)");path.resize(count);return path;}

@@ -4,6 +4,7 @@ const names = {verified:"完成 · 共享验证通过",exempt:"完成 · 宿主�
 Object.assign(names,{eligible:"可恢复操作",completed:"等待结束","timed-out":"等待超时",retrying:"有限重试中","passed-after-retry":"重试后通过 / flaky","exhausted-failed":"重试耗尽","environment-blocked":"环境阻断",window:"编辑窗口",files:"文件归属",peers:"其他编辑者",result:"共同结果"});
 // Only view preferences are stored; build state remains read-only server data.
 const viewKey = "SnowDesktop.build-monitor.ui.v1";
+Object.assign(names,{queued:"排队",starting:"启动中",incomplete:"未完成",unavailable:"记录不可用",pipeline:"执行管线",preflight:"占用预检",codegen:"XAML 生成任务","custom-build":"自定义构建任务",arrange:"整理产物","build-targets":"构建目标","test-target-build":"测试目标构建","test-execute":"测试执行","release-pipeline":"Release 管线","debug-pipeline":"Debug 管线","ide-pipeline":"IDE 管线","tests-pipeline":"测试管线",queue:"排队"});
 const view = {paused:false, folds:Object.create(null), logs:Object.create(null), previews:Object.create(null), waits:{open:true,top:0}, filters:{task:"",state:"all",history:"all"}};
 try {
  const raw = localStorage.getItem(viewKey);
@@ -65,7 +66,7 @@ function render(snapshot,batch){
  $("waits").scrollTop=view.waits.top;
  $("fixture").hidden=!snapshot.fixture;text("updated","更新时间 "+time(snapshot.updatedUtc));
  $("history").replaceChildren(...snapshot.history.map(item=>{const row=element("div",null,"history-row"),btn=element("button",item.batchId+" / 第 "+(item.attempt||1)+" 次");btn.type="button";btn.addEventListener("click",()=>{selectBatch(item.batchId);});row.append(btn,element("span",label(item.outcome),"badge "+tone(item.outcome)),element("time",time(item.completedUtc)));return row;}));
- if(!batch){text("headline","暂无活动批次");text("description","开始修改前调用 begin。历史结果可在下方查看。只读查询不会创建编辑登记。");text("batch","—");text("stamp","—");text("taskCount",0);text("readyCount","暂无登记");text("stage","未知");text("stageNote","尚无本批日志");text("testCount","未知");text("coverage","没有冻结计划");text("freshness","未冻结");text("inputNote","尚无输入记录");text("owner","—");text("logHint","暂无日志");text("log","尚无本批日志。");$("tasks").replaceChildren();$("evidence").replaceChildren();return;}
+ if(!batch){text("headline","暂无活动批次");text("description","开始修改前调用 begin。历史结果可在下方查看。只读查询不会创建编辑登记。");text("batch","—");text("stamp","—");text("taskCount",0);text("readyCount","暂无登记");text("stage","未知");text("stageNote","尚无本批日志");text("testCount","未知");text("coverage","没有冻结计划");text("freshness","未冻结");text("inputNote","尚无输入记录");text("owner","—");text("logHint","暂无日志");text("log","尚无本批日志。");$("tasks").replaceChildren();$("evidence").replaceChildren();renderStandaloneRun(snapshot);return;}
  text("headline",(batch.historical?"历史 · ":"")+(batch.outcome==="cancelled"&&!batch.buildStartedUtc?"登记已撤回 · 未开始构建":label(batch.phase)));
  text("description",batchDescription(batch));
  text("batch",batch.id);text("stamp","第 "+batch.attempt+" 次 · 逻辑批次 "+batch.logicalBatchId.slice(0,8)+" · "+time(batch.completedUtc||batch.createdUtc));
@@ -192,13 +193,46 @@ function renderAttention(batch){
  if(!nodes.length)nodes.push(element("p",batch?"没有待处理记录。":"暂无活动批次。","empty"));
  $("attention").replaceChildren(...nodes);text("attentionCount",items.length?items.length+" 项":"—");
 }
-function renderExecution(batch){
+function preciseTime(value){return typeof value!=="number"||!Number.isFinite(value)?"未记录":value<1?Math.round(value*1000)+" 毫秒":value<60?value.toFixed(2)+" 秒":duration(value);}
+function renderStandaloneRun(snapshot){
+ const run=(snapshot.runs||[])[0];if(!run)return;
+ text("headline",(run.completedUtc?"最近运行 · ":"运行 · ")+label(run.status));text("description",run.waitingFor||run.error||run.task||"读取执行记录");text("batch",run.id.slice(0,8));text("stamp",time(run.completedUtc||run.createdUtc));
+ text("stage",label(run.phaseSummary?.find(item=>item.running)?.name||run.status));text("stageNote","执行入口与 MSBuild 事件");text("owner",run.ownerPid?"PID "+run.ownerPid+" · "+label(run.ownerState):label(run.ownerState));
+ if(run.log){logView=run.log;text("logHint",run.log.prefixOmitted?"运行日志尾部":"运行日志");text("log",run.log.lines.join("\n")||"尚无运行日志。");}
+}
+function renderRunRecords(snapshot,batch){
+ const target=$("runTelemetry");target.replaceChildren();
+ const runs=batch?.historical?(batch.run?[batch.run]:[]):batch?.run?[batch.run,...(snapshot.runs||[]).filter(item=>item.id!==batch.run.id)]:(snapshot.runs||[]);
+ if(!runs.length)return;
+ target.append(element("h3","运行记录"));
+ for(const [index,run] of runs.entries()){
+  const box=element("details"),key=JSON.stringify(["run",run.id]);retainFold(box,key);if(view.folds[key]==null)box.open=index===0;
+  box.append(element("summary",(run.task||run.id.slice(0,8))+" · "+label(run.status)));
+  if(run.error)detail(box,"运行错误",run.error,"bad");if(run.waitingFor)detail(box,"等待原因",run.waitingFor,"warn");
+  detail(box,"Run",run.id+(run.batchId?" · 批次 "+run.batchId.slice(0,8):""));detail(box,"执行者",(run.ownerPid?"PID "+run.ownerPid+" · ":"")+label(run.ownerState));
+  for(const stage of run.stages||[])detail(box,label(stage.name),preciseTime(stage.elapsedSeconds)+(stage.completedUtc?"":" · "+(run.completedUtc?"未完成":"进行中")));
+  const resource=run.resources||{};detail(box,"Job CPU / 峰值内存",preciseTime(resource.cpuSeconds)+" / "+(typeof resource.peakJobMemoryBytes==="number"?(resource.peakJobMemoryBytes/1048576).toFixed(1)+" MiB":"未记录"));
+  detail(box,"编译发起单元",run.compiler?.attemptedUnits==null?"未采集":run.compiler.attemptedUnits+" · "+(run.compiler.complete?"采集完成":"部分观测")+(run.compiler.unknownTasks?" · "+run.compiler.unknownTasks+" 项任务未确认":""));
+  if(run.phaseSummary?.length){
+   const table=element("table",null,"result-table"),head=element("tr"),body=element("tbody");for(const title of ["阶段","任务","累计任务时间"])head.append(element("th",title));const thead=element("thead");thead.append(head);table.append(thead,body);
+   for(const item of run.phaseSummary){const row=element("tr");row.append(element("td",label(item.name)),element("td",item.completed+" / "+item.tasks+(item.running?" · "+item.running+" 进行中":"")+(item.incomplete?" · "+item.incomplete+" 未完成":"")),element("td",preciseTime(item.taskSeconds)));body.append(row);}box.append(table,element("small","任务区间可能并行；累计任务时间不能相加作为运行总耗时。","muted"));
+  }
+  for(const interval of run.waitIntervals||[])detail(box,"产物等待 · "+preciseTime(interval.elapsedSeconds),interval.reason);
+  if(run.waitIntervalsTruncated||run.collectionLimited)box.append(element("p","采集达到上限，原始记录保留。","warn"));
+  const segments=element("details"),segmentKey=JSON.stringify(["run-segments",run.id]);retainFold(segments,segmentKey);segments.append(element("summary","任务区间 · "+(run.segmentCount||0)));
+  for(const item of run.segments||[])detail(segments,label(item.name)+" · "+(item.project||item.task||time(item.startedUtc)),preciseTime(item.elapsedSeconds)+" · "+label(item.status));
+  if(run.segmentsOmitted)segments.append(element("p","显示最近 "+run.segments.length+" 项；原始事件保留。","muted"));box.append(segments);
+  if(run.log?.lines?.length){const log=element("details");retainFold(log,JSON.stringify(["run-log",run.id]));log.append(element("summary","运行日志"+(run.log.prefixOmitted?" · 仅尾部":"")),element("pre",run.log.lines.join("\n")));box.append(log);}target.append(box);
+ }
+}
+function renderExecution(batch,snapshot){
+ renderRunRecords(snapshot,batch);
  const facts=$("runFacts"),results=$("testResults"),summary=$("testSummary");facts.replaceChildren();results.replaceChildren();summary.replaceChildren();
- if(!batch){facts.append(element("p","执行记录将在批次开始后显示。","empty"));return;}
+ if(!batch){if(!(snapshot.runs||[]).length)facts.append(element("p","执行记录将在批次开始后显示。","empty"));return;}
  const start=batch.buildStartedUtc&&new Date(batch.buildStartedUtc).getTime();
  const end=batch.completedUtc?new Date(batch.completedUtc).getTime():batch.historical?null:Date.now();
  const elapsed=start&&end&&end>=start?duration((end-start)/1000):"未记录";
- for(const [title,value] of [["执行开始",batch.buildStartedUtc?time(batch.buildStartedUtc):"未开始"],[batch.completedUtc?"执行总时长":"执行经过",elapsed],[batch.completedUtc?"执行结束":"最近日志",batch.completedUtc?time(batch.completedUtc):batch.log.modifiedUtc?time(batch.log.modifiedUtc):"未记录"],["阶段来源",batch.outcome?"结果记录":batch.phase==="editing"?"协调登记":"日志观察，未采集分段时长"]]){
+ for(const [title,value] of [["执行开始",batch.buildStartedUtc?time(batch.buildStartedUtc):"未开始"],[batch.completedUtc?"执行总时长":"执行经过",elapsed],[batch.completedUtc?"执行结束":"最近日志",batch.completedUtc?time(batch.completedUtc):batch.log.modifiedUtc?time(batch.log.modifiedUtc):"未记录"],["阶段来源",batch.run?"执行入口与 MSBuild 事件":batch.outcome?"结果记录":batch.phase==="editing"?"协调登记":"日志观察，未采集分段时长"]]){
   const box=element("div",null,"run-fact");box.append(element("span",title),element("strong",value));facts.append(box);
  }
  const counts=batch.coverage.summary,observed=batch.log.testCompleted;
@@ -253,7 +287,7 @@ function filterLog(){
 }
 function renderWorkbench(snapshot,batch){
  latestSnapshot=snapshot;latestBatch=batch;
- filterTasks();renderAttention(batch);renderExecution(batch);filterHistory();filterLog();
+ filterTasks();renderAttention(batch);renderExecution(batch,snapshot);filterHistory();filterLog();
 }
 function retainFocus(){
  const active=document.activeElement;if(!active||active===document.body)return ()=>{};

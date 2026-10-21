@@ -2,8 +2,14 @@
 #include <iostream>
 using namespace build_test;
 namespace {
-void test(const fs::path& repo) {
+void test(const fs::path& repo,bool withoutLogger=false) {
+    const auto label="allocation-collision-"+std::to_string(GetTickCount64());
+    const auto retained=fs::temp_directory_path()/wide("SnowDesktop-native-"+label+"-"+std::to_string(GetCurrentProcessId())+"-0");
+    require(fs::create_directory(retained),"Cannot prepare isolated allocation collision");write(retained/L"evidence","preserved");
+    const auto allocated=temporary(label);
+    require(!fs::equivalent(allocated,retained)&&read(retained/L"evidence")=="preserved","Fixture allocation replaced retained collision evidence");
     Coordinator c(repo,"observed-native-build");
+    if(withoutLogger){auto source=read(c.scripts/L"build_telemetry.ps1");replace(source,"if($logger){","if($false -and $logger){");write(c.scripts/L"build_telemetry.ps1",source,true);}
     copy(repo,c.root,{"scripts/build_command.ps1","scripts/build_msbuild_logger.cs","cmake/SnowDesktop.SharedBuildGuard.cmake","cmake/SnowDesktop.PowerShell.cmake"});
     c.call({"task-open","observations","-TaskName","native phase observations"});
     write(c.root/L"CMakeLists.txt",R"CMAKE(cmake_minimum_required(VERSION 3.24)
@@ -49,7 +55,10 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
     counts(execute(),0);
     write(c.root/L"worker.cpp","int worker(){return 3;}\n");
     counts(execute(),1);
+    const auto controlRoot=temporary("omitted-native-collector");
+    const auto control=run({executable().wstring(),repo.wstring(),L"--without-logger"},controlRoot,60,{},true);
+    require(control.code==1&&control.err.find("Real CMake/MSBuild did not publish configuration and logger observations")!=std::string::npos,"Omitted collector escaped the actual native observation assertion: "+control.out+control.err);
     std::cout<<"PASS actual leased CMake/MSBuild phases, two translation units, no-op build and one-unit increment\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,test);}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){test(repo,argc>2&&std::string(argv[2])=="--without-logger");});}

@@ -239,6 +239,151 @@ class Store:
         self.cache_time = 0
         self.lock = threading.Lock()
 
+    def run(self, run_id):
+        if not HEX.fullmatch(str(run_id)):
+            raise ValueError("Invalid Run identity")
+        directory = safe_path(self.root, "runs")
+        record = read_json(directory, run_id + ".json")
+        if not record:
+            return None
+        request = read_json(directory, run_id + ".request.json")
+        checkout = self.root.parent.parent
+        if not isinstance(record, dict) or not isinstance(request, dict) or record.get("schemaVersion") != 1 or request.get("schemaVersion") != 1 or not HEX.fullmatch(str(request.get("nonce"))) or record.get("id") != run_id or request.get("id") != run_id or record.get("nonce") != request.get("nonce") or Path(request.get("repositoryRoot", "")).resolve() != checkout or record.get("repositoryRoot") != request.get("repositoryRoot"):
+            raise ValueError("Run request/result identity mismatch")
+        def number(value):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
+        operations = {}
+        collectors = 0
+        finished_collectors = 0
+        unfinished = 0
+        limited = False
+        pending_line = False
+        total_bytes = 0
+        paths = sorted(directory.glob(run_id + ".stages.*.jsonl")) + sorted(directory.glob(run_id + ".msbuild.*.jsonl"))
+        if len(paths) > 100:
+            raise ValueError("Run observation file budget exceeded")
+        pipeline_logs = []
+        for path in paths:
+            with shared_open(safe_path(directory, path.name)) as stream:
+                content = stream.read(4 * 1024 * 1024 + 1)
+            total_bytes += len(content)
+            if total_bytes > 4 * 1024 * 1024:
+                raise ValueError("Run observation byte budget exceeded")
+            lines = content.decode("utf-8-sig").split("\n")
+            pending_line = pending_line or bool(lines[-1])
+            for line in lines[:-1]:
+                if not line:
+                    continue
+                event = json.loads(line)
+                if event.get("schemaVersion") != 1 or event.get("runId") != run_id:
+                    raise ValueError("Run observation identity mismatch")
+                kind = event.get("kind")
+                if kind == "collector":
+                    collectors += 1
+                elif kind == "collector-end":
+                    finished_collectors += 1
+                    unfinished += event.get("unfinishedTasks", 0)
+                elif kind == "collector-limit":
+                    limited = True
+                elif kind in ("start", "end"):
+                    eid = event.get("id")
+                    if not HEX.fullmatch(str(eid)):
+                        raise ValueError("Invalid Run stage identity")
+                    pair = operations.setdefault(eid, {})
+                    if kind in pair:
+                        raise ValueError("Duplicate Run stage identity")
+                    pair[kind] = event
+                    if kind == "start" and event.get("logPath") and event.get("name", "").endswith("-pipeline"):
+                        path_hint = Path(event["logPath"])
+                        if path_hint.parent == self.root and re.fullmatch(r"entry-[a-f0-9]{32}\.log", path_hint.name):
+                            pipeline_logs.append((event.get("utc", ""), path_hint.name))
+        segments = []
+        summaries = {}
+        units = 0
+        unknown_units = 0
+        for eid, pair in operations.items():
+            start, end = pair.get("start"), pair.get("end")
+            if not start:
+                raise ValueError("Run stage ended without an observed start")
+            if end and end.get("name") != start.get("name"):
+                raise ValueError("Run stage name mismatch")
+            elapsed = number((end or {}).get("elapsedSeconds"))
+            name = redact(start.get("name", "unknown"))
+            row = {"id": eid, "name": name, "parentId": start.get("parentId"), "startedUtc": start.get("utc"),
+                   "sourceUtc": start.get("sourceUtc"), "elapsedSeconds": elapsed, "exitCode": (end or {}).get("exitCode"),
+                   "status": "running" if not end else "passed" if end.get("exitCode") == 0 else "failed",
+                   "project": redact(start.get("project", "")), "task": redact(start.get("task", "")),
+                   "measurement": redact((end or {}).get("measurement", "producer monotonic interval"))}
+            segments.append(row)
+            summary = summaries.setdefault(name, {"name": name, "tasks": 0, "completed": 0, "running": 0, "incomplete": 0, "failed": 0, "taskSeconds": 0})
+            summary["tasks"] += 1
+            summary["running" if not end else "completed"] += 1
+            summary["failed"] += bool(end and end.get("exitCode") != 0)
+            if elapsed is not None:
+                summary["taskSeconds"] += elapsed
+            if name == "compile":
+                if end and end.get("unitCountKnown") is True and number(end.get("attemptedUnits")) is not None:
+                    units += end["attemptedUnits"]
+                else:
+                    unknown_units += 1
+        process = owner_state(record.get("owner"))
+        terminal = record.get("status") in ("passed", "failed", "cancelled", "start-failed", "invalidated", "interrupted")
+        status = "interrupted" if not terminal and process == "exited" else record.get("status", "unknown")
+        if terminal or status == "interrupted":
+            for row in segments:
+                if row["status"] == "running":
+                    row["status"] = "incomplete"
+            for summary in summaries.values():
+                summary["incomplete"] = summary["running"]
+                summary["running"] = 0
+        resources = read_json(directory, run_id + ".resources.json") or {}
+        waits = record.get("waitIntervals") or []
+        log_key = run_id + ".stdout.log"
+        log_root = directory
+        if pipeline_logs:
+            log_root, log_key = self.root, sorted(pipeline_logs)[-1][1]
+        cache_key = "run:" + run_id
+        if cache_key not in self.logs:
+            if len(self.logs) > 50:
+                self.logs.clear()
+            self.logs[cache_key] = LogReader()
+        segments.sort(key=lambda item: (str(item["startedUtc"]), item["id"]))
+        return {"id": run_id, "batchId": request.get("batch"), "task": redact(request.get("task", "")),
+                "action": request.get("action"), "mode": request.get("mode"), "configuration": request.get("configuration"),
+                "status": status, "persistedStatus": record.get("status"), "ownerState": process, "ownerPid": (record.get("owner") or {}).get("pid"),
+                "createdUtc": record.get("createdUtc"), "updatedUtc": record.get("updatedUtc"), "completedUtc": record.get("completedUtc"),
+                "exitCode": record.get("exitCode"), "error": redact(record.get("error", "")), "waitingFor": redact(record.get("waitingFor", "")) if not terminal and status != "interrupted" else "",
+                "stages": [{**{k: stage.get(k) for k in ("id", "name", "startedUtc", "completedUtc", "exitCode")}, "elapsedSeconds": number(stage.get("elapsedSeconds"))} for stage in (record.get("stages") or [])[:40]],
+                "waitIntervals": [{**{k: interval.get(k) for k in ("resource", "startedUtc", "completedUtc")}, "reason": redact(interval.get("reason", "")), "elapsedSeconds": number(interval.get("elapsedSeconds"))} for interval in waits[:100]],
+                "waitIntervalsTruncated": record.get("waitIntervalsTruncated") is True,
+                "resources": {**{k: number(resources.get(k)) for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")}, "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True},
+                "phaseSummary": list(summaries.values()), "segments": segments[-80:], "segmentCount": len(segments), "segmentsOmitted": max(0, len(segments)-80),
+                "compiler": {"collectorCount": collectors, "attemptedUnits": units if collectors else None, "unknownTasks": unknown_units,
+                             "complete": bool(terminal and collectors and finished_collectors == collectors and not unknown_units and not unfinished and not limited and not pending_line)},
+                "collectionLimited": limited, "pendingLine": pending_line, "unfinishedTasks": unfinished,
+                "log": self.logs[cache_key].read(safe_path(log_root, log_key)),
+                "limitation": "Task intervals may overlap; taskSeconds is accumulated task time, not Run wall time. Compiler counts are attempted source units from observed CL commands; missing projections remain unknown."}
+
+    def runs(self):
+        directory = safe_path(self.root, "runs")
+        files = []
+        for path in directory.glob("*.json"):
+            if not HEX.fullmatch(path.stem):
+                continue
+            try:
+                files.append((path.stat().st_mtime, path.stem))
+            except FileNotFoundError:
+                continue
+        result = []
+        for _, rid in sorted(files, reverse=True)[:8]:
+            try:
+                value = self.run(rid)
+                if value:
+                    result.append(value)
+            except (ValueError, OSError) as error:
+                result.append({"id": rid, "status": "unavailable", "error": redact(error)})
+        return result
+
     def batch(self, batch_id, current=None):
         result = read_json(self.root, batch_id + ".json")
         if result and result.get("batchId") != batch_id:
@@ -268,6 +413,14 @@ class Store:
                 task["stale"] = False
                 if task["state"] == "finished":
                     task["display"] = "verified" if outcome == "passed" else ("exempt" if outcome == "skipped" else "batch-ended")
+        run = None
+        if data.get("runId"):
+            try:
+                run = self.run(data["runId"])
+                if run is None:
+                    run = {"id": data["runId"], "status": "unavailable", "error": "Associated Run record is not readable yet."}
+            except (ValueError, OSError, TypeError) as error:
+                run = {"id": data["runId"], "status": "unavailable", "error": redact(error)}
         return {"id": batch_id, "phase": phase, "outcome": outcome, "historical": current is None,
                 "protocolVersion": data.get("protocolVersion", 1), "ownerState": owner,
                 "createdUtc": data.get("createdUtc"), "completedUtc": data.get("completedUtc"),
@@ -290,6 +443,8 @@ class Store:
                                    "buildStagePassed": (data.get("binaryEvidence") or {}).get("buildStagePassed"),
                                    "executables": (data.get("binaryEvidence") or {}).get("executables", [])[:20]},
                 "logicalBatchId":data.get("logicalBatchId",batch_id),"attempt":data.get("attempt",1),"repairOf":data.get("repairOf"),
+                "runId": data.get("runId"),
+                "run": run,
                 "retry": self.retry_view(batch_id),
                 "log": log}
 
@@ -370,8 +525,8 @@ class Store:
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
                           "current": active, "history": history, "waits": self.waits(),
                           "taskPresence": presence, "taskPresenceTotal": len(ledger.get("tasks") or []),
-                          "events": events, "eventTotal": len(ledger.get("events") or []),
-                          "limitation": "Only registered cooperating tasks are visible. Stale age is diagnostic; it never completes an editor. Build and link stages are inferred from logs; counts remain unknown until reported."}
+                          "events": events, "eventTotal": len(ledger.get("events") or []), "runs": self.runs(),
+                          "limitation": "Only registered cooperating tasks are visible. Stale age never completes an editor. Run task intervals and compiler counts come from producer observations; unobserved phases remain unknown."}
             self.cache_time = time.monotonic()
             return self.cache
 

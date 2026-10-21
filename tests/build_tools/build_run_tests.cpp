@@ -78,6 +78,14 @@ Json await_running(Coordinator& c,const std::string& id) {
     c.workers.push_back(view.at("record").at("owner"));return view;
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
+void old_entry_edit_control(const fs::path& repo){
+    Coordinator c(repo,"old-entry-edit-control");setup_run(c,repo);
+    auto manager=read(c.scripts/L"build_manager.ps1");replace(manager,"Assert-OutputIdleForEdits $current # begin","# Former begin did not inspect an ordinary Run output lease");write(c.scripts/L"build_manager.ps1",manager,true);
+    ParentJob parent(c.root/L"launch-run.ps1",c.root,true);require(parent.wait()==0,"Entry/edit control could not launch");
+    const auto id=Json::parse(read(c.root/L"submitted.json")).at("id").str();await_running(c,id);
+    const auto attempted=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","pending-editor"});
+    require(attempted.code==2,"Active ordinary Run allowed a source-edit grant");
+}
 void tool_plan(const fs::path& repo,bool oldBehavior=false){
     Coordinator c(repo,oldBehavior?"old-tool-plan":"tool-plan-no-host",true);
     if(oldBehavior){
@@ -197,11 +205,16 @@ void test(const fs::path& repo) {
         until([&]{if(!fs::exists(c.stateRoot/L"runs"))return false;for(const auto& file:fs::directory_iterator(c.stateRoot/L"runs"))if(file.path().filename().wstring().ends_with(L".request.json")){id=Json::parse(read(file.path())).at("id").str();return true;}return false;});
         auto view=await_running(c,id);const auto task=view.at("task").str();
         require(task.starts_with("entry-")&&view.at("request").at("automaticTask").boolean,"Default entry did not register its actual execution task");
+        c.call({"task-open","pending-editor","-TaskName","investigation during ordinary Run"});
+        const auto refused=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","pending-editor"});
+        require(refused.code==2&&c.state().at("current").kind==Json::Kind::Null&&owner_alive(view.at("record").at("owner")),"Active ordinary Run allowed a source-edit grant");
         parent.close();require(owner_alive(view.at("record").at("owner"))&&c.calls()==1,"Closing default entry observer killed or duplicated execution");
         c.gate("hold-build",false);
         const auto result=command(c,id,{L"-Command",L"wait",L"-Seconds",L"10"});
         view=Json::parse(result.out);
         require(result.code==0&&view.at("status").str()=="passed"&&c.calls()==1,"Default entry did not publish successful durable execution");
+        const auto editing=c.call({"begin","pending-editor"});
+        c.call({"recover","pending-editor","-Batch",editing.at("batchId").str(),"-ConfirmStopped","-Reason","fixture editor completed without writing"});
         HANDLE lease=CreateFileW((c.stateRoot/L"build.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
         require(lease!=INVALID_HANDLE_VALUE,"A terminal default Run still owns its output lease");CloseHandle(lease);
         require(view.at("stageError").str().empty(),"Actual stage observations were unreadable");
@@ -215,6 +228,9 @@ void test(const fs::path& repo) {
         const auto taskState=c.state();bool closed=false;for(const auto& entry:taskState.at("taskLedger").at("tasks").items)if(entry.at("id").str()==task)closed=entry.at("closedUtc").kind==Json::Kind::String;
         require(closed,"A terminal default Run has not completed its automatic task transaction");
         std::cout<<"PASS default entry survives observer Job close, registers/finishes its task and records actual stages\n";
+        const auto controlRoot=temporary("entry-edit-control-parent");
+        const auto control=run({executable().wstring(),repo.wstring(),L"--old-entry-edit"},controlRoot,40,{},true);
+        require(control.code==1&&control.err.find("Active ordinary Run allowed a source-edit grant")!=std::string::npos,"Former ordinary-Run edit overlap escaped its actual grant assertion: "+control.out+control.err);
     }
     {
         Coordinator c(repo,"run-cancel");setup_run(c,repo);
@@ -275,4 +291,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}

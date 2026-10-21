@@ -82,6 +82,14 @@ function Try-Lease([string]$Name) {
         throw
     }
 }
+function Assert-OutputIdleForEdits($Current){
+    if($Current -and $Current.phase -ne 'editing'){return}
+    # The metadata lease makes this probe atomic with an ordinary entry's
+    # state check and output acquisition. No source grant overlaps that Run.
+    $probe=Try-Lease 'build.lock'
+    if(-not $probe){throw 'Shared output execution is active; no edit grant was created or reopened. Observe the Run, then repeat begin/repair after its output lease is released.'}
+    $probe.Dispose()
+}
 
 function Wait-Again([string]$Message) {
     if ($clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
@@ -400,6 +408,7 @@ try {
                 Write-AtomicJson $chain $chainPath;$chain|ConvertTo-Json;exit 0
             }
             elseif ($Command -eq 'repair') {
+                Assert-OutputIdleForEdits $current # repair
                 if (-not $result -or $result.outcome -notin 'failed','invalidated','interrupted') { throw 'Repair requires a failed/invalidated/interrupted saved attempt, never a live frozen batch.' }
                 if([string]::IsNullOrWhiteSpace($Reason)){throw 'Repair requires -Reason with the failure/repair handoff.'}
                 $prior=@($result.participants|Where-Object id -eq $Participant)
@@ -444,6 +453,7 @@ try {
                 exit 0
             }
             elseif ($Command -eq 'begin') {
+                Assert-OutputIdleForEdits $current # begin
                 if ($null -ne $current -and $null -ne (Read-Result $current.id)) {
                     throw 'The current result is durable but retirement was interrupted. Use status and recover before a new begin.'
                 }
