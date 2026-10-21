@@ -316,8 +316,16 @@ queries, write storage or rebuild invariant data on every frame.
   upper bound. Recommended preview variants do not need to restrict resizing.
 - Keep `permissions` empty unless a documented guarded API needs one. Reserved
   vocabulary does not make an API available.
-- Never include native binaries, executables, absolute paths, parent traversal,
-  symlinks, junctions, reparse points or files outside the package.
+- Native helpers are limited to declared, hash-matched `.exe` files with
+  `native.execute` permission and the `task.native.request` required feature.
+  Provide all four localized consent explanations and require the host's strong
+  user authorization before execution. Lua remains sandboxed; use only the fixed
+  helper protocol described under "Native EXE helpers" in `references/api-v2.md`.
+  A supporting host must be published before a component requires this feature.
+- Never include component DLLs or undeclared executables. Do not use shell
+  commands or scripts as native helpers.
+- Never include absolute paths, parent traversal, symlinks, junctions, reparse
+  points or files outside the package.
 
 ## Build, preview and verify
 
