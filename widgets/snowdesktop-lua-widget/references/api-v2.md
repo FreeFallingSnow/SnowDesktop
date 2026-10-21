@@ -2094,12 +2094,17 @@ local sound = resource.audio("sound")
 local taskId, err = task.start("audio.play", {source=sound, volume=0.6, loop=false})
 -- Alternatively: {handle=userSelectedFile}, or {handle=selectedFolder,name="song.mp3"}.
 -- task.complete.value.playbackId is an opaque ID belonging to this VM.
-task.start("audio.pause", {playbackId=id})
-task.start("audio.resume", {playbackId=id})
-task.start("audio.seek", {playbackId=id, positionMs=30000})
-task.start("audio.setVolume", {playbackId=id, volume=0.5})
-task.start("audio.setLoop", {playbackId=id, loop=true})
-task.start("audio.stop", {playbackId=id})
+-- Save it in the instance model in the descriptor's event callback:
+-- if event.kind == "task.complete" and event.taskId == model.playTask and event.ok then
+--     model.playbackId = event.value.playbackId
+-- end
+-- After that completion, a later event can control this playback:
+task.start("audio.pause", {playbackId=model.playbackId})
+task.start("audio.resume", {playbackId=model.playbackId})
+task.start("audio.seek", {playbackId=model.playbackId, positionMs=30000})
+task.start("audio.setVolume", {playbackId=model.playbackId, volume=0.5})
+task.start("audio.setLoop", {playbackId=model.playbackId, loop=true})
+task.start("audio.stop", {playbackId=model.playbackId})
 ```
 
 全部任务要求 `audio.playback`，无需即时手势；用户选择的文件还要求
