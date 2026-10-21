@@ -58,7 +58,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')
 . (Join-Path $PSScriptRoot 'build_preflight.ps1')
-if($Command -notin 'status','task-list','event-read','event-wait','event-ack','edit-verify' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
+if($Command -notin 'status','task-list','event-read','event-wait','event-ack','edit-verify','evidence-list','acceptance-list' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
     . (Join-Path $PSScriptRoot 'build_runtime.ps1')
     Ensure-BuildDashboard
 }

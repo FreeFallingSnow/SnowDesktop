@@ -29,7 +29,7 @@ Json acceptance_complete(Coordinator& c,const std::string& id,const std::string&
 }
 }
 
-void evidence_records_tests(const fs::path& repo,bool omitEvidence){
+void evidence_records_tests(const fs::path& repo,bool omitEvidence,bool queryStartup){
     Coordinator c(repo,omitEvidence?"former-evidence":"evidence",true);
     copy(repo,c.root,{"scripts/test_manager.ps1","scripts/test_output.ps1"});
     write(c.scripts/L"build_batch_tests.ps1","param([string]$Batch)\n& (Join-Path $PSScriptRoot 'test_manager.ps1') -Mode plan -PlanBatch $Batch;exit $LASTEXITCODE\n",true);
@@ -54,7 +54,14 @@ void evidence_records_tests(const fs::path& repo,bool omitEvidence){
         require(entry.at("bindingDigest").str().size()==64&&entry.at("binding").at("assertionBinary").str().size()==64&&entry.at("binding").at("invocationDigest").str().size()==64&&entry.at("binding").at("environmentDigest").str().size()==64,"Evidence did not bind actual command/binary/environment identity");
         require(!entry.at("reuseAllowed").boolean&&entry.at("runId").str()==failed.at("runId").str(),"Unknown dependencies were promoted to reusable evidence");
     }
+    const auto runtimeSource=read(c.scripts/L"build_runtime.ps1");
+    write(c.scripts/L"build_runtime.ps1",runtimeSource+"\nfunction Ensure-BuildDashboard {[IO.File]::AppendAllText((Join-Path $PSScriptRoot '../unexpected-dashboard-start'),'called')}\n",true);
+    if(queryStartup){auto source=read(c.scripts/L"build_manager.ps1");replace(source,"'event-ack','edit-verify','evidence-list','acceptance-list'","'event-ack','edit-verify'");write(c.scripts/L"build_manager.ps1",source,true);}
+    const auto beforeQuery=read(c.stateRoot/L"state.json");
     const auto filtered=c.call({"evidence-list","a","-Batch",batch});
+    c.call({"acceptance-list","a","-Batch",batch});
+    require(!fs::exists(c.root/L"unexpected-dashboard-start")&&beforeQuery==read(c.stateRoot/L"state.json"),"Read-only record query started optional dashboard or changed state");
+    write(c.scripts/L"build_runtime.ps1",runtimeSource);
     require(filtered.at("tests").items.size()==1&&filtered.at("tests").items[0].at("test").str()=="Alpha","Evidence query lost task-specific requests");
     if(omitEvidence)return;
     auto repair=c.call({"repair","b","-Batch",batch,"-Revision","0","-Reason","Synthetic Beta dependency changed; preserve original evidence"});
@@ -73,6 +80,8 @@ void evidence_records_tests(const fs::path& repo,bool omitEvidence){
     require(latest.items[0].at("bindingDigest").str()!=named(entries,"Beta").at("bindingDigest").str(),"Changed candidate retained the old evidence identity");
     const auto control=run({executable().wstring(),repo.wstring(),L"--without-evidence"},c.root,80);
     require(control.code==1&&control.err.find("Immutable result omitted per-test evidence")!=std::string::npos,"Former result publication escaped the evidence business assertion: "+control.out+control.err);
+    const auto startup=run({executable().wstring(),repo.wstring(),L"--with-query-startup"},c.root,80);
+    require(startup.code==1&&startup.err.find("Read-only record query started optional dashboard or changed state")!=std::string::npos,"Former query startup escaped the read-only side-effect assertion: "+startup.out+startup.err);
     std::cout<<"PASS production candidate/test evidence, shared request provenance, failed attempt preservation and targeted supplement; former result control fails\n";
 }
 
