@@ -9,18 +9,35 @@ class ParentJob {
     HANDLE job_=nullptr,process_=nullptr;
 public:
     ParentJob(const fs::path& script,const fs::path& root,bool allow) {
+        HANDLE input=INVALID_HANDLE_VALUE,output=INVALID_HANDLE_VALUE,error=INVALID_HANDLE_VALUE;
+        LPPROC_THREAD_ATTRIBUTE_LIST attributes=nullptr;bool initialized=false;PROCESS_INFORMATION info{};
+        const auto cleanup=[&]{
+            for(HANDLE handle:{input,output,error,info.hThread})if(handle&&handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);
+            if(initialized)DeleteProcThreadAttributeList(attributes);
+        };
+        std::vector<unsigned char> storage;
         try {
             job_=CreateJobObjectW(nullptr,nullptr);require(job_!=nullptr,"Parent job creation failed");
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
             limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE|(allow?JOB_OBJECT_LIMIT_BREAKAWAY_OK:0);
             require(SetInformationJobObject(job_,JobObjectExtendedLimitInformation,&limits,sizeof(limits))!=FALSE,"Parent job limits failed");
             auto engine=powershell();std::wstring command=quote(engine.wstring())+L" -NoProfile -NonInteractive -File "+quote(script.wstring());
-            STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION info{};
-            require(CreateProcessW(engine.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_SUSPENDED|CREATE_NO_WINDOW,nullptr,root.c_str(),&startup,&info)!=FALSE,"Controlled launcher creation failed");
+            SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES),nullptr,TRUE};
+            input=CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,OPEN_EXISTING,0,nullptr);
+            output=CreateFileW((root/L"native-launcher.out").c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
+            error=CreateFileW((root/L"native-launcher.err").c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,CREATE_ALWAYS,0,nullptr);
+            require(input!=INVALID_HANDLE_VALUE&&output!=INVALID_HANDLE_VALUE&&error!=INVALID_HANDLE_VALUE,"Controlled launcher streams failed");
+            SIZE_T size=0;InitializeProcThreadAttributeList(nullptr,1,0,&size);storage.resize(size);attributes=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+            require(InitializeProcThreadAttributeList(attributes,1,0,&size)!=FALSE,"Controlled launcher attribute allocation failed");initialized=true;
+            HANDLE handles[]={input,output,error};require(UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr)!=FALSE,"Controlled launcher stream whitelist failed");
+            STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdInput=input;startup.StartupInfo.hStdOutput=output;startup.StartupInfo.hStdError=error;startup.lpAttributeList=attributes;
+            require(CreateProcessW(engine.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_SUSPENDED|CREATE_NO_WINDOW|EXTENDED_STARTUPINFO_PRESENT,nullptr,root.c_str(),&startup.StartupInfo,&info)!=FALSE,"Controlled launcher creation failed");
             process_=info.hProcess;
-            if(!AssignProcessToJobObject(job_,process_)){TerminateProcess(process_,99);CloseHandle(info.hThread);throw std::runtime_error("Controlled launcher job assignment failed");}
-            require(ResumeThread(info.hThread)!=static_cast<DWORD>(-1),"Controlled launcher resume failed");CloseHandle(info.hThread);
-        } catch(...) {if(process_){TerminateProcess(process_,99);CloseHandle(process_);}if(job_)CloseHandle(job_);throw;}
+            if(!AssignProcessToJobObject(job_,process_)){TerminateProcess(process_,99);throw std::runtime_error("Controlled launcher job assignment failed");}
+            require(ResumeThread(info.hThread)!=static_cast<DWORD>(-1),"Controlled launcher resume failed");
+            cleanup();
+        } catch(...) {cleanup();if(process_){TerminateProcess(process_,99);CloseHandle(process_);}if(job_)CloseHandle(job_);throw;}
     }
     ~ParentJob(){close();if(process_)CloseHandle(process_);}
     void close(){if(job_){CloseHandle(job_);job_=nullptr;}}
@@ -66,7 +83,8 @@ void test(const fs::path& repo) {
     {
         Coordinator c(repo,"run-cancel");setup_run(c,repo);
         ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
-        require(parent.wait()==0,"Breakaway-capable parent could not submit: "+read(c.root/L"launcher.err"));
+        const int launchCode=parent.wait();
+        require(launchCode==0,"Breakaway-capable parent could not submit, exit "+std::to_string(launchCode)+": "+read(c.root/L"native-launcher.err"));
         const auto id=Json::parse(read(c.root/L"submitted.json")).at("id").str();
         auto view=await_running(c,id);const auto executor=view.at("record").at("owner");
         parent.close();require(owner_alive(executor),"Closing parent Job killed the admitted executor");
