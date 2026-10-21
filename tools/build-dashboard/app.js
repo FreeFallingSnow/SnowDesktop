@@ -24,7 +24,7 @@ try {
 }catch(_){/* Denied or corrupt storage still permits in-memory view state. */}
 function saveView(){try{localStorage.setItem(viewKey,JSON.stringify({schema:1,...view}));}catch(_){}}
 function remember(name,key,value,limit){delete view[name][key];view[name][key]=value;for(const stale of Object.keys(view[name]).slice(0,-limit))delete view[name][stale];saveView();}
-function retainFold(node,key){node.open=view.folds[key]===true;node.addEventListener("toggle",()=>remember("folds",key,node.open,250));}
+function retainFold(node,key){node.dataset.foldKey=key;node.open=view.folds[key]===true;node.addEventListener("toggle",()=>remember("folds",key,node.open,250));}
 function historyBatch(){const id=location.hash.slice(1);return /^[a-f0-9]{32}$/.test(id)?id:null;}
 let selected = historyBatch(), paused = view.paused, inflight = false, logView = null;
 function selectBatch(id){selected=id;history.replaceState(null,"",location.pathname+location.search+(id?"#"+id:""));poll();}
@@ -156,7 +156,7 @@ function renderAttention(batch){
  const nodes=items.slice(0,60).map(item=>{
   const box=element("article",null,"attention-item "+item.state);
   box.append(element("strong",item.title),element("p",item.reason));
-  const button=element("button",item.taskId?"查看任务":"查看详情");button.type="button";
+  const button=element("button",item.taskId?"查看任务":"查看详情");button.type="button";button.dataset.focusKey=JSON.stringify(["attention",item.title,item.taskId,item.target]);
   button.addEventListener("click",()=>{
    if(item.taskId){
     view.filters.task="";view.filters.state="all";$("taskSearch").value="";$("taskFilter").value="all";saveView();filterTasks();
@@ -178,10 +178,21 @@ function renderExecution(batch){
  for(const [title,value] of [["执行开始",batch.buildStartedUtc?time(batch.buildStartedUtc):"未开始"],[batch.completedUtc?"执行总时长":"执行经过",elapsed],[batch.completedUtc?"执行结束":"最近日志",batch.completedUtc?time(batch.completedUtc):batch.log.modifiedUtc?time(batch.log.modifiedUtc):"未记录"],["阶段来源",batch.outcome?"结果记录":batch.phase==="editing"?"协调登记":"日志观察，未采集分段时长"]]){
   const box=element("div",null,"run-fact");box.append(element("span",title),element("strong",value));facts.append(box);
  }
- const counts=batch.coverage.summary;
- if(!counts){summary.append(element("p","测试计数未记录。","muted"));return;}
- text("testCount",counts.selected?counts.executed+" / "+counts.selected:"未选测试");
+ const counts=batch.coverage.summary,observed=batch.log.testCompleted;
+ const liveLog=!batch.historical&&!batch.outcome&&batch.phase==="building"&&observed!=null&&observed>(counts?.executed||0);
+ if(liveLog){
+  text("testCount",observed+" / "+(counts?.selected||batch.log.testTotal||"未知"));
+  text("coverage",counts?.selected?"日志已完成 / 已选":"日志已完成 / 日志总数");
+  summary.append(element("span","日志报告完成 "+observed+" 项"));
+ }
+ if(!counts||(!counts.selected&&!counts.executed)){
+  if(!liveLog)text("testCount",batch.coverage.mode==="skipped"?"无需宿主测试":"未记录");
+  summary.append(element("p",batch.coverage.mode==="skipped"?"本批不要求宿主测试。":"测试计划与结果未记录。","muted"));return;
+ }
+ if(!liveLog)text("testCount",counts.executed+" / "+counts.selected);
+ if(liveLog)summary.append(element("span","执行结果已记录 "+counts.executed+" 项"));
  for(const [title,key] of [["已选","selected"],["已执行","executed"],["通过","passed"],["失败","failed"],["未运行","notRun"],["跳过","skipped"],["结果未记录","unreported"]]){
+  if(liveLog&&key==="executed")continue;
   if(counts[key]||key==="selected")summary.append(element("span",title+" "+counts[key],key==="failed"&&counts[key]?"failed":""));
  }
  if(counts.flaky)summary.append(element("span","重试后通过 "+counts.flaky));
@@ -204,7 +215,7 @@ function filterHistory(){
   const kind=noBuild?"skipped":item.outcome==="passed"?"passed":["failed","invalidated","interrupted","cancelled"].includes(item.outcome)?"failed":"unknown";
   row.hidden=filter!=="all"&&filter!==kind;if(!row.hidden)visible++;
   const names=(item.participants||[]).join("、");
-  row.querySelector("button").textContent=(names?names+" · ":"")+item.batchId+" · 第 "+(item.attempt||1)+" 次";
+  const button=row.querySelector("button");button.dataset.focusKey="history:"+item.batchId;button.textContent=(names?names+" · ":"")+item.batchId+" · 第 "+(item.attempt||1)+" 次";
   if(item.outcome==="cancelled"&&!item.buildStartedUtc){const badge=row.querySelector(".badge");badge.textContent="登记撤回 · 未构建";badge.className="badge";}
  }
  $("historyEmpty").hidden=visible>0;
@@ -221,8 +232,19 @@ function renderWorkbench(snapshot,batch){
  latestSnapshot=snapshot;latestBatch=batch;
  filterTasks();renderAttention(batch);renderExecution(batch);filterHistory();filterLog();
 }
+function retainFocus(){
+ const active=document.activeElement;if(!active||active===document.body)return ()=>{};
+ const key=active.dataset.focusKey,fold=active.closest("details"),foldKey=fold?.dataset.foldKey;
+ const summary=active.tagName==="SUMMARY",buttonIndex=fold?Array.from(fold.querySelectorAll("button")).indexOf(active):-1;
+ return ()=>{
+  if(active.isConnected)return;
+  let target=key?Array.from(document.querySelectorAll("[data-focus-key]")).find(node=>node.dataset.focusKey===key):null;
+  if(!target&&foldKey){const parent=Array.from(document.querySelectorAll("details[data-fold-key]")).find(node=>node.dataset.foldKey===foldKey);target=summary?parent?.querySelector("summary"):buttonIndex>=0?parent?.querySelectorAll("button")[buttonIndex]:null;}
+  if(target)target.focus({preventScroll:true});
+ };
+}
 async function request(url){const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error("HTTP "+response.status);return response.json();}
-async function poll(){if(inflight)return;inflight=true;const requested=selected;try{const data=await request("/api/status");let batch=data.current;if(requested)batch=await request("/api/batches/"+requested);if(requested!==selected)return;render(data,batch);renderWorkbench(data,batch);text("connection","已连接");$("signal").classList.add("online");}catch(error){text("connection","读取失败 · "+error.message);$("signal").classList.remove("online");text("description","连接中断，当前显示上次读取的数据。");}finally{inflight=false;if(requested!==selected)poll();}}
+async function poll(){if(inflight)return;inflight=true;const requested=selected;try{const data=await request("/api/status");let batch=data.current;if(requested)batch=await request("/api/batches/"+requested);if(requested!==selected)return;const restoreFocus=retainFocus();render(data,batch);renderWorkbench(data,batch);restoreFocus();text("connection","已连接");$("signal").classList.add("online");}catch(error){text("connection","读取失败 · "+error.message);$("signal").classList.remove("online");text("description","连接中断，当前显示上次读取的数据。");}finally{inflight=false;if(requested!==selected)poll();}}
 text("pause",paused?"恢复跟随":"暂停跟随");
 $("log").addEventListener("scroll",()=>{if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);});
 $("pause").addEventListener("click",()=>{paused=!paused;view.paused=paused;saveView();text("pause",paused?"恢复跟随":"暂停跟随");if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);if(!paused)$("log").scrollTop=$("log").scrollHeight;});
