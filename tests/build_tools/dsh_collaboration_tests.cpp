@@ -71,6 +71,7 @@ export class TypertRemoteService{constructor(ctx,name){this.ctx=ctx;ctx.services
     // URL resolution avoids Windows drive-letter and Unicode pathname loss.
     write(c.root/L"loader.mjs",R"JS(export async function resolve(specifier,context,next){if(specifier.startsWith('@deepseek-ai/'))return {url:new URL('./sdk-fixture.mjs',import.meta.url).href,shortCircuit:true};return next(specifier,context);}
 )JS");
+    write(c.root/L"register-loader.mjs","import {register} from 'node:module'; register('./loader.mjs',import.meta.url);\n");
     write(c.root/L"host.mjs",R"JS(import fs from 'node:fs';import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
 const [moduleFile,root]=process.argv.slice(2),{apply}=await import(pathToFileURL(moduleFile));
 const hooks=new Map(),disposers=[],notices=[],services={};let tool;
@@ -97,7 +98,7 @@ try{
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
-    const auto host=run({L"node",L"--experimental-loader",(c.root/L"loader.mjs").wstring(),(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
+    const auto host=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
     require(observed.at("denied").items.size()==2&&observed.at("denied").items[0].boolean&&observed.at("denied").items[1].boolean,"Host write/edit hooks did not deny missing grants");
