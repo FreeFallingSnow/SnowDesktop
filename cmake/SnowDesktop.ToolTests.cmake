@@ -62,4 +62,6 @@ if(BUILD_TESTING AND WIN32)
         test_selection_tests.cpp "tools;core;contract;build" 30)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCollaborationTests build_collaboration
         build_collaboration_tests.cpp "tools;core;contract;build" 180)
+    snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
+        build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 90)
 endif()
