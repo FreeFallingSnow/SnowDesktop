@@ -23,6 +23,16 @@ using namespace std::chrono_literals;
 namespace
 {
 void Check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+bool traceSystemMedia = false;
+void TraceAudio(const AudioPlaybackMessage& item)
+{
+    if (traceSystemMedia && (!item.ok || item.state.status == "ended" ||
+            item.state.status == "stopped" || !item.command.command.empty()))
+        std::cout << "SMTC event: " << item.playbackId << " task=" << item.taskId
+            << " status=" << item.state.status << " loop=" << item.state.loop
+            << " seek=" << item.state.canSeek << " error=" << item.state.error
+            << " command=" << item.command.command << std::endl;
+}
 struct Shared
 {
     std::mutex mutex;
@@ -70,7 +80,7 @@ AudioPlaybackMessage Complete(WidgetAudioPlayback& service, AudioPlaybackRequest
     const auto id = request.taskId;
     Check(service.Submit(std::move(request)), "valid request must enter audio queue");
     AudioPlaybackMessage result;
-    Check(Wait([&] { for (auto& item : service.Drain()) if (item.taskId == id) result = item; return result.taskId != 0; }), "completion deadline");
+    Check(Wait([&] { for (auto& item : service.Drain()) { TraceAudio(item); if (item.taskId == id) result = item; } return result.taskId != 0; }), "completion deadline");
     return result;
 }
 void FormatTests()
@@ -304,6 +314,7 @@ void RealBackend(const std::filesystem::path& path, bool shortFixture = true, bo
 }
 void RealSystemMedia(const std::filesystem::path& path)
 {
+    traceSystemMedia = true;
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     {
         WidgetAudioPlayback service;
@@ -360,23 +371,25 @@ void RealSystemMedia(const std::filesystem::path& path)
         Check(media.Thumbnail() && media.Thumbnail().OpenReadAsync().get().Size() > 0,
             "SMTC receives readable cover bytes");
         Check(session.TryPauseAsync().get(), "system pause accepted");
-        bool paused = false;
-        Check(Wait([&] { for (const auto& item : service.Drain()) paused |= item.state.status == "paused"; return paused; }), "system pause reaches native player");
+        bool paused = false, nativeCanSeek = false;
+        Check(Wait([&] { for (const auto& item : service.Drain()) { TraceAudio(item); paused |= item.state.status == "paused"; nativeCanSeek = item.state.canSeek; } return paused; }), "system pause reaches native player");
         Check(session.TryPlayAsync().get(), "system play accepted");
+        std::cout << "SMTC seek capability: native=" << nativeCanSeek << " system="
+            << session.GetPlaybackInfo().Controls().IsPlaybackPositionEnabled() << std::endl;
         Check(session.TryChangePlaybackPositionAsync(1000000).get(), "system seek accepted");
         const auto command = [&](const char* name, auto request) {
             std::cout << "SMTC command: " << name << std::endl;
             Check(request().get(), "system command accepted");
             bool found = false;
             Check(Wait([&] {
-                for (const auto& item : service.Drain()) if (item.command.command == name)
+                for (const auto& item : service.Drain()) { TraceAudio(item); if (item.command.command == name)
                 {
                     Check(item.owner == 1 && item.playbackId == started.playbackId, "system command targets own playback");
                     if (item.command.command == "setShuffle") Check(item.command.value == 1, "system shuffle payload");
                     if (item.command.command == "setPlaybackRate") Check(item.command.value == 1.5, "system rate payload");
                     if (item.command.command == "setRepeatMode") Check(item.command.repeatMode == "list", "system repeat payload");
                     found = true;
-                }
+                } }
                 return found;
             }), "system command delivered to component queue");
         };
@@ -385,7 +398,7 @@ void RealSystemMedia(const std::filesystem::path& path)
             // player does. Subsequent controls must target the new session.
             session = nullptr;
             const auto stopped = Complete(service, {++serial, 1, "audio.stop", started.playbackId});
-            Check(stopped.ok, "component consumes navigation by stopping the old track");
+            if (!stopped.ok) throw std::runtime_error("component navigation stop: " + stopped.state.error);
             Check(Wait([&] {
                 for (const auto& candidate : manager.GetSessions())
                     if (candidate.TryGetMediaPropertiesAsync().get().Title() == L"SnowDesktop Audio Fixture 20261021") return false;
