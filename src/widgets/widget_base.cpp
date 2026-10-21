@@ -668,6 +668,7 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 RECT WidgetContainer::GetBodyRect() const
 {
     if (popupFrameActive_) return hostedFrame_;
+    if (IsLargeFolderMode()) return GetLayoutFrameRect();
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -678,8 +679,18 @@ RECT WidgetContainer::GetBodyRect() const
  */
 RECT WidgetContainer::GetMoveHandleRect() const
 {
+    if (IsLargeFolderMode()) return {};
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).titleBar;
+}
+
+bool WidgetContainer::IsLargeFolderMode() const
+{
+    return data_ && data_->type == DesktopWidgetType::Collection &&
+        !IsPopupHosted() &&
+        snowdesktop::widget_item_layout::CollectionUsesFullFrame(
+            data_->scrollContainerMode,
+            data_->gridSpan.columns, data_->gridSpan.rows);
 }
 
 /**
@@ -3050,6 +3061,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         if (clipGeo) context->PopLayer();
     }
 
+    const bool largeFolder = IsLargeFolderMode();
     const bool tinyCollection = data_->type == DesktopWidgetType::Collection &&
         data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const bool persistentBottomBar = tinyCollection ||
@@ -3060,8 +3072,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    bool showGradient = persistentBottomBar ||
-        !data_->bottomBarHover || hovered;
+    const bool showGradient = !largeFolder &&
+        (persistentBottomBar || !data_->bottomBarHover || hovered);
     if (showGradient)
     {
         const bool topTitle = UsesTopTitleBar();
@@ -3107,8 +3119,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
-    bool showHandle = persistentBottomBar ||
-        (data_->bottomBarHover ? hovered : true);
+    // Large folders use their final grid cell for the title. Only the resize
+    // dot overlays their content on hover, without a duplicate title bar.
+    const bool showHandle = largeFolder ? hovered :
+        persistentBottomBar || !data_->bottomBarHover || hovered;
 
     if (showHandle)
     {
@@ -3118,7 +3132,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const std::wstring displayTitle = demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (!displayTitle.empty() && data_->showTitle)
+        if (!largeFolder && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -3211,7 +3225,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            if (!IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
+            if (!largeFolder && !IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
         }
     }
 

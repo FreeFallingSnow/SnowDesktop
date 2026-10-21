@@ -111,8 +111,7 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     else if (snowdesktop::widget_item_layout::CollectionUsesFullFrame(
             data->scrollContainerMode,
             data->gridSpan.columns, data->gridSpan.rows))
-        // The large-folder action bar floats over the frame on hover. It does
-        // not own layout space, so fixed rows use the complete widget height.
+        // Large folders have no title bar; fixed rows use the complete frame.
         content = widget->GetFrameRect();
     else
         content = widget->GetBodyRect();
@@ -984,6 +983,15 @@ RECT Collection::GetAllButtonRect() const
     if (!presentation.showAllButton) return {};
     return GetCollectionSlotRect(
         this, presentation.allButtonSlot, body);
+}
+
+RECT Collection::GetTitleCellRect() const
+{
+    if (!app_ || !IsLargeFolderMode()) return {};
+    // Keep the rename anchor stable even when the All button is absent or
+    // titles are hidden. Dense titleless folders use their resolved grid.
+    return GetCollectionSlotRect(this,
+        GetCollectionPhysicalCapacity(this) - 1, GetBodyRect());
 }
 
 /**

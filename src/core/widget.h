@@ -193,6 +193,7 @@ public:
     bool IsSingleCellPresentation() const;
     bool IsSingleCellDesktopPoint(POINT point) const;
     bool IsSingleCellIconMode() const;
+    bool IsLargeFolderMode() const;
     RECT GetSingleCellIconRect() const;
     void DrawSingleCellContents(ID2D1DeviceContext* context, RECT body);
     RECT GetCollapseButtonRect() const;
@@ -563,6 +564,7 @@ public:
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     RECT GetAllButtonRect() const;
+    RECT GetTitleCellRect() const;
 
 private:
     RECT GetThumbnailIconRect(RECT rect) const;

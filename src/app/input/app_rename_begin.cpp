@@ -174,7 +174,19 @@ void DesktopApp::BeginRenameSelected(
                     handle = wc->GetTitleRect();
                     desktopIconTitle = wc->IsSingleCellIconMode();
                     leftAligned = !desktopIconTitle && !wc->UsesTopTitleBar();
-                    if (desktopIconTitle)
+                    const auto* collection = dynamic_cast<const Collection*>(wc);
+                    if (collection && collection->IsLargeFolderMode())
+                    {
+                        frame = collection->GetTitleCellRect();
+                        handle = GetItemRenameRect(frame,
+                            ResolveItemTitleLines(collection->GetWidgetData()));
+                        desktopIconTitle = true;
+                        leftAligned = false;
+                        fontSize = GetItemVisualMetrics(frame,
+                            ResolveItemTitleLines(collection->GetWidgetData())).fontSize;
+                        fontWeight = FW_NORMAL;
+                    }
+                    else if (desktopIconTitle)
                     {
                         handle = GetItemRenameRect(frame);
                         fontWeight = FW_NORMAL;
