@@ -28,8 +28,8 @@ function Write-RunJson($Value,[string]$Path){
     $temporary=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temporary,($Value|ConvertTo-Json -Depth 30),(New-Object Text.UTF8Encoding($false)))
-        if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,$null)}else{[IO.File]::Move($temporary,$Path)}
-    } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+        if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,$temporary+'.bak')}else{[IO.File]::Move($temporary,$Path)}
+    } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
 }
 function Run-OwnerState($Owner){
     if(-not $Owner){return 'none'}
@@ -113,7 +113,9 @@ try {
             $temporary=Run-Path $RunId ('.cancel.'+[Guid]::NewGuid().ToString('N')+'.tmp')
             [IO.File]::WriteAllText($temporary,$request.nonce,(New-Object Text.UTF8Encoding($false)))
             $cancelPath=Run-Path $RunId '.cancel'
-            if([IO.File]::Exists($cancelPath)){[IO.File]::Replace($temporary,$cancelPath,$null)}else{[IO.File]::Move($temporary,$cancelPath)}
+            try {
+                if([IO.File]::Exists($cancelPath)){[IO.File]::Replace($temporary,$cancelPath,$temporary+'.bak')}else{[IO.File]::Move($temporary,$cancelPath)}
+            } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
         }
         [pscustomobject]@{id=$RunId;cancellationRequested=(-not $view.terminal);status=$view.status;observation='A request is not a completed cancellation; observe the terminal result.'}|ConvertTo-Json
         exit 0
