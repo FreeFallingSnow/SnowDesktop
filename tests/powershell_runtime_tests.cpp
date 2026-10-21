@@ -5,7 +5,47 @@
 #include <thread>
 using namespace build_test;
 namespace {
+void fallback_module_test(const fs::path& repo,const fs::path& entryOverride={}) {
+    const auto core=powershell(),legacy=powershell(true);
+    if(core==legacy){std::cout<<"Core-to-Desktop module-path case requires installed PowerShell7\n";return;}
+    const auto root=temporary("fallback-module-path");
+    write(root/L"broken pwsh.exe","not a PE executable");write(root/L"hash-input.txt","abc");
+    fs::create_directory(root/L"custom modules");
+    write(root/L"hash-target.ps1",R"PS($ErrorActionPreference='Stop'
+[IO.File]::AppendAllText(([IO.Path]::Combine($PSScriptRoot,'executed.txt')),"once`n")
+$failure='';$hash='';try{$hash=(Get-FileHash -LiteralPath ([IO.Path]::Combine($PSScriptRoot,'hash-input.txt')) -Algorithm SHA256).Hash}catch{$failure=$_.Exception.Message}
+$module=Get-Module Microsoft.PowerShell.Utility
+$observation=@{major=$PSVersionTable.PSVersion.Major;hash=$hash;failure=$failure;utility=$module.Path;modulePath=$env:PSModulePath;sentinel=$env:SNOWDESKTOP_CHILD_SENTINEL}
+[IO.File]::WriteAllText(([IO.Path]::Combine($PSScriptRoot,'observed.json')),($observation|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+if($failure){exit 1}
+)PS",true);
+    write(root/L"launch.ps1",R"PS(param([string]$Entry,[string]$Runtime)
+. $Entry
+$env:PSModulePath=(Join-Path $PSScriptRoot 'custom modules')+';'+$env:PSModulePath
+$before=$env:PSModulePath;$env:SNOWDESKTOP_CHILD_SENTINEL='路径-child-marker'
+$env:SNOWDESKTOP_ENTRY_POWERSHELL=$Runtime
+$p=Start-BuildPowerShellScript -Script (Join-Path $PSScriptRoot 'hash-target.ps1') -WorkingDirectory $PSScriptRoot -OutputPath (Join-Path $PSScriptRoot 'child.out') -ErrorPath (Join-Path $PSScriptRoot 'child.err')
+$p.WaitForExit();$code=$p.ExitCode;$p.Dispose()
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'parent.json'),(@{before=$before;after=$env:PSModulePath}|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+exit $code
+)PS",true);
+    const auto entry=entryOverride.empty()?repo/L"scripts/build_entry.ps1":entryOverride;
+    for(const bool fallback:{true,false}) {
+        fs::remove(root/L"executed.txt");fs::remove(root/L"observed.json");
+        const auto result=run({core.wstring(),L"-NoProfile",L"-File",(root/L"launch.ps1").wstring(),L"-Entry",entry.wstring(),L"-Runtime",(fallback?root/L"broken pwsh.exe":core).wstring()},root,20);
+        const auto observation=fs::exists(root/L"observed.json")?Json::parse(read(root/L"observed.json")):Json::object({});
+        require(result.code==0&&observation.has("hash")&&observation.at("hash").str()=="BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",std::string(fallback?"Fallback Windows PowerShell could not hash with its own Utility module: ":"Core child lost its hashing module: ")+result.out+result.err+observation.dump());
+        const auto parent=Json::parse(read(root/L"parent.json"));
+        require(parent.at("before").str()==parent.at("after").str()&&read(root/L"executed.txt")=="once\n","Child module-path repair changed the parent environment or replayed business execution");
+        require(observation.at("major").integer()==(fallback?5:7)&&observation.at("sentinel").str()=="路径-child-marker","Child environment lost runtime selection or a Unicode value");
+        const auto utility=(fallback?legacy:core).parent_path()/L"Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1";
+        require(fs::equivalent(fs::path(wide(observation.at("utility").str())),utility),"Child loaded a different runtime's Utility module");
+        require((observation.at("modulePath").str().find(utf8((root/L"custom modules").wstring()))!=std::string::npos)==!fallback,"Core child lost its custom path or Desktop child retained process-only Core paths");
+    }
+    std::cout<<"PASS actual Core-to-Desktop fallback hashing, own Utility module, parent/custom Core paths, Unicode environment and exactly one execution\n";
+}
 void test(const fs::path& repo) {
+    fallback_module_test(repo);
     development_launcher_tests::Run(repo);
     auto root=temporary("powershell runtime");
     write(root/L"target.ps1",R"PS(param([string]$Value,[int]$Code=0,[int]$Delay=0)
@@ -88,5 +128,5 @@ $p.Dispose();Write-Output 'parent exited';exit 0
 int main(int argc,char** argv) {
     if(auto fixture=development_launcher_tests::Fixture(argc,argv))return *fixture;
     if(executable().filename().wstring().find(L"delayed pwsh")!=std::wstring::npos){std::this_thread::sleep_for(std::chrono::seconds(9));return 99;}
-    return test_main(argc,argv,test);
+    return test_main(argc,argv,[&](const fs::path& repo){if(argc>3&&std::string(argv[2])=="--fallback-module-control")fallback_module_test(repo,fs::path(wide(argv[3])));else test(repo);});
 }

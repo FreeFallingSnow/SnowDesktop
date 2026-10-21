@@ -72,6 +72,9 @@ namespace SnowDesktop.Entry {
    return Start(executable,arguments,directory,output,error,false);
   }
   public static Process Start(string executable,string arguments,string directory,string output,string error,bool breakaway) {
+   return Start(executable,arguments,directory,output,error,breakaway,false);
+  }
+  public static Process Start(string executable,string arguments,string directory,string output,string error,bool breakaway,bool resetModulePath) {
    // Reject corrupt executables before entering Windows app-compat/error UI.
    // The loader can block here even when CreateProcess requested no window.
    using(var image=new BinaryReader(File.Open(executable,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))) {
@@ -81,7 +84,7 @@ namespace SnowDesktop.Entry {
     image.BaseStream.Position=offset;
     if(image.ReadUInt32()!=0x4550)throw new InvalidDataException("PowerShell runtime has an invalid PE signature");
    }
-   IntPtr input=IntPtr.Zero,stdout=IntPtr.Zero,stderr=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero;
+   IntPtr input=IntPtr.Zero,stdout=IntPtr.Zero,stderr=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero,environment=IntPtr.Zero;
    bool initialized=false;ProcessInfo child=new ProcessInfo();
    var security=new Security{size=Marshal.SizeOf(typeof(Security)),inherit=1};
    try {
@@ -98,13 +101,23 @@ namespace SnowDesktop.Entry {
     var startup=new ExtendedStartup();startup.startup.size=Marshal.SizeOf(typeof(ExtendedStartup));startup.startup.flags=0x100;
     startup.startup.input=input;startup.startup.output=stdout;startup.startup.error=stderr;startup.attributes=attributes;
     uint creation=0x80000|0x8000000;
+    if(resetModulePath) {
+     // Native CreateProcess does not perform PowerShell 7's WinPS module-path
+     // filtering. Let Windows PowerShell construct its own default paths,
+     // without changing the launching process or its other environment values.
+     var values=new System.Collections.Generic.SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+     foreach(System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+      if(!String.Equals((string)entry.Key,"PSModulePath",StringComparison.OrdinalIgnoreCase))values[(string)entry.Key]=(string)entry.Value;
+     var block=new StringBuilder();foreach(var entry in values)block.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');
+     block.Append('\0');environment=Marshal.StringToHGlobalUni(block.ToString());creation|=0x400; // CREATE_UNICODE_ENVIRONMENT
+    }
     if(breakaway)creation|=0x01000000; // CREATE_BREAKAWAY_FROM_JOB; refusal is not a persistent launch.
-    if(!CreateProcess(executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,true,creation,IntPtr.Zero,directory,ref startup,out child))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    if(!CreateProcess(executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,true,creation,environment,directory,ref startup,out child))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     var process=Process.GetProcessById(child.pid);GC.KeepAlive(process.Handle);return process;
    } finally {
     foreach(var handle in new[]{input,stdout,stderr,child.process,child.thread})if(handle!=IntPtr.Zero&&handle!=new IntPtr(-1))CloseHandle(handle);
     if(initialized)DeleteProcThreadAttributeList(attributes);
-    if(attributes!=IntPtr.Zero)Marshal.FreeHGlobal(attributes);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);
+    if(attributes!=IntPtr.Zero)Marshal.FreeHGlobal(attributes);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);if(environment!=IntPtr.Zero)Marshal.FreeHGlobal(environment);
    }
   }
  }
@@ -127,7 +140,8 @@ namespace SnowDesktop.Entry {
         $timer=[Diagnostics.Stopwatch]::StartNew()
         try {
             $env:SNOWDESKTOP_ENTRY_POWERSHELL=$runtime
-            $process=[SnowDesktop.Entry.PowerShellChild]::Start($runtime,('-NoProfile -NonInteractive -File "'+$bootstrapPath+'"'),$WorkingDirectory,$out,$err,[bool]$Breakaway)
+            $resetModulePath=$PSVersionTable.PSEdition -eq 'Core' -and [IO.Path]::GetFileName($runtime) -ieq 'powershell.exe'
+            $process=[SnowDesktop.Entry.PowerShellChild]::Start($runtime,('-NoProfile -NonInteractive -File "'+$bootstrapPath+'"'),$WorkingDirectory,$out,$err,[bool]$Breakaway,[bool]$resetModulePath)
             $null=$process.Handle
             while(-not $process.HasExited -and -not [IO.File]::Exists($ready) -and $timer.Elapsed.TotalSeconds -lt $StartupSeconds){Start-Sleep -Milliseconds 20}
             if([IO.File]::Exists($ready) -and -not $process.HasExited) {
