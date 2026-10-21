@@ -1,9 +1,27 @@
 #include "build_tool_test_support.h"
+#include <algorithm>
 #include <iostream>
 using namespace build_test;
 namespace {
 Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
 void equal(const Json& a,const Json& b){require(equivalent_results(a,b),"Waiters did not receive equivalent persisted results\n"+a.dump()+"\n"+b.dump());}
+Json registration_semantics(Json value){
+    for(auto& [name,item]:value.fields){
+        if(name.ends_with("Utc")&&item.kind==Json::Kind::String){
+            auto& text=item.text;
+            if(text.size()>21&&text[10]=='T'&&text[19]=='.'&&text.back()=='Z'&&
+                std::all_of(text.begin()+20,text.end()-1,[](char c){return c>='0'&&c<='9';})){
+                // Date coercion may omit zero fractional digits. Retain every
+                // nonzero digit and every other registration/execution field.
+                while(text.size()>21&&text[text.size()-2]=='0')text.erase(text.size()-2,1);
+                if(text.size()==21)text.erase(19,1);
+            }
+        }
+        item=registration_semantics(std::move(item));
+    }
+    for(auto& item:value.items)item=registration_semantics(std::move(item));
+    return value;
+}
 void run_tests(const fs::path& repo){
     for(bool legacy:{false,true}){
         Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
@@ -36,14 +54,23 @@ void run_tests(const fs::path& repo){
         auto waiting=presence.begin("waiter").at("batchId").str();presence.begin("peer");
         auto waiter=presence.start(presence.bound("finish","waiter",waiting));
         until([&]{return presence.state().at("current").at("participants").items[0].at("state").str()=="finished";});
-        const auto before=presence.state().at("current").dump();
+        HANDLE timestampLease=INVALID_HANDLE_VALUE;
+        until([&]{timestampLease=CreateFileW((presence.stateRoot/L"state.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);return timestampLease!=INVALID_HANDLE_VALUE;},5);
+        try{
+            auto controlled=presence.state();controlled["current"]["participants"].items[0]["finishedUtc"]="2026-10-21T11:43:44.5345720Z";
+            atomic(presence.stateRoot/L"state.json",controlled.dump());
+        }catch(...){CloseHandle(timestampLease);throw;}
+        CloseHandle(timestampLease);
+        const auto beforeState=presence.state().at("current");const auto before=beforeState.dump();
         const std::vector<std::string> post={"event-post","reader","-Target","waiter","-EventKey","requirement-1","-EventKind","requirements","-Importance","urgent","-Text","Review changed requirement","-RequirementsRevision","2"};
         auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty()&&event.at("recipients").items.size()==1&&event.at("recipients").items[0].str()=="waiter","Persistence claimed delivery or singleton recipient lost array identity");
         require(presence.call(post).at("sequence").integer()==event.at("sequence").integer(),"Retried event was duplicated");
         require(complete(*waiter,6).at("registrationRetained").boolean,"Urgent wait did not retain registration");
-        const auto after=presence.state().at("current").dump();
+        const auto afterState=presence.state().at("current");const auto after=afterState.dump();
         write(presence.stateRoot/L"urgent-before.json",before);write(presence.stateRoot/L"urgent-after.json",after);
-        require(after==before,"Urgent wait return changed registration or execution\nBefore: "+before+"\nAfter: "+after);
+        require(registration_semantics(afterState).dump()==registration_semantics(beforeState).dump(),"Urgent wait return changed registration or execution\nBefore: "+before+"\nAfter: "+after);
+        auto changedTime=afterState;changedTime["participants"].items[0]["finishedUtc"]="2026-10-21T11:43:44.5345721Z";
+        require(registration_semantics(changedTime).dump()!=registration_semantics(beforeState).dump(),"Registration comparison lost a real UTC instant change");
         presence.call({"event-ack","reader-while-building","-Sequence","1"},2);
         auto received=presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","adapter"});
         require(received.at("receipts").items.size()==1&&received.at("receipts").items[0].at("level").str()=="adapter","Adapter receipt became agent acknowledgement");
