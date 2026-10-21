@@ -17,19 +17,34 @@ function New-BatchTestEvidence([string]$Root,$Result) {
         $retryTests=Get-Field $retry 'tests'
         if($retryTests -and $retryTests.PSObject.Properties[$name]){
             $entry=$retryTests.$name
-            $attempts=@($entry.attempts|ForEach-Object{[pscustomobject]@{attempt=$_.attempt;status=$_.status;exitCode=(Get-Field $_ 'exitCode');report=(Get-Field $_ 'report')}})
+            $attempts=@($entry.attempts|ForEach-Object{[pscustomobject]@{attempt=$_.attempt;status=$_.status;exitCode=$null;runnerExitCode=(Get-Field $_ 'exitCode');report=(Get-Field $_ 'report')}})
         }
-        if(-not $attempts.Count -and $observed.Count -eq 1){$attempts=@([pscustomobject]@{attempt=1;status=$status;exitCode=$null;report=(Get-Field $coverage 'report')})}
+        if(-not $attempts.Count -and $observed.Count -eq 1){$attempts=@([pscustomobject]@{attempt=1;status=$status;exitCode=$null;runnerExitCode=(Get-Field $Result 'pipelineExitCode');report=(Get-Field $coverage 'report')})}
+        $seconds=$null
         foreach($attempt in $attempts){
+            $seconds=$null
             $digest=$null
             if($attempt.report){
                 $path=[IO.Path]::GetFullPath([string]$attempt.report)
                 if($path.StartsWith($Root+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)){
-                    if(-not $reports.ContainsKey($path)){$reports[$path]=Get-FileDigest $path}
-                    $digest=$reports[$path]
+                    if(-not $reports.ContainsKey($path)){
+                        $times=@{};$reader=$null
+                        try{
+                            if((Get-Item -LiteralPath $path).Length -le 64MB){
+                                $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+                                $reader=[Xml.XmlReader]::Create($path,$settings)
+                                while($reader.Read()){if($reader.NodeType -eq [Xml.XmlNodeType]::Element -and $reader.LocalName -eq 'testcase'){$times[$reader.GetAttribute('name')]=$reader.GetAttribute('time')}}
+                            }
+                        }catch{$times=@{}}finally{if($reader){$reader.Dispose()}}
+                        $reports[$path]=[pscustomobject]@{sha256=(Get-FileDigest $path);times=$times}
+                    }
+                    $digest=$reports[$path].sha256
+                    $value=0.0
+                    if($reports[$path].times.ContainsKey($name) -and [double]::TryParse([string]$reports[$path].times[$name],[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$value) -and -not [double]::IsNaN($value) -and -not [double]::IsInfinity($value) -and $value -ge 0){$seconds=$value}
                 }
             }
             Set-Field $attempt 'reportSha256' $digest
+            Set-Field $attempt 'seconds' $seconds
         }
         $source=Get-Field $Result 'inputStart'
         $binding=[pscustomobject]@{sourceDigest=(Get-Field $source 'digest');configuration=(Get-Field (Get-Field $Result 'testingPlan') 'configuration');
@@ -38,7 +53,7 @@ function New-BatchTestEvidence([string]$Root,$Result) {
         $complete=$binding.sourceDigest -and $binding.assertionBinary -and $binding.invocationDigest -and $binding.environmentDigest
         $stable=(Get-Field $Result 'inputCheck') -eq 'stable'
         $items+=@([pscustomobject]@{id=[Guid]::NewGuid().ToString('N');test=$name;status=$status;
-            seconds=$(if($observed.Count -eq 1){Get-Field $observed[0] 'seconds'}else{$null});
+            seconds=$seconds;
             batchId=$Result.batchId;runId=(Get-Field $Result 'runId');logicalBatchId=(Get-Field $Result 'logicalBatchId' $Result.batchId);attempt=(Get-Field $Result 'attempt' 1);
             requesters=@(Get-Field $coverage 'tasks' @()|Where-Object {$_.requested -contains $name}|ForEach-Object participant);
             binding=$binding;bindingDigest=$(if($complete -and $stable){Get-VerificationTextDigest ($binding|ConvertTo-Json -Compress)}else{$null});

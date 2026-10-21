@@ -3,7 +3,7 @@
 function Get-AcceptanceClock {
     $ticks=[Diagnostics.Stopwatch]::GetTimestamp().ToString();$utc=[DateTime]::UtcNow.ToString('o')
     try {
-        $boot=(Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime -ErrorAction Stop).LastBootUpTime
+        $boot=(Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime -OperationTimeoutSec 3 -ErrorAction Stop).LastBootUpTime
         return [pscustomobject]@{ticks=$ticks;utc=$utc;frequency=[Diagnostics.Stopwatch]::Frequency.ToString();
             bootUtc=(ConvertTo-UtcTimestamp $boot).ToString('o');available=$true}
     } catch {return [pscustomobject]@{ticks=$null;utc=$utc;frequency=$null;bootUtc=$null;available=$false}}

@@ -271,7 +271,7 @@ def evidence_view(value):
                      "seconds": record_seconds(entry.get("seconds")), "requesters": [redact(x) for x in (entry.get("requesters") or [])[:80]],
                      "binding": {key: (entry.get("binding") or {}).get(key) for key in ("sourceDigest", "configuration", "assertionBinary", "invocationDigest", "environmentDigest")},
                      "reuseAllowed": entry.get("reuseAllowed") is True,
-                     "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
+                     "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "runnerExitCode", "seconds", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
     return {"status": value.get("status", "not-recorded"), "tests": rows, "totalCount": len(entries)}
 
 class Store:

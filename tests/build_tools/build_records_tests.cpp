@@ -48,6 +48,7 @@ void evidence_records_tests(const fs::path& repo,bool omitEvidence){
     require(failed.at("outcome").str()=="failed"&&failed.has("evidence"),"Immutable result omitted per-test evidence");
     const auto& entries=failed.at("evidence").at("tests");
     require(entries.items.size()==2&&named(entries,"Alpha").at("status").str()=="passed"&&named(entries,"Beta").at("status").str()=="failed","Per-test evidence lost actual outcomes");
+    require(std::abs(named(entries,"Alpha").at("seconds").number-0.1)<0.000001&&named(entries,"Alpha").at("attempts").items[0].at("exitCode").kind==Json::Kind::Null&&named(entries,"Alpha").at("attempts").items[0].at("runnerExitCode").integer()!=0,"Per-test report duration or runner/individual exit distinction was lost");
     require(named(entries,"Alpha").at("requesters").items.size()==2&&named(entries,"Beta").at("requesters").items.size()==1&&read(c.root/L"build.count")=="build\n","Merged requests repeated a target build or lost subscribers");
     for(const auto& entry:entries.items){
         require(entry.at("bindingDigest").str().size()==64&&entry.at("binding").at("assertionBinary").str().size()==64&&entry.at("binding").at("invocationDigest").str().size()==64&&entry.at("binding").at("environmentDigest").str().size()==64,"Evidence did not bind actual command/binary/environment identity");
@@ -58,6 +59,7 @@ void evidence_records_tests(const fs::path& repo,bool omitEvidence){
     if(omitEvidence)return;
     auto repair=c.call({"repair","b","-Batch",batch,"-Revision","0","-Reason","Synthetic Beta dependency changed; preserve original evidence"});
     const auto child=repair.at("batchId").str();
+    const auto reopenedA=c.begin("a");require(reopenedA.at("batchId").str()==child,"Supplement reopened a different candidate");
     const auto aRevision=edit_revision(c,"a"),bRevision=edit_revision(c,"b");
     claim_files(c,"b",child,bRevision,"src/b.txt");write(c.root/L"src/b.txt","corrected fixture input\n");
     c.plan("a",child,aRevision,"none","","tool","src/a.txt");c.plan("b",child,bRevision,"selected","Beta","tool","src/b.txt");
