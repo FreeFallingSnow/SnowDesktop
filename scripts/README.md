@@ -18,6 +18,8 @@ scripts\build.bat run cancel -RunId <runId> -Task my-task
 
 PowerShell 7 启动器通过原生进程 API 启动 Windows PowerShell 5.1 时，仅在子进程环境中移除继承的 `PSModulePath`，由 5.1 按自身规则重建默认模块路径，避免误载 7 版 Utility 等同名模块。父进程路径、普通 7 子进程及其他环境值保持原样；仅附加到当前 Core 进程的临时模块路径不会传给 5.1。此行为沿用 [Microsoft 对中间进程启动 Windows PowerShell 的说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath#starting-windows-powershell-from-powershell-7)。启动就绪握手、六秒初始化预算和业务开始后禁止重放的规则不变。
 
+原生工具回归驱动直接启动 `powershell.exe` 时，也使用 5.1 自身的默认模块环境；夹具明确提供的 `PSModulePath` 覆盖仍保留，便于验证污染环境等失败路径。此隔离仅属于测试驱动，不修改用户或机器环境。启动超时与模块解析错误分别记录，不以模块路径检查通过代替所有初始化场景通过。
+
 普通入口保持 busy 时立即拒绝、前台日志与原退出码；已提交后由工作进程重新取得执行权。没有显式 Task 的普通调用会创建 `entry-<id>` 调查登记，结果结束后关闭；显式 `run start` 仍须传入已登记的 Task。`build_entry.ps1 -Task ID` 可把标准入口绑定既有 Task；IDE 配置与目标、测试筛选均保存到不可变请求。观察期遇到未确认紧急事件返回 6，保留 Run。请求和日志路径会显示在终端。
 
 `run status/wait` 的 `stageEvents` 读取同一 Run 下按进程分开的追加记录，保留单调时钟耗时、父阶段、真实退出码与日志路径。当前覆盖标准预检、入口管线，以及测试中的 configure/test-target-build/arrange/test-execute；编译与链接尚未独立采集，不按日志文字推算。阶段读取失败单独返回 `stageError`，不伪装成零耗时。CPU/内存/I/O Job 采样仍单独保存。

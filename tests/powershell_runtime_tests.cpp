@@ -5,7 +5,7 @@
 #include <thread>
 using namespace build_test;
 namespace {
-void fallback_module_test(const fs::path& repo,const fs::path& entryOverride={}) {
+void fallback_module_test(const fs::path& repo,const fs::path& entryOverride={},bool restoreNativeInheritance=false) {
     const auto core=powershell(),legacy=powershell(true);
     if(core==legacy){std::cout<<"Core-to-Desktop module-path case requires installed PowerShell7\n";return;}
     const auto root=temporary("fallback-module-path");
@@ -42,7 +42,25 @@ exit $code
         require(fs::equivalent(fs::path(wide(observation.at("utility").str())),utility),"Child loaded a different runtime's Utility module");
         require((observation.at("modulePath").str().find(utf8((root/L"custom modules").wstring()))!=std::string::npos)==!fallback,"Core child lost its custom path or Desktop child retained process-only Core paths");
     }
-    std::cout<<"PASS actual Core-to-Desktop fallback hashing, own Utility module, parent/custom Core paths, Unicode environment and exactly one execution\n";
+    const auto inherited=environment(L"PSModulePath");
+    {
+        struct RestoreModulePath {
+            std::wstring original;
+            ~RestoreModulePath(){SetEnvironmentVariableW(L"PSModulePath",original.empty()?nullptr:original.c_str());}
+        } restore{inherited};
+        const auto polluted=(core.parent_path()/L"Modules").wstring()+L";"+inherited;
+        require(SetEnvironmentVariableW(L"PSModulePath",polluted.c_str())!=FALSE,"Cannot set the controlled native-parent module environment");
+        fs::remove(root/L"executed.txt");
+        const auto raw=[&](const Env& env){fs::remove(root/L"observed.json");return run({legacy.wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(root/L"hash-target.ps1").wstring()},root,15,env);};
+        const auto result=raw(restoreNativeInheritance?Env{{L"PSModulePath",polluted}}:Env{});
+        auto observed=Json::parse(read(root/L"observed.json"));
+        require(result.code==0&&observed.at("major").integer()==5&&observed.at("hash").str()=="BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"&&read(root/L"executed.txt")=="once\n","Native Windows PowerShell inherited Core modules: "+result.err+observed.dump());
+        const auto intentional=raw({{L"pSmOdUlEpAtH",polluted}});
+        observed=Json::parse(read(root/L"observed.json"));
+        require(intentional.code==1&&observed.at("hash").str().empty()&&observed.at("failure").str().find("Get-FileHash")!=std::string::npos&&read(root/L"executed.txt")=="once\nonce\n","Native driver discarded a deliberate case-insensitive module-path fault fixture");
+    }
+    require(environment(L"PSModulePath")==inherited,"Native module-path fixture failed to restore its process environment");
+    std::cout<<"PASS actual Core-to-Desktop fallback and native5.1 hashing, Utility origin, parent/custom Core paths, Unicode environment, exactly one execution and explicit fault overrides\n";
 }
 void test(const fs::path& repo) {
     fallback_module_test(repo);
@@ -128,5 +146,5 @@ $p.Dispose();Write-Output 'parent exited';exit 0
 int main(int argc,char** argv) {
     if(auto fixture=development_launcher_tests::Fixture(argc,argv))return *fixture;
     if(executable().filename().wstring().find(L"delayed pwsh")!=std::wstring::npos){std::this_thread::sleep_for(std::chrono::seconds(9));return 99;}
-    return test_main(argc,argv,[&](const fs::path& repo){if(argc>3&&std::string(argv[2])=="--fallback-module-control")fallback_module_test(repo,fs::path(wide(argv[3])));else test(repo);});
+    return test_main(argc,argv,[&](const fs::path& repo){if(argc>3&&std::string(argv[2])=="--fallback-module-control")fallback_module_test(repo,fs::path(wide(argv[3])));else if(argc>2&&std::string(argv[2])=="--native-module-control")fallback_module_test(repo,{},true);else test(repo);});
 }

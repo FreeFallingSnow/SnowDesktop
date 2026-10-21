@@ -41,7 +41,7 @@ Json canonical_dates(Json value){
     for(auto& [key,item]:value.fields){(void)key;item=canonical_dates(std::move(item));}
     return value;
 }
-std::vector<wchar_t> child_environment(const Env& patch) {
+std::vector<wchar_t> child_environment(const Env& patch,bool windowsPowerShell) {
     std::map<std::wstring,std::wstring,CompareEnv> values;
     wchar_t* block=GetEnvironmentStringsW();
     require(block!=nullptr,"GetEnvironmentStrings failed");
@@ -53,6 +53,12 @@ std::vector<wchar_t> child_environment(const Env& patch) {
     values.erase(L"SNOWDESKTOP_EXECUTION_TOKEN");
     values.erase(L"SNOWDESKTOP_RUN_ID");
     values.erase(L"SNOWDESKTOP_STAGE_PARENT");
+    // A native driver has no PowerShell7 NativeCommandProcessor to filter Core
+    // module paths before starting Windows PowerShell. Keep deliberate fixture
+    // overrides, otherwise let5.1 construct its own normal module environment.
+    bool explicitModulePath=false;
+    for(const auto& [key,value]:patch){(void)value;if(_wcsicmp(key.c_str(),L"PSModulePath")==0)explicitModulePath=true;}
+    if(windowsPowerShell&&!explicitModulePath)values.erase(L"PSModulePath");
     values[L"PSExecutionPolicyPreference"]=L"Bypass";
     for(const auto& [key,value]:patch) values[key]=value;
     std::vector<wchar_t> out;
@@ -178,7 +184,7 @@ Child::Child(const std::vector<std::wstring>& args,const fs::path& cwd,const Env
         HANDLE handles[]={in,out,err};require(UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr)!=0,"Handle whitelist failed");
         STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=in;startup.StartupInfo.hStdOutput=out;startup.StartupInfo.hStdError=err;startup.lpAttributeList=attributes;
         std::wstring command;const bool cmd=_wcsicmp(fs::path(args[0]).filename().c_str(),L"cmd.exe")==0;
-        for(const auto& arg:args){if(!command.empty())command+=L' ';command+=(cmd&&arg.starts_with(L"call "))?arg:quote(arg);}auto block=child_environment(env);
+        for(const auto& arg:args){if(!command.empty())command+=L' ';command+=(cmd&&arg.starts_with(L"call "))?arg:quote(arg);}auto block=child_environment(env,_wcsicmp(fs::path(args[0]).filename().c_str(),L"powershell.exe")==0);
         if(allowBreakaway){
             // Only the controlled test launcher permits breakaway. Production
             // build Jobs retain their strict kill-on-close containment.
