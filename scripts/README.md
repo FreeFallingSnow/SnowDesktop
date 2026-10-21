@@ -217,6 +217,32 @@ CL/Link/Lib、XAML 及自定义构建分别显示真实任务区间。`elapsedSe
 
 Job CPU、峰值 Job 内存、进程与 I/O 来自该 Run 私有 Job 的采样。网页和 DSH 悬窗通过同一只读快照显示
 普通 Run 与批次关联 Run、等待、阶段、资源和日志。记录先验证请求/结果的根目录、ID、nonce；不公开执行凭据。
+
+### 测试证据与人工验收
+
+批次结果的 `evidence.tests` 逐条保存测试结果、原始尝试/报告哈希、请求任务、候选输入、测试二进制、
+CTest 命令/属性摘要和执行环境摘要。采集在目标生成后、测试执行前完成；缺少数据保持 incomplete。
+输入修正后的补验属于新的尝试，原失败记录不覆盖。`build.bat evidence-list ID -Batch B` 只读查询。
+当前环境摘要绑定已解析工具、缓存/预设及明确环境字段，但外部 SDK 和语义依赖尚未闭合，
+`reuseAllowed=false`，不能据此自动跨候选省略测试；普通独立 Run 的逐条索引和去重仍待接入。
+
+人工验收独立于构建与测试。先用 `task-list` 读取当前任务修订，然后登记：
+两个写命令均须使用最新 `TaskRevision`；未结束的验收须先完成或取消，再关闭 Task。
+
+```bat
+scripts\build.bat acceptance-start ID -Batch B -Revision R -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files .build/Release/SnowDesktop.exe
+scripts\build.bat acceptance-list ID -Batch B
+scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -AcceptanceOutcome passed -Reporter user -Reference "实际反馈或证据位置" -Notes "原始样本、观察步骤和结果"
+```
+
+开始时要求候选已通过且输入稳定、任务需求修订一致，运行文件须属于该候选的输入、已记录构建输出或测试输出。
+旧格式缺少需求关联、未验证的现有输出以及路径链接均不推断为可验收候选。文件关联表示可核对的文件身份，
+实际进程加载与可见行为仍由观察和引用证明，不能仅凭文件哈希宣称实机通过。
+完成时重新核对输入、产物与需求修订；变化后不能登记 pass，可如实记录 failed/cancelled，再准备新候选。
+反馈来源为 user 或 agent，须记录真实观察；已完成记录不可改写，结果不改动原构建/测试结论，也不表示发布。
+区间使用同一系统启动周期内的 QPC 单调计数；UTC 只用于显示，跨重启或无法取得时钟身份时明确未记录耗时。
+参见 [Windows 高精度计时说明](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)。
+不补造既往验收的开始时间。只读看板与悬浮窗分别展示逐条测试证据和人工验收，不把两者相加为测试通过数。
 观测文件每 Run 的读取预算为 4 MiB / 100 文件，超限保留原始记录并报告不可用；界面任务区间只显示最近80项，标注省略数。
 观测能力本身不构成提速证明，性能比较仍需相同输入、工具链、缓存和外部负载下的独立基线。
 

@@ -230,6 +230,50 @@ class LogReader:
         except FileNotFoundError:
             return {"lines": [], "stage": "unknown", "testCompleted": None, "testTotal": None}
 
+def record_seconds(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+        return number if math.isfinite(number) and number >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+def acceptance_view(ledger, batch_id=None):
+    records = (ledger or {}).get("acceptances") or []
+    if not isinstance(records, list):
+        raise ValueError("Invalid acceptance records")
+    result = []
+    for entry in records[-100:]:
+        if not isinstance(entry, dict) or not HEX.fullmatch(str(entry.get("id", ""))):
+            raise ValueError("Invalid acceptance identity")
+        if batch_id and entry.get("batchId") != batch_id:
+            continue
+        result.append({**{key: entry.get(key) for key in ("id", "task", "batchId", "runId", "status", "requirementsRevision", "editRevision", "startedUtc", "completedUtc", "durationStatus", "reporter", "sourceDigest")},
+                       **{key: redact(entry.get(key, "")) for key in ("criterion", "reference", "notes")},
+                       "elapsedSeconds": record_seconds(entry.get("elapsedSeconds")),
+                       "artifactCount": len(entry.get("artifacts") or []),
+                       "artifacts": [{key: redact(x.get(key, "")) for key in ("file", "sha256", "sourceAssociation")} for x in (entry.get("artifacts") or [])[:64]]})
+    return result
+
+def evidence_view(value):
+    value = value or {}
+    if value.get("schemaVersion") != 1:
+        return {"status": "not-recorded", "tests": [], "totalCount": 0}
+    entries = value.get("tests") or []
+    if not isinstance(entries, list):
+        raise ValueError("Invalid per-test evidence")
+    rows = []
+    for entry in entries[:300]:
+        if not isinstance(entry, dict) or not HEX.fullmatch(str(entry.get("id", ""))):
+            raise ValueError("Invalid per-test evidence identity")
+        rows.append({**{key: entry.get(key) for key in ("id", "test", "status", "batchId", "runId", "logicalBatchId", "attempt", "bindingDigest", "inputCheck", "identityStatus")},
+                     "seconds": record_seconds(entry.get("seconds")), "requesters": [redact(x) for x in (entry.get("requesters") or [])[:80]],
+                     "binding": {key: (entry.get("binding") or {}).get(key) for key in ("sourceDigest", "configuration", "assertionBinary", "invocationDigest", "environmentDigest")},
+                     "reuseAllowed": entry.get("reuseAllowed") is True,
+                     "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
+    return {"status": value.get("status", "not-recorded"), "tests": rows, "totalCount": len(entries)}
+
 class Store:
     def __init__(self, root, fixture):
         self.root = root
@@ -461,6 +505,8 @@ class Store:
                 "logicalBatchId":data.get("logicalBatchId",batch_id),"attempt":data.get("attempt",1),"repairOf":data.get("repairOf"),
                 "runId": data.get("runId"),
                 "run": run,
+                "evidence": evidence_view(data.get("evidence")),
+                "acceptances": acceptance_view((read_json(self.root, "state.json") or {}).get("taskLedger"), batch_id),
                 "retry": self.retry_view(batch_id),
                 "log": log}
 
@@ -542,6 +588,7 @@ class Store:
                           "current": active, "history": history, "waits": self.waits(),
                           "taskPresence": presence, "taskPresenceTotal": len(ledger.get("tasks") or []),
                           "events": events, "eventTotal": len(ledger.get("events") or []), "runs": self.runs(),
+                          "acceptances": acceptance_view(ledger),
                           "limitation": "Only registered cooperating tasks are visible. Stale age never completes an editor. Run task intervals and compiler counts come from producer observations; unobserved phases remain unknown."}
             self.cache_time = time.monotonic()
             return self.cache

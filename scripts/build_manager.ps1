@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
@@ -26,7 +26,13 @@ param(
     [ValidateSet('normal','urgent')][string]$Importance='normal',
     [ValidateLength(0,4000)][string]$Text='', [ValidatePattern('^[a-zA-Z0-9._-]{1,100}$')][string]$EventKey,
     [long]$AfterSequence=0, [long]$Sequence=0,
-    [ValidateSet('adapter','agent')][string]$AckLevel='adapter'
+    [ValidateSet('adapter','agent')][string]$AckLevel='adapter',
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$AcceptanceId,
+    [ValidateLength(0,1000)][string]$AcceptanceCriterion='',
+    [ValidateSet('passed','failed','cancelled')][string]$AcceptanceOutcome='passed',
+    [ValidateSet('user','agent')][string]$Reporter='agent',
+    [ValidateLength(0,2000)][string]$Reference='',
+    [ValidateLength(0,4000)][string]$Notes=''
 )
 
 # Foreground execution needs neither Python nor a hidden worker launch. It uses
@@ -266,6 +272,39 @@ try {
         [pscustomobject]@{schemaVersion=1;stateRoot=$stateRoot;current=$diagnostic;tasks=(Get-Field (Get-Field $state 'taskLedger') 'tasks' @());execution=(Read-EntryJson (Join-Path $stateRoot 'execution.json'));observation='Atomic read-only snapshot; execution record may be historical.'}|ConvertTo-Json -Depth 20
         exit 0
     }
+    if($Command -in 'evidence-list','acceptance-list'){
+        $state=Read-State
+        if($Command -eq 'evidence-list'){
+            if(-not $Batch){throw 'evidence-list requires a saved -Batch.'}
+            $saved=Read-Result $Batch;if(-not $saved){throw 'No immutable result is available for this batch.'}
+            $evidence=Get-Field $saved 'evidence'
+            [pscustomobject]@{batchId=$Batch;status=(Get-Field $evidence 'status' 'not-recorded');tests=@(Get-Field $evidence 'tests' @()|Where-Object {-not $Participant -or $_.requesters -contains $Participant});observation='A recorded identity does not establish dependency closure or automatic reuse.'}|ConvertTo-Json -Depth 20
+        }else{
+            [pscustomobject]@{acceptances=@(Get-Field (Get-Field $state 'taskLedger') 'acceptances' @()|Where-Object {(-not $Participant -or $_.task -eq $Participant) -and (-not $Batch -or $_.batchId -eq $Batch)})}|ConvertTo-Json -Depth 20
+        }
+        exit 0
+    }
+    if($Command -in 'acceptance-start','acceptance-complete'){
+        if(-not $Participant){throw 'Acceptance requires a registered task ID.'}
+        . (Join-Path $PSScriptRoot 'build_acceptance.ps1')
+        $metadata=Lock-State
+        try{
+            $state=Read-State;$task=Find-VisibleTask (Get-TaskLedger $state) $Participant;Assert-TaskRevision $task $TaskRevision
+            if($task.phase -in 'completed','cancelled'){throw 'A closed task cannot open or complete acceptance.'}
+            if($Command -eq 'acceptance-start'){
+                if(-not $Batch -or $Revision -lt 0){throw 'Acceptance start requires the candidate batch and edit revision.'}
+                $saved=Read-Result $Batch;if(-not $saved){throw 'Candidate result is not available.'}
+                $record=Start-TaskAcceptance $repositoryRoot $state $task $saved $Revision $AcceptanceCriterion $Files
+            }else{
+                if(-not $AcceptanceId){throw 'Acceptance completion requires -AcceptanceId.'}
+                $record=Complete-TaskAcceptance $repositoryRoot $state $task $AcceptanceId $AcceptanceOutcome $Reporter $Reference $Notes
+            }
+            if([Text.Encoding]::UTF8.GetByteCount(($state|ConvertTo-Json -Depth 30)) -gt 7MB){throw 'Acceptance would exceed the metadata budget; preserve records for reviewed archival.'}
+            Write-AtomicJson $state $statePath
+            [pscustomobject]@{acceptance=$record;editingAuthority=$false;observation='Reported manual acceptance does not alter build/test results or publish a release.'}|ConvertTo-Json -Depth 20
+        }finally{$metadata.Dispose()}
+        exit 0
+    }
     if($Command -in 'task-list','event-read') {
         $state=Read-State;$ledger=Get-Field $state 'taskLedger'
         if($Command -eq 'task-list') {[pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0)}|ConvertTo-Json -Depth 20}
@@ -298,6 +337,7 @@ try {
                     if($Command -eq 'task-close') {
                         if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
                         if($current -and @($current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
+                        if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
                         $task.closedUtc=[DateTime]::UtcNow.ToString('o')
                     } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
                     $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
@@ -523,6 +563,8 @@ try {
                 if ($Command -eq 'plan') {
                     if ($entry.state -ne 'editing') { throw 'Plan changes require atomic begin/reopen before editing.' }
                     Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason)
+                    $visible=Find-VisibleTask (Get-TaskLedger $state) $Participant
+                    Set-Field $entry.testPlan 'requirementsRevision' $visible.requirementsRevision
                     Write-AtomicJson $state $statePath
                     ConvertTo-Json -InputObject ([pscustomobject]@{participant=$Participant;batchId=$Batch;editRevision=$Revision;testPlan=$entry.testPlan}) -Depth 15
                     exit 0
@@ -668,7 +710,13 @@ try {
                         if ($null -eq $buildLease) { throw 'Unexpected occupied build lease; inspect status without clearing registrations.' }
                         # The metadata lease covers membership freeze and the
                         # input identity, closing the new-begin/start-build race.
-                        try { $frozenPlan=New-FrozenPlan $current } catch {
+                        try {
+                            $frozenPlan=New-FrozenPlan $current
+                            foreach($request in $frozenPlan.tasks){
+                                $required=Get-Field $request.requirement 'requirementsRevision'
+                                if($null -ne $required -and $required -ne (Find-VisibleTask (Get-TaskLedger $state) $request.participant).requirementsRevision){throw 'Requirements changed after planning; reopen and update the declared plan before execution.'}
+                            }
+                        } catch {
                             Set-Field $current 'planStatus' 'blocked'; Set-Field $current 'planError' $_.Exception.Message
                             Write-AtomicJson $state $statePath; throw
                         }
@@ -684,6 +732,8 @@ try {
                         $startInputs = Get-BuildInputIdentity $repositoryRoot
                         $current | Add-Member -NotePropertyName inputStart -NotePropertyValue $startInputs -Force
                         $current.phase = 'building'
+                        Set-Field $current 'planStatus' 'executing'
+                        Set-Field $current 'planError' ''
                         $current.buildStartedUtc = [DateTime]::UtcNow.ToString('o')
                         $current.owner = [pscustomobject]@{ pid = $PID; startTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString() }
                         $current.logPath = Join-Path $stateRoot ($current.id + '.log')
@@ -784,6 +834,8 @@ try {
                     $result.inputEnd = $endInputs
                     $result.inputCheck = $inputCheck
                     $result.pipelineExitCode = $pipelineCode
+                    . (Join-Path $PSScriptRoot 'build_evidence.ps1')
+                    Set-Field $result 'evidence' (New-BatchTestEvidence $repositoryRoot $result)
                     if($ExecutionRun){Write-AtomicJson $result (Join-Path $stateRoot ($selected.id+'.pending-result.json'))}
                     else {Publish-Result $state $result}
                 }

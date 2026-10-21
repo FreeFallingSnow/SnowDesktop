@@ -12,6 +12,10 @@ if /i "%~1"=="task-open" goto collaboration
 if /i "%~1"=="task-stage" goto collaboration
 if /i "%~1"=="task-close" goto collaboration
 if /i "%~1"=="task-list" goto collaboration
+if /i "%~1"=="evidence-list" goto collaboration
+if /i "%~1"=="acceptance-list" goto collaboration
+if /i "%~1"=="acceptance-start" goto collaboration
+if /i "%~1"=="acceptance-complete" goto collaboration
 if /i "%~1"=="event-post" goto collaboration
 if /i "%~1"=="event-read" goto collaboration
 if /i "%~1"=="event-wait" goto collaboration

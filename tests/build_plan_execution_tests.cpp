@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <iostream>
 using namespace build_test;
+void evidence_records_tests(const fs::path& repo,bool omitEvidence);
+void acceptance_records_tests(const fs::path& repo,bool omitRevisionGuard);
 namespace {
 void test(const fs::path& repo) {
     auto root=temporary("plan-execution");
@@ -38,6 +40,7 @@ exit 0
     auto coverage=invoke("pass",true);require(coverage.at("status").str()=="passed"&&coverage.at("tasks").items.size()==2,"Coverage tasks not passed");
     for(const auto& item:coverage.at("tasks").items)require(item.at("status").str()=="passed","Per-task pass missing");
     require(coverage.at("testExecutablesBeforeRun").items.size()==2,"Fingerprint inventory incomplete");for(const auto& item:coverage.at("testExecutablesBeforeRun").items)require(item.at("sha256").str().size()==64,"Fingerprint missing");
+    require(coverage.at("testDefinitionsBeforeRun").items.size()==2&&coverage.at("executionContext").at("digest").str().size()==64&&!coverage.at("executionContext").at("externalDependenciesClosed").boolean,"Actual test invocation/environment identity was lost or external dependencies were inferred closed");
     coverage=invoke("failed",false);require(coverage.at("tasks").items[1].at("failed").items[0].str()=="Beta"&&coverage.at("tasks").items[0].at("status").str()=="passed","Per-task failure attribution incorrect");
     coverage=invoke("skipped",false);for(const auto& item:coverage.at("tasks").items)require(item.at("status").str()=="not-run","Skipped treated as pass");
     auto before=read(root/L"build.count");coverage=invoke("environment",false);
@@ -61,4 +64,11 @@ exit 0
     std::cout<<"PASS real test manager selection, fingerprints, task coverage, explicit unavailable/zero/skipped failure, cold/legacy host guards, arrangement and full output checkpoints"<<std::endl;
 }
 }
-int main(int argc,char** argv) {return test_main(argc,argv,test);}
+int main(int argc,char** argv) {return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2){
+        const std::string mode=argv[2];
+        if(mode=="--evidence"||mode=="--without-evidence"){evidence_records_tests(repo,mode=="--without-evidence");return;}
+        if(mode=="--acceptance"||mode=="--without-acceptance-revision"){acceptance_records_tests(repo,mode=="--without-acceptance-revision");return;}
+    }
+    test(repo);
+});}

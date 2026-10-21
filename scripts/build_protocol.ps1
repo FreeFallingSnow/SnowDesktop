@@ -7,6 +7,11 @@ function Get-Field($Object, [string]$Name, $Default = $null) {
 function Set-Field($Object, [string]$Name, $Value) {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
+function Get-VerificationTextDigest([string]$Text) {
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}
+    finally {$sha.Dispose()}
+}
 # ConvertFrom-Json returns strings in Windows PowerShell and can return typed
 # dates in PowerShell 7. Never stringify a typed date: that drops its UTC kind.
 function ConvertTo-UtcTimestamp($Value) {

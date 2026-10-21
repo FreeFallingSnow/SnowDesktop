@@ -116,6 +116,29 @@ function Get-TestSelection {
     }
 }
 
+function Get-TestExecutionContext {
+    $files=[ordered]@{}
+    foreach($relative in @('CMakePresets.json','CMakeUserPresets.json','.build/CMakeCache.txt')){
+        $path=Join-Path $repositoryRoot $relative
+        $files[$relative]=if([IO.File]::Exists($path)){Get-FileDigest $path}else{$null}
+    }
+    $tools=[ordered]@{}
+    foreach($name in @('cmake.exe','ctest.exe','node.exe','python.exe')){
+        $tool=Get-Command $name -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
+        $tools[$name]=if($tool -and [IO.File]::Exists($tool.Source)){[pscustomobject]@{path=$tool.Source;sha256=(Get-FileDigest $tool.Source)}}else{$null}
+    }
+    $process=[Diagnostics.Process]::GetCurrentProcess()
+    try {$runtime=$process.MainModule.FileName;$tools['powershell']=[pscustomobject]@{path=$runtime;sha256=(Get-FileDigest $runtime)}}finally{$process.Dispose()}
+    $environment=[ordered]@{}
+    foreach($key in @('PATH','PATHEXT','SystemRoot','TEMP','TMP','SNOWDESKTOP_ENTRY_POWERSHELL','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','CMAKE_GENERATOR','SNOWDESKTOP_STEAMWORKS_SDK_PATH')){
+        $environment[$key]=[Environment]::GetEnvironmentVariable($key,'Process')
+    }
+    # Preserve only a digest of inherited values, never their raw contents.
+    $binding=[pscustomobject]@{files=$files;tools=$tools;environmentDigest=(Get-VerificationTextDigest ($environment|ConvertTo-Json -Compress))}
+    return [pscustomobject]@{schemaVersion=1;digest=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 8 -Compress));files=$files;tools=$tools;
+        environmentDigest=$binding.environmentDigest;externalDependenciesClosed=$false}
+}
+
 function Invoke-FilteredTests {
     param(
         [string[]]$CTestFilterArguments,
@@ -170,15 +193,25 @@ function Invoke-FilteredTests {
 
     Write-Host ""
     if($Mode -eq 'plan'){
+        # A first-build CTest inventory can omit command until its executable
+        # exists. Re-query declarations after building; never guess its argv.
+        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
+        if(@(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Configured test selection changed before execution.'}
+        $selection=$executed
         $artifacts=@()
+        $definitions=@()
         foreach($test in $selection.Tests){
             $cmd=@(Get-Field $test 'command' @());if($cmd.Count -eq 0){continue}
+            $definition=[pscustomobject]@{name=$test.name;command=$cmd;properties=@($test.properties|Sort-Object name)}
+            $definitions+=@([pscustomobject]@{name=$test.name;digest=(Get-VerificationTextDigest ($definition|ConvertTo-Json -Depth 15 -Compress))})
             $path=[IO.Path]::GetFullPath([string]$cmd[0])
             if($path.StartsWith($repositoryRoot+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)){
                 $artifacts += [pscustomobject]@{test=$test.name;executable=$path.Substring($repositoryRoot.Length+1);sha256=(Get-FileDigest $path);bytes=(Get-Item -LiteralPath $path).Length}
             }
         }
         Set-Field $coverage 'testExecutablesBeforeRun' $artifacts
+        Set-Field $coverage 'testDefinitionsBeforeRun' $definitions
+        Set-Field $coverage 'executionContext' (Get-TestExecutionContext)
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
