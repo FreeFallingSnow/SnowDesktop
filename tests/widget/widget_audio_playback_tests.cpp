@@ -313,6 +313,7 @@ void RealSystemMedia(const std::filesystem::path& path)
         auto started = Complete(service, play);
         if (!started.ok) throw std::runtime_error("SMTC fixture starts muted: " + started.state.error);
         bool metadata = false;
+        std::int64_t duration = 0;
         Check(Wait([&] {
             for (const auto& item : service.Drain())
                 if (item.state.status == "playing")
@@ -323,9 +324,26 @@ void RealSystemMedia(const std::filesystem::path& path)
                         item.state.artworkToken.starts_with("@audio:"), "embedded cover decoded to bounded runtime image");
                     Check(item.state.systemMediaControls, "SMTC is enabled only for opted-in playback");
                     metadata = true;
+                    duration = item.state.durationMs;
                 }
             return metadata;
         }), "metadata and cover event");
+        if (duration > 0 && duration <= 2000)
+        {
+            const auto afterCycle = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration + 100);
+            std::int64_t previousPosition = -1;
+            bool wrapped = false, playingBeyondCycle = false;
+            Check(Wait([&] {
+                for (const auto& item : service.Drain()) if (item.playbackId == started.playbackId)
+                {
+                    Check(item.state.status != "ended" && item.state.status != "error", "looping SMTC voice must not retire at natural end");
+                    wrapped |= previousPosition > duration / 2 && item.state.positionMs < previousPosition;
+                    previousPosition = item.state.positionMs;
+                    playingBeyondCycle |= wrapped && item.state.status == "playing" && std::chrono::steady_clock::now() >= afterCycle;
+                }
+                return playingBeyondCycle;
+            }), "looping SMTC voice stays playing with actual position wrap beyond one cycle");
+        }
         using namespace winrt::Windows::Media::Control;
         const auto manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
         GlobalSystemMediaTransportControlsSession session{nullptr};

@@ -52,7 +52,7 @@ std::string AudioTag(const winrt::hstring& value)
 
 class WindowsAudioPlayer final : public WidgetAudioPlayer
 {
-    struct Terminal { std::atomic<int> value{0}; };
+    struct Terminal { std::atomic<int> value{0}; std::atomic<bool> looping{false}; };
     struct Commands
     {
         std::mutex mutex;
@@ -113,7 +113,15 @@ public:
             player_ = winrt::Windows::Media::Playback::MediaPlayer();
             player_.CommandManager().IsEnabled(false);
             player_.AutoPlay(false);
-            player_.MediaEnded([terminal = terminal_](const auto&, const auto&) { terminal->value = 1; });
+            player_.MediaEnded([terminal = terminal_](const auto&, const auto&) {
+                // Explicit playback items can report each loop boundary. Keep
+                // the voice alive, and never overwrite a concurrent failure.
+                if (!terminal->looping)
+                {
+                    int running = 0;
+                    terminal->value.compare_exchange_strong(running, 1);
+                }
+            });
             player_.MediaFailed([terminal = terminal_](const auto&, const auto&) { terminal->value = 2; });
             // Bind once in Configure. Assigning a raw source first creates an
             // implicit playback item; wrapping that same source again for SMTC
@@ -257,7 +265,10 @@ public:
     void SetLoop(bool value) override { SetPlaybackMode(metadata_.shuffle, value ? "track" : "none"); }
     void SetPlaybackMode(bool shuffle, const std::string& repeatMode) override
     {
-        player_.IsLoopingEnabled(repeatMode == "track");
+        const bool looping = repeatMode == "track";
+        const bool previous = terminal_->looping.exchange(looping);
+        try { player_.IsLoopingEnabled(looping); }
+        catch (...) { terminal_->looping = previous; throw; }
         metadata_.shuffle = shuffle; metadata_.repeatMode = repeatMode;
         if (metadata_.systemMediaControls)
         {
