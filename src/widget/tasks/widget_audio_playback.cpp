@@ -350,6 +350,16 @@ struct WidgetAudioPlayback::Impl
         std::unordered_map<std::string, Entry> players;
         for (;;)
         {
+            // MediaPlayer owns an internal SMTC window on this thread. Dispatch
+            // its notifications outside our lock, including queued next/prev
+            // commands and session cleanup, while bounding each polling pass.
+            MSG nativeMessage{};
+            for (unsigned count = 0; count < 64 &&
+                PeekMessageW(&nativeMessage, nullptr, 0, 0, PM_REMOVE); ++count)
+            {
+                TranslateMessage(&nativeMessage);
+                DispatchMessageW(&nativeMessage);
+            }
             std::deque<AudioPlaybackRequest> work;
             std::unordered_set<std::uint64_t> dead, cancel;
             std::vector<std::pair<std::uint64_t, std::string>> files;

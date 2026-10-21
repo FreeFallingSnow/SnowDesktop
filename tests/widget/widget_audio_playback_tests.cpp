@@ -6,6 +6,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Media.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -333,12 +334,18 @@ void RealSystemMedia(const std::filesystem::path& path)
                     session = candidate;
             return session != nullptr;
         }), "own tagged fixture is discoverable in Windows SMTC");
+        const auto media = session.TryGetMediaPropertiesAsync().get();
+        Check(media.Artist() == L"Audio Regression" && media.AlbumTitle() == L"Local File Tests",
+            "SMTC receives local artist and album tags");
+        Check(media.Thumbnail() && media.Thumbnail().OpenReadAsync().get().Size() > 0,
+            "SMTC receives readable cover bytes");
         Check(session.TryPauseAsync().get(), "system pause accepted");
         bool paused = false;
         Check(Wait([&] { for (const auto& item : service.Drain()) paused |= item.state.status == "paused"; return paused; }), "system pause reaches native player");
         Check(session.TryPlayAsync().get(), "system play accepted");
         Check(session.TryChangePlaybackPositionAsync(1000000).get(), "system seek accepted");
         const auto command = [&](const char* name, auto request) {
+            std::cout << "SMTC command: " << name << std::endl;
             Check(request().get(), "system command accepted");
             bool found = false;
             Check(Wait([&] {

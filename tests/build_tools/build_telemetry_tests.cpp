@@ -52,9 +52,8 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
         require(units==expected&&(expected==0?compiles==0:linked),"Actual compiled-unit or incremental/link observation mismatch: expected "+std::to_string(expected)+", observed "+std::to_string(units)+" / "+view.at("stageEvents").dump());
     };
     counts(execute(),2);
-    // Restore the actual failing CMake cache form before the no-op build. The
-    // logger must resolve the location even with a pinned instance version.
-    // CMake retains this value when its current generator instance is reused.
+    // Configure a fresh output with the actual failing instance specification.
+    // An already initialized CMake generator cannot change its instance value.
     const auto cachePath=c.root/L".build/cxx/CMakeCache.txt";
     auto cache=read(cachePath);
     const std::string prefix="CMAKE_GENERATOR_INSTANCE:INTERNAL=";
@@ -69,8 +68,12 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
         L"$v=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $env:SNOWDESKTOP_FIXTURE_VS_INSTANCE 'Common7/IDE/devenv.exe'));[Console]::Write($v.ProductVersion)"},
         c.root,10,{{L"SNOWDESKTOP_FIXTURE_VS_INSTANCE",wide(location)}});
     require(version.code==0&&!version.out.empty(),"Cannot read configured VS version: "+version.out+version.err);
-    cache.replace(valueStart,valueEnd-valueStart,location+",version="+version.out);
-    write(cachePath,cache,true);
+    auto presets=Json::parse(read(c.root/L"CMakePresets.json"));
+    auto& configure=presets["configurePresets"].items.front();
+    configure["binaryDir"]="${sourceDir}/.build/versioned-cxx";
+    configure["cacheVariables"]=Json::object({{"CMAKE_GENERATOR_INSTANCE",location+",version="+version.out}});
+    write(c.root/L"CMakePresets.json",presets.dump());
+    counts(execute(),2);
     counts(execute(),0);
     write(c.root/L"worker.cpp","int worker(){return 3;}\n");
     counts(execute(),1);
