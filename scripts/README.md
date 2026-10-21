@@ -2,7 +2,7 @@
 
 本目录统一保存开发、测试和发布入口及其实现：
 
-持久执行的初步接入使用 `build.bat run`；普通入口与旧批次目前仍沿用既有执行方式，不会热迁移活动任务：
+普通 Release、Debug、测试及 IDE 包装入口先核对共享输出是否空闲，再提交持久 Run 并观察结果；退出观察方不会取消已提交执行。独立启动、观察和显式取消仍可用 `build.bat run`，旧协作批次尚未迁移：
 
 ```bat
 scripts\build.bat task-open my-task -TaskName "当前调查任务"
@@ -16,7 +16,11 @@ scripts\build.bat run cancel -RunId <runId> -Task my-task
 
 启动必须获父 Job 允许脱离；拒绝时保留 `start-failed` 和原始请求，不退化成依附聊天的后台进程。执行者随后为编译和测试创建带 `KILL_ON_JOB_CLOSE` 的私有 Job，未继承执行租约或 Job 句柄；执行者异常退出会清理子进程。观察接口将已确认退出的执行者投影为 `interrupted`，保留最后记录和请求，不按心跳超时重新接管。继续执行需显式新建 Run。普通入口与协作入口均禁用 MSBuild 节点复用，避免旧工作节点逃出本次归属。
 
-当前仅接通独立标准入口的持久请求、queue/pipeline 实际区间、CPU/内存/I/O Job 采样和取消；尚未将旧批次切换为单一执行器，也未完成 configure/codegen/compile/link/arrange/test/acceptance 的完整阶段拆分及面板接入。资源采样缺失用不可用或 null 表示，不作为零占用或性能改善。此入口不等同于 B 批全部完成。
+普通入口保持 busy 时立即拒绝、前台日志与原退出码；已提交后由工作进程重新取得执行权。没有显式 Task 的普通调用会创建 `entry-<id>` 调查登记，结果结束后关闭；显式 `run start` 仍须传入已登记的 Task。`build_entry.ps1 -Task ID` 可把标准入口绑定既有 Task；IDE 配置与目标、测试筛选均保存到不可变请求。观察期遇到未确认紧急事件返回 6，保留 Run。请求和日志路径会显示在终端。
+
+`run status/wait` 的 `stageEvents` 读取同一 Run 下按进程分开的追加记录，保留单调时钟耗时、父阶段、真实退出码与日志路径。当前覆盖标准预检、入口管线，以及测试中的 configure/test-target-build/arrange/test-execute；编译与链接尚未独立采集，不按日志文字推算。阶段读取失败单独返回 `stageError`，不伪装成零耗时。CPU/内存/I/O Job 采样仍单独保存。
+
+尚未将协作批次切换为单一持久执行器，也未完成 codegen/compile/link、资源锁和编译单元计量、面板接入。资源采样缺失用不可用或 null 表示，不作为零占用或性能改善。此入口不等同于 B 批全部完成。
 
 - `build.bat`：默认无进程副作用的 Release 编译；
 - `build_debug.bat`：默认无进程副作用的 Debug 编译；

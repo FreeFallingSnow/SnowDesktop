@@ -81,6 +81,30 @@ void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
 
 void test(const fs::path& repo) {
     {
+        Coordinator c(repo,"default-entry");setup_run(c,repo);
+        write(c.root/L"launch-entry.ps1","[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$null,'Process')\n[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$null,'Process')\n& "+ps_literal(c.scripts/L"build_entry.ps1")+" -Action release\nexit $LASTEXITCODE\n",true);
+        ParentJob parent(c.root/L"launch-entry.ps1",c.root,true);
+        std::string id;
+        until([&]{if(!fs::exists(c.stateRoot/L"runs"))return false;for(const auto& file:fs::directory_iterator(c.stateRoot/L"runs"))if(file.path().filename().wstring().ends_with(L".request.json")){id=Json::parse(read(file.path())).at("id").str();return true;}return false;});
+        auto view=await_running(c,id);const auto task=view.at("task").str();
+        require(task.starts_with("entry-")&&view.at("request").at("automaticTask").boolean,"Default entry did not register its actual execution task");
+        parent.close();require(owner_alive(view.at("record").at("owner"))&&c.calls()==1,"Closing default entry observer killed or duplicated execution");
+        c.gate("hold-build",false);
+        const auto result=command(c,id,{L"-Command",L"wait",L"-Seconds",L"10"});
+        view=Json::parse(result.out);
+        require(result.code==0&&view.at("status").str()=="passed"&&c.calls()==1,"Default entry did not publish successful durable execution");
+        require(view.at("stageError").str().empty(),"Actual stage observations were unreadable");
+        bool preflight=false,pipeline=false,completed=false;
+        for(const auto& event:view.at("stageEvents").items){
+            preflight=preflight||event.at("name").str()=="preflight";
+            pipeline=pipeline||event.at("name").str()=="release-pipeline";
+            if(event.at("kind").str()=="end")completed=completed||(event.at("exitCode").integer()==0&&event.at("elapsedSeconds").number>=0);
+        }
+        require(preflight&&pipeline&&completed,"Default production entry did not retain actual preflight/pipeline intervals");
+        until([&]{const auto current=c.state();for(const auto& entry:current.at("taskLedger").at("tasks").items)if(entry.at("id").str()==task)return entry.at("closedUtc").kind==Json::Kind::String;return false;});
+        std::cout<<"PASS default entry survives observer Job close, registers/finishes its task and records actual stages\n";
+    }
+    {
         Coordinator c(repo,"run-cancel");setup_run(c,repo);
         ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
         const int launchCode=parent.wait();

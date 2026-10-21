@@ -51,6 +51,8 @@ std::vector<wchar_t> child_environment(const Env& patch) {
     }
     FreeEnvironmentStringsW(block);
     values.erase(L"SNOWDESKTOP_EXECUTION_TOKEN");
+    values.erase(L"SNOWDESKTOP_RUN_ID");
+    values.erase(L"SNOWDESKTOP_STAGE_PARENT");
     values[L"PSExecutionPolicyPreference"]=L"Bypass";
     for(const auto& [key,value]:patch) values[key]=value;
     std::vector<wchar_t> out;
@@ -122,6 +124,10 @@ std::string read(const fs::path& path) {
 void write(const fs::path& path,const std::string& text,bool bom) {fs::create_directories(path.parent_path());std::ofstream output(path,std::ios::binary);require(static_cast<bool>(output),"Cannot write fixture");if(bom&&!text.starts_with("\xef\xbb\xbf"))output<<"\xef\xbb\xbf";output<<text;require(static_cast<bool>(output),"Fixture write failed");}
 void atomic(const fs::path& path,const std::string& text) {static std::atomic<unsigned> sequence=0;auto temporary=path.wstring()+L"."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(sequence++)+L".pending";write(temporary,text);const bool moved=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;require(moved,"Fixture atomic replacement failed: "+std::to_string(GetLastError()));}
 void copy(const fs::path& repo,const fs::path& root,const std::vector<std::string>& files) {for(const auto& file:files){fs::create_directories((root/file).parent_path());fs::copy_file(repo/file,root/file,fs::copy_options::overwrite_existing);}}
+void copy_persistent_entry(const fs::path& repo,const fs::path& root) {
+    copy(repo,root,{"scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_manager.ps1","scripts/build_inputs.ps1","scripts/build_protocol.ps1","scripts/build_ownership.ps1"});
+    if(!fs::exists(root/L"scripts/build_preflight.ps1"))copy(repo,root,{"scripts/build_preflight.ps1"});
+}
 std::string utf8(const std::wstring& value) {if(value.empty())return {};int count=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);std::string out(static_cast<size_t>(count),0);WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),out.data(),count,nullptr,nullptr);return out;}
 std::wstring wide(const std::string& value) {if(value.empty())return {};int count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);require(count>0,"Invalid UTF-8");std::wstring out(static_cast<size_t>(count),0);MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),count);return out;}
 std::wstring environment(const wchar_t* name) {DWORD size=GetEnvironmentVariableW(name,nullptr,0);if(!size)return {};std::wstring out(size,0);DWORD count=GetEnvironmentVariableW(name,out.data(),size);out.resize(count);return out;}
@@ -137,7 +143,7 @@ fs::path production_python() {std::wstring path(32768,0);DWORD count=SearchPathW
 fs::path standin() {auto path=executable().parent_path()/L"SnowDesktopBuildToolTestStandIn.exe";require(fs::is_regular_file(path),"Native stand-in missing");return path;}
 void replace(std::string& text,const std::string& before,const std::string& after) {auto position=text.find(before);require(position!=std::string::npos,"Fixture substitution missing: "+before);text.replace(position,before.size(),after);}
 void until(const std::function<bool()>& predicate,int seconds) {auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds);do {if(predicate())return;std::this_thread::sleep_for(std::chrono::milliseconds(40));}while(std::chrono::steady_clock::now()<end);throw std::runtime_error("Fixture condition timed out");}
-Child::Child(const std::vector<std::wstring>& args,const fs::path& cwd,const Env& env,bool input,bool outputPipes):outputPipes_(outputPipes) {
+Child::Child(const std::vector<std::wstring>& args,const fs::path& cwd,const Env& env,bool input,bool outputPipes,bool allowBreakaway):outputPipes_(outputPipes) {
     require(!args.empty(),"Missing command");static std::atomic<unsigned> sequence=0;
     auto stem="process-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++);
     out_=cwd/L".build/native-test-output"/wide(stem+".out");err_=cwd/L".build/native-test-output"/wide(stem+".err");fs::create_directories(out_.parent_path());
@@ -162,28 +168,37 @@ Child::Child(const std::vector<std::wstring>& args,const fs::path& cwd,const Env
         STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=in;startup.StartupInfo.hStdOutput=out;startup.StartupInfo.hStdError=err;startup.lpAttributeList=attributes;
         std::wstring command;const bool cmd=_wcsicmp(fs::path(args[0]).filename().c_str(),L"cmd.exe")==0;
         for(const auto& arg:args){if(!command.empty())command+=L' ';command+=(cmd&&arg.starts_with(L"call "))?arg:quote(arg);}auto block=child_environment(env);
-        const bool launched=CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT|EXTENDED_STARTUPINFO_PRESENT,block.data(),cwd.c_str(),&startup.StartupInfo,&process)!=0;
+        if(allowBreakaway){
+            // Only the controlled test launcher permits breakaway. Production
+            // build Jobs retain their strict kill-on-close containment.
+            parentJob_=CreateJobObjectW(nullptr,nullptr);require(parentJob_!=nullptr,"Controlled launcher job creation failed");
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE|JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            require(SetInformationJobObject(parentJob_,JobObjectExtendedLimitInformation,&limits,sizeof(limits))!=FALSE,"Controlled launcher breakaway policy failed");
+        }
+        const bool launched=CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,(allowBreakaway?CREATE_SUSPENDED:0)|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT|EXTENDED_STARTUPINFO_PRESENT,block.data(),cwd.c_str(),&startup.StartupInfo,&process)!=0;
         require(launched,"CreateProcess failed: "+std::to_string(GetLastError()));
+        if(parentJob_&&!AssignProcessToJobObject(parentJob_,process.hProcess)){throw std::runtime_error("Controlled launcher job assignment failed");}
+        if(allowBreakaway)require(ResumeThread(process.hThread)!=static_cast<DWORD>(-1),"Controlled child resume failed");
         process_=process.hProcess;pid_=process.dwProcessId;CloseHandle(process.hThread);
-    } catch (...) {for(HANDLE handle:{input_,outRead_,errRead_})if(handle)CloseHandle(handle);input_=outRead_=errRead_=nullptr;if(initialized)DeleteProcThreadAttributeList(attributes);for(HANDLE handle:{in,out,err})if(handle&&handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);throw;}
+    } catch (...) {if(process.hProcess&&!process_){TerminateProcess(process.hProcess,99);CloseHandle(process.hProcess);CloseHandle(process.hThread);}for(HANDLE handle:{input_,outRead_,errRead_,parentJob_})if(handle)CloseHandle(handle);input_=outRead_=errRead_=parentJob_=nullptr;if(initialized)DeleteProcThreadAttributeList(attributes);for(HANDLE handle:{in,out,err})if(handle&&handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);throw;}
     if(initialized)DeleteProcThreadAttributeList(attributes);for(HANDLE handle:{in,out,err})CloseHandle(handle);
 }
-Child::~Child() {stop();for(HANDLE handle:{input_,outRead_,errRead_,process_})if(handle)CloseHandle(handle);}
+Child::~Child() {stop();for(HANDLE handle:{input_,outRead_,errRead_,process_,parentJob_})if(handle)CloseHandle(handle);}
 bool Child::running() const {return process_&&WaitForSingleObject(process_,0)==WAIT_TIMEOUT;}
 void Child::send(const std::string& value) {require(input_!=nullptr,"Child has no input channel");DWORD bytes=0;require(WriteFile(input_,value.data(),static_cast<DWORD>(value.size()),&bytes,nullptr)!=0&&bytes==value.size(),"Child request write failed");}
 std::string Child::out() const {return read(out_);}
 std::string Child::err() const {return read(err_);}
 void Child::stop() {if(running()){TerminateProcess(process_,4);WaitForSingleObject(process_,5000);}}
 Result Child::wait(int seconds) {DWORD status=WaitForSingleObject(process_,static_cast<DWORD>(seconds)*1000);if(status!=WAIT_OBJECT_0){stop();throw std::runtime_error("Child timeout: "+std::to_string(pid_)+"\n"+out()+"\n"+err());}DWORD code=0;require(GetExitCodeProcess(process_,&code)!=0,"Exit code unavailable");if(outputPipes_){write(out_,drain_pipe(outRead_));write(err_,drain_pipe(errRead_));}return {static_cast<int>(code),out(),err()};}
-Result run(const std::vector<std::wstring>& args,const fs::path& root,int seconds,const Env& env) {Child child(args,root,env);return child.wait(seconds);}
+Result run(const std::vector<std::wstring>& args,const fs::path& root,int seconds,const Env& env,bool allowBreakaway) {Child child(args,root,env,false,false,allowBreakaway);return child.wait(seconds);}
 void init_git(const fs::path& root) {for(const auto& args:std::vector<std::vector<std::wstring>>{{L"git",L"init",L"--quiet"},{L"git",L"add",L"."},{L"git",L"-c",L"user.name=Fixture",L"-c",L"user.email=fixture@example.invalid",L"commit",L"--quiet",L"-m",L"fixture"}}){auto result=run(args,root);require(result.code==0,result.err);}}
-Bridge::Bridge(const fs::path& repo,const fs::path& root,bool legacy):root_(root),state_(root/L".build/native-test-bridge") {
+Bridge::Bridge(const fs::path& repo,const fs::path& root,bool legacy,bool allowBreakaway):root_(root),state_(root/L".build/native-test-bridge") {
     static std::atomic<unsigned> sequence=0;
     state_/=wide(std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));
     fs::create_directories(state_);fs::copy_file(repo/L"tests/build_tool_bridge.ps1",state_/L"bridge.ps1",fs::copy_options::overwrite_existing);
     for(int attempt=0;attempt<2;++attempt) {
         auto ready=state_/L"ready";fs::remove(ready);auto engine=powershell(legacy||attempt==1);
-        child_=std::make_unique<Child>(std::vector<std::wstring>{engine.wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(state_/L"bridge.ps1").wstring(),L"-Root",state_.wstring()},root,Env{{L"SNOWDESKTOP_ENTRY_POWERSHELL",engine.wstring()}},true);
+        child_=std::make_unique<Child>(std::vector<std::wstring>{engine.wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(state_/L"bridge.ps1").wstring(),L"-Root",state_.wstring()},root,Env{{L"SNOWDESKTOP_ENTRY_POWERSHELL",engine.wstring()}},true,false,allowBreakaway);
         const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(6);
         while(child_->running()&&!fs::exists(ready)&&std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(20));
         if(fs::exists(ready)&&child_->running())return;
@@ -207,7 +222,7 @@ bool owner_alive(const Json& value) {if(!value.has("pid")||!value.has("startTick
 void stop_owner(const Json& value) {if(!owner_alive(value))return;HANDLE handle=OpenProcess(PROCESS_TERMINATE|PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return;if(std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str()){TerminateProcess(handle,4);WaitForSingleObject(handle,5000);}CloseHandle(handle);}
 int test_main(int argc,char** argv,const std::function<void(const fs::path&)>& test) {try {require(argc>=2,"Repository argument required");test(fs::path(wide(argv[1])));std::cout<<"PASSED"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}}
 Coordinator::Coordinator(const fs::path& repo,const std::string& label):root(temporary(label)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration") {
-    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
+    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_telemetry.ps1","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
     write(scripts/L"build_preflight.ps1",R"PS(param([Alias('ReloadShell')][switch]$ExecuteReloadShell,[Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {
  $unknown=Test-Path (Join-Path $Root 'preflight-unknown');$blocked=Test-Path (Join-Path $Root 'preflight-blocked')

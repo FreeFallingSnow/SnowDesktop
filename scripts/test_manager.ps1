@@ -20,6 +20,8 @@ if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Pro
     & (Join-Path $PSScriptRoot 'build_entry.ps1') @entryOptions
     exit $LASTEXITCODE
 }
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
+. (Join-Path $PSScriptRoot 'build_telemetry.ps1')
 
 function Invoke-Checked {
     param(
@@ -39,8 +41,11 @@ function Invoke-Checked {
         $Arguments += @("--output-junit", $reportPath)
     }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
-    & $FilePath @Arguments
-    $commandExit = $LASTEXITCODE
+    $stageName=if($FilePath -eq 'ctest'){'test-execute'}elseif($FilePath -eq 'cmake' -and $Arguments -contains '--build'){'test-target-build'}elseif($FilePath -eq 'cmake'){'configure'}else{'arrange'}
+    $stage=Start-BuildStage $repositoryRoot $stageName
+    $commandExit=2
+    try {& $FilePath @Arguments;$commandExit=$LASTEXITCODE}
+    finally {Complete-BuildStage $repositoryRoot $stage $commandExit}
     $elapsed.Stop()
     Write-Host ("{0}: {1:N2}s, exit {2}" -f $FilePath, $elapsed.Elapsed.TotalSeconds, $commandExit)
     if ($reportPath) { Write-Host "CTest report: $reportPath" }

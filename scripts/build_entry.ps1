@@ -3,7 +3,8 @@ param([Alias('Action')][ValidateSet('release','debug','ide','tests','verify')][s
     [Alias('CloseApplication')][switch]$EntryCloseApplication,
     [Alias('Configuration')][ValidateSet('Release','Debug')][string]$EntryConfiguration='Release', [Alias('Targets')][string[]]$EntryTargets=@(),
     [Alias('Mode')][ValidateSet('full','fast','core','tools','label','name','list','plan')][string]$EntryMode='list', [Alias('Filter')][string]$EntryFilter='',
-    [Alias('PlanBatch')][ValidatePattern('^[a-f0-9]{32}$')][string]$EntryPlanBatch)
+    [Alias('PlanBatch')][ValidatePattern('^[a-f0-9]{32}$')][string]$EntryPlanBatch,
+    [Alias('Task')][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$EntryTask)
 
 function Get-BuildPowerShell {
     $env:PSExecutionPolicyPreference='Bypass'
@@ -318,12 +319,27 @@ if($MyInvocation.InvocationName -ne '.') {
             if(-not (Test-EntryDelegation $root)){throw 'Shared CMake/IDE output requires a live leased entry. Use scripts/build.bat, scripts/test.bat, or scripts/build_entry.ps1 -Action ide; independent output remains available for diagnostics.'}
             exit 0
         }
+        if(-not (Test-EntryDelegation $root) -and -not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')) {
+            # Preserve fail-fast busy behavior. Releasing this probe performs no
+            # preflight/process action; the detached worker reacquires authority.
+            $probe=Enter-BuildEntry $root
+            Exit-BuildEntry $probe
+            $submit=@{Command='invoke';Action=$EntryAction;Mode=$EntryMode;Filter=$EntryFilter;
+                Configuration=$EntryConfiguration;Targets=$EntryTargets;ReloadShell=$EntryReloadShell;CloseApplication=$EntryCloseApplication}
+            if($EntryTask){$submit.Task=$EntryTask};if($EntryPlanBatch){$submit.PlanBatch=$EntryPlanBatch}
+            & (Join-Path $PSScriptRoot 'build_run.ps1') @submit
+            exit $LASTEXITCODE
+        }
         $entry=Enter-BuildEntry $root
         $log=Join-Path $root ('.build/collaboration/entry-'+[Guid]::NewGuid().ToString('N')+'.log')
+        . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
         if($EntryCloseApplication -and ($EntryAction -ne 'release' -or $EntryReloadShell)){throw 'CloseApplication requires a Release build without ReloadShell.'}
         if($EntryAction -in 'release','debug') {
             $configuration=if($EntryAction -eq 'debug'){'Debug'}else{'Release'}
-            $preflightCode=Invoke-EntryPreflight $root ([bool]$EntryReloadShell) ([bool]$EntryCloseApplication) $configuration $log
+            $preflightStage=Start-BuildStage $root 'preflight' $log
+            $preflightCode=2
+            try {$preflightCode=Invoke-EntryPreflight $root ([bool]$EntryReloadShell) ([bool]$EntryCloseApplication) $configuration $log}
+            finally {Complete-BuildStage $root $preflightStage $preflightCode}
             if($preflightCode -ne 0){[Console]::Error.WriteLine('Preflight log: '+$log);exit 3}
         }
         Push-Location $root
@@ -352,7 +368,16 @@ if($MyInvocation.InvocationName -ne '.') {
                 $pipeline='call scripts\'+$scriptName
             }
             [Console]::Error.WriteLine('Shared entry log: '+$log)
-            $code=[SnowDesktop.Build.Job]::RunLeasedCommand($root,$log,$pipeline)
+            $pipelineStage=Start-BuildStage $root ($EntryAction+'-pipeline') $log
+            $previousParent=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT','Process')
+            $code=2
+            try {
+                if($pipelineStage){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$pipelineStage.id,'Process')}
+                $code=[SnowDesktop.Build.Job]::RunLeasedCommand($root,$log,$pipeline)
+            } finally {
+                [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$previousParent,'Process')
+                Complete-BuildStage $root $pipelineStage $code
+            }
             if([IO.File]::Exists($log)){Get-Content -LiteralPath $log}
             exit $code
         } finally {Pop-Location}

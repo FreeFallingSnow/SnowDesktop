@@ -27,7 +27,8 @@ exit 0
     auto request=Json::object({{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha"})},{"requiredFull",false},{"reason","independent fixture"}});
     auto second=request;second["tests"]=Json::array({"Beta"});
     auto plan=Json::object({{"schemaVersion",1},{"batchId",batch},{"configuration","Release"},{"mode","selected"},{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha","Beta"})},{"tasks",Json::array({Json::object({{"participant","a"},{"requirement",request}}),Json::object({{"participant","b"},{"requirement",second}})})}});
-    Bridge bridge(repo,root);
+    copy_persistent_entry(repo,root);copy(repo,root,{"scripts/powershell_runtime.bat"});write(root/L".gitignore","/*\n!/scripts/\n!/.gitignore\n");init_git(root);
+    Bridge bridge(repo,root,false,true);
     auto invoke=[&](const std::string& mode,bool success) {
         write(root/L"behavior",mode);write(folder/wide(batch+".plan.json"),plan.dump());
         auto result=bridge.invoke(root/L"scripts/test_manager.ps1",{"-Mode","plan","-PlanBatch",batch},env,20);
