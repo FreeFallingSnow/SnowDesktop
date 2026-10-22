@@ -55,6 +55,27 @@ $timer=[Diagnostics.Stopwatch]::StartNew())PS");
     require(first->running()&&owner_alive(ownerBefore)&&c.calls()==2,"Observing progress changed Run ownership or repeated the pipeline");
     c.gate("hold-test",false);const auto result=first->wait(18);
     require(result.code==0&&c.result(batch).at("runId").str()==id&&c.result(batch).at("outcome").str()=="passed","Observed Run did not retain its common successful result");
+    // Adjacent lifecycle states are controlled projection inputs, not evidence
+    // of resource admission. Exercise the real wait entry without a new build.
+    const auto projection=c.begin("projection").at("batchId").str();
+    const std::string projectedRun(32,'d'),nonce(32,'e');
+    auto model=c.state();model["current"]["phase"]="building";model["current"]["owner"]=owner(GetCurrentProcessId());model["current"]["runId"]=projectedRun;
+    atomic(c.stateRoot/L"state.json",model.dump());
+    const auto request=Json::object({{"id",projectedRun},{"nonce",nonce},{"repositoryRoot",utf8(c.root.wstring())},{"batch",projection}});
+    atomic(c.stateRoot/L"runs"/wide(projectedRun+".request.json"),request.dump());
+    auto projected=Json::object({{"id",projectedRun},{"nonce",nonce},{"repositoryRoot",utf8(c.root.wstring())},{"status","queued"},{"waitingFor","shared-output"}});
+    const auto show=[&](const std::string& status,const std::string& expected){
+        projected["status"]=status;atomic(c.stateRoot/L"runs"/wide(projectedRun+".json"),projected.dump());
+        auto p=c.start(c.bound("wait","projection",projection));until([&]{return p->err().find("Waiting for batch ")!=std::string::npos;},8);
+        const auto text=p->err();p->stop();require(text.find(expected)!=std::string::npos,"Wait projection misreported "+status+": "+text);
+        if(status!="running")require(text.find("executing Run")==std::string::npos,"Non-running lifecycle state was reported as execution: "+text);
+    };
+    show("queued","queued; waiting for shared-output");show("starting","starting");show("passed","passed; common result pending");
+    show("running","stage unavailable (no observation yet)");
+    write(c.stateRoot/L"runs"/wide(projectedRun+".stages.control.jsonl"),"invalid observation\n");
+    show("running","stage unavailable (observation failed)");
+    projected["nonce"]=std::string(32,'f');show("queued","state unavailable (observation failed)");
+    require(c.calls()==2,"Lifecycle projection observations started another pipeline");model["current"]=Json{};atomic(c.stateRoot/L"state.json",model.dump());
     std::cout<<"PASS real durable build/test wait messages, stage provenance, observer exit, unchanged owner and one pipeline\n";
 }
 void run_tests(const fs::path& repo){
