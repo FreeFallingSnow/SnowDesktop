@@ -741,7 +741,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // feed an empty snapshot into placement, pruning or persistence.
             LayoutItems();
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
-                L"Startup Shell read pending; saved widgets shown, desktop items deferred", DiagnosticLogLevel::Warning);
+                L"Startup Shell read pending; saved widgets shown, desktop items deferred");
         }
         snowdesktop::startup_diagnostics::Call(L"StartIconLoader", [&] { StartIconLoader(); });
     }

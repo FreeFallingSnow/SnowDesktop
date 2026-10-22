@@ -53,6 +53,9 @@ int wmain(int argc, wchar_t** argv)
     Check(argc == 2, "the Bridge fixture path is provided");
     if (argc != 2) return EXIT_FAILURE;
 
+    // This suite verifies the explicit activation trace, including success.
+    snowdesktop::diagnostics::SetLogModules(
+        snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Steam));
     using namespace snowdesktop::steam_entitlement;
     const auto owned = ParseBridgeResponse(
         "noise\n{\"ok\":true,\"appId\":5080330,"
