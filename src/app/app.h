@@ -3059,6 +3059,7 @@ private:
     bool UpdateLuaWidgetPanelCompositionAnimation(
         bool commit = true);
     bool StartCollectionPopupCompositionAnimation();
+    void ContinueCollectionPopupSwitch();
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0, const DesktopWidget* widgetSource = nullptr,
@@ -4765,6 +4766,7 @@ private:
         std::wstring widgetId;
         POINT anchorPoint{};
         std::wstring categoryId;
+        std::wstring dockSourceId;
     };
     std::optional<PendingCollectionPopupOpenRequest>
         pendingCollectionPopupOpen_;

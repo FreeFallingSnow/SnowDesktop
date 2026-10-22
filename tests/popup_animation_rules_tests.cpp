@@ -124,13 +124,21 @@ int main()
         const double beforeVelocity = quick.Velocity();
         quick.AccelerateCloseForSwitch(3020);
         Check(quick.GetVisual().scale == beforeSwitch.scale && quick.Velocity() == beforeVelocity &&
-            quick.RemainingTimeline().durationMilliseconds <= 55,
+            quick.RemainingTimeline().durationMilliseconds <= 75,
             "switching accelerates outgoing motion without jumping position or velocity");
         quick.AccelerateCloseForSwitch(3030);
-        Check(quick.RemainingTimeline().durationMilliseconds <= 45,
+        Check(quick.RemainingTimeline().durationMilliseconds <= 65,
             "a newer switch target cannot restart the outgoing deadline");
-        quick.Advance(3075);
-        Check(quick.IsHidden(), "another popup can start within 55ms of the switch request");
+        quick.Advance(3095);
+        Check(quick.IsHidden(), "another popup can start within 75ms of the switch request");
+        quick.ShowImmediately();
+        quick.Close(4000);
+        quick.Advance(4100);
+        quick.AccelerateCloseForSwitch(4100);
+        Check(quick.RemainingTimeline().durationMilliseconds <= 10,
+            "a late switch cannot extend the outgoing popup's remaining deadline");
+        quick.Advance(4110);
+        Check(quick.IsHidden(), "late switching still completes by the original close deadline");
     }
     {
         State spring;
@@ -553,8 +561,11 @@ int main()
     Check(state.IsHidden(), "reset-hidden clears state");
 
     Check(ResolveExistingSourceAction(false, true) ==
+            ExistingSourceAction::OpenAfterExistingCloses,
+        "switching from an interactive collection must play its outgoing close");
+    Check(ResolveExistingSourceAction(false, false) ==
             ExistingSourceAction::OpenAtRequestedAnchor,
-        "a different collection may open at its requested anchor");
+        "an empty popup host can open at its requested anchor immediately");
     Check(ResolveExistingSourceAction(false, false, true) ==
             ExistingSourceAction::OpenAfterExistingCloses,
         "a desktop collection switch waits for the old close animation");

@@ -73,7 +73,7 @@ inline ExistingSourceAction ResolveExistingSourceAction(
 {
     if (!sameSource)
     {
-        return closingStartedByCurrentPress ||
+        return interactive || closingStartedByCurrentPress ||
                 existingSourceClosing
             ? ExistingSourceAction::OpenAfterExistingCloses
             : ExistingSourceAction::OpenAtRequestedAnchor;
@@ -120,7 +120,7 @@ public:
     [[nodiscard]] double DurationMilliseconds(bool opening) const
     {
         if (spring_)
-            return std::ceil((opening ? 160.0 : 110.0) * durationScale_ / (opening ? 1.0 : closingSpeed_));
+            return std::ceil((opening ? 160.0 : closingSpeed_ > 1.0 ? 75.0 : 110.0) * durationScale_);
         return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_ / (opening ? 1.0 : closingSpeed_);
     }
     [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : spring_ ? 0.0f : kMinimumScale; }
@@ -154,9 +154,10 @@ public:
     {
         Advance(now);
         if (!IsClosing() || closingSpeed_ > 1.0) return;
-        closingSpeed_ = 2.0;
+        const double remaining = std::max(0.0, springDuration_ - springElapsed_);
+        closingSpeed_ = 110.0 / 75.0;
         lastTick_ = now;
-        if (spring_) StartSpringSegment(false);
+        if (spring_) StartSpringSegment(false, remaining);
     }
 
     bool Advance(std::uint64_t now)
@@ -256,19 +257,19 @@ public:
     }
 
 private:
-    [[nodiscard]] double SpringFrequency(bool opening) const
-    {
-        // Reach 99% in the first 75%, then finish with a short C1 tail.
-        // The visible endpoint and the actual completion deadline coincide.
-        return 6.638352067994 / (DurationMilliseconds(opening) * 0.00075);
-    }
-    void StartSpringSegment(bool opening)
+    void StartSpringSegment(bool opening, double maximumMilliseconds = 0.0)
     {
         springElapsed_ = 0.0;
         springDuration_ = popup_motion_curve::AtRest(motion_, opening ? 1.0 : 0.0)
             ? 0.0 : DurationMilliseconds(opening);
+        if (maximumMilliseconds > 0.0)
+            springDuration_ = std::min(springDuration_, maximumMilliseconds);
+        // Reach 99% in the first 75%, then finish with a short C1 tail.
+        // A late switch may shorten the track, but cannot extend its deadline.
+        const double frequency = springDuration_ > 0.0
+            ? 6.638352067994 / (springDuration_ * 0.00075) : 0.0;
         springTimeline_ = popup_motion_curve::Build(motion_, opening ? 1.0 : 0.0,
-            SpringFrequency(opening), springDuration_);
+            frequency, springDuration_);
         animating_ = springDuration_ > 0.0;
         if (!animating_)
         {

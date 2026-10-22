@@ -381,7 +381,7 @@ void DesktopApp::DrawCollectionPopup(
                         drawing.shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 2.5f * popupMetrics.scale);
                         drawing.shadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1_VECTOR_4F{0, 0, 0, 0.65f});
                         drawing.shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION, D2D1_SHADOW_OPTIMIZATION_BALANCED);
-                        drawing.shadow->SetValue(D2D1_PROPERTY_CACHED, true);
+                        drawing.shadow->SetValue(D2D1_PROPERTY_CACHED, static_cast<BOOL>(TRUE));
                         drawing.shadow->SetInput(0, drawing.commands.Get());
                         drawing.shadow->GetOutput(&drawing.shadowImage);
                         if (SUCCEEDED(ctx->GetImageLocalBounds(drawing.shadowImage.Get(), &drawing.shadowBounds)))

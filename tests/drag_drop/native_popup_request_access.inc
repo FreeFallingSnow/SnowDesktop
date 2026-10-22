@@ -33,6 +33,7 @@
     static void CancelNativePopupRequests(DesktopApp& app) { app.CancelCollectionPopupDwell(); }
     static void CheckLuaPopupReuse(DesktopApp& app)
     {
+        CheckCollectionPopupSwitch(app);
         const auto check = [](bool ok, const char* message) {
             if (!ok) throw std::runtime_error(message);
         };
@@ -114,6 +115,88 @@
         app.luaWidgetPanelRequest_ = {};
         app.luaWidgetPanelAnimation_.ResetHidden();
         CheckLuaPopupScrollbar(app);
+    }
+
+    static void CheckCollectionPopupSwitch(DesktopApp& app)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        check(!app.instance_ && !app.floatingPopupHwnd_ && !app.d2dDevice_,
+            "popup switching fixture must not construct desktop presentation windows");
+        auto savedWidgets = std::move(app.widgets_);
+        auto savedDock = std::move(app.dockEntries_);
+        const int mode = snowdesktop::animation::detail::mode.exchange(snowdesktop::animation::AlwaysOn);
+        const int effect = snowdesktop::animation::detail::popupEffect.exchange(snowdesktop::animation::Scale);
+        const int speed = snowdesktop::animation::detail::speed.exchange(1);
+        for (const auto* id : {L"switch-A", L"switch-B", L"switch-folder"})
+        {
+            DesktopWidget widget;
+            widget.id = widget.title = id;
+            widget.type = id == std::wstring_view(L"switch-folder")
+                ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection;
+            widget.gridCell.pageId = app.gridPages_.front().id;
+            widget.gridSpan = {1, 1};
+            widget.bounds = {20, 20, 180, 180};
+            app.widgets_.push_back(std::move(widget));
+        }
+        app.popupWidgetIndex_ = 0;
+        app.popupRect_ = {20, 20, 300, 250};
+        app.popupHasAnchor_ = true;
+        app.popupAnchorPoint_ = {50, 50};
+        app.popupAnimation_.Configure(false, 1.0, true);
+        app.popupAnimation_.ShowImmediately();
+        const POINT target{350, 270};
+        app.OpenCollectionPopupAt(1, target);
+        check(app.popupWidgetIndex_ == 0 && app.popupAnimation_.IsClosing() &&
+            app.popupAnimation_.GetVisual().scale > 0.0f && app.popupAnchorPoint_.x == 50 &&
+            app.pendingCollectionPopupOpen_ && app.pendingCollectionPopupOpen_->widgetId == L"switch-B",
+            "actual collection switch retains visible outgoing content and anchor while closing");
+        const double deadline = app.popupAnimation_.RemainingTimeline().durationMilliseconds;
+        app.OpenCollectionPopupAt(2, target);
+        check(app.popupWidgetIndex_ == 0 && app.pendingCollectionPopupOpen_ &&
+            app.pendingCollectionPopupOpen_->widgetId == L"switch-folder" &&
+            app.popupAnimation_.RemainingTimeline().durationMilliseconds <= deadline,
+            "a later folder-mapping request replaces only the queued target, without restarting close");
+        const auto finish = [&] {
+            app.popupAnimation_.Advance(static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()) + 10000);
+            check(app.popupAnimation_.IsHidden(), "outgoing popup must reach zero before finalizing a switch");
+            app.FinalizeCloseCollectionPopup();
+        };
+        finish();
+        check(app.dockFolderPopupOpen_ && app.dockFolderPopupMappingWidgetId_ == L"switch-folder" &&
+            app.popupAnimation_.IsInteractive() && !app.pendingCollectionPopupOpen_,
+            "the real close finalizer opens the latest mapping target exactly once");
+        app.popupAnimation_.ShowImmediately();
+        app.OpenCollectionPopupAt(1, target);
+        check(app.dockFolderPopupOpen_ && app.popupAnimation_.IsClosing() && app.pendingCollectionPopupOpen_,
+            "switching from a folder back to a collection retains the outgoing folder model");
+        finish();
+        app.popupAnimation_.ShowImmediately();
+        app.dockEntries_.push_back({DockEntryType::FolderMapping, L"switch-folder", false});
+        app.OpenDockFolderPopupAt(0, target);
+        check(app.popupWidgetIndex_ == 1 && !app.dockFolderPopupOpen_ &&
+            app.popupAnimation_.IsClosing() && app.pendingCollectionPopupOpen_ &&
+            !app.pendingCollectionPopupOpen_->dockSourceId.empty(),
+            "the real Dock folder entry also queues behind the outgoing collection close");
+        finish();
+        check(app.dockFolderPopupOpen_ && app.dockFolderPopupMappingWidgetId_ == L"switch-folder" &&
+            app.popupAnimation_.IsInteractive(), "queued Dock folder identity survives the real close finalizer");
+        app.popupAnimation_.ShowImmediately();
+        snowdesktop::animation::detail::popupEffect.store(snowdesktop::animation::NoEffect);
+        app.OpenCollectionPopupAt(0, target);
+        check(!app.dockFolderPopupOpen_ && app.popupWidgetIndex_ == 0 &&
+            app.popupAnimation_.IsInteractive() && !app.pendingCollectionPopupOpen_,
+            "disabled animation consumes the same switch synchronously without losing its target");
+        app.pendingCollectionPopupOpen_.reset();
+        app.FinalizeCloseCollectionPopup();
+        check(!app.floatingPopupHwnd_, "native routing regression must never allocate a desktop popup window");
+        app.widgets_ = std::move(savedWidgets);
+        app.dockEntries_ = std::move(savedDock);
+        snowdesktop::animation::detail::mode.store(mode);
+        snowdesktop::animation::detail::popupEffect.store(effect);
+        snowdesktop::animation::detail::speed.store(speed);
     }
 
     static void CheckPopupRenderStorage(DesktopApp& app, ID2D1Device* device,
@@ -264,10 +347,29 @@
         render();
         check(app.popupFanIconRecorder_.Get() == recorder.Get() && recordings.size() == app.popupFanIconDrawings_.size(),
             "selection feedback reuses the recorder and static icon recordings");
+        bool negativeControlRecorded = false;
         for (const auto& [key, recording] : recordings)
+        {
             check(app.popupFanIconDrawings_.at(key).commands.Get() == recording.commands.Get() &&
                 app.popupFanIconDrawings_.at(key).shadow.Get() == recording.shadow.Get(),
                 "stable fan frames reuse actual command-list and shadow-effect identities");
+            BOOL cached = FALSE;
+            check(recording.shadow && SUCCEEDED(recording.shadow->GetValue(D2D1_PROPERTY_CACHED, &cached)) && cached,
+                "the actual Direct2D shadow has its four-byte cache property enabled");
+            if (!negativeControlRecorded)
+            {
+                check(SUCCEEDED(recording.shadow->SetValue(D2D1_PROPERTY_CACHED, static_cast<BOOL>(FALSE))),
+                    "clear the test-owned shadow cache before the legacy negative control");
+                const HRESULT legacy = recording.shadow->SetValue(D2D1_PROPERTY_CACHED, true);
+                cached = FALSE;
+                check(SUCCEEDED(recording.shadow->GetValue(D2D1_PROPERTY_CACHED, &cached)),
+                    "read the actual legacy one-byte property result");
+                std::cout << "fan shadow negative control: oneByteResult=" << legacy << " cached=" << cached << '\n';
+                check(SUCCEEDED(recording.shadow->SetValue(D2D1_PROPERTY_CACHED, static_cast<BOOL>(TRUE))),
+                    "restore the actual four-byte shadow cache property");
+                negativeControlRecorded = true;
+            }
+        }
         for (const auto& [key, layout] : layouts)
             check(app.popupFanTextLayouts_.at(key).Get() == layout.Get(), "stable fan frames reuse actual DirectWrite layouts");
         std::fill(pixels.begin(), pixels.end(), 0xff30d050);

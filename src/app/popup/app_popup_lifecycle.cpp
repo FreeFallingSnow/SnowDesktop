@@ -142,9 +142,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     }
     else entry = dockEntries_[entryIndex];
 
-    pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
-    ResetDockTrayPopup();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
@@ -167,10 +165,6 @@ void DesktopApp::OpenDockFolderPopupAt(
         }
     }
 
-    PreserveDockFolderPopupDragSourceForTransition();
-    ClearPopupDragTarget();
-    bool targetPending = false;
-    const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
@@ -187,11 +181,25 @@ void DesktopApp::OpenDockFolderPopupAt(
                 FindPersistentDockHost(requestedDock);
         }
     }
-    const bool reverseClosingAnimation =
-        popupAnimation_.IsClosing() &&
-        dockFolderPopupOpen_ &&
+    const bool sameSource = dockFolderPopupOpen_ &&
         dockFolderPopupSourceId_ == sourceId &&
         collectionPopupDockHost_ == requestedDockHost;
+    if (!sameSource && GetOpenPopupWidget() &&
+        snowdesktop::popup_animation_rules::OccludesSurface(popupAnimation_))
+    {
+        pendingCollectionPopupOpen_ = PendingCollectionPopupOpenRequest{
+            standaloneMapping ? widgets_[mappingWidgetIndex].id : L"",
+            anchorPoint, L"", standaloneMapping ? L"" : sourceId};
+        ContinueCollectionPopupSwitch();
+        return;
+    }
+    pendingCollectionPopupOpen_.reset();
+    ResetDockTrayPopup();
+    PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
+    bool targetPending = false;
+    const auto target = ResolveDockFolderTarget(entry, &targetPending);
+    const bool reverseClosingAnimation = popupAnimation_.IsClosing() && sameSource;
     ResetCollectionPopupAnimationCache();
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
@@ -615,6 +623,21 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ApplyFloatingDockLayerPolicy();
     if (pendingOpen && hwnd_ && IsWindow(hwnd_))
     {
+        if (!pendingOpen->dockSourceId.empty())
+        {
+            for (size_t index = 0; index < dockEntries_.size(); ++index)
+            {
+                const auto& entry = dockEntries_[index];
+                const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
+                    L":" + ToUpperInvariant(entry.reference);
+                if (sourceId == pendingOpen->dockSourceId)
+                {
+                    OpenDockFolderPopupAt(index, pendingOpen->anchorPoint);
+                    break;
+                }
+            }
+            return;
+        }
         const size_t widgetIndex =
             FindWidgetIndexById(pendingOpen->widgetId);
         if (widgetIndex < widgets_.size())
@@ -643,6 +666,26 @@ void DesktopApp::CloseCollectionPopup(
 {
     CancelPopupHover(true);
     BeginCollectionPopupClose(clearSelection);
+}
+
+void DesktopApp::ContinueCollectionPopupSwitch()
+{
+    // Keep the outgoing model, anchor and snapshot until its close completes.
+    // With effects disabled the finalizer may consume the request synchronously.
+    if (popupAnimation_.IsInteractive()) BeginCollectionPopupClose(true);
+    if (!pendingCollectionPopupOpen_) return;
+    popupAnimation_.AccelerateCloseForSwitch(static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    if (popupAnimation_.IsHidden())
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (!StartCollectionPopupCompositionAnimation())
+    {
+        UpdateCollectionPopupCompositionAnimation();
+        EnsureUiAnimationFrame();
+    }
 }
 
 void DesktopApp::BeginCollectionPopupClose(bool clearSelection)

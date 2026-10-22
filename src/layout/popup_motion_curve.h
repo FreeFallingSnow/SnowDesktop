@@ -14,6 +14,7 @@ struct Sample
 
 inline Sample Evaluate(Sample initial, double target, double frequency, double seconds)
 {
+    if (seconds <= 0.0) return initial;
     const double offset = initial.position - target;
     const double linear = initial.velocity + frequency * offset;
     const double decay = std::exp(-frequency * std::max(0.0, seconds));
