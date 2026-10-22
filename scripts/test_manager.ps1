@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan")]
+    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan", "verify")]
     [string]$Mode = "list",
     [string]$Filter = "",
     [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
@@ -117,36 +117,18 @@ function Get-TestSelection {
 }
 
 function Get-TestExecutionContext {
-    $files=[ordered]@{}
-    foreach($relative in @('CMakePresets.json','CMakeUserPresets.json','.build/CMakeCache.txt')){
-        $path=Join-Path $repositoryRoot $relative
-        $files[$relative]=if([IO.File]::Exists($path)){Get-FileDigest $path}else{$null}
-    }
-    $tools=[ordered]@{}
-    foreach($name in @('cmake.exe','ctest.exe','node.exe','python.exe')){
-        $tool=Get-Command $name -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
-        $tools[$name]=if($tool -and [IO.File]::Exists($tool.Source)){[pscustomobject]@{path=$tool.Source;sha256=(Get-FileDigest $tool.Source)}}else{$null}
-    }
-    $process=[Diagnostics.Process]::GetCurrentProcess()
-    try {$runtime=$process.MainModule.FileName;$tools['powershell']=[pscustomobject]@{path=$runtime;sha256=(Get-FileDigest $runtime)}}finally{$process.Dispose()}
-    $environment=[ordered]@{}
-    foreach($key in @('PATH','PATHEXT','SystemRoot','TEMP','TMP','SNOWDESKTOP_ENTRY_POWERSHELL','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','CMAKE_GENERATOR','SNOWDESKTOP_STEAMWORKS_SDK_PATH')){
-        $environment[$key]=[Environment]::GetEnvironmentVariable($key,'Process')
-    }
-    # Preserve only a digest of inherited values, never their raw contents.
-    $binding=[pscustomobject]@{files=$files;tools=$tools;environmentDigest=(Get-VerificationTextDigest ($environment|ConvertTo-Json -Compress))}
-    return [pscustomobject]@{schemaVersion=1;digest=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 8 -Compress));files=$files;tools=$tools;
-        environmentDigest=$binding.environmentDigest;externalDependenciesClosed=$false}
+    return Get-VerificationEnvironment $repositoryRoot
 }
 
 function Invoke-FilteredTests {
     param(
         [string[]]$CTestFilterArguments,
         [string]$BuildPreset = "",
-        [string]$TestPreset = "tests"
+        [string]$TestPreset = "tests",
+        [switch]$ExecutionOnly, $ExistingSelection=$null
     )
 
-    $selection = Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
+    $selection = if($ExecutionOnly){$ExistingSelection}else{Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset}
     if ($selection.Tests.Count -eq 0) {
         throw "The requested filter did not match any configured tests."
     }
@@ -168,7 +150,10 @@ function Invoke-FilteredTests {
         Assert-HostRuntimeAvailable
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
+    if ($ExecutionOnly) {
+        Write-Host '=== Existing artifacts verified; configure, build and arrangement are omitted ==='
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
         Write-Host "=== Building the aggregate target for $($selection.Tests.Count) selected test(s) ==="
         Invoke-Checked -FilePath "cmake" -Arguments @(
             "--build", "--preset", $BuildPreset)
@@ -182,7 +167,7 @@ function Invoke-FilteredTests {
     }
 
     # The full aggregate already arranges its output in CMake.
-    if ($needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
+    if (-not $ExecutionOnly -and $needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
         Invoke-Checked -FilePath (Get-BuildPowerShell) -Arguments @(
             "-NoProfile",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
@@ -199,11 +184,9 @@ function Invoke-FilteredTests {
         if(@(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Configured test selection changed before execution.'}
         $selection=$executed
         $artifacts=@()
-        $definitions=@()
+        $definitions=@(Get-VerificationDefinitions $selection.Tests)
         foreach($test in $selection.Tests){
             $cmd=@(Get-Field $test 'command' @());if($cmd.Count -eq 0){continue}
-            $definition=[pscustomobject]@{name=$test.name;command=$cmd;properties=@($test.properties|Sort-Object name)}
-            $definitions+=@([pscustomobject]@{name=$test.name;digest=(Get-VerificationTextDigest ($definition|ConvertTo-Json -Depth 15 -Compress))})
             $path=[IO.Path]::GetFullPath([string]$cmd[0])
             if($path.StartsWith($repositoryRoot+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)){
                 $artifacts += [pscustomobject]@{test=$test.name;executable=$path.Substring($repositoryRoot.Length+1);sha256=(Get-FileDigest $path);bytes=(Get-Item -LiteralPath $path).Length}
@@ -211,12 +194,13 @@ function Invoke-FilteredTests {
         }
         Set-Field $coverage 'testExecutablesBeforeRun' $artifacts
         Set-Field $coverage 'testDefinitionsBeforeRun' $definitions
+        Set-Field $coverage 'testRuntimeFilesBeforeRun' @(Get-VerificationRuntimeFiles $repositoryRoot $selection.Tests)
         Set-Field $coverage 'executionContext' (Get-TestExecutionContext)
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
-    Invoke-Checked -FilePath "ctest" -Arguments (
-        @("--preset", $TestPreset) + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+    $testArguments=if($ExecutionOnly){@('--test-dir',(Join-Path $repositoryRoot '.build'),'-C','Release','--no-tests=error','--output-on-failure')}else{@('--preset',$TestPreset)}
+    Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
 }
 
 function Get-TestRunOptions {
@@ -282,7 +266,50 @@ try {
     try {$entryLease=Enter-BuildEntry $repositoryRoot}
     catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'build_verification.ps1')
 $script:lastReportPath=$null
+if($Mode -eq 'verify'){
+    $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if($runId -notmatch '^[a-f0-9]{32}$'){throw 'Verification must execute inside its admitted durable Run.'}
+    $runRoot=Join-Path $repositoryRoot '.build/collaboration/runs'
+    $request=Read-EntryJson (Join-Path $runRoot ($runId+'.request.json'))
+    $coveragePath=Join-Path $runRoot ($runId+'.verification.json')
+    $coverage=[pscustomobject]@{schemaVersion=1;runId=$runId;baseline=$PlanBatch;mode='verify';status='not-run';selected=@();completed=@();tasks=@();report=$null;error='';noBuild=$true}
+    $code=5;$admitted=$false
+    try {
+        if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $repositoryRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
+        $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter
+        if($snapshot.key -ne $request.verification.key){throw 'Verification inputs or execution environment changed while queued.'}
+        $admitted=$true;$code=1
+        $coverage.selected=@($snapshot.binding.names)
+        $coverage.tasks=@([pscustomobject]@{participant=$request.task;requested=$coverage.selected})
+        Set-Field $coverage 'testDefinitionsBeforeRun' $snapshot.binding.definitions
+        Set-Field $coverage 'testExecutablesBeforeRun' $snapshot.binding.artifacts
+        Set-Field $coverage 'testRuntimeFilesBeforeRun' $snapshot.binding.runtimeFiles
+        Set-Field $coverage 'executionContext' $snapshot.executionContext
+        $coverage.status='running'
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        Invoke-FilteredTests -CTestFilterArguments @('-R',$snapshot.pattern) -ExecutionOnly -ExistingSelection ([pscustomobject]@{Tests=$snapshot.tests;Targets=@()})
+        $coverage.status='passed';$code=0
+    } catch {$coverage.status=if($admitted){'failed'}else{'invalidated'};$coverage.error=$_.Exception.Message}
+    finally {
+        $coverage.report=$script:lastReportPath
+        if($script:lastReportPath -and [IO.File]::Exists($script:lastReportPath)){
+            $report=[xml][IO.File]::ReadAllText($script:lastReportPath)
+            $coverage.completed=@($report.SelectNodes('//testcase')|ForEach-Object {
+                [pscustomobject]@{name=$_.GetAttribute('name');status=$(if($_.SelectSingleNode('failure|error')){'failed'}elseif($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -in 'notrun','disabled'){'not-run'}else{'passed'});seconds=$_.GetAttribute('time')}
+            })
+        }
+        if($admitted){
+            try {$after=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter;if($after.key -ne $snapshot.key){throw 'Verification context changed during execution.'}}
+            catch {$coverage.status='invalidated';$coverage.error=$_.Exception.Message;$code=5}
+        }
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
+    if($coverage.error){[Console]::Error.WriteLine($coverage.error)}
+    exit $code
+}
 if($Mode -eq 'plan') {
     if(-not $PlanBatch){throw 'Plan mode requires a frozen batch ID.'}
     $initialPlanRoot=Join-Path $repositoryRoot '.build/collaboration'
@@ -354,6 +381,10 @@ if ($Mode -eq "plan") {
         foreach($artifact in @(Get-Field $coverage 'testExecutablesBeforeRun' @())){
             $path=Join-Path $repositoryRoot $artifact.executable
             if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Test executable changed during run.'}
+        }
+        foreach($artifact in @(Get-Field $coverage 'testRuntimeFilesBeforeRun' @())){
+            $path=if([IO.Path]::IsPathRooted($artifact.file)){$artifact.file}else{Join-Path $repositoryRoot $artifact.file}
+            if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Explicit test runtime file changed during run.'}
         }
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
         if($coverage.status -eq 'invalidated'){throw $coverage.error}

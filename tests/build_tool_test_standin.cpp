@@ -34,6 +34,7 @@ int execute(const std::vector<std::string>& args) {
             write(root/L"native-started","started");if(fs::exists(root/L"hold-native"))Sleep(60000);return 0;
         }
         if(contains(args,"--build")){append(root/L"build.count","build\n");std::string joined;for(const auto& item:args)joined+=item+" ";append(root/L"build-args.txt",joined+"\n");}
+        else append(root/L".build/configure.count","configure\n");
         for(const auto& item:{"Alpha","Beta","theme_workflow","widget_author_preview_cli"})write(root/L".build/Release/tests"/wide(target(item)+".exe"),"fixture binary "+std::string(item));
         fs::create_directories(root/L".build/Release/SnowDesktop.Runtime");std::cout<<"mock configure/build\n";return 0;
     }
@@ -53,11 +54,16 @@ int execute(const std::vector<std::string>& args) {
                 test["properties"].items.push_back(Json::object({{"name","LABELS"},{"value",labels}}));
                 auto path=utf8((root/L".build/Release/tests"/wide(target(item)+".exe")).wstring());
                 test["properties"].items.push_back(Json::object({{"name","REQUIRED_FILES"},{"value",Json::array({path})}}));
+                if(fs::exists(root/L".build/known-runtime.txt"))test["properties"].items.back()["value"].items.push_back(utf8((root/L".build/known-runtime.txt").wstring()));
+                test["properties"].items.push_back(Json::object({{"name","COST"},{"value",fs::exists(root/L".build/learned-cost")?7:1}}));
                 if(mode!="cold"&&!retry){test["command"]=Json::array({path});if(host)test["command"].items.push_back(utf8((root/L".build/Release/SnowDesktop.exe").wstring()));}
                 inventory["tests"].items.push_back(test);
             }
             std::cout<<inventory.dump()<<std::endl;return 0;
         }
+        append(root/L".build/verification-exec.count","execute\n");
+        write(root/L".build/verification-started","started");
+        until([&]{return !fs::exists(root/L".build/hold-verification");},90);
         auto report=fs::path(wide(argument(args,"--output-junit")));
         auto pattern=std::regex(argument(args,"-R"));std::string xml="<testsuites><testsuite>";
         bool failed=retry?(mode=="always"||mode=="change"):mode=="failed";

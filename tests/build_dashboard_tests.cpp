@@ -133,6 +133,14 @@ void dashboard(const fs::path& repo,bool browser){
     require(observed.at("resources").at("status").str()=="unrecorded","Missing resource record became a measured result");
     resourceRecord["finished"]=true;atomic(resourcePath,resourceRecord.dump());refresh();observed=Json::parse(http(port).body).at("current").at("run");
     require(observed.at("resources").at("status").str()=="complete"&&observed.at("resources").at("accountingAvailable").boolean,"Valid terminal accounting was not preserved");
+    const std::string intentKey(64,'a');
+    runRequest["mode"]="verify";runRequest["planBatch"]=bid;
+    runRequest["verification"]=Json::object({{"key",intentKey},{"binding",Json::object({{"names",Json::array({"Alpha"})}})}});
+    auto subscribed=current();subscribed["verificationLedger"]=Json::object({{"schemaVersion",1},{"entries",Json::array({Json::object({{"runId",observedRunId},{"key",intentKey},{"subscriptions",Json::array({Json::object({{"id",std::string(32,'3')},{"task","observer"},{"requirementsRevision",2},{"withdrawnUtc",Json{}},{"reason","Verify existing candidate"}})})}})})}});
+    save("state.json",subscribed);atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());refresh();
+    const auto standalone=Json::parse(http(port).body).at("runs").items[0].at("verification");
+    require(standalone.at("noBuild").boolean&&!standalone.at("reuseAllowed").boolean&&standalone.at("baseline").str()==bid&&standalone.at("names").items[0].str()=="Alpha"&&standalone.at("subscriptions").items[0].at("requirementsRevision").integer()==2,"HTTP projection lost standalone verification/subscriber provenance");
+    runRequest["mode"]="list";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());save("state.json",current());refresh();
     auto wrongRun=runRecord;wrongRun["nonce"]=std::string(32,'8');atomic(runRoot/wide(observedRunId+".json"),wrongRun.dump());save("state.json",current());refresh();
     auto badRuns=Json::parse(http(port).body).at("runs");require(badRuns.items[0].at("status").str()=="unavailable","Mismatched Run nonce was projected as valid");
     atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());refresh();

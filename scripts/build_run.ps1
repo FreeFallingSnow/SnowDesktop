@@ -2,11 +2,11 @@
 param(
     # The batch router forwards its literal leading verb without rebuilding argv.
     [ValidateSet('run')][string]$Verb='run',
-    [ValidateSet('start','invoke','status','wait','cancel','worker')][string]$Command='status',
+    [ValidateSet('start','invoke','status','wait','cancel','unsubscribe','worker')][string]$Command='status',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Task,
     [ValidateSet('release','debug','tests','ide','batch')][string]$Action='tests',
-    [ValidateSet('full','fast','core','tools','label','name','list','plan')][string]$Mode='list',
+    [ValidateSet('full','fast','core','tools','label','name','list','plan','verify')][string]$Mode='list',
     [string]$Filter='',
     [ValidateSet('Release','Debug')][string]$Configuration='Release',
     [string[]]$Targets=@(),
@@ -14,7 +14,8 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [long]$EditRevision=-1,
     [ValidateRange(0,60)][int]$Seconds=30,
-    [switch]$ReloadShell,[switch]$CloseApplication
+    [switch]$ReloadShell,[switch]$CloseApplication,
+    [string]$Reason='', [switch]$ConfirmSharedCancellation
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -23,6 +24,10 @@ $directory=Join-Path $root '.build/collaboration/runs'
 [void][IO.Directory]::CreateDirectory($directory)
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+. (Join-Path $PSScriptRoot 'build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'build_evidence.ps1')
+. (Join-Path $PSScriptRoot 'build_verification.ps1')
 $script:runStageClocks=@{}
 
 function Run-Path([string]$Id,[string]$Suffix){return Join-Path $directory ($Id+$Suffix)}
@@ -89,7 +94,13 @@ function Get-RunView([string]$Id){
     $metrics=if([IO.File]::Exists((Run-Path $Id '.resources.json'))){Read-RunJson (Run-Path $Id '.resources.json')}else{$null}
     $stages=@();$stageError=''
     try {$stages=@(Read-BuildStageEvents $root $Id)}catch{$stageError=$_.Exception.Message}
-    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;
+    $subscriptions=@()
+    if($request.mode -eq 'verify'){
+        $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+        $ledger=Get-Field $state 'verificationLedger'
+        if($ledger){$subscriptions=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object subscriptions)}
+    }
+    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;
         request=$request;record=$record;resources=$metrics;stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
 }
 function Run-CancellationRequested($Request){
@@ -129,6 +140,7 @@ function Enter-BatchRun($Request){
 try {
     if($Command -in 'start','invoke'){
         $automaticTask=$false
+        if($Mode -eq 'verify' -and ($Action -ne 'tests' -or -not $Task -or -not $PlanBatch -or [string]::IsNullOrWhiteSpace($Reason) -or $Reason.Length -gt 2048 -or $Configuration -ne 'Release')){throw 'Verification requires tests, an explicit active Task, Release, -PlanBatch and a nonempty -Reason (up to 2048 characters).'}
         if($Command -eq 'invoke' -and -not $Task){
             $Task='entry-'+[Guid]::NewGuid().ToString('N');$automaticTask=$true
             $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') task-open $Task -TaskName ('Standard '+$Action+' '+$Mode) -Adapter cli
@@ -151,8 +163,37 @@ try {
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
             completedUtc=$null;exitCode=$null;error='';waitingFor='';waitIntervals=@();waitIntervalsTruncated=$false;stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
-        $batchTransaction=$null
+        $batchTransaction=$null;$joined=$false;$verification=$null
+        if($Mode -eq 'verify'){
+            $verification=Get-VerificationSnapshot $root $PlanBatch $Filter
+            # Inventory is re-read and validated by the worker; retain hashes,
+            # not duplicate raw CTest environment/command contents in requests.
+            $verification.PSObject.Properties.Remove('tests')
+            $request|Add-Member NoteProperty verification $verification
+        }
         try {
+        if($Mode -eq 'verify'){
+            $batchTransaction=Open-EntryStateTransaction $root
+            $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+            $active=@($state.taskLedger.tasks|Where-Object {$_.id -eq $Task -and -not $_.closedUtc})
+            if($active.Count -ne 1){throw 'Verification subscriber task is no longer active.'}
+            $ledger=Get-VerificationLedger $state
+            foreach($candidate in @($ledger.entries|Where-Object key -eq $verification.key)){
+                $existing=Get-RunView $candidate.runId
+                if(-not $existing.terminal -and $existing.ownerState -eq 'alive' -and -not (Run-CancellationRequested $existing.request)){
+                    if($existing.request.mode -ne 'verify' -or $existing.request.verification.key -ne $verification.key){throw 'Verification ledger/request identity mismatch.'}
+                    Add-VerificationSubscription $candidate $active[0] $PlanBatch $Reason
+                    $id=$candidate.runId;$joined=$true;break
+                }
+                if(-not $existing.terminal -and $existing.ownerState -eq 'unknown'){throw 'Verification owner state is unknown; inspect the existing Run before submitting another attempt.'}
+            }
+            if(-not $joined){
+                $candidate=[pscustomobject]@{key=$verification.key;runId=$id;createdUtc=$now;subscriptions=@()}
+                Add-VerificationSubscription $candidate $active[0] $PlanBatch $Reason
+                $ledger.entries=@($ledger.entries)+@($candidate)
+            }
+            if(($state|ConvertTo-Json -Depth 40 -Compress).Length -gt 7MB){throw 'Verification metadata budget requires explicit maintenance.'}
+        }
         if($Action -eq 'batch'){
             $batchTransaction=Open-EntryStateTransaction $root
             $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
@@ -169,11 +210,11 @@ try {
             $current|Add-Member NoteProperty runId $id
         }
         # Identity is fresh. Request publication is create-only, never a mutable plan.
-        Write-NewRunRequest $request
-        Write-RunRecord $record
-        if($Action -eq 'batch'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
+        if(-not $joined){Write-NewRunRequest $request;Write-RunRecord $record}
+        if($Action -eq 'batch' -or $Mode -eq 'verify'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
         } finally {if($batchTransaction){$batchTransaction.Dispose()}}
         $launched=$false
+        if(-not $joined){
         try {
             $child=Start-BuildPowerShellScript -Script $PSCommandPath -Arguments ('-Command worker -RunId '+$id) -WorkingDirectory $root -Breakaway `
                 -OutputPath (Run-Path $id '.stdout.log') -ErrorPath (Run-Path $id '.stderr.log')
@@ -186,8 +227,9 @@ try {
             $record.status='start-failed';$record.exitCode=2;$record.error=$_.Exception.Message;$record.completedUtc=[DateTime]::UtcNow.ToString('o');Write-RunRecord $record
             Get-RunView $id|ConvertTo-Json -Depth 30;exit 2
         }
+        }
         if($Command -eq 'start'){
-            [pscustomobject]@{id=$id;task=$Task;requestPath=(Run-Path $id '.request.json');status='submitted';next='run status/wait; only explicit run cancel cancels execution'}|ConvertTo-Json -Depth 8
+            [pscustomobject]@{id=$id;task=$Task;joined=$joined;requestPath=(Run-Path $id '.request.json');status='submitted';next='run status/wait; unsubscribe withdraws interest, only explicit owner cancellation stops execution'}|ConvertTo-Json -Depth 8
             exit 0
         }
         $RunId=$id
@@ -195,8 +237,30 @@ try {
     }
     if(-not $RunId){throw 'This command requires -RunId.'}
     $request=Read-RunRequest $RunId
+    if($Command -eq 'unsubscribe'){
+        if(-not $Task -or $request.mode -ne 'verify'){throw 'unsubscribe requires a verification Run and subscriber Task.'}
+        $transaction=Open-EntryStateTransaction $root
+        try {
+            $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+            $ledger=Get-VerificationLedger $state
+            $entries=@($ledger.entries|Where-Object runId -eq $RunId)
+            if($entries.Count -ne 1){throw 'Verification subscription identity mismatch.'}
+            $mine=@($entries[0].subscriptions|Where-Object {$_.task -eq $Task -and -not $_.withdrawnUtc})
+            if(-not $mine.Count){throw 'No active subscription for this Task.'}
+            foreach($subscription in $mine){$subscription.withdrawnUtc=[DateTime]::UtcNow.ToString('o')}
+            Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')
+        } finally {$transaction.Dispose()}
+        [pscustomobject]@{id=$RunId;task=$Task;withdrawn=$true;runPreserved=$true}|ConvertTo-Json;exit 0
+    }
     if($Command -eq 'cancel'){
         if(-not $Task -or $request.task -ne $Task){throw 'Explicit cancellation requires the Run owning task ID.'}
+        $cancelTransaction=$null
+        try {
+        if($request.mode -eq 'verify'){
+            $cancelTransaction=Open-EntryStateTransaction $root
+            $shared=Get-RunView $RunId
+            if(@($shared.subscriptions|Where-Object {$_.task -ne $Task -and -not $_.withdrawnUtc}).Count -and -not $ConfirmSharedCancellation){throw 'Other Tasks subscribe to this verification; owner cancellation requires -ConfirmSharedCancellation.'}
+        }
         $view=Get-RunView $RunId
         if(-not $view.terminal){
             $temporary=Run-Path $RunId ('.cancel.'+[Guid]::NewGuid().ToString('N')+'.tmp')
@@ -207,6 +271,7 @@ try {
             } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
         }
         [pscustomobject]@{id=$RunId;cancellationRequested=(-not $view.terminal);status=$view.status;observation='A request is not a completed cancellation; observe the terminal result.'}|ConvertTo-Json
+        } finally {if($cancelTransaction){$cancelTransaction.Dispose()}}
         exit 0
     }
     if($Command -in 'status','wait','invoke'){
@@ -235,7 +300,8 @@ try {
             }
             if($view.terminal -or $Command -eq 'status' -or ($Command -ne 'invoke' -and $timer.Elapsed.TotalSeconds -ge $Seconds)){break}
             $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
-            $urgent=@($state.taskLedger.events | Where-Object {$_.importance -eq 'urgent' -and $_.recipients -contains $request.task -and @($_.receipts | Where-Object {$_.task -eq $request.task -and $_.level -eq 'agent'}).Count -eq 0})
+            $observerTask=if($Task){$Task}else{$request.task}
+            $urgent=@($state.taskLedger.events | Where-Object {$_.importance -eq 'urgent' -and $_.recipients -contains $observerTask -and @($_.receipts | Where-Object {$_.task -eq $observerTask -and $_.level -eq 'agent'}).Count -eq 0})
             if($urgent.Count){[pscustomobject]@{id=$RunId;status=$view.status;events=$urgent;runPreserved=$true}|ConvertTo-Json -Depth 25;exit 6}
             Start-Sleep -Milliseconds 500
         } while($true)
@@ -314,7 +380,7 @@ try {
             Complete-RunStage $record $stage $record.exitCode
             $record.inputEnd=Get-BuildInputIdentity $root
             $cancelled=('SnowDesktop.Build.Job' -as [type]) -and [SnowDesktop.Build.Job]::RunWasCancelled
-            $record.status=if($cancelled){'cancelled'}elseif($record.exitCode -eq 0){'passed'}else{'failed'}
+            $record.status=if($cancelled){'cancelled'}elseif($request.mode -eq 'verify' -and $record.exitCode -eq 5){'invalidated'}elseif($record.exitCode -eq 0){'passed'}else{'failed'}
             if($record.status -eq 'cancelled'){$record.exitCode=4}
             elseif($record.inputStart.digest -ne $record.inputEnd.digest){$record.status='invalidated';$record.exitCode=5;$record.error='Build inputs changed while this Run was executing.'}
         }
@@ -351,7 +417,24 @@ try {
                 $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') task-close $request.task -TaskRevision $taskRecord.revision -TaskPhase $(if($record.status -eq 'cancelled'){'cancelled'}else{'completed'})
             } catch {[Console]::Error.WriteLine('Run is terminal; automatic task closure needs attention: '+$_.Exception.Message)}
         }
-        if($ownsRun){$record.completedUtc=[DateTime]::UtcNow.ToString('o');Write-RunRecord $record}
+        if($ownsRun){
+            $record.completedUtc=[DateTime]::UtcNow.ToString('o')
+            if($request.mode -eq 'verify'){
+                try {
+                    $coverage=Read-EntryJson (Run-Path $RunId '.verification.json')
+                    $subscriptions=@((Get-RunView $RunId).subscriptions)
+                    if($coverage){Set-Field $coverage 'tasks' @($subscriptions|Select-Object -ExpandProperty task -Unique|ForEach-Object {[pscustomobject]@{participant=$_;requested=$request.verification.binding.names}})}
+                    $synthetic=[pscustomobject]@{batchId=$null;runId=$RunId;coverage=$coverage;inputStart=$record.inputStart;inputEnd=$record.inputEnd;inputCheck=$(if($record.status -eq 'invalidated'){'invalidated'}elseif($record.inputStart -and $record.inputEnd -and $record.inputStart.digest -eq $record.inputEnd.digest){'stable'}else{'not-recorded'});pipelineExitCode=$record.exitCode;testingPlan=[pscustomobject]@{configuration='Release'}}
+                    Set-Field $record 'evidence' (New-BatchTestEvidence $root $synthetic)
+                    Set-Field $record 'verification' ([pscustomobject]@{baseline=$request.planBatch;key=$request.verification.key;names=$request.verification.binding.names;noBuild=$true;reuseAllowed=$false})
+                    $projectionRoot=Join-Path $root '.build/verification';[void][IO.Directory]::CreateDirectory($projectionRoot)
+                    Write-RunJson ([pscustomobject]@{schemaVersion=2;kind='durable-test-verification';runId=$RunId;task=$request.task;status=$record.status;baseline=$request.planBatch;binding=$request.verification.binding;
+                        noBuild=$true;reuseAllowed=$false;createdUtc=$record.createdUtc;completedUtc=$record.completedUtc;exitCode=$record.exitCode;report=(Get-Field $coverage 'report');evidence=$record.evidence;
+                        authority=('.build/collaboration/runs/'+$RunId+'.json');logPath=$record.logPath}) (Join-Path $projectionRoot ($RunId+'.json'))
+                } catch {$record.status='failed';$record.exitCode=2;$record.error+=' Verification publication: '+$_.Exception.Message}
+            }
+            Write-RunRecord $record
+        }
         if($ownerLease){$ownerLease.Dispose()}
     }
     $record|ConvertTo-Json -Depth 30;exit ([int]$record.exitCode)

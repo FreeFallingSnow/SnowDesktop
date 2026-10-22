@@ -44,7 +44,7 @@ if(BUILD_TESTING AND WIN32)
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
     snowdesktop_add_native_tool_test(SnowDesktopBuildPlanExecutionTests build_plan_execution
         build_plan_execution_tests.cpp "tools;core" 120)
-    target_sources(SnowDesktopBuildPlanExecutionTests PRIVATE tests/build_tools/build_records_tests.cpp)
+    target_sources(SnowDesktopBuildPlanExecutionTests PRIVATE tests/build_tools/build_records_tests.cpp tests/build_tools/build_verification_tests.cpp)
     foreach(record IN ITEMS evidence acceptance)
         add_test(NAME build_${record} COMMAND SnowDesktopBuildPlanExecutionTests
             "${CMAKE_CURRENT_SOURCE_DIR}" --${record})
@@ -52,6 +52,10 @@ if(BUILD_TESTING AND WIN32)
             ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     endforeach()
+    add_test(NAME build_verification COMMAND SnowDesktopBuildPlanExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --verification)
+    set_tests_properties(build_verification PROPERTIES TIMEOUT 240 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
         build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
     add_test(NAME build_dashboard_browser COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --browser)

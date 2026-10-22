@@ -12,6 +12,18 @@ scripts\build.bat run wait -RunId <runId> -Seconds 30
 scripts\build.bat run cancel -RunId <runId> -Task my-task
 ```
 
+无需编译的补验使用已有稳定批次，测试名称是精确逗号列表，不是正则：
+
+```bat
+scripts\build.bat run start -Task my-task -Action tests -Mode verify -PlanBatch <baselineBatch> -Filter Alpha,Beta -Reason "补验原候选"
+scripts\build.bat run wait -Task my-task -RunId <runId> -Seconds 30
+scripts\build.bat run unsubscribe -Task my-task -RunId <runId>
+```
+
+`verify` 不配置、不编译、不整理产物。基线须有完整的 v2 测试定义身份和实际二进制/显式运行文件记录；旧批次记录不足会拒绝补验，不自动补建或猜测匹配。开始时、取得输出租约后及结束时核对源码内容、现有 CTest 定义、实际产物和执行上下文。CTest 的动态 `COST` 不参与断言身份，其余声明保留。环境仅保存摘要，排除精确列出的执行凭据与遥测标记；变更测试环境会创建不同执行意图。必要时应使用相同 PowerShell 运行时/有效环境提交，以免保守地判为环境变化。
+
+相同活动意图在协调器事务内合并订阅，同 Task/需求修订/基线重复提交幂等。已结束的结果不自动命中缓存；传递依赖尚未闭合，记录保持 `reuseAllowed=false`。撤回订阅与关闭等待者均保留执行；原所属 Task 取消有其他有效订阅的 Run 时需显式加 `-ConfirmSharedCancellation`，其他订阅者不能取消共享执行。等待时检查调用者 Task 的紧急消息。独立结果投影到 `.build/verification/<runId>.json`（schema 2），原始请求、覆盖、逐条证据和结果权威仍是 `.build/collaboration/runs/`；不会覆盖基线。此阶段仍串行取得共享输出租约，候选隔离和编辑解耦在后续实施。
+
 `start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求先在同目录唯一临时文件中完整写入并刷新，关闭后再以不可覆盖的改名发布为 `.build/collaboration/runs/<id>.request.json`，后续不改写；发布前终止创建者不会留下可被最终文件名发现的半成品请求。发布完成仍须通过 Run 状态判断执行是否已开始。记录、日志、资源采样和带代际标记的取消请求分别保存。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6；两者均保留运行。退出观察者不取消执行，只有显式 `cancel` 才请求终止本次私有 Job 内的进程树。取消请求和已完成取消分开报告。
 
 启动必须获父 Job 允许脱离；拒绝时保留 `start-failed` 和原始请求，不退化成依附聊天的后台进程。执行者随后为编译和测试创建带 `KILL_ON_JOB_CLOSE` 的私有 Job，未继承执行租约或 Job 句柄；执行者异常退出会清理子进程。观察接口将已确认退出的执行者投影为 `interrupted`，保留最后记录和请求，不按心跳超时重新接管。继续执行需显式新建 Run。普通入口与协作入口均禁用 MSBuild 节点复用，避免旧工作节点逃出本次归属。

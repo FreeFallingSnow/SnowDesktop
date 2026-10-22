@@ -408,7 +408,21 @@ class Store:
                 self.logs.clear()
             self.logs[cache_key] = LogReader()
         segments.sort(key=lambda item: (str(item["startedUtc"]), item["id"]))
+        verification = None
+        if request.get("mode") == "verify":
+            intent = request.get("verification") or {}
+            binding = intent.get("binding") or {}
+            if not HEX.fullmatch(str(intent.get("key"))) or not HEX.fullmatch(str(request.get("planBatch"))):
+                raise ValueError("Invalid standalone verification identity")
+            state = read_json(self.root, "state.json") or {}
+            entries = [x for x in (state.get("verificationLedger") or {}).get("entries", []) if x.get("runId") == run_id]
+            if len(entries) != 1 or entries[0].get("key") != intent["key"]:
+                raise ValueError("Verification subscription identity mismatch")
+            verification = {"baseline": request["planBatch"], "key": intent["key"], "names": [redact(x) for x in binding.get("names", [])[:128]],
+                            "noBuild": True, "reuseAllowed": False,
+                            "subscriptions": [{**{k: x.get(k) for k in ("id", "task", "requirementsRevision", "baseline", "subscribedUtc", "withdrawnUtc")}, "reason": redact(x.get("reason", ""))} for x in entries[0].get("subscriptions", [])[:128]]}
         return {"id": run_id, "batchId": request.get("batch"), "task": redact(request.get("task", "")),
+                "verification": verification, "evidence": evidence_view(record.get("evidence")),
                 "action": request.get("action"), "mode": request.get("mode"), "configuration": request.get("configuration"),
                 "status": status, "persistedStatus": record.get("status"), "ownerState": process, "ownerPid": (record.get("owner") or {}).get("pid"),
                 "createdUtc": record.get("createdUtc"), "updatedUtc": record.get("updatedUtc"), "completedUtc": record.get("completedUtc"),
