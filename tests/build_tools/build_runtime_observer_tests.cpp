@@ -5,6 +5,7 @@
 using namespace build_test;
 namespace {
 const Json& module(const Json& report,const std::wstring& filename){for(const auto& image:report.at("images").items)if(fs::path(wide(image.at("path").str())).filename()==filename)return image;throw std::runtime_error("Actual DLL load was absent from runtime observation");}
+int fixture_processes(const Json& report,const fs::path& executable){int count=0;for(const auto& image:report.at("images").items)if(image.at("kind").str()=="executable"&&fs::path(wide(image.at("path").str())).filename()==executable.filename())++count;return count;}
 void raw(const fs::path& root,const std::string& mode){
     if(mode=="--exit-seven")ExitProcess(7);
     if(mode=="--env-check"){require(environment(L"SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT").empty(),"Observer telemetry leaked into the test environment");return;}
@@ -33,8 +34,8 @@ void tests(const fs::path& repo){
     const auto arguments=[&](const std::string& name,const std::wstring& mode){return std::vector<std::wstring>{observer.wstring(),L"--test",wide(name),L"--report",(root/L"reports"/wide(name+".manual.json")).wstring(),L"--",observed.wstring(),root.wstring(),mode};};
     const auto trace=[&](const std::string& name,const std::wstring& mode,int expected=0){const auto result=run(arguments(name,mode),root,20);require(result.code==expected,"Runtime observer returned unexpected exit: "+result.out+result.err);return Json::parse(read(root/L"reports"/wide(name+".manual.json")));};
     const auto first=trace("Alpha",L"--load");const auto& loaded=module(first,L"观察模块.dll");
-    require(first.at("rootExitCode").integer()==0&&first.at("processCount").integer()==1&&loaded.at("sha256").str().size()==64&&loaded.at("unloaded").boolean&&!loaded.at("startup").boolean&&loaded.at("identitySource").str()=="load-event-handle","Transient Unicode DLL was not associated with its actual load handle/phase");
-    const auto descendant=trace("Child",L"--spawn");require(descendant.at("processCount").integer()==2&&module(descendant,L"观察模块.dll").at("pid").integer()!=descendant.at("rootPid").integer(),"Descendant process DLL loads were omitted");
+    require(first.at("rootExitCode").integer()==0&&fixture_processes(first,observed)==1&&loaded.at("sha256").str().size()==64&&loaded.at("unloaded").boolean&&!loaded.at("startup").boolean&&loaded.at("identitySource").str()=="load-event-handle","Transient Unicode DLL was not associated with its actual load handle/phase");
+    const auto descendant=trace("Child",L"--spawn");require(fixture_processes(descendant,observed)==2&&module(descendant,L"观察模块.dll").at("pid").integer()!=descendant.at("rootPid").integer(),"Descendant process DLL loads were omitted");
     const auto failure=trace("Failed",L"--exit-seven",7);require(failure.at("rootExitCode").integer()==7,"Observed test failure was replaced by observer success");
     auto probeArguments=arguments("Probe",L"--wait");probeArguments.insert(probeArguments.begin()+1,L"--probe");
     const auto probe=run(probeArguments,root,15);require(probe.code==0&&!fs::exists(root/L"alive.json"),"Module probe executed the fixture main function: "+probe.out+probe.err);
