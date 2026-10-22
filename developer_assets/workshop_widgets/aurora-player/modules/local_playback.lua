@@ -70,11 +70,73 @@ local function modeKey(p)
     return p.shuffle and "shuffle" or p.repeatMode=="track" and "loop" or p.repeatMode=="list" and "repeat" or "sequential"
 end
 local rates={0.25,0.5,0.75,1,1.25,1.5,2,3,4}
+
+function M.filtered(model)
+    local terms,indices={},{}
+    for term in (model.searchText or ""):lower():gmatch("%S+") do terms[#terms+1]=term end
+    for i,track in ipairs(model.player.tracks) do
+        local name=track.name:lower()
+        local matches=true
+        for _,term in ipairs(terms) do if not name:find(term,1,true) then matches=false;break end end
+        if matches then indices[#indices+1]=i end
+    end
+    return indices,#terms>0
+end
+
+function M.search(model,text)
+    if type(text)~="string" or #text>256 or text==(model.searchText or "") then return false end
+    model.searchText=text;model.drag=nil;model.suppressClick=nil
+    model.searchRevision=(model.searchRevision or 0)+1
+    return true
+end
+
+local function dragValid(model)
+    local drag=model.drag
+    if not drag or drag.query~=(model.searchText or "") or #drag.keys~=#model.player.tracks then return false end
+    for i,key in ipairs(drag.keys) do if model.player.tracks[i].key~=key then return false end end
+    return true
+end
+
+function M.beginDrag(model,key,y)
+    model.drag=nil
+    local indices=M.filtered(model)
+    for visible,index in ipairs(indices) do
+        if model.player.tracks[index].key==key then
+            local keys={}
+            for i,track in ipairs(model.player.tracks) do keys[i]=track.key end
+            model.drag={key=key,from=index,to=index,visibleFrom=visible,indices=indices,keys=keys,
+                query=model.searchText or "",y=y}
+            model.suppressClick=nil;return true
+        end
+    end
+    return false
+end
+
+function M.updateDrag(model,y,offset)
+    if not dragValid(model) then model.drag=nil;return false end
+    local drag=model.drag
+    drag.moved=drag.moved or math.abs(y-drag.y)>model.itemExtent*0.15
+    local _,boundary=player.dropTarget(drag.visibleFrom,#drag.indices,
+        y-model.listTop+(offset or 0),model.itemExtent)
+    drag.boundary=boundary
+    drag.to=boundary and drag.indices[boundary<drag.visibleFrom and boundary+1 or boundary] or drag.from
+    return true
+end
+
+function M.finishDrag(model)
+    local drag=model.drag
+    local valid=dragValid(model)
+    model.drag=nil
+    if not valid then return false end
+    model.suppressClick=drag.moved
+    if drag.moved then model.player:move(drag.from,drag.to) end
+    return true
+end
+
 function M.panel(_context,model,systemSession,systemPermission)
     local p=model.player
     if model.drag and not model.preview and widget.hasFeature("interaction.pointerActions") then
-        local track=p.tracks[model.drag.from]
-        if not track or not interaction.isPressed(track.key) then model.drag=nil end
+        if not dragValid(model) or not interaction.isPressed(model.drag.key) then model.drag=nil end
     end
     local row=ui.metrics().layoutRowHeight
     local c=panel.theme()
@@ -114,18 +176,39 @@ function M.panel(_context,model,systemSession,systemPermission)
             end
         end
     else
+        local indices,searching=M.filtered(model)
+        local searchSupported=widget.hasFeature("view.inputControls")
+        local count=searching and tostring(#indices).." / "..#p.tracks or tostring(#p.tracks)
         children[#children+1]=view.row({key="playlist.toolbar",width="fill",height=row*1.12,padding={horizontal=row*0.3},gap=row*0.2,alignItems="center",children={
-            panel.text("playlist.subtitle",tostring(#p.tracks).."  "..l10n.tr("music.tracks"),row,{style={foreground=c.secondary}}),
+            panel.text("playlist.subtitle",count.."  "..l10n.tr("music.tracks"),row,{style={foreground=c.secondary}}),
             panel.iconButton("playlist.add.files",0xF067,l10n.tr("music.files"),row*1.1,"local.files",M.available()),
             panel.iconButton("playlist.add.folder",0xF07B,l10n.tr("music.folder"),row*1.1,"local.folder",M.available()),
+            view.button({key="music.clear",label=l10n.tr("music.clear"),width="auto",height=row,
+                fontSize=row*0.41,padding={horizontal=row*0.4},enabled=#p.sources>0,
+                style={foreground=c.secondary,background=c.surface,borderWidth=0,cornerRadius=row*0.3},
+                events={click={id="local.clear"}}}),
         }})
+        if searchSupported then
+            local searchChildren={view.searchBox({key="playlist.search",width="fill",height=row,value=model.searchText or "",
+                placeholder=l10n.tr("music.search"),maxBytes=256,fontSize=row*0.43,padding={horizontal=row*0.4},
+                style={foreground=c.primary,background=c.surface,borderWidth=0,cornerRadius=row*0.3},
+                events={change={id="local.search"}},accessibility={label=l10n.tr("music.search")}})}
+            if model.searchText and model.searchText~="" then
+                searchChildren[#searchChildren+1]=panel.iconButton("playlist.search.clear",0xF00D,
+                    l10n.tr("music.clear_search"),row,"local.search.clear")
+            end
+            children[#children+1]=view.row({key="playlist.search.row",width="fill",height=row,
+                padding={horizontal=row*0.3},gap=row*0.2,children=searchChildren})
+        end
         local extent=row*1.25
-        local viewport=math.max(row,layout.contentHeight()-row*3.28)
-        local range=view.virtualRange({key="playlist.list",itemCount=#p.tracks,itemExtent=extent,viewportExtent=viewport,overscan=1})
+        local viewport=math.max(row,layout.contentHeight()-row*(searchSupported and 3.28 or 2))
+        local listKey=model.listKey or "playlist.list"
+        local range=view.virtualRange({key=listKey,itemCount=#indices,itemExtent=extent,viewportExtent=viewport,overscan=1})
         model.listOffset=range.offset;model.itemExtent=extent
-        model.listTop=row*1.7;model.listViewport=viewport
+        model.listTop=row*(searchSupported and 2.98 or 1.7);model.listViewport=viewport
         local items={}
-        for i=math.max(1,range.firstIndex),range.lastIndex do
+        for visible=math.max(1,range.firstIndex),range.lastIndex do
+            local i=indices[visible]
             local track=p.tracks[i]
             local color=i==p.index and accent or primary
             local drag=model.drag
@@ -140,7 +223,7 @@ function M.panel(_context,model,systemSession,systemPermission)
                             fontSize=row*0.35,style={foreground=secondary}}),
                     }})}})
             }
-            if boundary==i or (boundary==0 and i==1) then
+            if boundary==visible or (boundary==0 and visible==1) then
                 layers[#layers+1]=view.column({key=track.key..".drop",width="fill",height="fill",
                     padding={horizontal=row*0.3},justifyContent=boundary==0 and "start" or "end",children={
                         view.row({key=track.key..".drop.line",width="fill",height=row*0.12,alignItems="center",children={
@@ -154,15 +237,9 @@ function M.panel(_context,model,systemSession,systemPermission)
                 accessibility={label=track.name},children={
                     view.stack({key=track.key..".layers",width="fill",height="fill",children=layers})}})
         end
-        children[#children+1]=view.virtualList({key="playlist.list",width="fill",height=viewport,itemCount=#p.tracks,itemExtent=extent,
+        children[#children+1]=view.virtualList({key=listKey,width="fill",height=viewport,itemCount=#indices,itemExtent=extent,
             firstIndex=range.firstIndex,children=items,emptyContent=view.column({key="playlist.empty.inset",width="fill",height="fill",
-                padding={horizontal=row*0.3},children={label("playlist.empty",l10n.tr("music.empty"))}})})
-        children[#children+1]=view.row({key="playlist.footer",width="fill",height=row,padding={horizontal=row*0.3},gap=row*0.2,alignItems="center",children={
-            view.spacer({key="playlist.footer.space",width="fill",height=row}),
-            view.button({key="music.clear",label=l10n.tr("music.clear"),width="auto",height=row,
-                fontSize=row*0.41,padding={horizontal=row*0.4},enabled=#p.sources>0,
-                style={foreground=c.secondary,background=c.surface,borderWidth=0,cornerRadius=row*0.3},
-                events={click={id="local.clear"}}})}})
+                padding={horizontal=row*0.3},children={label("playlist.empty",l10n.tr(#p.tracks>0 and searching and "music.no_matches" or "music.empty"))}})})
     end
     local content=view.column({key="playlist.surface",width="fill",height=model.panelKind=="options" and "auto" or "fill",
         padding=model.panelKind=="options" and row*0.3 or {vertical=row*0.3},gap=row*0.28,children=children})
@@ -196,6 +273,14 @@ function M.event(_context,model,e)
     elseif e.kind=="action" then
         if type(e.id)~="string" or e.id:sub(1,6)~="local." then return false end
         local id=e.id:sub(7)
+        if id=="search" or id=="search.clear" then
+            if M.search(model,id=="search.clear" and "" or e.text) then
+                if widget.hasFeature("view.scroll.programmatic") then view.scrollTo(model.listKey or "playlist.list",0)
+                else model.listKey="playlist.list."..model.searchRevision end
+                widget.invalidate()
+            end
+            return true
+        end
         if id=="source.system" or id=="source.local" then
             M.select(model,id=="source.local" and "local" or "system")
             widget.invalidate();return true
@@ -252,19 +337,15 @@ function M.event(_context,model,e)
         elseif id=="track.top" then local i=indexOf(p,e.value);if i then p:move(i,1) end
         elseif id=="track.bottom" then local i=indexOf(p,e.value);if i then p:move(i,#p.tracks) end
         elseif id=="drag.start" and e.button==1 then
-            local i=indexOf(p,e.value);model.suppressClick=nil
-            if i then model.drag={from=i,to=i,y=e.y} end
+            M.beginDrag(model,e.value,e.y)
         elseif id=="drag.move" and model.drag then
-            local drag=model.drag
-            drag.moved=drag.moved or math.abs(e.y-drag.y)>model.itemExtent*0.15
-            local range=view.virtualRange({key="playlist.list",itemCount=#p.tracks,itemExtent=model.itemExtent,
+            local indices=M.filtered(model)
+            local range=view.virtualRange({key=model.listKey or "playlist.list",itemCount=#indices,itemExtent=model.itemExtent,
                 viewportExtent=model.listViewport,overscan=1})
-            drag.to,drag.boundary=player.dropTarget(drag.from,#p.tracks,
-                e.y-model.listTop+range.offset,model.itemExtent)
+            M.updateDrag(model,e.y,range.offset)
         elseif id=="drag.end" and model.drag then
-            local drag=model.drag;model.drag=nil;model.suppressClick=drag.moved
-            if drag.moved then p:move(drag.from,drag.to) end
-        elseif id=="clear" then p:clear();model.drag=nil end
+            M.finishDrag(model)
+        elseif id=="clear" then p:clear();M.search(model,"");model.drag=nil end
     else return false end
     widget.invalidate()
     return true

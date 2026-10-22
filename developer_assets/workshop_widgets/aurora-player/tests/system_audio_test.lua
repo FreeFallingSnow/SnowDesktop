@@ -48,6 +48,29 @@ local function fixture()
 end
 
 return {
+    ["wheel HUD follows accepted shared volume and expires after the last gesture"] = function()
+        local f=fixture();assert(shared.hud(f.model)==nil)
+        f:action("volume.wheel",{delta=120})
+        assert(math.abs(shared.hud(f.model).volume-0.62)<0.000001 and f.model.surface==nil)
+        f.now=2100;assert(shared.hud(f.model))
+        f:action("volume.wheel",{delta=-120})
+        f.now=2300;assert(shared.hud(f.model))
+        f.now=3300;assert(shared.hud(f.model)==nil and f.model.hudUntil==nil)
+        f:action("volume.wheel",{delta=120});f:complete(false)
+        assert(shared.hud(f.model).volume==0.6,"rejected output never leaves a phantom volume in the HUD")
+    end,
+    ["wheel HUD handles limits hidden widgets and output changes"] = function()
+        local f=fixture();f:set("audio.output.volume",{endpointId="speakers",volume=1,muted=true})
+        f:action("volume.wheel",{delta=120})
+        assert(#f.calls==0 and shared.hud(f.model).volume==1 and shared.hud(f.model).muted)
+        f:action("volume.wheel",{delta=0});assert(f.model.hudUntil==2200)
+        shared.event(f.model,{kind="visibility",visible=false});assert(shared.hud(f.model)==nil)
+        shared.event(f.model,{kind="visibility",visible=true})
+        f:action("volume.wheel",{delta=-120})
+        f:set("audio.output.default",{id="headphones"});assert(shared.hud(f.model)==nil)
+        f.model.hudUntil=nil;f.permissions["audio.output.control"]=false
+        f:action("volume.wheel",{delta=120});assert(shared.hud(f.model)==nil)
+    end,
     ["sound opens a titleless anchored popover with panel fallback and no playback changes"] = function()
         local f=fixture();f:open()
         assert(f.popover.anchorKey=="system.audio.open" and f.popover.title==nil and f.model.surface=="popover")

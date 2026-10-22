@@ -182,8 +182,21 @@ function M.open(model,anchor,localActive)
     return true
 end
 
+function M.hud(model)
+    if not model.hudUntil then return nil end
+    if not model.visible or model.api.now()>=model.hudUntil then
+        model.hudUntil=nil;model.hudEndpoint=nil;return nil
+    end
+    local state=M.state(model)
+    if state.id~=model.hudEndpoint or state.volume==nil then
+        model.hudUntil=nil;model.hudEndpoint=nil;return nil
+    end
+    return state
+end
+
 function M.event(model, event,localModel)
     if event.kind=="visibility" then
+        if event.visible~=true then model.hudUntil=nil;model.hudEndpoint=nil end
         model.visible=event.visible==true;M.sync(model,model.opened);return false
     elseif event.kind=="panel" or event.kind=="popover" then
         if event.kind~=model.surface then return false end
@@ -222,6 +235,7 @@ function M.event(model, event,localModel)
     elseif event.id=="system.audio.volume.wheel" and state.canVolume and finite(event.delta) then
         local scalar=clamp(state.volume+math.max(-1200,math.min(1200,event.delta))/120*0.02)
         if math.abs(scalar-state.volume)>0.000001 then send(model,"audio.output.setVolume",{volume=scalar},state.id) end
+        if event.delta~=0 then model.hudUntil=model.api.now()+1200;model.hudEndpoint=state.id end
     elseif event.id=="system.audio.volume" and state.canVolume and finite(event.controlValue) then
         local scalar=clamp(event.controlValue)
         if event.source=="pointer" then

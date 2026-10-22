@@ -18,7 +18,100 @@ local function fixture()
     return p,calls,canceled,function() return saved end
 end
 
+-- Keep the actual panel/event/queue code; replace only host presentation and
+-- system tasks so filtered rows must still commit to the real queue identity.
+local function playlistFixture()
+    local f={calls={},scrolls={}}
+    local p=queue.new({start=function(name,args) f.calls[#f.calls+1]={name=name,args=args};return #f.calls end,
+        cancel=function() end,save=function() return true end})
+    p:ingest({{handle="a",kind="file",name="Alpha [live].mp3"},
+        {handle="b",kind="file",name="Hidden.flac"},{handle="c",kind="file",name="ALPHA piano.flac"},
+        {handle="d",kind="file",name="海边 散步.mp3"},{handle="e",kind="file",name="Alpha studio.mp3"}})
+    f.model={player=p,source="local",panelKind="playlist"}
+    widget={hasFeature=function() return true end,hasPermission=function() return true end,
+        invalidate=function() end,theme=function() return {contentTheme=0} end}
+    ui={metrics=function() return {layoutRowHeight=28} end}
+    layout={contentHeight=function() return 360 end}
+    l10n={tr=function(key) return key end}
+    interaction={isPressed=function() return true end}
+    view={}
+    for _,name in ipairs({"row","column","spacer","button","iconButton","icon","text","listItem","stack","virtualList","searchBox"}) do
+        local nodeType=name;view[name]=function(spec) spec.type=nodeType;return spec end
+    end
+    view.virtualRange=function(spec) return {offset=0,firstIndex=spec.itemCount>0 and 1 or 0,lastIndex=spec.itemCount} end
+    view.scrollTo=function(key,offset) f.scrolls[#f.scrolls+1]={key=key,offset=offset} end
+    function f:find(node,key)
+        if node.key==key then return node end
+        for _,child in ipairs(node.children or {}) do local found=self:find(child,key);if found then return found end end
+    end
+    function f:panel() return localPlayback.panel({},self.model) end
+    function f:action(id,fields)
+        local e=fields or {};e.kind="action";e.id="local."..id
+        assert(localPlayback.event({},self.model,e))
+    end
+    return f
+end
+
 return {
+    ["playlist search matches words literally and preserves the original queue"] = function()
+        local f=playlistFixture();local p=f.model.player
+        f:action("search",{text="  ALPHA  [live] "})
+        local indices,active=localPlayback.filtered(f.model)
+        assert(active and #indices==1 and indices[1]==1 and #p.tracks==5)
+        f:action("search",{text="海边 散步"})
+        indices=localPlayback.filtered(f.model);assert(#indices==1 and indices[1]==4)
+        f:action("search",{text="["});indices=localPlayback.filtered(f.model)
+        assert(#indices==1 and indices[1]==1,"search punctuation must not become a Lua pattern")
+        f:action("search",{text="not present"})
+        local tree=f:panel();local list=f:find(tree,"playlist.list")
+        assert(list.itemCount==0 and f:find(list.emptyContent,"playlist.empty").text=="music.no_matches")
+        f:action("search.clear")
+        assert(#localPlayback.filtered(f.model)==5 and f.model.searchText=="")
+        assert(#f.scrolls==5 and f.scrolls[1].offset==0 and #f.calls==0)
+    end,
+    ["filtered panel row actions play and remove the actual matching song"] = function()
+        local f=playlistFixture();local p=f.model.player
+        local key=p.tracks[3].key
+        f:action("search",{text="piano"})
+        local tree=f:panel();local list=f:find(tree,"playlist.list")
+        assert(list.itemCount==1 and list.children[1].key==key)
+        local action=list.children[1].events.click
+        f:action(action.id:sub(7),{value=action.value})
+        assert(p.index==3 and f.calls[#f.calls].name=="audio.play" and f.calls[#f.calls].args.handle=="c")
+        f:action("track.remove",{value=key})
+        assert(#p.tracks==4 and p.tracks[1].name=="Alpha [live].mp3" and p.tracks[2].name=="Hidden.flac")
+        assert(#localPlayback.filtered(f.model)==0)
+        tree=f:panel();f:action("clear")
+        assert(#p.tracks==0 and #p.sources==0 and f.model.searchText=="","clear always empties the full queue, including hidden songs")
+    end,
+    ["filtered dragging moves by visible anchors and retains playing identity"] = function()
+        local f=playlistFixture();local p=f.model.player
+        p:play(3);p:complete({taskId=p.playingTask,ok=true,value={playbackId="playing"}})
+        local moved=p.tracks[1].key
+        f:action("search",{text="alpha"});f:panel()
+        f:action("drag.start",{value=moved,button=1,y=f.model.listTop+10})
+        f:action("drag.move",{y=f.model.listTop+f.model.itemExtent*2.7})
+        assert(f.model.drag.to==5 and f.model.drag.boundary==3)
+        f:action("drag.end")
+        assert(p.tracks[5].key==moved and p.tracks[1].name=="Hidden.flac" and p.tracks[3].name=="海边 散步.mp3")
+        assert(p.index==2 and p.playbackId=="playing" and f.model.suppressClick)
+        f:action("track",{value=moved});assert(p.index==2,"a completed drag must not also play the clicked row")
+        f:panel();f:action("drag.start",{value=moved,button=1,y=f.model.listTop+70})
+        f:action("drag.move",{y=f.model.listTop-10});assert(f.model.drag.to==2 and f.model.drag.boundary==0)
+        f:action("drag.end");assert(p.tracks[2].key==moved and p.index==3)
+    end,
+    ["search and library changes cancel stale drag commits"] = function()
+        local f=playlistFixture();local p=f.model.player;local key=p.tracks[1].key
+        f:panel();f:action("drag.start",{value=key,button=1,y=f.model.listTop+10})
+        f:action("drag.move",{y=f.model.listTop+100})
+        f:action("search",{text="piano"});f:action("drag.end")
+        assert(p.tracks[1].key==key and f.model.drag==nil)
+        f:action("search.clear");f:panel()
+        f:action("drag.start",{value=key,button=1,y=f.model.listTop+10})
+        p:append("new","New.mp3")
+        f:action("drag.move",{y=f.model.listTop+100});f:action("drag.end")
+        assert(p.tracks[1].key==key and #p.tracks==6 and f.model.drag==nil)
+    end,
     ["switching to local attempts system pause before playback and does not block on failure"]=function()
         local p,calls=fixture()
         local attempted=0

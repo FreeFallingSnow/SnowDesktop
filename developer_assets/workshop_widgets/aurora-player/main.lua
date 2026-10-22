@@ -604,8 +604,9 @@ local function viewTree(context, model)
     if not hasTimeline then
         clearSeekPreview(model)
     end
-    updateProgressTicker(model, hasTimeline and playing and model.visible and
-        not model.preview and not model.recordFramePending)
+    local volumeHud=systemAudio.hud(model.systemAudio)
+    updateProgressTicker(model, model.visible and not model.preview and not model.recordFramePending and
+        (volumeHud~=nil or hasTimeline and playing))
     local now = hasTimeline and time.now() or nil
     local position = player.position(timeline, playing, now)
     if model.seekPreview ~= nil then
@@ -839,6 +840,20 @@ local function viewTree(context, model)
             padding=plan.padding*0.45,justifyContent="start",alignItems="end",children={
                 view.row({key="aurora.utilities.row",width="auto",height=utilitySize,gap=utilitySize*0.25,children=utilities})}})
     end
+    if volumeHud then
+        local value=math.floor(volumeHud.volume*100+0.5).."%"
+        children[#children+1]=view.column({key="aurora.volume.hud.overlay",width="fill",height="fill",
+            padding={top=plan.padding*0.45,right=plan.padding*0.45+utilitySize*1.25*#utilities},
+            alignItems="end",children={view.row({key="system.audio.hud",width=utilitySize*3.1,height=utilitySize*0.94,
+                padding={horizontal=utilitySize*0.3},gap=utilitySize*0.23,alignItems="center",
+                style={background=colors.secondaryButton,cornerRadius=utilitySize*0.38,opacity=0.97},
+                accessibility={role="group",label=l10n.tr("shared.system_volume").." "..value,live="polite"},children={
+                    view.icon({key="system.audio.hud.icon",glyph=volumeHud.muted and utf8.char(0xF6A9) or glyphs.sound,
+                        iconFont="fa",width=utilitySize*0.48,height="fill",fontSize=utilitySize*0.42,
+                        style={foreground=colors.secondaryButtonText}}),
+                    view.text({key="system.audio.hud.value",text=value,width="fill",height="fill",fontSize=utilitySize*0.48,
+                        fontWeight=600,textAlign="end",style={foreground=colors.secondaryButtonText}})}})}})
+    end
     return view.stack({
         key = "aurora.surface",
         width = "fill",
@@ -938,6 +953,7 @@ local function event(context, model, value)
     if value.kind == "visibility" then
         model.visible = value.visible == true
         if not model.visible then
+            updateProgressTicker(model,false)
             animation.cancelFrame(RECORD_FRAME)
             model.recordFramePending = false
         else
