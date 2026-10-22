@@ -36,9 +36,23 @@ void scenario(const fs::path& repo,const std::string& control){
         auto source=read(c.scripts/L"build_verification.ps1");replace(source,"if([IO.Path]::GetFileNameWithoutExtension($runtime) -eq 'pwsh')","if($false)");
         write(c.scripts/L"build_verification.ps1",source,true);
     }
+    if(control=="observations"){
+        auto source=read(c.scripts/L"test_manager.ps1");
+        for(int i=0;i<2;++i)replace(source,"if($Mode -in 'plan','verify'){","if($Mode -eq 'plan'){");
+        write(c.scripts/L"test_manager.ps1",source,true);
+    }
     fs::create_directories(c.root/L"fake-bin");for(const auto& name:{L"cmake.exe",L"ctest.exe"})fs::copy_file(standin(),c.root/L"fake-bin"/name);
     Env env={{L"PATH",(c.root/L"fake-bin").wstring()+L";"+environment(L"PATH")}};
     write(c.root/L".build/known-runtime.txt","original explicit runtime resource");
+    // Exercise the real collector with an isolated reviewed input outside the
+    // explicit CTest file list. The stand-in controls execution, not collection.
+    const auto reviewedRuntime=c.root/L".build/reviewed-runtime.txt";
+    write(reviewedRuntime,"original reviewed runtime resource");
+    write(c.scripts/L"test_runtime_contracts.json",Json::object({{"schemaVersion",1},{"tests",Json::array({Json::object({
+        {"test","Alpha"},{"kind","reviewed-file-inputs-v1"},
+        {"reviewedSources",Json::array({Json::object({{"path","src/a.txt"},{"sha256","25718360e05d3c2d0963d1381e9dd4dae5fca789244ee4b9f861adcc0cc96218"}})})},
+        {"inputs",Json::array({Json::object({{"kind","file"},{"path",".build/reviewed-runtime.txt"},{"required",true}})})}
+    })})}}).dump());
     auto begun=c.begin("owner");const auto batch=begun.at("batchId").str();
     c.plan("owner",batch,0,"selected","Alpha,Beta","tool","src/a.txt");
     const auto produced=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","owner","-Batch",batch,"-Revision","0","-WaitSeconds","60"},env,75);
@@ -106,7 +120,14 @@ void scenario(const fs::path& repo,const std::string& control){
     require(original==read(c.stateRoot/wide(batch+".json")),"Supplement overwrote the immutable baseline result");
     const auto projection=Json::parse(read(c.root/L".build/verification"/wide(id+".json")));
     require(projection.at("schemaVersion").integer()==2&&projection.at("noBuild").boolean&&!projection.at("reuseAllowed").boolean&&projection.at("runId").str()==id,"Verification projection lost its authority or implied unclosed dependency reuse");
-    for(const auto& evidence:done.at("record").at("evidence").at("tests").items)require(evidence.at("requesters").items.size()==2&&evidence.at("bindingDigest").str().size()==64,"Shared result omitted requester/binding provenance");
+    for(const auto& evidence:done.at("record").at("evidence").at("tests").items){
+        require(evidence.at("requesters").items.size()==2&&evidence.at("bindingDigest").str().size()==64,"Shared result omitted requester/binding provenance");
+        require(evidence.at("dependencies").has("observation")&&evidence.at("dependencies").at("manifestSha256").str().size()==64&&
+            evidence.at("runtimeModules").at("status").str()=="not-instrumented"&&
+            evidence.at("runtimeInputs").at("status").str()==(evidence.at("test").str()=="Alpha"?"stable":"unclosed")&&!evidence.at("reuseAllowed").boolean,
+            "Verification omitted this execution's dependency/file/module observations or treated unknown closure as reusable");
+    }
+    if(control=="observations")return;
     // A changed binary must fail admission, with no execution or fallback build.
     const auto binary=c.root/L".build/Release/tests/SnowDesktopAlphaTests.exe";const auto bytes=read(binary);
     write(binary,"changed assertion binary");
@@ -127,9 +148,20 @@ void scenario(const fs::path& repo,const std::string& control){
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");const auto during=start("owner",env);const auto duringId=during.at("id").str();
     await_execution(c,duringId);write(binary,"changed during execution");c.gate(".build/hold-verification",false);
     require(wait_run(c,env,duringId,5).at("status").str()=="invalidated","Changed assertion binary retained a passing result");write(binary,bytes);
-    for(const std::string mutation:{"configure","duplicate","path"}){
+    fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
+    const auto runtimeRun=start("owner",env).at("id").str();await_execution(c,runtimeRun);
+    write(reviewedRuntime,"changed during verification");c.gate(".build/hold-verification",false);
+    const auto runtimeInvalid=wait_run(c,env,runtimeRun,5);
+    require(runtimeInvalid.at("status").str()=="invalidated"&&runtimeInvalid.at("record").at("error").str().find("Reviewed runtime file inputs changed")!=std::string::npos,
+        "Reviewed runtime file mutation retained a passing verification result");
+    const auto runtimeCoverage=Json::parse(read(c.stateRoot/L"runs"/wide(runtimeRun+".verification.json")));
+    const auto& fileObservation=runtimeCoverage.at("runtimeInputCheck").at("tests").items.front();
+    require(fileObservation.at("status").str()=="invalidated"&&fileObservation.at("beforeDigest").str()!=fileObservation.at("afterDigest").str()&&
+        original==read(c.stateRoot/wide(batch+".json")),"Runtime invalidation lost its endpoints or changed the original candidate evidence");
+    write(reviewedRuntime,"original reviewed runtime resource");
+    for(const std::string mutation:{"configure","duplicate","path","observations"}){
         const auto negative=run({executable().wstring(),repo.wstring(),wide("--verification-"+mutation)},c.root,65);
-        const auto signal=mutation=="configure"?"Verification repeated configure/build instead of executing the existing candidate":mutation=="duplicate"?"Equivalent verification requests launched duplicate Runs":"Verification was rejected before test execution";
+        const auto signal=mutation=="configure"?"Verification repeated configure/build instead of executing the existing candidate":mutation=="duplicate"?"Equivalent verification requests launched duplicate Runs":mutation=="observations"?"Verification omitted this execution's dependency/file/module observations":"Verification was rejected before test execution";
         require(negative.code==1&&negative.err.find(signal)!=std::string::npos,"Negative control did not reach the verification business assertion: "+negative.out+negative.err);
     }
     std::cout<<"PASS durable existing-artifact verification, exact active-intent dedup, independent observer/subscriber lifetime, environment separation, immutable evidence and queued/during-run invalidation; forced build, duplicate and startup PATH controls fail\n";

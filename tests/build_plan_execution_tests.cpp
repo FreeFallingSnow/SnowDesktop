@@ -68,7 +68,7 @@ exit 0
 int main(int argc,char** argv) {return test_main(argc,argv,[&](const fs::path& repo){
     if(argc>2){
         const std::string mode=argv[2];
-        if(mode=="--verification"||mode=="--verification-configure"||mode=="--verification-duplicate"||mode=="--verification-path"){verification_records_tests(repo,mode=="--verification"?"":mode.substr(15));return;}
+        if(mode=="--verification"||mode=="--verification-configure"||mode=="--verification-duplicate"||mode=="--verification-path"||mode=="--verification-observations"){verification_records_tests(repo,mode=="--verification"?"":mode.substr(15));return;}
         if(mode=="--evidence"||mode=="--without-evidence"||mode=="--with-query-startup"){evidence_records_tests(repo,mode=="--without-evidence",mode=="--with-query-startup");return;}
         if(mode=="--acceptance"||mode=="--without-acceptance-revision"){acceptance_records_tests(repo,mode=="--without-acceptance-revision");return;}
     }

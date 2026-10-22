@@ -280,6 +280,10 @@ function Invoke-FilteredTests {
         Set-Field $coverage 'testDefinitionsBeforeRun' $definitions
         Set-Field $coverage 'testRuntimeFilesBeforeRun' @(Get-VerificationRuntimeFiles $repositoryRoot $selection.Tests)
         Set-Field $coverage 'executionContext' (Get-TestExecutionContext)
+    }
+    if($Mode -in 'plan','verify'){
+        # Verification already bound invocation/binaries at admission. Observe
+        # this execution's inputs instead of borrowing the baseline's reads.
         $dependencyScript=Join-Path $PSScriptRoot 'build_test_dependencies.ps1'
         if([IO.File]::Exists($dependencyScript)){
             . $dependencyScript
@@ -319,7 +323,7 @@ function Invoke-FilteredTests {
         $testCode=0
     }finally{
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$previousModuleRoot,'Process')
-        if($Mode -eq 'plan'){
+        if($Mode -in 'plan','verify'){
             $runtimeCheck=if(Get-Command Compare-TestRuntimeInputs -ErrorAction SilentlyContinue){Compare-TestRuntimeInputs $repositoryRoot $selection.Tests (Get-Field $coverage 'dependencyManifest')}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime input observer is unavailable.';reuseAllowed=$false}}
             Set-Field $coverage 'runtimeInputCheck' $runtimeCheck
             $moduleScript=Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1'
@@ -439,6 +443,11 @@ if($Mode -eq 'verify'){
         if($admitted){
             try {$after=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget;if($after.key -ne $snapshot.key){throw 'Verification context changed during execution.'}}
             catch {$coverage.status='invalidated';$coverage.error=$_.Exception.Message;$code=5}
+            $changedRuntime=@(Get-Field (Get-Field $coverage 'runtimeInputCheck') 'tests' @()|Where-Object status -eq 'invalidated')
+            if($changedRuntime.Count){
+                $coverage.status='invalidated';$code=5
+                $coverage.error='Reviewed runtime file inputs changed during verification: '+(($changedRuntime|ForEach-Object test) -join ', ')
+            }
         }
         $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
