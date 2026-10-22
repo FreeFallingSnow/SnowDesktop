@@ -17,6 +17,7 @@ foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSele
  $tokens=$null;$errors=$null;$source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryRoot $import.path),[ref]$tokens,[ref]$errors)
  foreach($functionName in $import.functions){$definition=$source.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName},$false);. ([scriptblock]::Create($definition.Extent.Text))}
 }
+$repositoryRoot=$PSScriptRoot # Function-only probes operate on their isolated fixture, including inside a candidate checkout.
 $request=Get-Content -Raw (Join-Path $PSScriptRoot 'request.json')|ConvertFrom-Json
 $script:fixture=$request.inventory|ConvertTo-Json -Depth 12 -Compress;$script:queryArguments=@();$script:invocations=@();$script:runtimeInspections=0;$script:runtimeLocks=@($request.locks);$Mode='name'
 function Get-HostRuntimeLocks {++$script:runtimeInspections;$script:runtimeLocks}
