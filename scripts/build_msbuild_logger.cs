@@ -28,6 +28,7 @@ namespace SnowDesktop.Build
         readonly object sync = new object();
         readonly Dictionary<string, Operation> active = new Dictionary<string, Operation>();
         readonly Dictionary<string, string> targets = new Dictionary<string, string>();
+        readonly Dictionary<string, string[]> projects = new Dictionary<string, string[]>();
         StreamWriter output;
         string run, parent;
         bool capped;
@@ -38,6 +39,8 @@ namespace SnowDesktop.Build
         { return value == null ? "none" : value.NodeId+":"+value.ProjectContextId+":"+value.TargetId+":"+value.TaskId; }
         static string TargetContext(BuildEventContext value)
         { return value == null ? "none" : value.NodeId+":"+value.ProjectContextId+":"+value.TargetId; }
+        static string ProjectContext(BuildEventContext value)
+        { return value == null ? "none" : value.NodeId+":"+value.ProjectContextId; }
         static string Phase(string task, string target)
         {
             if (task == "CL") return "compile";
@@ -76,7 +79,7 @@ namespace SnowDesktop.Build
             if(fields.Length!=3 || !Guid.TryParseExact(fields[1],"N",out parsed)) throw new LoggerException("Invalid SnowDesktop observation parameters");
             run=fields[1];parent=fields[2];
             if(output!=null)Shutdown();
-            active.Clear();targets.Clear();capped=false;written=0;
+            active.Clear();targets.Clear();projects.Clear();capped=false;written=0;
             // CMake can invoke/reuse MSBuild once per selected target with the
             // same logger parameters. Each initialization owns a fresh file.
             string file=Path.ChangeExtension(fields[0],Guid.NewGuid().ToString("N")+".jsonl");
@@ -89,11 +92,29 @@ namespace SnowDesktop.Build
             events.MessageRaised+=Message;
             events.TargetStarted+=StartTarget;
             events.TargetFinished+=FinishTarget;
+            events.ProjectStarted+=StartProject;
+            events.ProjectFinished+=FinishProject;
         }
+        void StartProject(object sender, ProjectStartedEventArgs value)
+        {
+            lock(sync){
+                string configuration=null,platform=null;
+                if(value.GlobalProperties!=null){value.GlobalProperties.TryGetValue("Configuration",out configuration);value.GlobalProperties.TryGetValue("Platform",out platform);}
+                projects[ProjectContext(value.BuildEventContext)]=new[]{configuration,platform};
+            }
+        }
+        void FinishProject(object sender, ProjectFinishedEventArgs value)
+        {lock(sync){projects.Remove(ProjectContext(value.BuildEventContext));}}
         void StartTarget(object sender, TargetStartedEventArgs value)
         { lock(sync) { targets[TargetContext(value.BuildEventContext)]=value.TargetName; } }
         void FinishTarget(object sender, TargetFinishedEventArgs value)
-        { lock(sync) { targets.Remove(TargetContext(value.BuildEventContext)); } }
+        { lock(sync) {
+            if(value.TargetName=="Build"){
+                string[] context;projects.TryGetValue(ProjectContext(value.BuildEventContext),out context);
+                Write("project-build",",\"parentId\":"+Json(parent)+",\"projectFile\":"+Json(value.ProjectFile)+",\"configuration\":"+Json(context==null?null:context[0])+",\"platform\":"+Json(context==null?null:context[1])+",\"exitCode\":"+(value.Succeeded?"0":"1"));
+            }
+            targets.Remove(TargetContext(value.BuildEventContext));
+        } }
         void Start(object sender, TaskStartedEventArgs value)
         {
             lock(sync)

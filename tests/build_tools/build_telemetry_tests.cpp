@@ -4,6 +4,7 @@ using namespace build_test;
 void configuration_cache_tests(const fs::path& repo,bool omitHeaderIdentity);
 void resource_publication_tests(const fs::path& repo,bool formerBehavior);
 void compile_budget_tests(const fs::path& repo,const std::string& control);
+void test_build_roots_tests(const fs::path& repo);
 namespace {
 void test(const fs::path& repo,bool withoutLogger=false) {
     const auto label="allocation-collision-"+std::to_string(GetTickCount64());
@@ -96,6 +97,7 @@ target_compile_options(ObservedNative PRIVATE /W4 /WX)
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     if(argc>2){
         const std::string mode=argv[2];
+        if(mode=="--test-build-roots"){test_build_roots_tests(repo);return;}
         if(mode=="--compile-budget"||mode=="--compile-budget-limit"||mode=="--compile-budget-observation"){compile_budget_tests(repo,mode=="--compile-budget"?"":mode.substr(17));return;}
         if(mode=="--configuration-cache"){configuration_cache_tests(repo,false);return;}
         if(mode=="--configuration-header-control"){configuration_cache_tests(repo,true);return;}

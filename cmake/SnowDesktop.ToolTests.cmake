@@ -183,6 +183,10 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_state_transaction_tests.cpp "tools;core;integration" 60)
     snowdesktop_add_native_tool_test(SnowDesktopBuildTelemetryTests build_telemetry
         build_tools/build_telemetry_tests.cpp "tools;integration" 180)
+    target_sources(SnowDesktopBuildTelemetryTests PRIVATE tests/build_tools/build_test_build_roots_tests.cpp)
+    add_test(NAME test_build_roots COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --test-build-roots)
+    set_tests_properties(test_build_roots PROPERTIES TIMEOUT 240 LABELS "tools;integration;build"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildNoopTests build_noop_outputs
         build_tools/build_noop_tests.cpp "tools;integration" 240)
     set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)

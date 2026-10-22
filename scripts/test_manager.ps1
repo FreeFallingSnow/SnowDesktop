@@ -127,6 +127,70 @@ function Get-TestExecutionContext {
     return Get-VerificationEnvironment $repositoryRoot
 }
 
+function Get-TestBuildRoots([string]$Root,[string[]]$Targets) {
+    $original=@($Targets|Sort-Object -Unique)
+    $fallback=[pscustomobject]@{targets=$original;omitted=@();reason='original-targets'}
+    if($original.Count -lt 2 -or -not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process') -or
+       -not (Get-Command Read-BuildStageEvents -ErrorAction SilentlyContinue)){return $fallback}
+    try{
+        $context=Get-ConfiguredBuildContext $Root @('--build','--preset','tests')
+        if(-not $context -or $context.generator -notlike 'Visual Studio *'){return $fallback}
+        $directory=[IO.Path]::GetFullPath($context.directory).TrimEnd('\','/')
+        $pending=New-Object 'System.Collections.Generic.Queue[string]';$graph=@{};$selected=@{}
+        foreach($target in $original){
+            if($target -notmatch '^[A-Za-z0-9_]+$'){return $fallback}
+            $path=Join-Path $directory ($target+'.vcxproj');$selected[$target]=$path;$pending.Enqueue($path)
+        }
+        while($pending.Count){
+            $path=$pending.Dequeue();if($graph.ContainsKey($path)){continue}
+            if($graph.Count -ge 2048 -or -not $path.StartsWith($directory+'\',[StringComparison]::OrdinalIgnoreCase) -or
+               -not [IO.File]::Exists($path) -or (Get-Item -LiteralPath $path).Length -gt 8MB){return $fallback}
+            $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+            $reader=[Xml.XmlReader]::Create($path,$settings)
+            try{$document=New-Object Xml.XmlDocument;$document.XmlResolver=$null;$document.Load($reader)}finally{$reader.Dispose()}
+            $edges=@()
+            foreach($reference in $document.SelectNodes('//*[local-name()="ProjectReference"][@Include]')){
+                $conditional=$false;$parent=$reference
+                while($parent -is [Xml.XmlElement]){if($parent.HasAttribute('Condition')){$conditional=$true;break};$parent=$parent.ParentNode}
+                if($conditional -or @($reference.SelectNodes('*[local-name()="BuildReference"]')|Where-Object InnerText -ne 'true').Count){continue}
+                $child=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($path)) $reference.GetAttribute('Include')))
+                $edges+=@($child);$pending.Enqueue($child)
+            }
+            $graph[$path]=$edges
+        }
+        $reach=@{}
+        foreach($target in $original){
+            $seen=@{};$pending.Enqueue($selected[$target])
+            while($pending.Count){$path=$pending.Dequeue();if($seen.ContainsKey($path)){continue};$seen[$path]=$true;foreach($child in $graph[$path]){$pending.Enqueue($child)}}
+            $reach[$target]=$seen
+        }
+        $roots=@();$omitted=@()
+        foreach($target in $original){
+            $parents=@($original|Where-Object {$_ -ne $target -and $reach[$_].ContainsKey($selected[$target])})
+            if(@($parents|Where-Object {$reach[$target].ContainsKey($selected[$_])}).Count){return $fallback}
+            if($parents.Count){$omitted+=@($target)}else{$roots+=@($target)}
+        }
+        if(-not $roots.Count){return $fallback}
+        return [pscustomobject]@{targets=$roots;omitted=$omitted;reason='generated-project-reference-roots'}
+    }catch{return $fallback}
+}
+function Get-TestConfirmedBuildTargets([string]$Root,[string[]]$Targets) {
+    # A declared edge is only a scheduling hint. Confirm actual successful
+    # Release/x64 Build targets in this immutable Run before omitting a call.
+    try{
+        $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+        if($id -notmatch '^[a-f0-9]{32}$'){return @()}
+        $context=Get-ConfiguredBuildContext $Root @('--build','--preset','tests')
+        $events=@(Read-BuildStageEvents (Get-EntryRunRoot $Root) $id|Where-Object {
+            (Get-Field $_ 'kind') -eq 'project-build' -and (Get-Field $_ 'exitCode') -eq 0 -and
+            (Get-Field $_ 'configuration') -ceq 'Release' -and (Get-Field $_ 'platform') -ceq 'x64'})
+        $directories=@($context.directory);$candidate=Get-CandidateEntryContext $Root
+        if($candidate){$directories+=@($candidate.output)}
+        $built=@($events|ForEach-Object {Get-Field $_ 'projectFile'})
+        return @($Targets|Where-Object {$target=$_;@($directories|Where-Object {(Join-Path $_ ($target+'.vcxproj')) -in $built}).Count -gt 0})
+    }catch{return @()}
+}
+
 function Invoke-FilteredTests {
     param(
         [string[]]$CTestFilterArguments,
@@ -166,11 +230,20 @@ function Invoke-FilteredTests {
             "--build", "--preset", $BuildPreset)
     }
     elseif ($selection.Targets.Count -gt 0) {
-        Write-Host "=== Building $($selection.Targets.Count) target(s) for $($selection.Tests.Count) selected test(s) ==="
+        $buildRoots=Get-TestBuildRoots $repositoryRoot $selection.Targets
+        Write-Host "=== Building $($buildRoots.targets.Count) root target(s) for $($selection.Targets.Count) target(s) / $($selection.Tests.Count) selected test(s) ==="
         $buildArguments = @(
             "--build", "--preset", "tests", "--target"
-        ) + $selection.Targets
+        ) + $buildRoots.targets
         Invoke-Checked -FilePath "cmake" -Arguments $buildArguments
+        if($buildRoots.omitted.Count){
+            $confirmed=@(Get-TestConfirmedBuildTargets $repositoryRoot $buildRoots.omitted)
+            $remaining=@($buildRoots.omitted|Where-Object {$_ -notin $confirmed})
+            if($remaining.Count){
+                Write-Host "=== Building $($remaining.Count) dependency target(s) without confirmed Build completion ==="
+                Invoke-Checked -FilePath 'cmake' -Arguments (@('--build','--preset','tests','--target')+$remaining)
+            }
+        }
     }
 
     # The full aggregate already arranges its output in CMake.
