@@ -89,11 +89,42 @@ function Try-Lease([string]$Name) {
     }
 }
 
-function Wait-Again([string]$Message) {
+function Get-BatchWaitMessage($Current) {
+    if(-not $Current){return 'Waiting for batch retirement and its common result.'}
+    $message='Waiting for batch '+$Current.id
+    if($Current.phase -eq 'building'){
+        $runId=Get-Field $Current 'runId' ''
+        if($runId -match '^[a-f0-9]{32}$'){
+            $message+=': executing Run '+$runId
+            try {
+                . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+                $events=@(Read-BuildStageEvents $repositoryRoot $runId|Where-Object {$_.kind -in 'start','end'})
+                if($events.Count){$latest=$events[-1];$message+='; latest stage '+$latest.kind+' '+$latest.name}
+                else{$message+='; stage unavailable (no observation yet)'}
+            } catch {$message+='; stage unavailable (observation failed)'}
+        } else {$message+=': executing retained build/test pipeline'}
+    } elseif($Current.phase -eq 'editing'){
+        $editors=@($Current.participants|Where-Object state -eq 'editing'|ForEach-Object id)
+        $checks=@($Current.participants|Where-Object {$_.state -eq 'finished' -and (Get-Field (Get-Field $_ 'check') 'status') -in 'pending','running'}|ForEach-Object id)
+        $attention=@($Current.participants|Where-Object {$_.state -eq 'finished' -and (Get-Field (Get-Field $_ 'check') 'status') -in 'failed','invalidated','interrupted'}|ForEach-Object id)
+        $message+=': editing phase'
+        if($editors.Count){$message+='; editing peers '+(($editors|Select-Object -First 8) -join ', ')}
+        if($checks.Count){$message+='; checks running/pending '+(($checks|Select-Object -First 8) -join ', ')}
+        if($attention.Count){$message+='; checks need attention '+(($attention|Select-Object -First 8) -join ', ')}
+        if((Get-Field $Current 'planStatus') -eq 'blocked'){$message+='; plan blocked'}
+    } else {$message+=': phase '+$Current.phase}
+    return $message+'.'
+}
+
+function Wait-Again([string]$Message,$Current=$null) {
     if ($clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
+        if($Current){$Message=Get-BatchWaitMessage $Current}
         throw "Wait timed out. Registration was retained; use status and repeat the same command. $Message"
     }
     if ($clock.Elapsed.TotalSeconds - $script:lastNotice -ge 30) {
+        # Stage reads happen only when reporting, after releasing the state
+        # transaction. Observing must never relaunch or cancel the Run.
+        if($Current){$Message=Get-BatchWaitMessage $Current}
         [Console]::Error.WriteLine($Message)
         $script:lastNotice = $clock.Elapsed.TotalSeconds
     }
@@ -853,7 +884,7 @@ try {
             Emit-Result $result
         }
         if($Command -eq 'event-wait'){Start-Sleep -Milliseconds 200}
-        else {Wait-Again 'Waiting for this batch: editors must finish; a crashed build requires explicit recover. Do not modify files after finish.'}
+        else {Wait-Again 'Waiting for batch retirement and its common result.' (Get-Field $state 'current')}
     }
 }
 catch {
