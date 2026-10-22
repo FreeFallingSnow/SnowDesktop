@@ -3213,6 +3213,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                     homeAboutPage_->FocusTarget(
                         SettingsPage::Debug, focusId));
             }
+            RegisterFocusTarget("debug.logs.all",
+                homeAboutPage_->FocusTarget(SettingsPage::Debug, "debug.logs.all"));
             for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
             {
                 const auto focusId = "debug.logs." + std::string(descriptor.id);

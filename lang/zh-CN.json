@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "应用（%s 秒后可用）",
   "app.settings.widgets_permission_audio_playback": "播放组件音频",
   "settings.debug.logs.title": "详细日志",
-  "settings.debug.logs.description": "开关会保留到下次启动；警告、错误和崩溃始终记录。",
+  "settings.debug.logs.description": "开关状态会一直保留，直到手动更改。警告、错误和崩溃始终记录。",
   "settings.debug.logs.runtime": "启动与运行",
   "settings.debug.logs.input": "鼠标与键盘",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "状态栏与系统面板",
   "settings.debug.logs.settings": "设置窗口",
   "settings.debug.logs.steam": "Steam 与创意工坊",
-  "settings.debug.logs.data": "数据与恢复"
+  "settings.debug.logs.data": "数据与恢复",
+  "settings.debug.logs.all": "全部开启"
 }

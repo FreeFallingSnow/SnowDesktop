@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "Appliquer (disponible dans %s s)",
   "app.settings.widgets_permission_audio_playback": "Lire le son du composant",
   "settings.debug.logs.title": "Journaux détaillés",
-  "settings.debug.logs.description": "Les interrupteurs sont conservés après redémarrage. Les avertissements, erreurs et plantages sont toujours consignés.",
+  "settings.debug.logs.description": "L’état des interrupteurs est conservé jusqu’à ce que vous le changiez manuellement. Les avertissements, erreurs et plantages sont toujours consignés.",
   "settings.debug.logs.runtime": "Démarrage et exécution",
   "settings.debug.logs.input": "Souris et clavier",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "Barre d’état et panneaux système",
   "settings.debug.logs.settings": "Fenêtre des paramètres",
   "settings.debug.logs.steam": "Steam et Workshop",
-  "settings.debug.logs.data": "Données et récupération"
+  "settings.debug.logs.data": "Données et récupération",
+  "settings.debug.logs.all": "Tout activer"
 }

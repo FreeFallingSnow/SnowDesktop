@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "Aplicar (disponível em %s s)",
   "app.settings.widgets_permission_audio_playback": "Reproduzir áudio do componente",
   "settings.debug.logs.title": "Logs detalhados",
-  "settings.debug.logs.description": "As opções são mantidas após reiniciar. Avisos, erros e falhas do aplicativo são sempre registrados.",
+  "settings.debug.logs.description": "O estado das opções é mantido até que você o altere manualmente. Avisos, erros e falhas do aplicativo são sempre registrados.",
   "settings.debug.logs.runtime": "Inicialização e execução",
   "settings.debug.logs.input": "Mouse e teclado",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "Barra de status e painéis do sistema",
   "settings.debug.logs.settings": "Janela de configurações",
   "settings.debug.logs.steam": "Steam e Oficina",
-  "settings.debug.logs.data": "Dados e recuperação"
+  "settings.debug.logs.data": "Dados e recuperação",
+  "settings.debug.logs.all": "Ativar tudo"
 }

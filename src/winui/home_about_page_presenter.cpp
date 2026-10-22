@@ -127,6 +127,9 @@ struct HomeAboutPagePresenter::Impl
     };
     Section logSection;
     muxc::TextBlock logHelp{nullptr};
+    controls::SettingRow allLogsRow;
+    muxc::ToggleSwitch allLogsToggle{nullptr};
+    winrt::event_token allLogsToken{};
     std::vector<LogEntry> logEntries;
     std::uint32_t logModules = 0;
     Section debugProfileSection;
@@ -412,6 +415,11 @@ struct HomeAboutPagePresenter::Impl
         InitializeSection(logSection, cardStyle, debugRoot);
         logHelp = MakeBodyText(0.72);
         logSection.content.Children().Append(logHelp);
+        allLogsToggle = muxc::ToggleSwitch{};
+        allLogsToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        allLogsToggle.UseSystemFocusVisuals(true);
+        allLogsRow.Initialize(allLogsToggle, 180.0);
+        logSection.content.Children().Append(allLogsRow.root);
         logEntries.reserve(snowdesktop::diagnostics::LogModules.size());
         for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
         {
@@ -518,6 +526,15 @@ struct HomeAboutPagePresenter::Impl
                         SettingsRoute::ForPage(SettingsPage::Debug));
                 }
             });
+        allLogsToken = allLogsToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+            const bool enabled = allLogsToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [enabled](GeneralSettings& settings) {
+                    settings.diagnosticLogModules = enabled
+                        ? snowdesktop::diagnostics::AllLogModules : 0u;
+                });
+        });
         for (auto& entry : logEntries)
         {
             const auto module = entry.descriptor.module;
@@ -679,6 +696,8 @@ struct HomeAboutPagePresenter::Impl
         initializationToggle.IsEnabled(!profileEnabled);
         profileDataPath.Text(L("settings.debug.profile.data") + L"\n" + profileDirectory);
         desktopDirectoryRow.SetText(L("settings.debug.profile.desktop"), simulatedDesktop);
+        allLogsToggle.IsOn(snowdesktop::diagnostics::NormalizeLogModules(logModules) ==
+            snowdesktop::diagnostics::AllLogModules);
         for (const auto& entry : logEntries)
             entry.toggle.IsOn((logModules & snowdesktop::diagnostics::ModuleBit(entry.descriptor.module)) != 0);
         forceRestartToggle.IsOn(forceRestartEnabled);
@@ -766,6 +785,9 @@ struct HomeAboutPagePresenter::Impl
 
         SetSectionTitle(logSection, "settings.debug.logs.title", L"Detailed logs");
         logHelp.Text(L("settings.debug.logs.description"));
+        allLogsRow.SetText(L("settings.debug.logs.all"));
+        SetAutomation(allLogsToggle, allLogsRow.label.Text());
+        muxa::AutomationProperties::SetAutomationId(allLogsToggle, L"debug.logs.all");
         for (auto& entry : logEntries)
         {
             entry.row.SetText(L(entry.descriptor.labelKey));
@@ -931,7 +953,7 @@ struct HomeAboutPagePresenter::Impl
             if (focusId == "debug.clearProfile") return clearProfileButton;
             for (const auto& entry : logEntries)
                 if (focusId == "debug.logs." + std::string(entry.descriptor.id)) return entry.toggle;
-            if (focusId == "debug.logs") return logEntries.front().toggle;
+            if (focusId == "debug.logs" || focusId == "debug.logs.all") return allLogsToggle;
             if (focusId == "debug.demo_mode") return demoModeToggle;
             if (focusId == "debug.initialization") return initializationToggle;
             if (focusId == "debug.animation") return animationToggle;
@@ -954,6 +976,7 @@ struct HomeAboutPagePresenter::Impl
                 link.button.Click(link.clickToken);
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
+            allLogsToggle.Toggled(allLogsToken);
             for (const auto& entry : logEntries) entry.toggle.Toggled(entry.token);
             profileToggle.Toggled(profileToken);
             chooseDesktopButton.Click(chooseDesktopToken);

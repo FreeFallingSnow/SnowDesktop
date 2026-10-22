@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "Anwenden (in %s s verfügbar)",
   "app.settings.widgets_permission_audio_playback": "Komponenten-Audio abspielen",
   "settings.debug.logs.title": "Detaillierte Protokolle",
-  "settings.debug.logs.description": "Die Schalter bleiben nach einem Neustart gespeichert. Warnungen, Fehler und Abstürze werden immer protokolliert.",
+  "settings.debug.logs.description": "Die Schalterzustände bleiben gespeichert, bis Sie sie manuell ändern. Warnungen, Fehler und Abstürze werden immer protokolliert.",
   "settings.debug.logs.runtime": "Start und Laufzeit",
   "settings.debug.logs.input": "Maus und Tastatur",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "Statusleiste und Systembereiche",
   "settings.debug.logs.settings": "Einstellungsfenster",
   "settings.debug.logs.steam": "Steam und Workshop",
-  "settings.debug.logs.data": "Daten und Wiederherstellung"
+  "settings.debug.logs.data": "Daten und Wiederherstellung",
+  "settings.debug.logs.all": "Alle aktivieren"
 }

@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "適用（%s 秒後に利用可能）",
   "app.settings.widgets_permission_audio_playback": "コンポーネントの音声を再生",
   "settings.debug.logs.title": "詳細ログ",
-  "settings.debug.logs.description": "スイッチの状態は再起動後も保持されます。警告、エラー、クラッシュは常に記録されます。",
+  "settings.debug.logs.description": "スイッチの状態は手動で変更するまで保持されます。警告、エラー、クラッシュは常に記録されます。",
   "settings.debug.logs.runtime": "起動と実行",
   "settings.debug.logs.input": "マウスとキーボード",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "ステータスバーとシステムパネル",
   "settings.debug.logs.settings": "設定ウィンドウ",
   "settings.debug.logs.steam": "Steam とワークショップ",
-  "settings.debug.logs.data": "データと復元"
+  "settings.debug.logs.data": "データと復元",
+  "settings.debug.logs.all": "すべて有効にする"
 }

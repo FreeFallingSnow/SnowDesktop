@@ -1,6 +1,6 @@
 # Runtime logging
 
-The Debug settings page offers 16 independent detailed-log switches. They default to off and are persisted as `diagnosticLogModules` in `SnowDesktop.general.json` in the active data profile. Stable bit positions are declared in `diagnostic_log_modules.h`; append new modules rather than reordering them.
+The Debug settings page offers 16 independent detailed-log switches and an Enable all switch. The aggregate switch is on only when every module is enabled; turning it on or off commits all module bits in one settings update. Individual changes retain the other module choices. Preferences remain saved until manually changed, including across application restarts. They default to off and are persisted as `diagnosticLogModules` in `SnowDesktop.general.json` in the active data profile. Stable bit positions are declared in `diagnostic_log_modules.h`; append new modules rather than reordering them.
 
 Changes use the existing settings controller and versioned private IPC. Logging-only commits update the mask without rebuilding desktop layout. Confirmed snapshots configure the settings process. Startup and helper entry points read the saved preferences before starting detailed probes. Enabling startup logs captures the next application start.
 

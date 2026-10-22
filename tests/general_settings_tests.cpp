@@ -1135,6 +1135,19 @@ int main(int argc, char** argv)
         "general settings load succeeds");
     Check(loaded.diagnosticLogModules == saved.diagnosticLogModules,
         "independent log module choices survive save and restart");
+    for (const auto modules : {snowdesktop::diagnostics::AllLogModules, 0u})
+    {
+        GeneralSettings allLogs = saved, restored;
+        allLogs.diagnosticLogModules = modules;
+        Check(SaveGeneralSettings(path.c_str(), allLogs) &&
+            LoadGeneralSettings(path.c_str(), restored) &&
+            restored.diagnosticLogModules == modules &&
+            restored.forceRestartHotkeyEnabled == saved.forceRestartHotkeyEnabled &&
+            restored.contextMenuHideMoreManagement == saved.contextMenuHideMoreManagement,
+            "enable-all and disable-all log choices persist without changing other settings");
+    }
+    Check(SaveGeneralSettings(path.c_str(), saved),
+        "restore the independent log preferences for remaining settings checks");
     Check(loaded.contextMenuExpandQuickActions && loaded.contextMenuHidePageManagement &&
         loaded.contextMenuHideMoreManagement,
         "context-menu options survive restart");

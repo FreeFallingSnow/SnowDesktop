@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "Apply (available in %s s)",
   "app.settings.widgets_permission_audio_playback": "Play component audio",
   "settings.debug.logs.title": "Detailed logs",
-  "settings.debug.logs.description": "Switches are saved across restarts. Warnings, errors and crashes are always logged.",
+  "settings.debug.logs.description": "Switch states are saved until you change them manually. Warnings, errors and crashes are always logged.",
   "settings.debug.logs.runtime": "Startup and runtime",
   "settings.debug.logs.input": "Mouse and keyboard",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "Status bar and system panels",
   "settings.debug.logs.settings": "Settings window",
   "settings.debug.logs.steam": "Steam and Workshop",
-  "settings.debug.logs.data": "Data and recovery"
+  "settings.debug.logs.data": "Data and recovery",
+  "settings.debug.logs.all": "Enable all"
 }

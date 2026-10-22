@@ -2569,7 +2569,7 @@
   "app.widget_permission.native_countdown": "적용(%s초 후 사용 가능)",
   "app.settings.widgets_permission_audio_playback": "구성 요소 오디오 재생",
   "settings.debug.logs.title": "상세 로그",
-  "settings.debug.logs.description": "스위치 상태는 다시 시작해도 유지됩니다. 경고, 오류 및 충돌은 항상 기록됩니다.",
+  "settings.debug.logs.description": "스위치 상태는 수동으로 변경할 때까지 유지됩니다. 경고, 오류 및 충돌은 항상 기록됩니다.",
   "settings.debug.logs.runtime": "시작 및 실행",
   "settings.debug.logs.input": "마우스 및 키보드",
   "settings.debug.logs.dock": "Dock",
@@ -2585,5 +2585,6 @@
   "settings.debug.logs.system": "상태 표시줄 및 시스템 패널",
   "settings.debug.logs.settings": "설정 창",
   "settings.debug.logs.steam": "Steam 및 창작마당",
-  "settings.debug.logs.data": "데이터 및 복구"
+  "settings.debug.logs.data": "데이터 및 복구",
+  "settings.debug.logs.all": "모두 켜기"
 }

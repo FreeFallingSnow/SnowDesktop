@@ -651,6 +651,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DeveloperTools, "developer.runtime",
         "app.settings.widgets_runtime_diagnostics",
         "settings.developer.tools.description"},
+    {SettingsPage::Debug, "debug.logs.all", "settings.debug.logs.all", "settings.debug.logs.description"},
     {SettingsPage::Debug, "debug.logs.runtime", "settings.debug.logs.runtime", "settings.debug.logs.description"},
     {SettingsPage::Debug, "debug.logs.input", "settings.debug.logs.input", "settings.debug.logs.description"},
     {SettingsPage::Debug, "debug.logs.dock", "settings.debug.logs.dock", "settings.debug.logs.description"},
