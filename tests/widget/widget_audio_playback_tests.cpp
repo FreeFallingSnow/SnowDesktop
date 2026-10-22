@@ -329,6 +329,9 @@ function checkEntry(d)
     mediaSession.playbackStatus='paused'
     d.event(context,model,{kind='action',id='local.track',value=localModel.player.tracks[1].key})
     assert(localModel.source=='local' and calls[before+1].name=='audio.play')
+    assert(contains(d.view(context,model),'aurora.utilities'),'loading local playback keeps utilities visible')
+    -- Reset the new playback scenario before the original idle/hover checks.
+    localModel.player:stop()
     assert(not contains(d.view(context,model),'aurora.utilities'))
     hovered='aurora.surface';assert(contains(d.view(context,model),'aurora.utilities'))
     hovered='media.toggle';assert(contains(d.view(context,model),'aurora.utilities'))
