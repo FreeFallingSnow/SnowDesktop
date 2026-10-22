@@ -184,7 +184,7 @@ function M.panel(_context,model,systemSession,systemPermission)
             panel.iconButton("playlist.add.files",0xF067,l10n.tr("music.files"),row*1.1,"local.files",M.available()),
             panel.iconButton("playlist.add.folder",0xF07B,l10n.tr("music.folder"),row*1.1,"local.folder",M.available()),
             view.button({key="music.clear",label=l10n.tr("music.clear"),width="auto",height=row,
-                fontSize=row*0.41,padding={horizontal=row*0.4},enabled=#p.sources>0,
+                fontSize=row*0.41,padding={horizontal=row*0.4},textAlign="center",enabled=#p.sources>0,
                 style={foreground=c.secondary,background=c.surface,borderWidth=0,cornerRadius=row*0.3},
                 events={click={id="local.clear"}}}),
         }})
@@ -207,6 +207,7 @@ function M.panel(_context,model,systemSession,systemPermission)
         model.listOffset=range.offset;model.itemExtent=extent
         model.listTop=row*(searchSupported and 2.98 or 1.7);model.listViewport=viewport
         local items={}
+        local indexWidth=row*math.max(0.5,#tostring(math.max(1,#p.tracks))*0.25)
         for visible=math.max(1,range.firstIndex),range.lastIndex do
             local i=indices[visible]
             local track=p.tracks[i]
@@ -215,11 +216,11 @@ function M.panel(_context,model,systemSession,systemPermission)
             local dragging=drag and drag.moved and drag.from==i
             local boundary=drag and drag.moved and drag.boundary
             local layers={view.column({key=track.key..".padding",width="fill",height="fill",padding={vertical=row*0.07,horizontal=row*0.3},children={
-                view.row({key=track.key..".row",width="fill",height="fill",padding={horizontal=row*0.45},gap=row*0.25,
+                view.row({key=track.key..".row",width="fill",height="fill",padding={horizontal=row*0.3},gap=row*0.2,justifyContent="start",
                     alignItems="center",style={background=i==p.index and c.selected or c.surface,cornerRadius=row*0.3,borderWidth=0,opacity=dragging and 0.45 or 1},children={
-                        text(track.key..".index",tostring(i),row*0.4,color,{width=row*1.5,textAlign="end"}),
-                        text(track.key..".title",track.name,row*0.43,color),
-                        view.icon({key=track.key..".grip",glyph=utf8.char(0xF0C9),iconFont="fa",width=row*0.5,height=row*0.6,
+                        text(track.key..".index",tostring(i),row*0.4,color,{width=indexWidth,minWidth=indexWidth,flexShrink=0,textAlign="start"}),
+                        text(track.key..".title",track.name,row*0.43,color,{minWidth=0,textAlign="start"}),
+                        view.icon({key=track.key..".grip",glyph=utf8.char(0xF0C9),iconFont="fa",width=row*0.5,height=row*0.6,flexShrink=0,
                             fontSize=row*0.35,style={foreground=secondary}}),
                     }})}})
             }
