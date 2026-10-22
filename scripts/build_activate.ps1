@@ -61,7 +61,7 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         if(-not $lease.CanWrite -or $lease.Name -ne (Join-Path $stateRoot 'build.lock')){throw 'Runtime activation lost its output lease.'}
         $current=Read-EntryJson (Join-Path $stateRoot 'activation-current.json')
         if($current -and (Get-Field $current 'sourceCapturedUtc') -and
-            [DateTime]$current.sourceCapturedUtc -gt [DateTime]$result.sourceCapturedUtc){$result.status='superseded';return $result}
+            (ConvertTo-UtcTimestamp $current.sourceCapturedUtc) -gt (ConvertTo-UtcTimestamp $result.sourceCapturedUtc)){$result.status='superseded';return $result}
         Initialize-BuildActivationControl
         $window=[IntPtr]::Zero;$process=$null
         while($true){
