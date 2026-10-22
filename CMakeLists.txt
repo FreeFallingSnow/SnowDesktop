@@ -1683,7 +1683,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopWidgetAudioPlaybackTests
         widget_audio_playback
-        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/local-music-player/modules/player.lua"
+        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/aurora-player/modules/local_queue.lua"
         SOURCES
             tests/widget/widget_audio_playback_tests.cpp
             src/widget/tasks/widget_audio_playback.cpp

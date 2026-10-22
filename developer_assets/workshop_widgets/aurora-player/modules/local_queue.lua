@@ -8,6 +8,17 @@ local function audioFile(name)
 end
 M.audioFile = audioFile
 
+-- Pointer position is in list-content coordinates, including scroll offset.
+-- Each item's midpoint divides the two insertion gaps around that item.
+function M.dropTarget(from, count, position, extent)
+    if count<1 or extent<=0 then return from,nil end
+    local boundary=math.max(0,math.min(count,math.floor(position/extent+0.5)))
+    local target=boundary<from and boundary+1 or boundary
+    target=math.max(1,math.min(count,target))
+    if target==from then return from,nil end
+    return target,boundary
+end
+
 function M.new(api)
     local p = { tracks = {}, sources = {}, pending = {}, scans = {}, releases = {}, index = 0,
         status = "stopped", position = 0, duration = 0, canSeek = false, volume = 1, playbackRate = 1, shuffle = false, repeatMode = "none", nextKey = 0, bag = {}, history = {},
