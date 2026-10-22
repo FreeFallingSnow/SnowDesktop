@@ -64,6 +64,10 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
         replace(script,"runtime=$payload;profile=$selection.profile;files=$records.Count",
             "runtime=$selection.root;profile=$selection.profile;files=$records.Count");
         write(c.scripts/L"build_candidate_artifacts.ps1",script,true);
+    }else if(control=="verification-default-preset"){
+        auto script=read(c.scripts/L"test_manager.ps1");
+        replace(script,"-TestPreset $(if($ExecutionOnly){'all-tests'}else{$TestPreset})","-TestPreset $TestPreset");
+        write(c.scripts/L"test_manager.ps1",script,true);
     }else if(control=="batches-held-window"){
         auto script=read(c.scripts/L"build_candidate_batch.ps1");
         replace(script,"Set-Field $state 'activeCandidates' (@($active)+@($batch));$state.current=$null",
@@ -94,7 +98,11 @@ snowdesktop_install_shared_guard()
     write(c.scripts/L"candidate_gate.ps1",R"PS($ErrorActionPreference='Stop'
 $gate=[Environment]::GetEnvironmentVariable('CANDIDATE_FIXTURE_GATE','Process')
 if($gate -and [IO.File]::Exists($gate)){
- [IO.File]::WriteAllText($gate+'.ready',(@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()}|ConvertTo-Json))
+ $marker=$gate+'.ready';$pending=$marker+'.'+[Guid]::NewGuid().ToString('N')+'.pending'
+ try{
+  [IO.File]::WriteAllText($pending,(@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()}|ConvertTo-Json))
+  [IO.File]::Move($pending,$marker)
+ }finally{if([IO.File]::Exists($pending)){[IO.File]::Delete($pending)}}
  $clock=[Diagnostics.Stopwatch]::StartNew()
  while([IO.File]::Exists($gate)){if($clock.Elapsed.TotalSeconds -gt 50){throw 'Candidate fixture gate expired'};Start-Sleep -Milliseconds 40}
 }
@@ -177,9 +185,17 @@ $repositoryRoot=$ProbeRoot
     }
     std::cout<<"PASS physical/logical candidate output owners, Release/Debug separation, neighbor exclusion, PowerShell7/5.1 and original-path negative control\n";
 }
-void candidate_batches(const fs::path& repo,bool heldWindow) {
+void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnly=false,bool oldPreset=false) {
     Coordinator c(repo,"candidate-batches",true,fixture_parent(repo));
-    prepare(c,repo,heldWindow?"batches-held-window":"");
+    prepare(c,repo,heldWindow?"batches-held-window":(oldPreset?"verification-default-preset":""));
+    if(verificationOnly){
+        auto cmake=read(c.root/L"CMakeLists.txt");replace(cmake,"LABELS \"core\"","LABELS \"tools\"");write(c.root/L"CMakeLists.txt",cmake);
+        auto presets=read(c.root/L"CMakePresets.json");
+        replace(presets,"\"name\":\"tests\",\"inherits\":\"all-tests\"","\"name\":\"tests\",\"inherits\":\"all-tests\",\"filter\":{\"exclude\":{\"label\":\"tools\"}}");
+        write(c.root/L"CMakePresets.json",presets);
+        c.git({L"add",L"--",L"CMakeLists.txt",L"CMakePresets.json"});
+        c.git({L"commit",L"-m",L"Tool-filtered verification fixture baseline"});
+    }
     auto begin=[&](const std::string& task){return c.bridge->call(c.scripts/L"build_manager.ps1",{"begin",task});};
     const auto empty=begin("empty-requirement").at("batchId").str();
     c.plan("empty-requirement",empty,0,"none","","docs","src/value.h");
@@ -235,16 +251,22 @@ void candidate_batches(const fs::path& repo,bool heldWindow) {
     const auto compiledTime=fs::last_write_time(candidateProgram);
     const auto originalPresets=read(c.root/L"CMakePresets.json");
     write(c.root/L"CMakePresets.json","An editor has not finished the next preset yet\n");
-    const auto verified=wait(c,submit(c,{"-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Verify the captured candidate while the original checkout continues editing"}));
+    const auto verified=wait(c,submit(c,{"-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Verify the captured candidate while the original checkout continues editing"}),oldPreset?1:0);
     write(c.root/L"CMakePresets.json",originalPresets);
-    require(verified.at("record").at("verification").at("noBuild").boolean&&fs::last_write_time(candidateProgram)==compiledTime,
-        "Candidate verification rebuilt its program or lost the no-build result");
+    require(verified.at("status").str()=="passed"&&verified.at("record").at("verification").at("noBuild").boolean&&fs::last_write_time(candidateProgram)==compiledTime,
+        "No-build candidate verification did not execute its selected tooling test or rebuilt its program");
     bool executed=false;
     for(const auto& event:verified.at("stageEvents").items){if(!event.has("name"))continue;const auto name=event.at("name").str();if(name=="test-execute")executed=true;require(name!="configure"&&name!="test-target-build"&&name!="arrange"&&name!="compile",
         "Execution-only candidate verification configured, built or arranged outputs");}
     require(executed&&verified.at("record").at("evidence").at("tests").items.size()==1&&
         verified.at("record").at("evidence").at("tests").items.front().at("attempts").items.front().at("report").str()!=result.at("coverage").at("report").str(),
         "Candidate verification reused an old report instead of executing the selected test");
+    if(verificationOnly){
+        const auto control=run({executable().wstring(),repo.wstring(),L"--tool-verification-old-preset"},c.root,100,{},true);
+        require(control.code==1&&control.err.find("No-build candidate verification did not execute its selected tooling test")!=std::string::npos,
+            "Default-preset control did not reach the tooling execution assertion: "+control.out+control.err);
+        std::cout<<"PASS tool-labeled candidate no-build verification, unchanged binary, actual fresh report and default-preset control\n";return;
+    }
     auto revision=[&](){const auto tasks=c.call({"task-list"});for(const auto& task:tasks.at("tasks").items)if(task.at("id").str()=="candidate")return std::to_string(task.at("revision").integer());throw std::runtime_error("Missing candidate task");};
     const auto acceptance=c.call({"acceptance-start","candidate","-Batch",batch,"-Revision","0","-TaskRevision",revision(),
         "-AcceptanceCriterion","Saved candidate returns7 while the live source contains11","-Files",".build/Release/tests/SnowDesktopCandidateFixtureTests.exe"}).at("acceptance");
@@ -427,7 +449,8 @@ void scenario(const fs::path& repo,const std::string& control) {
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
-    if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
+    if(mode=="--tool-verification"||mode=="--tool-verification-old-preset")candidate_batches(repo,false,true,mode=="--tool-verification-old-preset");
+    else if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
     else if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
     else scenario(repo,mode.empty()?"":mode.substr(2));

@@ -473,6 +473,16 @@ function Set-WeightedResourcePolicy([string]$Root,[int]$CpuCapacity,[int]$Memory
     }catch{if(Test-EntrySharingViolation $_.Exception){throw 'Resource policy is busy; no capacity change was applied while a lease or transaction is active.'};throw}
     finally{if($transaction){$transaction.Dispose()};if($compatibility){$compatibility.Dispose()}}
 }
+function Enter-ProjectResourceQueue($Binding,[string]$RunId) {
+    Initialize-ResourceRuntime
+    if(-not ('SnowDesktop.Build.ResourceWaiter' -as [type])){throw 'This PowerShell process loaded an older resource queue runtime; start a new process.'}
+    try{return [SnowDesktop.Build.ResourceWaiter]::Join([IO.Path]::GetDirectoryName($Binding.lockPath),$RunId)}
+    catch{if(Test-EntrySharingViolation $_.Exception){throw 'Shared project resources busy: admission queue transaction'};throw}
+}
+function Get-ProjectResourceTurn($Waiter) {
+    try{return $Waiter.Inspect()}
+    catch{if(Test-EntrySharingViolation $_.Exception){throw 'Shared project resources busy: admission queue transaction'};throw}
+}
 function Enter-ProjectResources($Binding) {
     # The handle is the authority. No PID, heartbeat age, stale JSON or timeout
     # releases somebody else's capacity. It is never inherited by a child.

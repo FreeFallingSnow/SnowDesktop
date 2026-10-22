@@ -9,6 +9,8 @@ struct BudgetHarness {
     Coordinator first;
     fs::path secondRoot;
     std::unique_ptr<Bridge> second;
+    fs::path thirdRoot;
+    std::unique_ptr<Bridge> third;
     int cpuCapacity=1;
     explicit BudgetHarness(const fs::path& repo):first(repo,"weighted-resources"),secondRoot(first.root/L"second worktree") {
         auto runtime=read(first.scripts/L"build_runtime.ps1");runtime+="\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='isolated resource fixture'}}\n";write(first.scripts/L"build_runtime.ps1",runtime,true);
@@ -25,8 +27,16 @@ struct BudgetHarness {
         second->call(secondRoot/L"scripts/build_manager.ps1",{"task-open","runner","-TaskName","second weighted resource owner"});
         gate(0,true);gate(1,true);
     }
-    fs::path root(int side) const {return side?secondRoot:first.root;}
-    Bridge& bridge(int side){return side?*second:*first.bridge;}
+    void add_third(const fs::path& repo){
+        thirdRoot=first.root/L"third worktree";
+        first.git({L"worktree",L"add",L"--detach",thirdRoot.wstring(),L"HEAD"});
+        fs::copy(first.scripts,thirdRoot/L"scripts",fs::copy_options::recursive|fs::copy_options::overwrite_existing);
+        third=std::make_unique<Bridge>(repo,thirdRoot,false,true);
+        third->call(thirdRoot/L"scripts/build_manager.ps1",{"task-open","runner","-TaskName","third queued resource owner"});
+        gate(2,true);
+    }
+    fs::path root(int side) const {return side==2?thirdRoot:(side?secondRoot:first.root);}
+    Bridge& bridge(int side){return side==2?*third:(side?*second:*first.bridge);}
     Json call(int side,const std::vector<std::string>& args,int code=0){return bridge(side).call(root(side)/L"scripts/build_run.ps1",args,code);}
     Json record(int side,const std::string& id){return Json::parse(read(root(side)/L".build/collaboration/runs"/wide(id+".json")));}
     void gate(int side,bool hold){const auto path=root(side)/L"hold-build";if(hold)write(path,"held");else fs::remove(path);}
@@ -52,6 +62,43 @@ struct BudgetHarness {
     void cancel(int side,const std::string& id){call(side,{"-Command","cancel","-Task","runner","-RunId",id});wait(side,id,4);}
     void finish(int side,const std::string& id){gate(side,false);require(wait(side,id).at("status").str()=="passed","Budget fixture did not finish");gate(side,true);}
 };
+void fairness(const fs::path& repo,bool bypass=false){
+    BudgetHarness h(repo);h.add_third(repo);
+    require(h.cpuCapacity>=2,"Fair-admission scenario requires two policy CPU slots");
+    if(bypass){
+        for(int side=0;side<3;++side){
+            const auto file=h.root(side)/L"scripts/build_run.ps1";auto script=read(file);
+            replace(script,"if($turn.Position -ne 1){","if($false){ # Controlled removal of admission ordering\n");
+            write(file,script,true);
+        }
+    }
+    const auto owner=h.start(0);h.running(0,owner);
+    const auto older=h.start(1,h.cpuCapacity);h.queued(1,older,"cpu-capacity");
+    const auto newer=h.start(2);
+    until([&]{const auto r=h.record(2,newer);return r.at("status").str()=="running"||r.at("completedUtc").kind!=Json::Kind::Null||r.at("waitingFor").str().find("earlier admission request")!=std::string::npos;},25);
+    const auto waiting=h.record(2,newer);
+    require(waiting.at("status").str()=="queued"&&waiting.at("resourceAdmission").at("queue").at("headRunId").str()==older,
+        "Later small reservation bypassed an older live admission request");
+    require(waiting.at("resourceAdmission").at("queue").at("sequence").number>h.record(1,older).at("resourceAdmission").at("queue").at("sequence").number,
+        "Admission sequence did not preserve joining order across worktrees");
+    h.cancel(2,newer);require(owner_alive(h.record(1,older).at("owner")),"Cancelling a queue tail stopped its earlier waiter");
+    const auto tail=h.start(2);h.queued(2,tail,"earlier admission request");
+    h.finish(0,owner);h.running(1,older);h.queued(2,tail,"cpu-capacity");
+    h.finish(1,older);h.running(2,tail);h.finish(2,tail);
+    const auto full=h.start(0,h.cpuCapacity);const auto fullOwner=h.running(0,full);
+    const auto lost=h.start(1);const auto lostRecord=h.queued(1,lost,"cpu-capacity");
+    const auto following=h.start(2);h.queued(2,following,"earlier admission request");
+    stop_owner(lostRecord.at("owner"));h.queued(2,following,"cpu-capacity");
+    require(owner_alive(fullOwner.at("owner")),"Abandoned ticket cleanup stopped an unrelated capacity owner");
+    h.finish(0,full);h.running(2,following);h.finish(2,following);
+    require(h.call(1,{"-Command","status","-RunId",lost}).at("status").str()=="interrupted","Lost queue owner was silently replaced");
+    if(!bypass){
+        const auto control=run({executable().wstring(),repo.wstring(),L"--fairness-bypass"},h.first.root,100,{},true);
+        require(control.code==1&&control.err.find("Later small reservation bypassed an older live admission request")!=std::string::npos,
+            "Admission bypass control did not reach the FIFO business assertion: "+control.out+control.err);
+    }
+    std::cout<<"PASS FIFO across real worktrees, queued cancellation, abandoned head, unrelated owner survival and bypass control\n";
+}
 void reservations(const fs::path& repo){
     BudgetHarness h(repo);
     write(h.root(0)/L"headroom-probe.ps1",R"PS(. $PSScriptRoot/scripts/build_entry.ps1
@@ -253,5 +300,5 @@ target_compile_options(BudgetProgram PRIVATE /W4 /WX /MP${SNOWDESKTOP_COMPILE_JO
 int main(int argc,char** argv){
     const std::string mode=argc>2?argv[2]:"";
     if(mode=="--job-probe")return job_probe();
-    return test_main(argc,argv,[&](const fs::path& repo){if(mode=="--limits-no-memory"){limits(repo,"memory");return;}if(mode=="--limits-no-cpu"){limits(repo,"cpu");return;}if(mode=="--compile"||mode=="--compile-no-scheduling"){compilation(repo,mode=="--compile-no-scheduling");return;}reservations(repo);invalidation(repo);limits(repo);});
+    return test_main(argc,argv,[&](const fs::path& repo){if(mode=="--limits-no-memory"){limits(repo,"memory");return;}if(mode=="--limits-no-cpu"){limits(repo,"cpu");return;}if(mode=="--compile"||mode=="--compile-no-scheduling"){compilation(repo,mode=="--compile-no-scheduling");return;}if(mode=="--fairness"||mode=="--fairness-bypass"){fairness(repo,mode=="--fairness-bypass");return;}reservations(repo);invalidation(repo);limits(repo);});
 }

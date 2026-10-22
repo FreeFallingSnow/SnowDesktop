@@ -218,8 +218,8 @@ function Invoke-FilteredTests {
         . (Join-Path $PSScriptRoot 'build_candidate.ps1')
         . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
         # Query commands after the first build; CTest may omit them beforehand.
-        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
-        if(@(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
+        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $(if($ExecutionOnly){'all-tests'}else{$TestPreset})
+        if($executed.Tests.Count -ne $selection.Tests.Count -or @(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
         $selection=$executed
     }
     $script:lastReportPath='';$script:lastCommandExit=2;$testCode=2

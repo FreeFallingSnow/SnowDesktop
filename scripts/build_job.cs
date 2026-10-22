@@ -332,6 +332,106 @@ namespace SnowDesktop.Build
         }
     }
 
+    public sealed class ResourceQueueTurn
+    {
+        public int Position, Waiting;
+        public long Sequence;
+        public string HeadRunId;
+    }
+    // A ticket is alive only while its private, non-inherited handle excludes
+    // a probe. Clock age, PID metadata and observer lifetime grant no turn.
+    public sealed class ResourceWaiter : IDisposable
+    {
+        readonly string directory, path;
+        FileStream lease;
+        public readonly string RunId;
+        public readonly long Sequence;
+        ResourceWaiter(string folder, string file, string run, long order, FileStream held)
+        { directory = folder; path = file; RunId = run; Sequence = order; lease = held; }
+        static bool Sharing(IOException error)
+        { int code = error.HResult & 0xffff; return code == 32 || code == 33; }
+        static List<string> Active(string folder, string own)
+        {
+            List<string> alive = new List<string>(); int inspected = 0;
+            foreach (string file in Directory.EnumerateFiles(folder, "*.ticket"))
+            {
+                if (++inspected > 1024) throw new InvalidOperationException("Resource queue exceeds its ticket budget; preserve it");
+                string name = Path.GetFileName(file); long order; Guid id;
+                if (name.Length != 60 || name[20] != '-' || !name.EndsWith(".ticket", StringComparison.Ordinal) ||
+                    !Int64.TryParse(name.Substring(0, 20), NumberStyles.None, CultureInfo.InvariantCulture, out order) || order < 1 ||
+                    !Guid.TryParseExact(name.Substring(21, 32), "N", out id))
+                    throw new InvalidOperationException("Invalid resource queue ticket; preserve it");
+                try { if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Linked resource queue ticket; preserve it"); }
+                catch (FileNotFoundException) { continue; }
+                if (file == own) { alive.Add(file); continue; }
+                try
+                {
+                    // Holding this exclusive read/write probe proves there is
+                    // no owning waiter. Delete sharing keeps the proof alive
+                    // while removing only that abandoned scheduling ticket.
+                    using (FileStream probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+                        File.Delete(file);
+                }
+                catch (FileNotFoundException) { }
+                catch (IOException error) { if (!Sharing(error)) throw; alive.Add(file); }
+            }
+            alive.Sort(StringComparer.Ordinal); return alive;
+        }
+        public static ResourceWaiter Join(string resourceDirectory, string runId)
+        {
+            Guid run;
+            if (!Guid.TryParseExact(runId, "N", out run)) throw new ArgumentException("Invalid resource queue Run identity");
+            string folder = Path.Combine(resourceDirectory, "admission"); Directory.CreateDirectory(folder);
+            if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Linked resource queue directory; preserve it");
+            using (FileStream transaction = new FileStream(Path.Combine(folder, "queue.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                List<string> active = Active(folder, null);
+                if (active.Count >= 1024) throw new InvalidOperationException("Resource queue is full");
+                string counter = Path.Combine(folder, "sequence"); long previous = 0;
+                if (File.Exists(counter))
+                {
+                    if (!Int64.TryParse(File.ReadAllText(counter).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out previous) || previous < 0 || previous == Int64.MaxValue)
+                        throw new InvalidOperationException("Invalid resource queue sequence; preserve it");
+                }
+                else if (active.Count != 0) throw new InvalidOperationException("Resource queue sequence is missing; preserve it");
+                long next = previous + 1;
+                if (active.Count != 0 && StringComparer.Ordinal.Compare(Path.GetFileName(active[active.Count - 1]).Substring(0, 20), next.ToString("D20", CultureInfo.InvariantCulture)) >= 0)
+                    throw new InvalidOperationException("Resource queue sequence moved backwards; preserve it");
+                string temporary = counter + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(next.ToString(CultureInfo.InvariantCulture));
+                    using (FileStream output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    { output.Write(bytes, 0, bytes.Length); output.Flush(true); }
+                    if (File.Exists(counter)) File.Replace(temporary, counter, null); else File.Move(temporary, counter);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                string ticket = Path.Combine(folder, next.ToString("D20", CultureInfo.InvariantCulture) + "-" + runId + ".ticket");
+                FileStream held = new FileStream(ticket, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                return new ResourceWaiter(folder, ticket, runId, next, held);
+            }
+        }
+        public ResourceQueueTurn Inspect()
+        {
+            if (lease == null) throw new InvalidOperationException("Resource queue ticket is no longer owned");
+            using (FileStream transaction = new FileStream(Path.Combine(directory, "queue.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                List<string> active = Active(directory, path); int index = active.IndexOf(path);
+                if (index < 0) throw new InvalidOperationException("Owned resource queue ticket disappeared");
+                return new ResourceQueueTurn { Position = index + 1, Waiting = active.Count, Sequence = Sequence,
+                    HeadRunId = Path.GetFileName(active[0]).Substring(21, 32) };
+            }
+        }
+        public void Dispose()
+        {
+            FileStream held = lease; lease = null;
+            if (held == null) return;
+            held.Dispose();
+            try { File.Delete(path); }
+            catch (IOException error) { if (!Sharing(error)) throw; }
+        }
+    }
     public sealed class ResourceReservation : IDisposable
     {
         List<FileStream> handles;

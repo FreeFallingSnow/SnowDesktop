@@ -97,6 +97,10 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildResourceBudgetTests build_resource_budget
         build_tools/build_resource_budget_tests.cpp "tools;integration" 240)
     set_tests_properties(build_resource_budget PROPERTIES PROCESSORS 6)
+    add_test(NAME build_resource_fairness COMMAND SnowDesktopBuildResourceBudgetTests "${CMAKE_CURRENT_SOURCE_DIR}" --fairness)
+    set_tests_properties(build_resource_fairness PROPERTIES TIMEOUT 180 PROCESSORS 6 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildResourceBudgetTests>")
     add_test(NAME build_resource_budget_compile COMMAND SnowDesktopBuildResourceBudgetTests "${CMAKE_CURRENT_SOURCE_DIR}" --compile)
     set_tests_properties(build_resource_budget_compile PROPERTIES TIMEOUT 240 PROCESSORS 9 LABELS "manual;tools;integration"
         RESOURCE_LOCK snowdesktop_compiler_budget
@@ -130,6 +134,10 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
     add_test(NAME build_candidate_batches COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --batches)
+    add_test(NAME build_candidate_tool_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --tool-verification)
+    set_tests_properties(build_candidate_tool_verification PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
     set_tests_properties(build_candidate_batches PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")

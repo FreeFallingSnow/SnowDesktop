@@ -431,7 +431,7 @@ try {
     $candidateBatch=Get-Field $request 'candidateBatch' $false
     $candidateVerification=Get-Field $request 'candidateVerification' $false
     $candidateBinding=$null
-    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null;$candidateExecution=$null;$runnerLocks=@();$stage=$null
+    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null;$candidateExecution=$null;$runnerLocks=@();$stage=$null;$resourceWaiter=$null
     try {
         $ownerLease=[IO.File]::Open((Run-Path $RunId '.owner.lock'),'OpenOrCreate','ReadWrite','None')
         $record=Read-RunJson (Run-Path $RunId '.json')
@@ -515,7 +515,18 @@ try {
             $observationClock=[Diagnostics.Stopwatch]::StartNew()
             while(-not $resourceLease){
                 if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$queuedCancellation=$true;break}
-                try {$resourceLease=Enter-ProjectResources $binding;$record.resourceAdmission.acquiredUtc=[DateTime]::UtcNow.ToString('o')}
+                try {
+                    if(-not $resourceWaiter){
+                        $resourceWaiter=Enter-ProjectResourceQueue $binding $RunId
+                        Set-Field $record.resourceAdmission 'queue' ([pscustomobject]@{policy='handle-fifo-v1';sequence=$resourceWaiter.Sequence;joinedUtc=[DateTime]::UtcNow.ToString('o');position=$null;waiting=$null;headRunId=$null;admittedUtc=$null})
+                    }
+                    $turn=Get-ProjectResourceTurn $resourceWaiter
+                    $record.resourceAdmission.queue.position=$turn.Position;$record.resourceAdmission.queue.waiting=$turn.Waiting;$record.resourceAdmission.queue.headRunId=$turn.HeadRunId
+                    if($turn.Position -ne 1){throw ('Shared project resources busy: earlier admission request '+$turn.HeadRunId+'; queue position '+$turn.Position)}
+                    $resourceLease=Enter-ProjectResources $binding;$record.resourceAdmission.acquiredUtc=[DateTime]::UtcNow.ToString('o')
+                    $record.resourceAdmission.queue.admittedUtc=$record.resourceAdmission.acquiredUtc
+                    $resourceWaiter.Dispose();$resourceWaiter=$null
+                }
                 catch {
                     if($_.Exception.Message -eq 'Resource policy changed before admission.'){$record.resourceAdmission.bindingValid=$false;throw}
                     if($_.Exception.Message -notmatch '^Shared project resources busy:'){throw}
@@ -617,6 +628,7 @@ try {
             catch {$record.status='failed';$record.exitCode=2;$record.error+=' Candidate result capture: '+$_.Exception.Message}
         }
         if($resourceLease){$resourceLease.Dispose();$record.resourceAdmission.releasedUtc=[DateTime]::UtcNow.ToString('o')}
+        if($resourceWaiter){$resourceWaiter.Dispose();$resourceWaiter=$null}
         if($candidateExecution){Exit-CandidateExecution $candidateExecution}else{Exit-BuildEntry $entry}
         foreach($stream in $runnerLocks){$stream.Dispose()}
         if($ownsRun -and $request.action -eq 'batch'){
