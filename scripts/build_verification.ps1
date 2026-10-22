@@ -29,9 +29,11 @@ function Get-VerificationEnvironment([string]$Root) {
     if(-not $environment.Contains('PROMPT')){$environment['PROMPT']='$P$G'}
     $canonical=[ordered]@{}
     foreach($name in @($environment.Keys|Sort-Object)){$canonical[$name]=$environment[$name]}
+    $fieldDigests=[ordered]@{}
+    foreach($name in $canonical.Keys){$fieldDigests[$name]=Get-VerificationTextDigest ([string]$canonical[$name])}
     $binding=[pscustomobject]@{files=$files;tools=$tools;environmentDigest=(Get-VerificationTextDigest ($canonical|ConvertTo-Json -Compress))}
     return [pscustomobject]@{schemaVersion=2;digest=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 8 -Compress));files=$files;tools=$tools;
-        environmentDigest=$binding.environmentDigest;externalDependenciesClosed=$false}
+        environmentDigest=$binding.environmentDigest;environmentFields=$fieldDigests;externalDependenciesClosed=$false}
 }
 function Get-VerificationDefinitions($Tests) {
     return @($Tests|Sort-Object name|ForEach-Object {
@@ -67,7 +69,7 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     if($source.digest -ne $result.inputEnd.digest){throw 'Verification source no longer matches the baseline candidate; build the changed inputs first.'}
     $names=@(Get-VerificationNames $Filter)
     $pattern='^('+ (($names|ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
-    $output=& ctest --test-dir (Join-Path $Root '.build') -C Release --show-only=json-v1 -R $pattern
+    $output=& ctest --preset all-tests --test-dir (Join-Path $Root '.build') -C Release --show-only=json-v1 -R $pattern
     if($LASTEXITCODE -ne 0){throw 'Unable to query existing configured tests; verification never configures or builds.'}
     $tests=@((($output -join [Environment]::NewLine)|ConvertFrom-Json).tests)
     if($tests.Count -ne $names.Count -or @(Compare-Object $names @($tests.name|Sort-Object)).Count){throw 'Verification selection differs from the requested existing tests.'}

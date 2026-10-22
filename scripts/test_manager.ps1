@@ -199,7 +199,7 @@ function Invoke-FilteredTests {
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
-    $testArguments=if($ExecutionOnly){@('--test-dir',(Join-Path $repositoryRoot '.build'),'-C','Release','--no-tests=error','--output-on-failure')}else{@('--preset',$TestPreset)}
+    $testArguments=if($ExecutionOnly){@('--preset','all-tests','--test-dir',(Join-Path $repositoryRoot '.build'),'-C','Release','--no-tests=error','--output-on-failure')}else{@('--preset',$TestPreset)}
     Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
 }
 
@@ -280,7 +280,14 @@ if($Mode -eq 'verify'){
     try {
         if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $repositoryRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
         $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter
-        if($snapshot.key -ne $request.verification.key){throw 'Verification inputs or execution environment changed while queued.'}
+        Set-Field $coverage 'observedExecutionContext' $snapshot.executionContext
+        if($snapshot.key -ne $request.verification.key){
+            $before=Get-Field $request.verification.executionContext 'environmentFields'
+            $after=$snapshot.executionContext.environmentFields
+            $keys=@(@($before.PSObject.Properties.Name)+@($after.Keys)|Sort-Object -Unique)
+            $changed=@($keys|Where-Object {(Get-Field $before $_) -ne $after[$_]})
+            throw ('Verification inputs or execution environment changed while queued. Changed environment fields (values withheld): '+($changed -join ', '))
+        }
         $admitted=$true;$code=1
         $coverage.selected=@($snapshot.binding.names)
         $coverage.tasks=@([pscustomobject]@{participant=$request.task;requested=$coverage.selected})

@@ -422,6 +422,7 @@ try {
             if($request.mode -eq 'verify'){
                 try {
                     $coverage=Read-EntryJson (Run-Path $RunId '.verification.json')
+                    if($coverage -and $record.status -in 'failed','invalidated' -and $coverage.error){$record.error=$coverage.error}
                     $subscriptions=@((Get-RunView $RunId).subscriptions)
                     if($coverage){Set-Field $coverage 'tasks' @($subscriptions|Select-Object -ExpandProperty task -Unique|ForEach-Object {[pscustomobject]@{participant=$_;requested=$request.verification.binding.names}})}
                     $synthetic=[pscustomobject]@{batchId=$null;runId=$RunId;coverage=$coverage;inputStart=$record.inputStart;inputEnd=$record.inputEnd;inputCheck=$(if($record.status -eq 'invalidated'){'invalidated'}elseif($record.inputStart -and $record.inputEnd -and $record.inputStart.digest -eq $record.inputEnd.digest){'stable'}else{'not-recorded'});pipelineExitCode=$record.exitCode;testingPlan=[pscustomobject]@{configuration='Release'}}
