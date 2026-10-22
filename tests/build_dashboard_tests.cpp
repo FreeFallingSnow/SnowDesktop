@@ -189,6 +189,25 @@ void dashboard(const fs::path& repo,bool browser){
     require(Json::parse(http(port).body).at("runs").items[0].at("verification").at("references").items[0].at("status").str()=="unavailable","Changed original coverage was displayed as a valid reference");
     write(originCoverage,originBytes);refresh();
     require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,"Readonly reference projection changed original execution or independent receipt");
+    auto compatibleReference=reference;
+    compatibleReference["id"]=std::string(32,'9');compatibleReference["scope"]="candidate-compatible-reviewed-binary";
+    compatibleReference["originKey"]=intentKey;compatibleReference["key"]=std::string(64,'b');
+    compatibleReference["currentCandidate"]=Json::object({{"snapshot",std::string(32,'c')}});
+    compatibleReference["originCandidate"]=Json::object({{"snapshot",std::string(32,'d')}});
+    compatibleReference["review"]["candidateCompatibility"]="same-output-reviewed-inputs-v1";
+    compatibleReference["compatibleTests"]=Json::array({Json::object({{"test","Alpha"},{"key",std::string(64,'e')}})});
+    write(referenceRoot/wide(compatibleReference.at("id").str()+".json"),compatibleReference.dump());
+    auto wrongOrigin=compatibleReference;wrongOrigin["id"]=std::string(32,'a');wrongOrigin["originKey"]=std::string(64,'f');
+    write(referenceRoot/wide(wrongOrigin.at("id").str()+".json"),wrongOrigin.dump());
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference,compatibleReference,wrongOrigin});
+    save("state.json",subscribed);refresh();references=Json::parse(http(port).body).at("runs").items[0].at("verification");
+    require(references.at("references").items[2].at("status").str()=="recorded"&&
+        references.at("references").items[2].at("originKey").str()==intentKey&&
+        references.at("references").items[2].at("currentSnapshot").str()==std::string(32,'c')&&
+        references.at("references").items[3].at("status").str()=="unavailable"&&
+        !references.at("reuseAllowed").boolean,"Compatible-reference HTTP projection lost origin identity or granted new execution authorization");
+    require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,
+        "Compatible-reference HTTP projection changed the original execution");
     runRequest["mode"]="list";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());save("state.json",current());refresh();
     auto wrongRun=runRecord;wrongRun["nonce"]=std::string(32,'8');atomic(runRoot/wide(observedRunId+".json"),wrongRun.dump());save("state.json",current());refresh();
     auto badRuns=Json::parse(http(port).body).at("runs");require(badRuns.items[0].at("status").str()=="unavailable","Mismatched Run nonce was projected as valid");

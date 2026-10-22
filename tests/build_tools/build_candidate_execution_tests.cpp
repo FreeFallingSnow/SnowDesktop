@@ -480,9 +480,12 @@ void executor_control(const fs::path& repo,bool checkout) {
     require(result.code==1&&result.err.find(assertion)!=std::string::npos,"Executor "+mutation+" negative control did not reach its business assertion: "+result.out+result.err);
     std::cout<<"PASS executor "<<mutation<<" negative control reached its business assertion\n";
 }
-void completed_verification(const fs::path& repo,bool noReference=false) {
+void completed_verification(const fs::path& repo,bool noReference=false,bool compatible=false,bool exactOnly=false) {
     Coordinator c(repo,"completed-verification",true,fixture_parent(repo));prepare(c,repo,"");
     if(noReference){auto source=read(c.scripts/L"build_run.ps1");replace(source,"$referenceProposal=Get-CompletedVerificationProposal $root $verification","$referenceProposal=$null");write(c.scripts/L"build_run.ps1",source,true);}
+    if(exactOnly){auto source=read(c.scripts/L"build_verification_reuse.ps1");replace(source,
+        "$compatibility=Get-Field $Verification 'compatibility';$index=@(Get-Field $Entry 'compatibleTests' @())",
+        "return $false # Controlled former exact-key-only completed history.");write(c.scripts/L"build_verification_reuse.ps1",source,true);}
     const auto observer=executable().parent_path()/L"SnowDesktopTestRuntimeObserver.exe";
     require(fs::exists(observer),"Completed verification needs the actual native runtime observer");
     auto cmake=read(c.root/L"CMakeLists.txt");replace(cmake,"VERSION 3.24","VERSION 3.29");
@@ -502,6 +505,20 @@ int main(int argc,char**){
     return argc>1?(value==7?0:1):value;
 }
 )CPP");
+    if(compatible){
+        auto main=read(c.root/L"src/main.cpp");
+        replace(main,"int main(int argc,char**){",R"CPP(bool runtime_ok(){
+    const auto file=CreateFileW(L"src/runtime.txt",GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return false;
+    char byte=0;DWORD count=0;
+    const bool ok=ReadFile(file,&byte,1,&count,nullptr)!=FALSE;
+    CloseHandle(file);return ok&&count==1&&byte=='7';
+}
+int main(int argc,char**){)CPP");
+        replace(main,"return argc>1?(value==7?0:1):value;","return argc>1?(value==7&&runtime_ok()?0:1):value;");
+        write(c.root/L"src/main.cpp",main);write(c.root/L"src/runtime.txt","7");
+        write(c.root/L"CMakeLists.txt",read(c.root/L"CMakeLists.txt")+"\nset_tests_properties(candidate_rule PROPERTIES WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\")\n");
+    }
     write(c.scripts/L"check-native-token.ps1",R"PS(
 if(-not ('SnowDesktop.Verification.NativeToken' -as [type])){Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build_verification_token.cs')))}
 $encoding=[Console]::OutputEncoding
@@ -522,6 +539,12 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
 @{schemaVersion=1;tests=@($contract)}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $PSScriptRoot 'test_runtime_contracts.json') -Encoding UTF8
 @{reviewed=[bool]$Binary}|ConvertTo-Json
 )PS",true);
+    if(compatible){
+        auto review=read(c.scripts/L"review-cache.ps1");
+        replace(review,"inputs=@()","inputs=@(@{kind='file';path='src/runtime.txt';required=$true})");
+        replace(review,"kind='reviewed-native-files-v1'","kind='reviewed-native-files-v2';crossCandidate=$true");
+        write(c.scripts/L"review-cache.ps1",review,true);
+    }
     c.bridge->call(c.scripts/L"review-cache.ps1",{});
     auto baseline=[&]{
         const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});const auto id=opened.at("batchId").str();
@@ -538,7 +561,7 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
     require(!cachedLoggers.empty(),"Nested candidate did not publish the logger at its owning Run root");
     const auto binary=fs::path(wide(original.at("candidateExecution").at("output").str()))/L"Release/tests/SnowDesktopCandidateFixtureTests.exe";
     c.bridge->call(c.scripts/L"review-cache.ps1",{"-Binary",utf8(binary.wstring())});
-    const auto reviewed=baseline();const auto batch=reviewed.at("batchId").str();
+    const auto reviewed=baseline();auto batch=reviewed.at("batchId").str();
     for(const auto& [path,bytes]:cachedLoggers)require(read(path)==bytes,"Repeated candidate build overwrote an identity-bound logger cache entry");
     auto verify=[&](bool fresh=false,const std::string& correlation="repeated"){
         std::vector<std::string> args={"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Review identical native execution evidence"};
@@ -558,6 +581,40 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
     require(references.at("reused").boolean&&references.at("id").str()==id&&references.at("status").str()=="referenced"&&
         !references.at("reference").at("newExecution").boolean,"Completed native verification executed again instead of referencing its original Run: "+references.dump());
     require(verify().at("reference").at("id").str()==references.at("reference").at("id").str(),"Repeated completed citation was not idempotent");
+    if(compatible){
+        const auto binaryBytes=read(binary);
+        write(c.root/L"src/unrelated-note.txt","This file is not a runtime or compiled input of candidate_rule.\n");
+        const auto changed=baseline();batch=changed.at("batchId").str();
+        require(changed.at("inputEnd").at("digest").str()!=reviewed.at("inputEnd").at("digest").str()&&read(binary)==binaryBytes,
+            "Compatible fixture did not change candidate source while preserving its actual assertion binary");
+        const auto across=verify();
+        require(across.at("reused").boolean&&across.at("id").str()==id&&
+            across.at("reference").at("scope").str()=="candidate-compatible-reviewed-binary"&&
+            across.at("reference").at("originKey").str()!=across.at("reference").at("key").str(),
+            "Unrelated candidate change executed again instead of referencing reviewed compatible evidence: "+across.dump());
+        require(read(resultPath)==resultBytes&&read(requestPath)==requestBytes&&read(coveragePath)==coverageBytes&&read(report)==reportBytes,
+            "Cross-candidate reference rewrote the original evidence");
+        const auto state=Json::parse(read(c.stateRoot/L"state.json"));
+        require(!state.at("verificationLedger").at("entries").items.front().at("compatibleTests").items.empty(),
+            "Compatible per-test identity was not indexed in the existing verification ledger");
+        write(c.root/L"src/runtime.txt","7\n");
+        const auto inputChanged=baseline();batch=inputChanged.at("batchId").str();
+        const auto rerun=verify();
+        require(!rerun.at("reused").boolean&&rerun.at("id").str()!=id,
+            "Changed reviewed runtime bytes reused prior evidence despite unchanged assertion binary");
+        wait(c,rerun.at("id").str());
+        const auto forced=verify(true);require(!forced.at("reused").boolean&&forced.at("id").str()!=rerun.at("id").str(),
+            "Compatible identity ignored the explicit Fresh override");
+        wait(c,forced.at("id").str());
+        for(const auto& origin:{rerun,forced}){
+            const auto saved=Json::parse(read(c.stateRoot/L"runs"/wide(origin.at("id").str()+".verification.json")));
+            const auto raw=fs::path(wide(saved.at("report").str()));write(raw,read(raw)+" ");
+        }
+        const auto corrupt=verify();require(!corrupt.at("reused").boolean,
+            "Corrupt compatible origin reports suppressed execution");wait(c,corrupt.at("id").str());
+        std::cout<<"PASS compatible candidate source change references original evidence; changed runtime bytes, Fresh and corrupt origins execute; per-test identities indexed\n";
+        return;
+    }
     const std::vector<std::wstring> concurrentArgs={powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"start",L"-Task",L"candidate",L"-Action",L"tests",L"-Mode",L"verify",L"-PlanBatch",wide(batch),L"-Filter",L"candidate_rule",L"-Reason",L"Concurrent completed reference"};
     Child concurrentA(concurrentArgs,c.root,{{L"CODEX_TOOL_CALL_ID",L"concurrent-a"},{L"CODEX_THREAD_ID",L"thread-a"},{L"CODEX_SESSION_ID",L"session-a"}}),concurrentB(concurrentArgs,c.root,{{L"CODEX_TOOL_CALL_ID",L"concurrent-b"},{L"CODEX_THREAD_ID",L"thread-b"},{L"CODEX_SESSION_ID",L"session-b"}});
     const auto responseA=concurrentA.wait(45),responseB=concurrentB.wait(45);
@@ -584,6 +641,13 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
     if(mode=="--completed-verification"||mode=="--completed-verification-without-reference")completed_verification(repo,mode=="--completed-verification-without-reference");
+    else if(mode=="--compatible-verification"||mode=="--compatible-verification-old-key")completed_verification(repo,false,true,mode=="--compatible-verification-old-key");
+    else if(mode=="--compatible-verification-control"){
+        const auto negative=run({executable().wstring(),repo.wstring(),L"--compatible-verification-old-key"},repo,180,{},true);
+        require(negative.code==1&&negative.err.find("Unrelated candidate change executed again instead of referencing reviewed compatible evidence")!=std::string::npos,
+            "Exact-key-only compatibility control failed outside the duplicate-execution assertion: "+negative.out+negative.err);
+        std::cout<<"PASS exact-key-only completed history fails the unrelated-candidate duplicate-execution assertion\n";
+    }
     else if(mode=="--completed-verification-control"){
         const auto negative=run({executable().wstring(),repo.wstring(),L"--completed-verification-without-reference"},repo,150,{},true);
         require(negative.code==1&&negative.err.find("Completed native verification executed again instead of referencing its original Run")!=std::string::npos,

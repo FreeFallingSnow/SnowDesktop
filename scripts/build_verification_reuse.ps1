@@ -4,11 +4,15 @@ function Get-ReviewedVerificationContext([string]$Root,$Tests,$Candidate) {
     try {
         if(-not $Candidate -or $Candidate.source -ne $Root){return $null}
         . (Join-Path $PSScriptRoot 'build_test_dependencies.ps1')
-        $context=[pscustomobject]@{root=$Root;files=@{}};$reviews=@();$names=@()
+        $context=[pscustomobject]@{root=$Root;files=@{}};$reviews=@();$names=@();$compatible=$true
         Initialize-TestRuntimeContracts $context
         foreach($test in $Tests|Sort-Object name){
             $contract=$context.runtimeContracts[$test.name];$policy=Get-Field $contract 'resultReuse'
-            if(-not $policy -or $policy.kind -ne 'reviewed-native-files-v1' -or $policy.binarySha256 -notmatch '^[a-f0-9]{64}$'){return $null}
+            if(-not $policy -or $policy.kind -notin 'reviewed-native-files-v1','reviewed-native-files-v2' -or $policy.binarySha256 -notmatch '^[a-f0-9]{64}$'){return $null}
+            if($policy.kind -eq 'reviewed-native-files-v2'){
+                $permission=Get-Field $policy 'crossCandidate'
+                if($permission -isnot [bool] -or -not $permission){return $null}
+            }else{$compatible=$false}
             $command=@($test.command)
             if($command.Count -lt 5 -or [IO.Path]::GetFileName($command[0]) -ne 'SnowDesktopTestRuntimeObserver.exe' -or $command[1] -ne '--test' -or $command[2] -cne $test.name -or $command[3] -ne '--'){return $null}
             $relative=([string]$policy.binary).Replace('\','/')
@@ -67,8 +71,74 @@ function Get-ReviewedVerificationContext([string]$Root,$Tests,$Candidate) {
         $platform=[pscustomobject]@{os=[Environment]::OSVersion.VersionString;boot=$boot;system=$system;
             kernel=(Get-FileDigest (Join-Path $system 'ntoskrnl.exe'));apiSet=(Get-FileDigest (Join-Path $system 'ApiSetSchema.dll'));
             tokenKind='windows-token-v1';tokenDigest=(Get-VerificationTextDigest $token);knownDlls=(Get-VerificationTextDigest ($knownBindings -join "`n"))}
-        return [pscustomobject]@{policy='reviewed-native-files-v1';platformDigest=(Get-VerificationTextDigest ($platform|ConvertTo-Json -Compress));platformBinding=$platform;reviews=$reviews}
+        $result=[pscustomobject]@{policy='reviewed-native-files-v1';platformDigest=(Get-VerificationTextDigest ($platform|ConvertTo-Json -Compress));platformBinding=$platform;reviews=$reviews}
+        if($compatible){Set-Field $result 'candidateCompatibility' 'same-output-reviewed-inputs-v1'}
+        return $result
     }catch{return $null} # Unknown review/host conditions execute a fresh test.
+}
+function Get-VerificationCompatibility($Verification) {
+    $review=Get-Field $Verification.binding 'reviewedReuse';$candidate=Get-Field $Verification.binding 'candidate'
+    if(-not $candidate -or (Get-Field $review 'candidateCompatibility') -ne 'same-output-reviewed-inputs-v1'){return $null}
+    # This is a second identity for completed results, never the identity of an
+    # active execution. Keep absolute invocation/output paths: moving a test is
+    # not covered by this source-input review. Cache bytes may change between
+    # configurations; actual invocation, executable bytes, presets and tools
+    # are bound separately, along with every effective environment value.
+    $implementation=@()
+    foreach($file in @('build_verification.ps1','build_verification_reuse.ps1','build_test_runtime_inputs.ps1','build_test_runtime_modules.ps1','build_verification_token.cs','test_manager.ps1')){
+        $digest=Get-FileDigest (Join-Path $candidate.source ('scripts/'+$file))
+        if($digest -notmatch '^[a-f0-9]{64}$'){return $null}
+        $implementation+=@([pscustomobject]@{file=$file;sha256=$digest})
+    }
+    $context=$Verification.executionContext;$rows=@()
+    foreach($name in $Verification.binding.names){
+        $definitions=@($Verification.binding.definitions|Where-Object name -eq $name)
+        $artifacts=@($Verification.binding.artifacts|Where-Object test -eq $name)
+        $runtime=@($Verification.binding.runtimeFiles|Where-Object test -eq $name)
+        $reviews=@($review.reviews|Where-Object test -eq $name)
+        if($definitions.Count -ne 1 -or $artifacts.Count -ne 1 -or -not $runtime.Count -or $reviews.Count -ne 1){return $null}
+        $binding=[pscustomobject]@{schemaVersion=1;scope='same-output-reviewed-inputs-v1';test=$name;configuration=$Verification.binding.configuration;
+            paths=[pscustomobject]@{source=$candidate.source;output=$candidate.output;slot=$candidate.slot;runRoot=$candidate.runRoot};
+            definitions=$definitions;artifacts=$artifacts;runtimeFiles=$runtime;review=$reviews[0];platform=$review.platformDigest;
+            environment=$context.environmentDigest;tools=$context.tools;presets=[pscustomobject]@{shared=$context.files.'CMakePresets.json';user=$context.files.'CMakeUserPresets.json'};
+            implementation=$implementation;resourceBudget=(Get-Field $Verification.binding 'resourceBudget')}
+        $rows+=@([pscustomobject]@{test=$name;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));binding=$binding})
+    }
+    return [pscustomobject]@{schemaVersion=1;scope='same-output-reviewed-inputs-v1';tests=$rows}
+}
+function Get-VerificationCompatibleMatch($Entry,$Verification,[switch]$Any) {
+    if($Entry.key -eq $Verification.key){return $true}
+    $compatibility=Get-Field $Verification 'compatibility';$index=@(Get-Field $Entry 'compatibleTests' @())
+    if(-not $compatibility -or $compatibility.schemaVersion -ne 1 -or -not $index.Count -or $index.Count -gt 128){return $false}
+    $matches=0
+    foreach($test in $compatibility.tests){
+        $found=@($index|Where-Object {$_.test -ceq $test.test -and $_.key -ceq $test.key})
+        if($found.Count -eq 1){$matches++}
+    }
+    return $(if($Any){$matches -gt 0}else{$matches -eq @($compatibility.tests).Count})
+}
+function Test-VerificationCompatibilityProof($Current,$Origin,$Entry) {
+    $old=Get-Field $Origin 'compatibility';$now=Get-Field $Current 'compatibility'
+    if(-not $old -or -not $now -or $old.schemaVersion -ne 1 -or @($old.tests).Count -gt 128){return $false}
+    if($Origin.key -ne $Entry.key -or $Origin.key -ne (Get-VerificationTextDigest ($Origin.binding|ConvertTo-Json -Depth 20 -Compress))){return $false}
+    foreach($test in $now.tests){
+        $prior=@($old.tests|Where-Object test -CEQ $test.test)
+        if($prior.Count -ne 1 -or $prior[0].key -cne $test.key -or $prior[0].key -cne (Get-VerificationTextDigest ($prior[0].binding|ConvertTo-Json -Depth 20 -Compress))){return $false}
+        # Tie the stored compatibility identity back to the original exact
+        # request and its original environment, rather than trusting an index.
+        $binding=$prior[0].binding;$originalReview=Get-Field $Origin.binding 'reviewedReuse'
+        if(($binding.definitions|ConvertTo-Json -Depth 8 -Compress) -cne (@($Origin.binding.definitions|Where-Object name -eq $test.test)|ConvertTo-Json -Depth 8 -Compress) -or
+           ($binding.artifacts|ConvertTo-Json -Depth 8 -Compress) -cne (@($Origin.binding.artifacts|Where-Object test -eq $test.test)|ConvertTo-Json -Depth 8 -Compress) -or
+           ($binding.runtimeFiles|ConvertTo-Json -Depth 8 -Compress) -cne (@($Origin.binding.runtimeFiles|Where-Object test -eq $test.test)|ConvertTo-Json -Depth 8 -Compress) -or
+           $binding.environment -cne $Origin.executionContext.environmentDigest -or $binding.platform -cne $originalReview.platformDigest -or
+           ($binding.tools|ConvertTo-Json -Depth 8 -Compress) -cne ($Origin.executionContext.tools|ConvertTo-Json -Depth 8 -Compress) -or
+           ($binding.review|ConvertTo-Json -Depth 8 -Compress) -cne (@($originalReview.reviews|Where-Object test -eq $test.test)|ConvertTo-Json -Depth 8 -Compress) -or
+           $binding.paths.source -cne $Origin.binding.candidate.source -or $binding.paths.output -cne $Origin.binding.candidate.output -or
+           $binding.paths.slot -cne $Origin.binding.candidate.slot -or $binding.paths.runRoot -cne $Origin.binding.candidate.runRoot -or
+           $binding.presets.shared -cne $Origin.executionContext.files.'CMakePresets.json' -or $binding.presets.user -cne $Origin.executionContext.files.'CMakeUserPresets.json' -or
+           ($binding.resourceBudget|ConvertTo-Json -Depth 8 -Compress) -cne ((Get-Field $Origin.binding 'resourceBudget')|ConvertTo-Json -Depth 8 -Compress)){return $false}
+    }
+    return $true
 }
 function Get-CompletedVerificationProposal([string]$Root,$Verification) {
     $binding=Get-Field $Verification.binding 'candidate';$lease=$null
@@ -100,18 +170,21 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
         Set-Field $Verification 'referenceCheck' 'checking-completed-history'
         $state=Read-EntryJson (Join-Path $Root '.build/collaboration/state.json')
         $ledger=Get-Field $state 'verificationLedger'
-        foreach($prior in @(Get-Field $ledger 'entries' @()|Where-Object key -eq $current.key)){
+        # Candidate-compatible history uses the same ledger, never an execution join.
+        foreach($prior in @(Get-Field $ledger 'entries' @()|Where-Object {Get-VerificationCompatibleMatch $_ $current -Any})){
             $priorView=Get-RunView $prior.runId
-            if(-not $priorView.terminal -or $priorView.status -in 'failed','invalidated','interrupted'){return $null}
+            if(-not $priorView.terminal -or $priorView.status -ne 'passed'){return $null}
         }
-        foreach($entry in @(Get-Field $ledger 'entries' @()|Where-Object key -eq $current.key|Sort-Object createdUtc -Descending)){
+        foreach($entry in @(Get-Field $ledger 'entries' @()|Where-Object {Get-VerificationCompatibleMatch $_ $current}|Sort-Object createdUtc -Descending)){
             try {
                 $view=Get-RunView $entry.runId
-                if(-not $view.terminal -or $view.status -ne 'passed' -or $view.record.exitCode -ne 0 -or $view.request.mode -ne 'verify' -or $view.request.verification.key -ne $current.key){continue}
-                if($view.record.inputStart.digest -ne $current.source.digest -or $view.record.inputEnd.digest -ne $current.source.digest){continue}
+                if(-not $view.terminal -or $view.status -ne 'passed' -or $view.record.exitCode -ne 0 -or $view.request.mode -ne 'verify' -or $view.request.verification.key -ne $entry.key){continue}
+                $origin=$view.request.verification;$crossCandidate=$entry.key -ne $current.key
+                if($crossCandidate -and -not (Test-VerificationCompatibilityProof $current $origin $entry)){continue}
+                if($view.record.inputStart.digest -ne $origin.source.digest -or $view.record.inputEnd.digest -ne $origin.source.digest){continue}
                 $coveragePath=Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.verification.json')
                 $coverage=Read-EntryJson $coveragePath
-                if($coverage.runId -ne $entry.runId -or $coverage.status -ne 'passed' -or @($coverage.selected).Count -ne @($current.binding.names).Count -or @(Compare-Object @($coverage.selected|Sort-Object) @($current.binding.names)).Count){continue}
+                if($coverage.runId -ne $entry.runId -or $coverage.status -ne 'passed' -or @($current.binding.names|Where-Object {$_ -notin @($coverage.selected)}).Count){continue}
                 $files=Compare-TestRuntimeInputs $binding.source $current.tests $coverage.dependencyManifest
                 Set-Field $Verification 'referenceCheck' 'checking-file-and-report-evidence'
                 if(@($files.tests).Count -ne @($current.tests).Count -or @($files.tests|Where-Object status -ne 'stable').Count){continue}
@@ -120,8 +193,8 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
                     $evidence=@($view.record.evidence.tests|Where-Object test -eq $test.name)
                     $modules=@($coverage.runtimeModules.tests|Where-Object test -eq $test.name)
                     if($evidence.Count -ne 1 -or $evidence[0].status -ne 'passed' -or $evidence[0].identityStatus -ne 'recorded' -or $modules.Count -ne 1 -or $modules[0].status -ne 'observed'){ $valid=$false;break }
-                    if($evidence[0].runId -ne $entry.runId -or $evidence[0].binding.sourceDigest -ne $current.source.digest -or
-                       $evidence[0].binding.environmentDigest -ne $current.executionContext.digest -or
+                    if($evidence[0].runId -ne $entry.runId -or $evidence[0].binding.sourceDigest -ne $origin.source.digest -or
+                       $evidence[0].binding.environmentDigest -ne $origin.executionContext.digest -or
                        $evidence[0].bindingDigest -ne (Get-VerificationTextDigest ($evidence[0].binding|ConvertTo-Json -Compress))){$valid=$false;break}
                     $attempts=@($evidence[0].attempts)
                     $reportRoot=Join-Path $binding.source '.build/Testing'
@@ -157,7 +230,9 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
                     $proofs+=@([pscustomobject]@{test=$test.name;evidenceId=$evidence[0].id;reportSha256=$attempts[0].reportSha256;moduleReportSha256=$modules[0].reportSha256;moduleDigest=$modules[0].digest})
                 }
                 if(-not $valid -or $proofs.Count -ne @($current.tests).Count){continue}
-                $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=[DateTime]::UtcNow.ToString('o');lease=$lease.lease}
+                $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;originKey=$entry.key;scope=$(if($crossCandidate){'candidate-compatible-reviewed-binary'}else{'exact-candidate-reviewed-binary'});
+                    currentCandidate=$current.binding.candidate;originCandidate=$origin.binding.candidate;compatibleTests=@(Get-Field (Get-Field $current 'compatibility') 'tests' @()|Select-Object test,key);
+                    runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=[DateTime]::UtcNow.ToString('o');lease=$lease.lease}
                 Set-Field $Verification 'referenceCheck' 'completed-origin-validated'
                 $lease=$null;return $proposal
             }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));continue} # Corrupt/incomplete history never suppresses execution.
@@ -167,7 +242,7 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
 }
 function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[string]$Baseline,$Proposal) {
     $references=@(Get-Field $Entry 'references' @())
-    $old=@($references|Where-Object {$_.task -eq $TaskRecord.id -and $_.requirementsRevision -eq $TaskRecord.requirementsRevision -and $_.baseline -eq $Baseline -and $_.sourceRunSha256 -eq $Proposal.runSha256})
+    $old=@($references|Where-Object {$_.task -eq $TaskRecord.id -and $_.requirementsRevision -eq $TaskRecord.requirementsRevision -and $_.baseline -eq $Baseline -and $_.key -eq $Proposal.key -and $_.sourceRunSha256 -eq $Proposal.runSha256})
     foreach($existing in $old){
         $existingPath=Join-Path $Root ('.build/verification/references/'+$existing.id+'.json')
         if($existing.id -match '^[a-f0-9]{32}$' -and [IO.File]::Exists($existingPath)){
@@ -177,7 +252,9 @@ function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[st
     }
     if($references.Count -ge 128){throw 'Completed verification reference budget requires explicit maintenance.'}
     $receipt=[pscustomobject]@{schemaVersion=1;kind='completed-verification-reference';id=[Guid]::NewGuid().ToString('N');task=$TaskRecord.id;taskRevision=$TaskRecord.revision;requirementsRevision=$TaskRecord.requirementsRevision;
-        baseline=$Baseline;sourceRunId=$Proposal.runId;sourceRunSha256=$Proposal.runSha256;coverageSha256=$Proposal.coverageSha256;key=$Proposal.key;checkedUtc=$Proposal.checkedUtc;review=$Proposal.review;tests=$Proposal.tests;execution='referenced';newExecution=$false;reuseAllowed=$true;scope='exact-candidate-reviewed-binary'}
+        baseline=$Baseline;sourceRunId=$Proposal.runId;sourceRunSha256=$Proposal.runSha256;coverageSha256=$Proposal.coverageSha256;key=$Proposal.key;originKey=$Proposal.originKey;
+        currentCandidate=$Proposal.currentCandidate;originCandidate=$Proposal.originCandidate;compatibleTests=$Proposal.compatibleTests;
+        checkedUtc=$Proposal.checkedUtc;review=$Proposal.review;tests=$Proposal.tests;execution='referenced';newExecution=$false;reuseAllowed=$true;scope=$Proposal.scope}
     $directory=Join-Path $Root '.build/verification/references';[void][IO.Directory]::CreateDirectory($directory)
     $path=Join-Path $directory ($receipt.id+'.json');$temp=$path+'.tmp'
     try{

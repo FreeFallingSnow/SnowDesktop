@@ -123,7 +123,10 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
         if($review){Set-Field $binding 'reviewedReuse' $review}
     }
     if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}
-    return [pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
+    $result=[pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
+    $compatibility=Get-VerificationCompatibility $result
+    if($compatibility){Set-Field $result 'compatibility' $compatibility}
+    return $result
 }
 function Get-VerificationLedger($State) {
     $ledger=Get-Field $State 'verificationLedger'

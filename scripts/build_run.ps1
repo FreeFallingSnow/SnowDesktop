@@ -254,6 +254,7 @@ try {
                 $shared=@($verification.tests|ForEach-Object properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value})
                 if($shared.Count){$request.projectResources.compatibilityMode='exclusive'}
                 $verification.key=Get-VerificationTextDigest ($verification.binding|ConvertTo-Json -Depth 20 -Compress)
+                if(Get-Field $verification 'compatibility'){Set-Field $verification 'compatibility' (Get-VerificationCompatibility $verification)}
             }
             # Inventory is re-read and validated by the worker; retain hashes,
             # not duplicate raw CTest environment/command contents in requests.
@@ -279,7 +280,7 @@ try {
                 if(-not $existing.terminal -and $existing.ownerState -eq 'unknown'){throw 'Verification owner state is unknown; inspect the existing Run before submitting another attempt.'}
             }
             if(-not $joined -and $referenceProposal){
-                $matches=@($ledger.entries|Where-Object {$_.runId -eq $referenceProposal.runId -and $_.key -eq $verification.key})
+                $matches=@($ledger.entries|Where-Object {$_.runId -eq $referenceProposal.runId -and $_.key -eq $referenceProposal.originKey})
                 if($matches.Count -eq 1 -and (Get-FileDigest (Run-Path $referenceProposal.runId '.json')) -eq $referenceProposal.runSha256){
                     $referenceReceipt=Add-CompletedVerificationReference $root $matches[0] $active[0] $PlanBatch $referenceProposal
                     $id=$referenceProposal.runId;$joined=$true;$reused=$true
@@ -288,6 +289,8 @@ try {
             }
             if(-not $joined){
                 $candidate=[pscustomobject]@{key=$verification.key;runId=$id;createdUtc=$now;subscriptions=@()}
+                $compatibility=Get-Field $verification 'compatibility'
+                if($compatibility){Set-Field $candidate 'compatibleTests' @($compatibility.tests|Select-Object test,key)}
                 Add-VerificationSubscription $candidate $active[0] $PlanBatch $Reason
                 $ledger.entries=@($ledger.entries)+@($candidate)
             }

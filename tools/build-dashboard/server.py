@@ -336,18 +336,33 @@ def verification_references(root, run_id, key, entries, record):
             row.update({k: item.get(k) for k in ("id", "sourceRunId", "baseline", "checkedUtc")})
             row["task"] = redact(item.get("task", ""))
             row["requirementsRevision"] = record_seconds(item.get("requirementsRevision"))
+            scope = item.get("scope")
+            origin_key = item.get("originKey", item.get("key"))
             if (item.get("schemaVersion") != 1 or item.get("kind") != "completed-verification-reference"
-                    or item.get("sourceRunId") != run_id or item.get("key") != key
+                    or item.get("sourceRunId") != run_id or origin_key != key
                     or not HEX.fullmatch(str(item.get("baseline", "")))
                     or item.get("execution") != "referenced" or item.get("newExecution") is not False
-                    or item.get("reuseAllowed") is not True or item.get("scope") != "exact-candidate-reviewed-binary"):
+                    or item.get("reuseAllowed") is not True
+                    or scope not in ("exact-candidate-reviewed-binary", "candidate-compatible-reviewed-binary")):
                 raise ValueError("Reference does not match its original execution")
+            if scope == "exact-candidate-reviewed-binary" and item.get("key") != key:
+                raise ValueError("Exact reference context differs from its original execution")
+            review = item.get("review")
+            if not isinstance(review, dict) or review.get("policy") != "reviewed-native-files-v1":
+                raise ValueError("Reference review policy is unavailable")
+            if scope == "candidate-compatible-reviewed-binary":
+                candidates = (item.get("currentCandidate"), item.get("originCandidate"))
+                compatible = item.get("compatibleTests")
+                if (not re.fullmatch(r"[a-f0-9]{64}", str(item.get("key", ""))) or item["key"] == origin_key
+                        or any(not isinstance(candidate, dict) or not HEX.fullmatch(str(candidate.get("snapshot", ""))) for candidate in candidates)
+                        or not isinstance(compatible, list) or not 1 <= len(compatible) <= 128
+                        or any(not isinstance(test, dict) or not re.fullmatch(r"[a-f0-9]{64}", str(test.get("key", ""))) for test in compatible)
+                        or review.get("candidateCompatibility") != "same-output-reviewed-inputs-v1"):
+                    raise ValueError("Candidate compatibility proof is unavailable")
             tests = item.get("tests")
             if (not isinstance(tests, list) or not 1 <= len(tests) <= 128
                     or any(not isinstance(test, dict) or not HEX.fullmatch(str(test.get("evidenceId", ""))) for test in tests)):
                 raise ValueError("Reference test evidence is invalid")
-            if not isinstance(item.get("review"), dict) or item["review"].get("policy") != "reviewed-native-files-v1":
-                raise ValueError("Reference review policy is unavailable")
             directory = safe_path(safe_path(root.parent, "verification"), "references")
             if read_json(directory, item["id"] + ".json") != item:
                 raise ValueError("Reference receipt is missing or differs from the ledger")
@@ -367,6 +382,9 @@ def verification_references(root, run_id, key, entries, record):
                         "scope": item["scope"], "sourceRunSha256": item["sourceRunSha256"],
                         "coverageSha256": item["coverageSha256"],
                         "reviewPolicy": redact((item.get("review") or {}).get("policy", ""))})
+            if scope == "candidate-compatible-reviewed-binary":
+                row.update({"originKey": origin_key, "currentKey": item["key"],
+                            "currentSnapshot": candidates[0]["snapshot"], "originSnapshot": candidates[1]["snapshot"]})
         except (ValueError, OSError, TypeError) as error:
             row["reason"] = redact(error)
         rows.append(row)
