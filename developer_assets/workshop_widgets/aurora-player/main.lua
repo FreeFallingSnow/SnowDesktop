@@ -408,7 +408,7 @@ local function startSessionTask(model, name, capability, extra)
 end
 
 local function controlButton(key, glyph, label, enabled, colors, primary,
-    plan)
+    plan, tooltip)
     local size = primary and plan.primaryButton or plan.secondaryButton
     local events={pointerEnter={id="media.hover"},pointerLeave={id="media.hover"}}
     if key=="system.audio.open" and widget.hasFeature("view.pointer.events") then
@@ -424,6 +424,7 @@ local function controlButton(key, glyph, label, enabled, colors, primary,
         enabled = enabled,
         action = { id = key },
         events = events,
+        tooltip = widget.hasFeature("view.tooltip") and tooltip or nil,
         accessibility = { role = "button", label = label },
         style = {
             background = primary and colors.button or colors.secondaryButton,
@@ -604,9 +605,8 @@ local function viewTree(context, model)
     if not hasTimeline then
         clearSeekPreview(model)
     end
-    local volumeHud=systemAudio.hud(model.systemAudio)
     updateProgressTicker(model, model.visible and not model.preview and not model.recordFramePending and
-        (volumeHud~=nil or hasTimeline and playing))
+        hasTimeline and playing)
     local now = hasTimeline and time.now() or nil
     local position = player.position(timeline, playing, now)
     if model.seekPreview ~= nil then
@@ -822,7 +822,7 @@ local function viewTree(context, model)
     children[#children + 1] = content
     local utilitySize=plan.secondaryButton*0.68
     local utilities={controlButton("system.audio.open",glyphs.sound,l10n.tr("shared.audio"),
-        widget.hasFeature("widget.panel"),colors,false,{secondaryButton=utilitySize}),controlButton("local.options",glyphs.options,
+        widget.hasFeature("widget.panel"),colors,false,{secondaryButton=utilitySize},systemAudio.tooltip(model.systemAudio)),controlButton("local.options",glyphs.options,
         l10n.tr("music.options"),widget.hasFeature("widget.panel"),colors,false,
         {secondaryButton=utilitySize})}
     if localActive then table.insert(utilities,1,controlButton("local.playlist",glyphs.playlist,
@@ -839,20 +839,6 @@ local function viewTree(context, model)
         children[#children+1]=view.column({key="aurora.utilities",width="fill",height="fill",
             padding=plan.padding*0.45,justifyContent="start",alignItems="end",children={
                 view.row({key="aurora.utilities.row",width="auto",height=utilitySize,gap=utilitySize*0.25,children=utilities})}})
-    end
-    if volumeHud then
-        local value=math.floor(volumeHud.volume*100+0.5).."%"
-        children[#children+1]=view.column({key="aurora.volume.hud.overlay",width="fill",height="fill",
-            padding={top=plan.padding*0.45,right=plan.padding*0.45+utilitySize*1.25*#utilities},
-            alignItems="end",children={view.row({key="system.audio.hud",width=utilitySize*3.1,height=utilitySize*0.94,
-                padding={horizontal=utilitySize*0.3},gap=utilitySize*0.23,alignItems="center",
-                style={background=colors.secondaryButton,cornerRadius=utilitySize*0.38,opacity=0.97},
-                accessibility={role="group",label=l10n.tr("shared.system_volume").." "..value,live="polite"},children={
-                    view.icon({key="system.audio.hud.icon",glyph=volumeHud.muted and utf8.char(0xF6A9) or glyphs.sound,
-                        iconFont="fa",width=utilitySize*0.48,height="fill",fontSize=utilitySize*0.42,
-                        style={foreground=colors.secondaryButtonText}}),
-                    view.text({key="system.audio.hud.value",text=value,width="fill",height="fill",fontSize=utilitySize*0.48,
-                        fontWeight=600,textAlign="end",style={foreground=colors.secondaryButtonText}})}})}})
     end
     return view.stack({
         key = "aurora.surface",

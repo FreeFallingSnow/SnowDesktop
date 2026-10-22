@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Music Controls",
   "nameKey": "workshop.aurora_player.name",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "System media controls and local music playback with album art, playlists, shuffle, repeat, playback speed, and optional live spectrum.",
   "descriptionKey": "workshop.aurora_player.description",
   "preview": "workshop-preview.png",
@@ -1000,6 +1000,7 @@
     "view.surface.panel",
     "view.surface.popover",
     "view.theme.tokens",
+    "view.tooltip",
     "widget.panel",
     "widget.popover"
   ]
