@@ -55,6 +55,7 @@ $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
+if(Test-CandidateSourceRoot $repositoryRoot){throw 'Candidate source is executor-owned; register tasks and edit the originating checkout.'}
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')

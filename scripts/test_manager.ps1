@@ -43,7 +43,9 @@ function Invoke-Checked {
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     $stageName=if($FilePath -eq 'ctest'){'test-execute'}elseif($FilePath -eq 'cmake' -and $Arguments -contains '--build'){'test-target-build'}elseif($FilePath -eq 'cmake'){'configure'}else{'arrange'}
     $commandExit=2
+    $script:lastCommandExit=2
     Invoke-BuildStageCommand $repositoryRoot $stageName $FilePath $Arguments ([ref]$commandExit)
+    $script:lastCommandExit=$commandExit
     $elapsed.Stop()
     Write-Host ("{0}: {1:N2}s, exit {2}" -f $FilePath, $elapsed.Elapsed.TotalSeconds, $commandExit)
     if ($reportPath) { Write-Host "CTest report: $reportPath" }
@@ -211,7 +213,22 @@ function Invoke-FilteredTests {
         }
         $testArguments+=@('--parallel',[string]$budget.cpuSlots)
     }
-    Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+    $candidate=Get-CandidateEntryContext $repositoryRoot
+    if($candidate){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        # Query commands after the first build; CTest may omit them beforehand.
+        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
+        if(@(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
+        $selection=$executed
+    }
+    $script:lastReportPath='';$script:lastCommandExit=2;$testCode=2
+    try {
+        Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+        $testCode=0
+    }finally{
+        if($candidate){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}
+    }
 }
 
 function Get-TestRunOptions {

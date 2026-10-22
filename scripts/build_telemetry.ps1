@@ -4,10 +4,11 @@ function Write-BuildStageEvent([string]$Root,$Event) {
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return}
     if($id -notmatch '^[a-f0-9]{32}$' -or -not (Test-EntryDelegation $Root)){throw 'Stage telemetry requires a live Run execution credential.'}
-    $directory=Join-Path $Root '.build/collaboration/runs'
+    $runRoot=Get-EntryRunRoot $Root
+    $directory=Join-Path $runRoot '.build/collaboration/runs'
     $request=Read-EntryJson (Join-Path $directory ($id+'.request.json'))
     $record=Read-EntryJson (Join-Path $directory ($id+'.json'))
-    if(-not $request -or -not $record -or $request.repositoryRoot -ne $Root -or $record.nonce -ne $request.nonce -or
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $runRoot -or $record.nonce -ne $request.nonce -or
         $record.status -ne 'running' -or $record.owner.pid -ne (Read-EntryJson (Join-Path $Root '.build/collaboration/execution.json')).owner.pid){
         throw 'Stage telemetry has no matching live Run owner.'
     }
@@ -108,7 +109,7 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
         if($LASTEXITCODE -ne 0){throw 'MSBuild observation logger compilation failed.'}
         [IO.File]::WriteAllText($assembly+'.json',(@{sha256=(Get-FileHash -LiteralPath $assembly).Hash;sourceIdentity=$identity}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
     }
-    $eventFile=Join-Path $Root ('.build/collaboration/runs/'+$id+'.msbuild.'+[Guid]::NewGuid().ToString('N')+'.jsonl')
+    $eventFile=Join-Path (Get-EntryRunRoot $Root) ('.build/collaboration/runs/'+$id+'.msbuild.'+[Guid]::NewGuid().ToString('N')+'.jsonl')
     $parameters=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($eventFile+"`n"+$id+"`n"+[Environment]::GetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT','Process')))
     return '-logger:SnowDesktop.Build.PhaseLogger,'+$assembly+';'+$parameters
 }

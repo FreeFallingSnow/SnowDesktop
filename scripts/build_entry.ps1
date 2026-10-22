@@ -234,11 +234,37 @@ function Test-EntryDelegation([string]$Root) {
     }
     return -not $state -or -not $state.current
 }
-function Start-EntryCredential([string]$Root,[string]$BatchId='') {
+function Test-CandidateSourceRoot([string]$Root) {
+    $state=Read-EntryJson (Join-Path ([IO.Path]::GetDirectoryName($Root)) 'materialization.json')
+    return $state -and $state.source -eq $Root
+}
+function Get-CandidateEntryContext([string]$Root) {
+    if(-not (Test-CandidateSourceRoot $Root)){return $null}
+    $credential=Read-EntryJson (Join-Path $Root '.build/collaboration/execution.json')
+    if(-not (Test-EntryDelegation $Root) -or -not $credential -or -not $credential.PSObject.Properties['candidate']){throw 'Candidate source requires its live private execution credential.'}
+    $context=$credential.candidate
+    if($context.schemaVersion -ne 1 -or $context.source -ne $Root -or $context.runId -notmatch '^[a-f0-9]{32}$' -or
+        -not [IO.Path]::IsPathRooted($context.runRoot)){throw 'Invalid candidate execution context.'}
+    $directory=Join-Path $context.runRoot '.build/collaboration/runs'
+    $request=Read-EntryJson (Join-Path $directory ($context.runId+'.request.json'))
+    $record=Read-EntryJson (Join-Path $directory ($context.runId+'.json'))
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $context.runRoot -or $request.action -ne 'candidate' -or
+        $request.snapshot -ne $context.snapshot -or $request.snapshotManifestDigest -ne $context.manifestDigest -or
+        $request.nonce -ne $context.nonce -or $record.nonce -ne $context.nonce -or $record.status -notin 'queued','running' -or
+        $record.owner.pid -ne $credential.owner.pid -or $record.owner.startTicks -ne $credential.owner.startTicks){throw 'Candidate execution has no matching live parent Run.'}
+    return $context
+}
+function Get-EntryRunRoot([string]$Root) {
+    $candidate=Get-CandidateEntryContext $Root
+    if($candidate){return $candidate.runRoot}
+    return $Root
+}
+function Start-EntryCredential([string]$Root,[string]$BatchId='',$Candidate=$null) {
     $directory=Join-Path $Root '.build/collaboration'
     $token=[Guid]::NewGuid().ToString('N')+[Guid]::NewGuid().ToString('N')
     $record=[pscustomobject]@{schemaVersion=1;repositoryRoot=$Root;batchId=$BatchId;tokenHash=(Get-EntryHash $token);
         owner=[pscustomobject]@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()};startedUtc=[DateTime]::UtcNow.ToString('o')}
+    if($Candidate){$record|Add-Member NoteProperty candidate $Candidate}
     $path=Join-Path $directory 'execution.json';$temporary=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temporary,($record|ConvertTo-Json -Depth 6),(New-Object Text.UTF8Encoding($false)))
@@ -269,6 +295,7 @@ function Open-EntryStateTransaction([string]$Root,[ValidateRange(0,30000)][int]$
     }
 }
 function Enter-BuildEntry([string]$Root) {
+    if(Test-CandidateSourceRoot $Root){$null=Get-CandidateEntryContext $Root}
     if(Test-EntryDelegation $Root){return $null}
     if([Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')){throw 'Invalid/stale execution credential; no shared output or process action was started.'}
     $directory=Join-Path $Root '.build/collaboration';[void][IO.Directory]::CreateDirectory($directory)
@@ -443,11 +470,12 @@ function Get-EntryResourceBudget([string]$Root) {
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return $null}
     if($id -notmatch '^[a-f0-9]{32}$'){throw 'Invalid budget Run identity.'}
-    $directory=Join-Path $Root '.build/collaboration/runs'
+    $runRoot=Get-EntryRunRoot $Root
+    $directory=Join-Path $runRoot '.build/collaboration/runs'
     $request=Read-EntryJson (Join-Path $directory ($id+'.request.json'))
     if(-not $request -or -not $request.PSObject.Properties['projectResources'] -or $request.projectResources.policy -ne 'project-weighted-v1'){return $null}
     $record=Read-EntryJson (Join-Path $directory ($id+'.json'))
-    if(-not $record -or $request.repositoryRoot -ne $Root -or $record.repositoryRoot -ne $Root -or $record.id -ne $id -or $record.nonce -ne $request.nonce -or
+    if(-not $record -or $request.repositoryRoot -ne $runRoot -or $record.repositoryRoot -ne $runRoot -or $record.id -ne $id -or $record.nonce -ne $request.nonce -or
         $record.status -ne 'running' -or -not (Test-EntryDelegation $Root) -or -not (Test-EntryAncestor $record.owner) -or
         -not $record.resourceAdmission.acquiredUtc -or -not $record.resourceAdmission.bindingValid){throw 'Weighted commands require their live admitted Run and output authority.'}
     return $request.projectResources
@@ -457,10 +485,11 @@ function Set-EntryRunControl([string]$Root) {
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return}
     if($id -notmatch '^[a-f0-9]{32}$'){throw 'Invalid Run identity.'}
-    $directory=Join-Path $Root '.build/collaboration/runs'
+    $runRoot=Get-EntryRunRoot $Root
+    $directory=Join-Path $runRoot '.build/collaboration/runs'
     $request=Read-EntryJson (Join-Path $directory ($id+'.request.json'))
     $record=Read-EntryJson (Join-Path $directory ($id+'.json'))
-    if(-not $request -or -not $record -or $request.repositoryRoot -ne $Root -or $record.repositoryRoot -ne $Root -or
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $runRoot -or $record.repositoryRoot -ne $runRoot -or
         $record.id -ne $id -or $record.nonce -ne $request.nonce -or $record.status -ne 'running'){
         throw 'Run control has no live matching request and execution record.'
     }

@@ -5,12 +5,16 @@ param(
     [ValidateSet('start','invoke','status','wait','cancel','unsubscribe','worker','budget')][string]$Command='status',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Task,
-    [ValidateSet('release','debug','tests','ide','batch','snapshot')][string]$Action='tests',
+    [ValidateSet('release','debug','tests','ide','batch','snapshot','candidate')][string]$Action='tests',
     [ValidateSet('full','fast','core','tools','label','name','list','plan','verify')][string]$Mode='list',
     [string]$Filter='',
     [ValidateSet('Release','Debug')][string]$Configuration='Release',
     [string[]]$Targets=@(),
     [string]$SnapshotInputs='',
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$Snapshot,
+    [ValidateSet('release','debug','ide','tests')][string]$CandidateAction='ide',
+    [ValidatePattern('^[a-z0-9][a-z0-9-]{0,31}$')][string]$CandidateSlot='default',
+    [string]$WorkerRoot='',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$PlanBatch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [long]$EditRevision=-1,
@@ -23,6 +27,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if($WorkerRoot){
+    $root=[IO.Path]::GetFullPath($WorkerRoot).TrimEnd('\','/')
+    if($Command -ne 'worker' -or -not $RunId -or $PSScriptRoot -ne (Join-Path $root ('.build/collaboration/runners/'+$RunId+'/scripts'))){throw 'WorkerRoot is reserved for the exact frozen candidate runner.'}
+}
 $directory=Join-Path $root '.build/collaboration/runs'
 [void][IO.Directory]::CreateDirectory($directory)
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
@@ -170,6 +178,13 @@ try {
             throw 'Snapshot capture accepts only its registered Task, configuration and optional SnapshotInputs; it does not build/test or perform process actions.'
         }
         if($SnapshotInputs -and ($Action -ne 'snapshot' -or $SnapshotInputs.Length -gt 4096)){throw 'SnapshotInputs is limited to snapshot capture and4096 characters.'}
+        if($Action -eq 'candidate'){
+            if(-not $Snapshot -or $Batch -or $PlanBatch -or $ReloadShell -or $CloseApplication -or $Mode -in 'plan','verify' -or
+                ($CandidateAction -ne 'tests' -and ($Mode -ne 'list' -or $Filter)) -or
+                ($CandidateAction -ne 'ide' -and $Targets.Count) -or
+                ($CandidateAction -eq 'debug' -and $Configuration -ne 'Debug') -or
+                ($CandidateAction -in 'release','tests' -and $Configuration -ne 'Release')){throw 'Candidate execution requires a snapshot and matching configuration; batch plans and desktop process actions are unavailable.'}
+        }elseif($Snapshot -or $PSBoundParameters.ContainsKey('CandidateAction') -or $PSBoundParameters.ContainsKey('CandidateSlot')){throw 'Candidate arguments require -Action candidate.'}
         if($Filter.Length -gt 4096){throw 'Test filter exceeds its length budget.'}
         if($ReloadShell -and ($CloseApplication -or $Action -notin 'release','debug')){throw 'ReloadShell requires release/debug and cannot be combined with CloseApplication.'}
         if($CloseApplication -and $Action -ne 'release'){throw 'CloseApplication requires release.'}
@@ -186,6 +201,18 @@ try {
         if($Action -eq 'snapshot'){
             $request|Add-Member NoteProperty snapshotInputs $SnapshotInputs
             $request|Add-Member NoteProperty snapshotRequirementsRevision (Get-Field $tasks[0] 'requirementsRevision' 0)
+        }
+        if($Action -eq 'candidate'){
+            . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+            . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+            $candidateManifest=Read-CandidateManifest $root $Snapshot
+            if($candidateManifest.manifest.context.binding.configuration -ne $Configuration){throw 'Candidate configuration differs from its snapshot.'}
+            Set-Field $request 'snapshot' $Snapshot
+            Set-Field $request 'snapshotManifestDigest' $candidateManifest.digest
+            Set-Field $request 'candidateAction' $CandidateAction
+            Set-Field $request 'candidateSlot' $CandidateSlot
+            Set-Field $request 'runnerRuntime' (New-CandidateRunner $root $id)
+            Assert-CandidateToolset $candidateManifest $request.runnerRuntime
         }
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
             completedUtc=$null;exitCode=$null;error='';waitingFor='';waitIntervals=@();waitIntervalsTruncated=$false;stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
@@ -262,7 +289,12 @@ try {
         $launched=$false
         if(-not $joined){
         try {
-            $child=Start-BuildPowerShellScript -Script $PSCommandPath -Arguments ('-Command worker -RunId '+$id) -WorkingDirectory $root -Breakaway `
+            $workerScript=$PSCommandPath;$workerArguments='-Command worker -RunId '+$id
+            if($Action -eq 'candidate'){
+                $workerScript=Join-Path $request.runnerRuntime.directory 'scripts/build_run.ps1'
+                $workerArguments+=' -WorkerRoot "'+$root+'"'
+            }
+            $child=Start-BuildPowerShellScript -Script $workerScript -Arguments $workerArguments -WorkingDirectory $root -Breakaway `
                 -OutputPath (Run-Path $id '.stdout.log') -ErrorPath (Run-Path $id '.stderr.log')
             $launched=$true
             try {Write-RunJson ([pscustomobject]@{pid=$child.Id;startTicks=$child.StartTime.ToUniversalTime().Ticks.ToString()}) (Run-Path $id '.launch.json')}
@@ -370,7 +402,7 @@ try {
     }
     # The process lifetime lease and immutable owner fence prevent duplicate workers
     # and make owner loss an explicit interrupted outcome rather than a takeover.
-    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null
+    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null;$candidateExecution=$null;$runnerLocks=@();$stage=$null
     try {
         $ownerLease=[IO.File]::Open((Run-Path $RunId '.owner.lock'),'OpenOrCreate','ReadWrite','None')
         $record=Read-RunJson (Run-Path $RunId '.json')
@@ -384,6 +416,12 @@ try {
         # Publish the owner before any fallible resource validation. Even a
         # pre-execution invalidation must retain a verifiable batch publisher.
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
+        if($request.action -eq 'candidate'){
+            if(-not $WorkerRoot){throw 'Candidate execution requires its frozen worker.'}
+            . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+            . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+            $runnerLocks=Assert-CandidateRunner $root $request $PSScriptRoot
+        }elseif($WorkerRoot){throw 'Frozen worker root is only valid for candidate execution.'}
         $binding=Get-Field $request 'projectResources'
         Set-Field $record 'resourceAdmission' ([pscustomobject]@{policy=$(if($binding){$binding.policy}else{'legacy-unbudgeted'});required=[bool]($binding -and $binding.required);
             commonGitDirectory=$(if($binding){$binding.commonGitDirectory}else{$null});acquiredUtc=$null;releasedUtc=$null;bindingValid=$null;
@@ -406,13 +444,21 @@ try {
         $waitInterval=$null;$waitClock=$null;$queuedCancellation=$false
         while(-not $entry){
             if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$queuedCancellation=$true;break}
-            try {$entry=if($request.action -eq 'batch'){Enter-BatchRun $request}else{Enter-BuildEntry $root}}
+            try {
+                if($request.action -eq 'candidate'){
+                    $candidateExecution=Enter-CandidateExecution $root $request
+                    $entry=$candidateExecution.entry
+                    Set-Field $record 'candidateExecution' $candidateExecution.context
+                    Set-Field $record 'materialization' $candidateExecution.prepared
+                    Write-RunRecord $record
+                }elseif($request.action -eq 'batch'){$entry=Enter-BatchRun $request}else{$entry=Enter-BuildEntry $root}
+            }
             catch {
-                if($_.Exception.Message -notmatch '^Shared output (busy:|lease/transaction is busy;)'){throw}
+                if($_.Exception.Message -notmatch '^(Shared output (busy:|lease/transaction is busy;)|Candidate slot is busy;)'){throw}
                 if($record.waitingFor -ne $_.Exception.Message){
                     if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds}
                     $record.waitingFor=$_.Exception.Message
-                    $waitInterval=[pscustomobject]@{resource='shared-output';reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed busy until acquisition or reason change, including retry/backoff.'}
+                    $waitInterval=[pscustomobject]@{resource=$(if($request.action -eq 'candidate'){'candidate-slot'}else{'shared-output'});reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed busy until acquisition or reason change, including retry/backoff.'}
                     $waitClock=[Diagnostics.Stopwatch]::StartNew()
                     if(@($record.waitIntervals).Count -lt 100){$record.waitIntervals=@($record.waitIntervals)+@($waitInterval)}else{$record.waitIntervalsTruncated=$true}
                     Write-RunRecord $record
@@ -461,13 +507,15 @@ try {
             $record.waitingFor=''
             Complete-RunStage $record $queue 0
             . (Join-Path $PSScriptRoot 'build_inputs.ps1')
-            $record.inputStart=Get-BuildInputIdentity $root
+            $executionRoot=if($candidateExecution){$candidateExecution.slot.source}else{$root}
+            $record.inputStart=Get-BuildInputIdentity $executionRoot
             $record.status='running';Write-RunRecord $record
             $stage=Start-RunStage $record 'pipeline'
             $previousRun=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
             try {
                 [Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$RunId,'Process')
                 $options=@{EntryAction=$request.action;EntryMode=$request.mode;EntryFilter=$request.filter}
+                if($candidateExecution){$options.EntryAction=$request.candidateAction}
                 if($request.PSObject.Properties['configuration']){$options.EntryConfiguration=$request.configuration;$options.EntryTargets=@($request.targets)}
                 if($request.PSObject.Properties['planBatch'] -and $request.planBatch){$options.EntryPlanBatch=$request.planBatch}
                 if($request.reloadShell){$options.EntryReloadShell=$true};if($request.closeApplication){$options.EntryCloseApplication=$true}
@@ -485,11 +533,11 @@ try {
                     }catch{Complete-RunStage $record $captureStage $(if(Run-CancellationRequested $request){4}else{2});throw}
                 }elseif($request.action -eq 'batch'){
                     & (Join-Path $PSScriptRoot 'build_manager.ps1') execute $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId
-                } else {& (Join-Path $PSScriptRoot 'build_entry.ps1') @options}
+                } else {& (Join-Path $executionRoot 'scripts/build_entry.ps1') @options}
                 if($request.action -ne 'snapshot'){$record.exitCode=$global:LASTEXITCODE}
             } finally {[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$previousRun,'Process')}
             Complete-RunStage $record $stage $record.exitCode
-            $record.inputEnd=Get-BuildInputIdentity $root
+            $record.inputEnd=Get-BuildInputIdentity $executionRoot
             $cancelled=('SnowDesktop.Build.Job' -as [type]) -and [SnowDesktop.Build.Job]::RunWasCancelled
             $record.status=if($cancelled){'cancelled'}elseif($request.mode -eq 'verify' -and $record.exitCode -eq 5){'invalidated'}elseif($record.exitCode -eq 0){'passed'}else{'failed'}
             if($record.status -eq 'cancelled'){$record.exitCode=4}
@@ -501,12 +549,14 @@ try {
         $captureCancelled=$request.action -eq 'snapshot' -and (Run-CancellationRequested $request)
         $record.exitCode=if($captureCancelled){4}elseif($invalidated){5}else{2};$record.error=$_.Exception.ToString()
         if($queue -and -not $queue.completedUtc){Complete-RunStage $record $queue $record.exitCode}
+        if($stage -and -not $stage.completedUtc){Complete-RunStage $record $stage $record.exitCode}
         $record.status=if($captureCancelled){'cancelled'}elseif($invalidated){'invalidated'}else{'failed'}
     } finally {
         # Terminal means that the leased output and automatic task transaction
         # have both finished. Observers may submit their next entry immediately.
         if($resourceLease){$resourceLease.Dispose();$record.resourceAdmission.releasedUtc=[DateTime]::UtcNow.ToString('o')}
-        Exit-BuildEntry $entry
+        if($candidateExecution){Exit-CandidateExecution $candidateExecution}else{Exit-BuildEntry $entry}
+        foreach($stream in $runnerLocks){$stream.Dispose()}
         if($ownsRun -and $request.action -eq 'batch'){
             try {
                 $null=& (Join-Path $PSScriptRoot 'build_manager.ps1') publish-run $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId -Reason $record.error -WaitSeconds 30

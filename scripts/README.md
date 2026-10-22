@@ -141,9 +141,28 @@ scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId> -Slo
 由操作系统文件句柄互斥，外部修改或文件冲突会拒绝覆盖。失败的部分准备须检查并选择新 Slot，不把
 未完成目录当作有效候选。调用结束即释放本次准备租约；真正的执行者仍须重新校验并持有租约。
 
-此阶段返回 `snapshotReady=true`、`executionReady=false`。工具、预设和构建环境已绑定；SDK/包的
-传递文件依赖尚未闭合，仍为 `externalDependenciesClosed=false`。没有启用自动结果缓存、候选程序
-执行或编辑/构建重叠，也不迁移现有 batch；这些门禁将在一致性与执行隔离验证后接入。
+捕获及仅准备接口仍返回 `snapshotReady=true`、`executionReady=false`，不授予执行权。
+显式执行使用独立的持久 Run：
+
+```bat
+scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction ide -CandidateSlot release -Targets SnowDesktopBuildCandidateExecutionTests
+scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction tests -CandidateSlot release -Mode name -Filter "^build_candidate_execution$"
+scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
+```
+
+`CandidateAction` 支持 release/debug/ide/tests，配置必须与快照一致；debug 另传 `-Configuration Debug`。
+不支持候选内 batch/plan/verify 或关闭应用、重载 Shell。提交时创建只读工具副本，快照须携带匹配的执行
+工具；旧快照需要重新捕获。执行者在排队及运行期间保留 Slot、私有输出和源码文件句柄，结束或退出才释放。
+同 Slot 排队，不同 Slot 仍遵守项目 CPU/内存准入；现有共享桌面资源继续独占。源码下的 `.build` 和
+`.build_debug` 只允许映射到该 Slot 的私有输出，标准脚本、预设和 CMake 凭据检查保持生效。原工作区只保存
+Run 请求、结果、事件及资源观测，候选执行不取得原工作区的输出租约，原工作区可通过正常 begin/claim 继续编辑。
+不能直接在候选源码登记任务或用过期凭据编译。
+
+Run 的 `candidateExecution` 关联快照、清单摘要、槽位及实际源码/输出目录；输入身份来自清单和逐文件内容，
+不向上发现原工作区 Git。候选测试在 `<runId>.candidate-tests.json` 保留选择集合、定义、二进制、显式运行
+文件及 JUnit 报告身份，包括测试失败。显式取消和执行者退出仅清理本次私有 Job，观察者退出不取消执行。
+SDK/包的传递文件依赖尚未闭合，仍为 `externalDependenciesClosed=false` 和 `reuseAllowed=false`。
+没有启用已完成结果自动缓存、依赖驱动筛选或现有批次自动迁移；本接口是后续调度的执行基础。
 
 MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSVC 同时编译的源码数由
 `SNOWDESKTOP_COMPILE_JOBS` 控制。后者默认使用本机逻辑处理器数的一半，最少 1、最多 8，

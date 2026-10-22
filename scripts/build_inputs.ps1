@@ -40,6 +40,12 @@ function Test-BuildInputPath([string]$Relative) {
 }
 
 function Get-BuildInputIdentity([string]$Root) {
+    # A slot has no Git index. Never discover its mutable ancestor checkout.
+    if((Get-Command Test-CandidateSourceRoot -ErrorAction SilentlyContinue) -and (Test-CandidateSourceRoot $Root)){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        return Get-CandidateExecutionInputIdentity $Root
+    }
     $listing = Invoke-InputGit $Root 'ls-files -z --cached --others --exclude-standard'
     if ($listing.code -ne 0) { throw ('Cannot enumerate repository inputs: ' + $listing.error) }
     $headQuery = Invoke-InputGit $Root 'rev-parse --verify HEAD'
