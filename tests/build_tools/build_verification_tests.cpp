@@ -148,17 +148,20 @@ void scenario(const fs::path& repo,const std::string& control){
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");const auto during=start("owner",env);const auto duringId=during.at("id").str();
     await_execution(c,duringId);write(binary,"changed during execution");c.gate(".build/hold-verification",false);
     require(wait_run(c,env,duringId,5).at("status").str()=="invalidated","Changed assertion binary retained a passing result");write(binary,bytes);
-    fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
-    const auto runtimeRun=start("owner",env).at("id").str();await_execution(c,runtimeRun);
-    write(reviewedRuntime,"changed during verification");c.gate(".build/hold-verification",false);
-    const auto runtimeInvalid=wait_run(c,env,runtimeRun,5);
-    require(runtimeInvalid.at("status").str()=="invalidated"&&runtimeInvalid.at("record").at("error").str().find("Reviewed runtime file inputs changed")!=std::string::npos,
-        "Reviewed runtime file mutation retained a passing verification result");
-    const auto runtimeCoverage=Json::parse(read(c.stateRoot/L"runs"/wide(runtimeRun+".verification.json")));
-    const auto& fileObservation=runtimeCoverage.at("runtimeInputCheck").at("tests").items.front();
-    require(fileObservation.at("status").str()=="invalidated"&&fileObservation.at("beforeDigest").str()!=fileObservation.at("afterDigest").str()&&
-        original==read(c.stateRoot/wide(batch+".json")),"Runtime invalidation lost its endpoints or changed the original candidate evidence");
-    write(reviewedRuntime,"original reviewed runtime resource");
+    for(const bool removeInput:{false,true}){
+        fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
+        const auto runtimeRun=start("owner",env).at("id").str();await_execution(c,runtimeRun);
+        if(removeInput)fs::remove(reviewedRuntime);else write(reviewedRuntime,"changed during verification");
+        c.gate(".build/hold-verification",false);
+        const auto runtimeInvalid=wait_run(c,env,runtimeRun,5);
+        require(runtimeInvalid.at("status").str()=="invalidated"&&runtimeInvalid.at("record").at("error").str().find("Reviewed runtime file inputs changed")!=std::string::npos,
+            std::string(removeInput?"Missing":"Changed")+" reviewed runtime file retained a passing verification result");
+        const auto runtimeCoverage=Json::parse(read(c.stateRoot/L"runs"/wide(runtimeRun+".verification.json")));
+        const auto& fileObservation=runtimeCoverage.at("runtimeInputCheck").at("tests").items.front();
+        require(fileObservation.at("status").str()=="invalidated"&&fileObservation.at("beforeDigest").str()!=fileObservation.at("afterDigest").str()&&
+            original==read(c.stateRoot/wide(batch+".json")),"Runtime invalidation lost its endpoints or changed the original candidate evidence");
+        write(reviewedRuntime,"original reviewed runtime resource");
+    }
     for(const std::string mutation:{"configure","duplicate","path","observations"}){
         const auto negative=run({executable().wstring(),repo.wstring(),wide("--verification-"+mutation)},c.root,65);
         const auto signal=mutation=="configure"?"Verification repeated configure/build instead of executing the existing candidate":mutation=="duplicate"?"Equivalent verification requests launched duplicate Runs":mutation=="observations"?"Verification omitted this execution's dependency/file/module observations":"Verification was rejected before test execution";

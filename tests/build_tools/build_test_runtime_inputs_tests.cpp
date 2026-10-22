@@ -55,6 +55,30 @@ $check=Compare-TestRuntimeInputs $PSScriptRoot @(@{name='Alpha'},@{name='Beta'})
     require(program().code==1&&semantic.at("alpha").at("digest").str()!=alphaDigest&&semantic.at("beta").at("digest").str()==betaDigest,"Semantic file read did not change both runtime behavior and its isolated identity");
     require(named(semantic.at("check").at("tests"),"Alpha").at("status").str()=="invalidated"&&named(semantic.at("check").at("tests"),"Beta").at("status").str()=="stable","File-input endpoint comparison lost its affected test");
     require(named(semantic.at("advice").at("tests"),"Alpha").at("recommendRun").boolean&&!named(semantic.at("advice").at("tests"),"Beta").at("recommendRun").boolean,"Runtime file advice invalidated an independent contract");
+    write(root/L"data/message.txt","allowed");fs::rename(root/L"data/message.txt",root/L"data/message.saved");
+    const auto missing=inspect();
+    require(program().code==1&&missing.at("alpha").at("status").str()=="incomplete"&&
+        named(missing.at("check").at("tests"),"Alpha").at("status").str()=="invalidated"&&
+        named(missing.at("check").at("tests"),"Beta").at("status").str()=="stable",
+        "Missing required runtime input did not invalidate its endpoint");
+    write(root/L"assert-endpoint.ps1",R"PS(
+$observation=(& (Join-Path $PSScriptRoot 'inspect.ps1')|ConvertFrom-Json)
+if(@($observation.check.tests|Where-Object test -eq 'Alpha')[0].status -ne 'invalidated'){throw 'Missing required runtime input did not invalidate its endpoint'}
+$observation|ConvertTo-Json -Depth 18
+)PS",true);
+    bridge.call(root/L"assert-endpoint.ps1",{});
+    const auto module=root/L"scripts/build_test_runtime_inputs.ps1";
+    const auto currentModule=read(module);
+    auto legacyModule=currentModule;
+    replace(legacyModule,"$status=if($old -and $old.status -eq 'observed' -and $current.digest -and $old.digest -ne $current.digest){'invalidated'}elseif(-not $old -or $old.status -ne 'observed' -or $current.status -ne 'observed'){'unclosed'}else{'stable'}",
+        "$status=if(-not $old -or $old.status -ne 'observed' -or $current.status -ne 'observed'){'unclosed'}elseif($old.digest -ne $current.digest){'invalidated'}else{'stable'}");
+    write(module,legacyModule,true);const auto negative=bridge.invoke(root/L"assert-endpoint.ps1");write(module,currentModule,true);
+    require(negative.code==1&&negative.err.find("Missing required runtime input did not invalidate its endpoint")!=std::string::npos,
+        "Legacy endpoint ordering failed outside the required-file invalidation assertion: "+negative.out+negative.err);
+    fs::rename(root/L"data/message.saved",root/L"data/message.txt");
+    fs::rename(root/L"tree",root/L"tree.saved");const auto missingTree=inspect("tree");
+    require(program().code==1&&named(missingTree.at("check").at("tests"),"Alpha").at("status").str()=="invalidated",
+        "Missing required runtime directory did not invalidate its endpoint");fs::rename(root/L"tree.saved",root/L"tree");
     write(root/L"data/message.txt","allowed");write(root/L"icons/003_c.png","new");const auto shape=inspect("icons/003_c.png");
     require(program().code==1&&shape.at("alpha").at("digest").str()!=alphaDigest,"Directory entries did not affect the runtime fingerprint");
     require(shape.at("advice").at("unmappedPaths").items.empty()&&named(shape.at("advice").at("tests"),"Alpha").at("recommendRun").boolean&&!named(shape.at("advice").at("tests"),"Beta").at("recommendRun").boolean,"New directory member became an unrelated global change");

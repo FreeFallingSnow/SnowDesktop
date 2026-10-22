@@ -124,7 +124,9 @@ function Compare-TestRuntimeInputs([string]$Root,$Tests,$Before) {
         foreach($test in $Tests){
             $prior=@($baseline.tests|Where-Object test -eq $test.name);$old=if($prior.Count -eq 1){Get-TestDependencyField $prior[0] 'runtimeInputs'}else{$null}
             $current=Get-TestRuntimeInputs $context $test.name
-            $status=if(-not $old -or $old.status -ne 'observed' -or $current.status -ne 'observed'){'unclosed'}elseif($old.digest -ne $current.digest){'invalidated'}else{'stable'}
+            # A missing required file has an incomplete current contract, but
+            # its observed absence still proves the prior endpoint changed.
+            $status=if($old -and $old.status -eq 'observed' -and $current.digest -and $old.digest -ne $current.digest){'invalidated'}elseif(-not $old -or $old.status -ne 'observed' -or $current.status -ne 'observed'){'unclosed'}else{'stable'}
             $rows+=@([pscustomobject]@{test=$test.name;status=$status;beforeDigest=(Get-TestDependencyField $old 'digest');afterDigest=$current.digest;issues=$current.issues;runtimeClosure='unclosed';reuseAllowed=$false})
         }
         return [pscustomobject]@{status='recorded';tests=$rows;reason='File-input endpoints only; DLL loading and external runtime state remain unclosed.'}
