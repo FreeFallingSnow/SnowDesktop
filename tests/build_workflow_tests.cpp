@@ -75,6 +75,7 @@ void commit_lifecycle_tests(const fs::path& repo,const std::string& mode){
     for(const bool legacy:{false,true}){
         Coordinator c(repo,legacy?"checkpoint-ps5":"checkpoint-ps7");
         if(legacy)c.bridge=std::make_unique<Bridge>(repo,c.root,true);
+        c.git({L"config",L"core.autocrlf",L"true"});c.git({L"config",L"core.safecrlf",L"warn"});
         if(mode=="--legacy-directory-control"){
             auto script=read(c.scripts/L"build_ownership.ps1");
             replace(script,"if(Test-Path -LiteralPath (Join-Path $repositoryRoot $path))","if([IO.File]::Exists((Join-Path $repositoryRoot $path)))");

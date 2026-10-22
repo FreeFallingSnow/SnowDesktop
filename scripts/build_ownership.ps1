@@ -107,6 +107,18 @@ function Assert-CommitIdentity($Entry) {
     $actual=Get-TaskIdentity ([pscustomobject]@{inputs=@(Get-Field $Entry 'ownedFiles' @())+@(Get-Field $expected 'paths' @())})
     if($actual.digest -ne $expected.digest){throw 'Claimed source changed after ready; frozen Git checkpoint refused. Begin/claim the new revision.'}
 }
+function Invoke-OwnedGitChange([string[]]$Arguments) {
+    # WinPS 5.1 turns stderr warnings into ErrorRecords. Capture both streams
+    # without treating an advisory as failure; the native exit code decides.
+    $previous=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        $messages=@(& git.exe @Arguments 2>&1)
+        $code=$LASTEXITCODE
+    } finally {$ErrorActionPreference=$previous}
+    foreach($message in $messages){[Console]::Error.WriteLine([string]$message)}
+    return $code
+}
 function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $paths=@($PathText.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
     if($paths.Count -eq 0 -or -not [IO.File]::Exists($MessageFile)){throw 'Commit requires Paths and an existing UTF-8 MessageFile.'}
@@ -119,12 +131,10 @@ function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     # --only commits these paths rather than the shared staged set. Existing
     # staged files belonging to other tasks remain in the index. The lease
     # covers the entire semantic transaction, including these inspections.
-    foreach($path in $paths){if(Test-Path -LiteralPath (Join-Path $repositoryRoot $path)){ & git.exe --literal-pathspecs add --intent-to-add -- $path | ForEach-Object {[Console]::Error.WriteLine($_)}; if($LASTEXITCODE -ne 0){throw "Cannot prepare claimed path: $path"} }}
-    & git.exe diff --check -- @paths
-    if($LASTEXITCODE -ne 0){throw 'Claimed patch has whitespace errors.'}
+    foreach($path in $paths){if(Test-Path -LiteralPath (Join-Path $repositoryRoot $path)){if((Invoke-OwnedGitChange (@('--literal-pathspecs','add','--intent-to-add','--',$path))) -ne 0){throw "Cannot prepare claimed path: $path"}}}
+    if((Invoke-OwnedGitChange (@('--literal-pathspecs','diff','--check','--')+$paths)) -ne 0){throw 'Claimed patch has whitespace errors.'}
     if(Get-Field $Selection 'frozen' $false){Assert-CommitIdentity $Selection}
-    & git.exe --literal-pathspecs commit --only -F $MessageFile -- @paths | ForEach-Object {[Console]::Error.WriteLine($_)}
-    if($LASTEXITCODE -ne 0){throw 'Commit failed; no index reset or rollback was attempted.'}
+    if((Invoke-OwnedGitChange (@('--literal-pathspecs','commit','--only','-F',$MessageFile,'--')+$paths)) -ne 0){throw 'Commit failed; no index reset or rollback was attempted.'}
     $after=(& git.exe rev-parse HEAD) -join ''
     $committed=@(& git.exe diff-tree --no-commit-id --name-only -r $after)
     foreach($file in $committed){if(@($paths|Where-Object {$file -eq $_ -or $file.StartsWith($_+'/')}).Count -eq 0){throw 'Unexpected committed paths; inspect manual Git activity.'}}
