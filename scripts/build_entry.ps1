@@ -575,7 +575,9 @@ if($MyInvocation.InvocationName -ne '.') {
             # All leased subprocesses belong to this entry's private Job. An
             # interrupted entry cannot release the lease while its CMake child
             # keeps writing. No user process is attached to this Job.
-            Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
+            # Weighted admission may already load this identical frozen
+            # runtime from another path before entering candidate source.
+            Initialize-ResourceRuntime
             [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE','1','Process')
             Set-EntryRunControl $root
             if($EntryAction -eq 'ide') {

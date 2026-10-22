@@ -155,6 +155,13 @@ void scenario(const fs::path& repo,const std::string& control) {
         until([&]{return !owner_alive(child);});require(unrelated.running(),"Candidate lifecycle cleanup terminated an unrelated process");fs::remove(gate);
     }
     wait(c,submit(c,execution(snapshot)));program(output,7);
+    auto weightedArguments=execution(snapshot);
+    weightedArguments.insert(weightedArguments.end(),{"-CpuSlots","2","-MemoryMiB","2048"});
+    const auto weighted=wait(c,submit(c,weightedArguments));program(output,7);
+    require(weighted.at("record").at("resourceAdmission").at("bindingValid").boolean&&
+        weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==2048&&
+        weighted.at("resources").at("finished").boolean&&weighted.at("resources").at("accountingAvailable").boolean,
+        "Candidate private entry did not reuse its admitted runtime and parent CPU/memory budget");
     for(const auto& mutation:std::vector<std::pair<std::string,std::string>>{{"checkout-lock","Original checkout editing remained blocked"},{"unlocked-source","Active candidate source accepted a concurrent writer"}}){
         const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation.first)},c.root,85,{},true);
         require(result.code==1&&result.err.find(mutation.second)!=std::string::npos,"Executor negative control did not reach its business assertion: "+result.out+result.err);
