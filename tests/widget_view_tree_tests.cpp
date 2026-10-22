@@ -5205,6 +5205,45 @@ void TestSurfaceScrollbarGutters()
                 Near(root.scrollbarFrame->width, clip->width),
             "only the track cross edge moves into the host gutter");
     }
+    for (auto orientation : {ViewOrientation::Vertical, ViewOrientation::Horizontal})
+    {
+        const bool vertical = orientation == ViewOrientation::Vertical;
+        ViewNode root;
+        root.type = vertical ? ViewNodeType::Column : ViewNodeType::Row;
+        root.key = "split";
+        root.height = {ViewLengthKind::Fill, 0};
+        ViewNode fixed;
+        fixed.key = "fixed-header-or-sidebar";
+        fixed.width = {vertical ? ViewLengthKind::Fill : ViewLengthKind::Fixed, 32};
+        fixed.height = {vertical ? ViewLengthKind::Fixed : ViewLengthKind::Fill, 32};
+        root.children = {fixed, make(orientation)};
+        std::string error;
+        std::vector<ViewScrollViewport> ports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error) &&
+            ApplyViewScrollOffsets(root, {}, ports, error), "fixed header/sidebar fixture lays out");
+        const auto original = root.children[1].clipFrame;
+        ApplyViewSurfaceScrollbarGutters(root, ports, {0, 0, 200, 100}, {0, 0, 214, 114});
+        const auto track = root.children[1].scrollbarFrame;
+        Check(track && (vertical ? Near(track->y, original->y) &&
+            Near(track->height, original->height) && Near(track->x + track->width, 214) :
+            Near(track->x, original->x) && Near(track->width, original->width) &&
+                Near(track->y + track->height, 114)),
+            "edge-aligned scroll areas move the cross edge while fixed header/sidebar stays outside the track");
+    }
+    {
+        auto root = make(ViewOrientation::Vertical);
+        auto nested = make(ViewOrientation::Vertical);
+        nested.key = "nested";
+        nested.width = nested.height = {ViewLengthKind::Fixed, 50};
+        root.children.front().children = {nested};
+        std::string error;
+        std::vector<ViewScrollViewport> ports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error) &&
+            ApplyViewScrollOffsets(root, {}, ports, error), "nested scroll fixture lays out");
+        ApplyViewSurfaceScrollbarGutters(root, ports, {0, 0, 200, 100}, {0, 0, 214, 114});
+        Check(root.scrollbarFrame && !root.children.front().children.front().scrollbarFrame,
+            "nested track stays inside the parent scroll clip rather than escaping into host chrome");
+    }
     for (int scenario = 0; scenario != 4; ++scenario)
     {
         auto scroll = make(ViewOrientation::Vertical);

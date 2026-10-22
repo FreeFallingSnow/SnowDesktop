@@ -5938,15 +5938,24 @@ void ApplyViewSurfaceScrollbarGutters(ViewNode& root,
             const auto sameEdge = [](float a, float b) {
                 return std::abs(a - b) < 0.5f;
             };
+            const bool vertical = node.orientation == ViewOrientation::Vertical;
+            const bool atSurfaceEdge = vertical
+                ? sameEdge(node.frame.x, contentBounds.x) &&
+                    sameEdge(node.frame.width, contentBounds.width) &&
+                    node.frame.y >= contentBounds.y - 0.5f &&
+                    node.frame.y + node.frame.height <=
+                        contentBounds.y + contentBounds.height + 0.5f
+                : sameEdge(node.frame.y, contentBounds.y) &&
+                    sameEdge(node.frame.height, contentBounds.height) &&
+                    node.frame.x >= contentBounds.x - 0.5f &&
+                    node.frame.x + node.frame.width <=
+                        contentBounds.x + contentBounds.width + 0.5f;
             if (!node.showScrollbar || !node.clipFrame ||
                 node.scrollContentExtent <= node.scrollViewportExtent ||
-                !sameEdge(node.frame.x, contentBounds.x) ||
-                !sameEdge(node.frame.y, contentBounds.y) ||
-                !sameEdge(node.frame.width, contentBounds.width) ||
-                !sameEdge(node.frame.height, contentBounds.height))
+                !atSurfaceEdge)
                 return;
             ViewRect track = *node.clipFrame;
-            if (node.orientation == ViewOrientation::Vertical)
+            if (vertical)
                 track.width = std::max(track.width,
                     trackBounds.x + trackBounds.width - track.x);
             else

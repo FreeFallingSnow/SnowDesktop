@@ -169,11 +169,16 @@
                 view.column({key="body",height=1800,padding=12,children={
                     view.text({key="title",text="Output devices",height=40})}})}})
             end
-            return {apiVersion=2,view=body,panel=body,dialog=body,popover=body})lua");
+            return widget.define({apiVersion=2,view=body,panel=body,dialog=body,popover=body}))lua");
         app.widgetEngine_ = std::make_unique<WidgetEngine>();
-        check(app.widgetEngine_->InitPreview(ctx.Get(), app.dwriteFactory_.Get()) &&
-            app.widgetEngine_->EnsureWidgetDirectoryPreviewLoaded(L"lua-popup-owner", package),
-            "load render-only scrollbar package");
+        check(app.widgetEngine_->InitPreview(ctx.Get(), app.dwriteFactory_.Get()),
+            "initialize render-only scrollbar engine");
+        if (!app.widgetEngine_->EnsureWidgetDirectoryPreviewLoaded(L"lua-popup-owner", package))
+        {
+            const auto failure = app.widgetEngine_->GetWidgetRuntimeFailure(L"lua-popup-owner");
+            throw std::runtime_error("load scrollbar package: " +
+                (failure ? failure->detail : "no runtime diagnostic"));
+        }
         for (const auto* surface : {"panel", "dialog", "popover"})
         for (const bool header : {false, true})
         {
@@ -247,7 +252,7 @@
                 view.box({key="overflow",width=900,height=1800,
                     style={background=0xFF0000}})}})
             end
-            return {apiVersion=2,view=body,popover=body})lua");
+            return widget.define({apiVersion=2,view=body,popover=body}))lua");
         check(app.widgetEngine_->EnsureWidgetDirectoryPreviewLoaded(L"lua-popup-owner", package),
             "load non-scrolling overflow counterexample");
         app.luaWidgetPanelRequest_.surface = "popover";
