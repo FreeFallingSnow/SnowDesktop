@@ -35,7 +35,11 @@ function(snowdesktop_dependency_source target source)
     # APPEND retains existing XAML DependentUpon/SubType metadata.
     set_property(SOURCE "${absolute}" TARGET_DIRECTORY "${target}" APPEND PROPERTY VS_SETTINGS
         "GenerateSourceDependencies=true"
-        "SourceDependenciesFile=$(IntDir)sd-${short_digest}.json")
+        "SourceDependenciesFile=$(IntDir)sd-${short_digest}.json"
+        # MSBuild can skip an unchanged object even when this auxiliary JSON
+        # is missing. Reassess only that source; existing reports keep ordinary
+        # tracking. ProjectDir binds child projects independently of process cwd.
+        "MinimalRebuildFromTracking=$([System.IO.File]::Exists('$(ProjectDir)$(IntDir)sd-${short_digest}.json'))")
     set_property(GLOBAL PROPERTY "SNOWDESKTOP_DEPENDENCY_CONFIGURED_${scope}" TRUE)
 endfunction()
 

@@ -32,7 +32,7 @@ void source_report_tests(const fs::path& repo,bool disableReports){
     auto commonText=git.out;while(!commonText.empty()&&(commonText.back()=='\r'||commonText.back()=='\n'))commonText.pop_back();
     const auto common=fs::path(wide(commonText));
     require(git.code==0&&common.filename()==L".git","Cannot bind the repository's short isolated test output root");
-    const auto root=temporary("sr",common.parent_path()/L".build/Release/tests/sr");
+    const auto root=temporary("sr space",common.parent_path()/L".build/Release/tests/sr");
     copy(repo,root,{"cmake/SnowDesktop.DependencyEvidence.cmake","scripts/build_test_dependencies.ps1"});
     write(root/L"CMakeLists.txt",R"CM(cmake_minimum_required(VERSION 3.24)
 project(StandardSourceReports LANGUAGES C CXX)
@@ -78,6 +78,7 @@ set_tests_properties(ReusedPchReport PROPERTIES REQUIRED_FILES "$<TARGET_FILE:Re
     // than requiring a clean rebuild or silently presenting an old report.
     const auto lost=std::find_if(releaseReports.begin(),releaseReports.end(),[](const Report& value){return fs::path(wide(value.source)).parent_path().filename()==L"right";});
     require(lost!=releaseReports.end(),"Right-source report not observed");fs::rename(lost->path,lost->path.wstring()+L".saved");build(L"Release");require(fs::exists(lost->path),"Incremental build did not recover its missing compiler source report");
+    const auto recoveredTimes=outputs(root,L"Release");build(L"Release");require(recoveredTimes==outputs(root,L"Release"),"Recovered source report kept forcing recompilation on the next no-op build");
     write(root/L"left/value.hpp","constexpr int leftValue=11;\n");build(L"Release");
     const auto fresh=run({(root/L".build/Release/ReportHost.exe").wstring(),L"32"},root);
     const auto old=run({(root/L".build/Release/ReportHost.exe").wstring(),L"24"},root);
