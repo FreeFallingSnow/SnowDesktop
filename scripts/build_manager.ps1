@@ -95,13 +95,29 @@ function Get-BatchWaitMessage($Current) {
     if($Current.phase -eq 'building'){
         $runId=Get-Field $Current 'runId' ''
         if($runId -match '^[a-f0-9]{32}$'){
-            $message+=': executing Run '+$runId
             try {
-                . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
-                $events=@(Read-BuildStageEvents $repositoryRoot $runId|Where-Object {$_.kind -in 'start','end'})
-                if($events.Count){$latest=$events[-1];$message+='; latest stage '+$latest.kind+' '+$latest.name}
-                else{$message+='; stage unavailable (no observation yet)'}
-            } catch {$message+='; stage unavailable (observation failed)'}
+                $directory=Join-Path $stateRoot 'runs'
+                $request=Read-EntryJson (Join-Path $directory ($runId+'.request.json'))
+                $record=Read-EntryJson (Join-Path $directory ($runId+'.json'))
+                if(-not $record -or -not $request -or $record.id -ne $runId -or $request.id -ne $runId -or
+                    $record.repositoryRoot -ne $repositoryRoot -or $request.repositoryRoot -ne $repositoryRoot -or
+                    $request.batch -ne $Current.id -or $record.nonce -ne $request.nonce){throw 'Run observation identity unavailable.'}
+                $status=[string]$record.status
+                if($status -eq 'running'){
+                    $message+=': executing Run '+$runId
+                    try {
+                        . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+                        $events=@(Read-BuildStageEvents $repositoryRoot $runId|Where-Object {$_.kind -in 'start','end'})
+                        if($events.Count){$latest=$events[-1];$message+='; latest stage '+$latest.kind+' '+$latest.name}
+                        else{$message+='; stage unavailable (no observation yet)'}
+                    } catch {$message+='; stage unavailable (observation failed)'}
+                } elseif($status -eq 'queued'){
+                    $waiting=[string](Get-Field $record 'waitingFor' '')
+                    $message+=': Run '+$runId+' queued; waiting for '+$(if($waiting){$waiting}else{'resource reason not recorded'})
+                } elseif($status -eq 'starting'){$message+=': Run '+$runId+' starting'}
+                elseif($status -in 'passed','failed','cancelled','start-failed','invalidated','interrupted'){$message+=': Run '+$runId+' '+$status+'; common result pending'}
+                else{throw 'Run observation status unavailable.'}
+            } catch {$message+=': Run '+$runId+' state unavailable (observation failed)'}
         } else {$message+=': executing retained build/test pipeline'}
     } elseif($Current.phase -eq 'editing'){
         $editors=@($Current.participants|Where-Object state -eq 'editing'|ForEach-Object id)
