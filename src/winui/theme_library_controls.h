@@ -823,7 +823,14 @@ private:
     void Feedback(const ThemeLibraryResult& result, bool save = false)
     {
         auto feedback = save ? saveFeedback_ : feedback_;
-        if (result.succeeded && result.message.empty()) { feedback.IsOpen(false); return; }
+        if (result.succeeded && result.message.empty())
+        {
+            feedback.IsOpen(false);
+            // The inline control surface wraps the bar; a cleared feedback must
+            // also collapse that surface or it keeps a zero-height gap open.
+            if (!save && !transfer_) root_.Visibility(x::Visibility::Collapsed);
+            return;
+        }
         feedback.Severity(result.succeeded ? c::InfoBarSeverity::Warning : c::InfoBarSeverity::Error);
         feedback.Message(result.message); feedback.IsOpen(!result.message.empty());
         if (!save && !transfer_)

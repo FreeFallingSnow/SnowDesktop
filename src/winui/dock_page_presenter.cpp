@@ -432,7 +432,10 @@ struct DockPagePresenter::Impl
                 if (!id.empty()) request.ids.push_back(std::move(id));
                 const auto result = action(std::move(request));
                 if (!guard || !*guard) return;
-                iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+                // An unlocalized error key must not open an empty banner.
+                const auto message = L(result.error.c_str(), L"");
+                iconStatus.Message(message);
+                iconStatus.IsOpen(!message.empty());
             }, snapshot.targetName);
     }
     void RestoreControlIcon(const std::wstring& target)
@@ -440,7 +443,9 @@ struct DockPagePresenter::Impl
         if (!active || closed || !actions.iconLibrary) return;
         IconLibraryRequest request; request.action = "restore"; request.target = target;
         const auto result = actions.iconLibrary(std::move(request));
-        iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+        const auto message = L(result.error.c_str(), L"");
+        iconStatus.Message(message);
+        iconStatus.IsOpen(!message.empty());
     }
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};

@@ -578,6 +578,11 @@ SettingsShell::SettingsShell()
     : ownerThreadId_(GetCurrentThreadId())
 {
     InitializeComponent();
+    // A closed InfoBar hides only its template; the control's own margin still
+    // participates in the shell's Auto rows. Keep the banner controls collapsed
+    // while closed so the empty status/prerequisite rows reserve no space.
+    snowdesktop::winui::presenter_controls::BindInfoBarVisibility(StatusInfoBar());
+    snowdesktop::winui::presenter_controls::BindInfoBarVisibility(FocusPrerequisiteInfoBar());
     solidFallbackBackground_ = ShellRoot().Background();
     if (!solidFallbackBackground_)
         solidFallbackBackground_ = CreateSystemWindowFallbackBrush();

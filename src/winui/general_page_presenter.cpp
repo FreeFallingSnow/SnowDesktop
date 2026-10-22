@@ -181,6 +181,8 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock advancedFeatureStatus{nullptr};
     muxc::Button registerAdvancedFeaturesButton{nullptr};
     muxc::Button retryAdvancedFeaturesButton{nullptr};
+    muxc::TextBlock advancedFeatureNoticeText{nullptr};
+    muxc::StackPanel advancedFeatureActions{nullptr};
     muxc::Button advancedFeatureInfoButton{nullptr};
     muxc::Flyout advancedFeatureInfoFlyout{nullptr};
     muxc::TextBlock advancedFeatureInfoTitle{nullptr};
@@ -428,7 +430,6 @@ struct GeneralPagePresenter::Impl
         advancedFeatureNotice.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(advancedFeatureNotice);
         retryAdvancedFeaturesButton = muxc::Button{};
-        advancedFeatureNotice.ActionButton(retryAdvancedFeaturesButton);
         advancedFeatureUpdateButton = muxc::Button{};
         advancedFeatureUpdateInstructions = muxc::TextBlock{};
         advancedFeatureUpdateInstructions.TextWrapping(mux::TextWrapping::Wrap);
@@ -436,7 +437,35 @@ struct GeneralPagePresenter::Impl
         advancedFeatureUpdateFlyout = muxc::Flyout{};
         advancedFeatureUpdateFlyout.Content(advancedFeatureUpdateInstructions);
         advancedFeatureUpdateButton.Flyout(advancedFeatureUpdateFlyout);
-        advancedFeatureNotice.Content(advancedFeatureUpdateButton);
+        // Show the message and both actions in a single row with the action
+        // group right-aligned. InfoBar.Message would force its own row because
+        // ActionButton only accepts one ButtonBase, so this banner moves the
+        // message into Content: with Title/Message/ActionButton empty the
+        // native template raises Content into the banner row, keeping the
+        // severity background/icon and a normal InfoBar height.
+        advancedFeatureNoticeText = muxc::TextBlock{};
+        advancedFeatureNoticeText.TextWrapping(mux::TextWrapping::Wrap);
+        advancedFeatureNoticeText.VerticalAlignment(mux::VerticalAlignment::Center);
+        advancedFeatureActions = muxc::StackPanel{};
+        advancedFeatureActions.Orientation(muxc::Orientation::Horizontal);
+        advancedFeatureActions.Spacing(8.0);
+        advancedFeatureActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        advancedFeatureActions.VerticalAlignment(mux::VerticalAlignment::Center);
+        advancedFeatureActions.Children().Append(retryAdvancedFeaturesButton);
+        advancedFeatureActions.Children().Append(advancedFeatureUpdateButton);
+        muxc::Grid advancedFeatureContent;
+        advancedFeatureContent.ColumnSpacing(16.0);
+        advancedFeatureContent.Margin({0.0, 12.0, 16.0, 12.0});
+        advancedFeatureContent.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::ColumnDefinition messageColumn, actionColumn;
+        messageColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        advancedFeatureContent.ColumnDefinitions().Append(messageColumn);
+        advancedFeatureContent.ColumnDefinitions().Append(actionColumn);
+        advancedFeatureContent.Children().Append(advancedFeatureNoticeText);
+        muxc::Grid::SetColumn(advancedFeatureActions, 1);
+        advancedFeatureContent.Children().Append(advancedFeatureActions);
+        advancedFeatureNotice.Content(advancedFeatureContent);
         advancedFeaturesCard.content.Children().Append(advancedFeatureNotice);
         advancedFeatureErrorExpander = muxc::Expander{};
         advancedFeatureErrorExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -1275,8 +1304,15 @@ struct GeneralPagePresenter::Impl
         retryAdvancedFeaturesButton.IsEnabled(showRetry && buttonEnabled);
         advancedFeatureUpdateButton.Visibility(showUpdateGuide ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (!showUpdateGuide) advancedFeatureUpdateFlyout.Hide();
+        // Keep the notice compact when it has no action at all: an empty
+        // action row would still contribute its bottom inset.
+        advancedFeatureActions.Visibility(showRetry || showUpdateGuide
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         advancedFeatureNotice.Severity(severity);
-        advancedFeatureNotice.Message(L(noticeKey));
+        const std::wstring noticeMessage = L(noticeKey);
+        advancedFeatureNoticeText.Text(noticeMessage);
+        muxa::AutomationProperties::SetName(advancedFeatureNotice, noticeMessage);
+        muxa::AutomationProperties::SetHelpText(advancedFeatureNotice, noticeMessage);
         advancedFeatureNotice.Visibility(showNotice
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         advancedFeatureNotice.IsOpen(showNotice);
