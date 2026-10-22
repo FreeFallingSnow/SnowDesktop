@@ -1932,7 +1932,11 @@ private:
      * @return 命中项的 DesktopIcon 指针，未命中返回 nullptr
      */
     DesktopIcon* HitTestIcon(POINT pt) const;
-    /** @brief 处理鼠标移动。 @param wp WPARAM @param point 完整客户端坐标 */
+    /** @brief 处理真实 WM_MOUSEMOVE；允许清理已丢失松键的自有捕获。 */
+    void OnNativeMouseMoveAt(
+        WPARAM wp, POINT point,
+        bool* dragPreviewSynced = nullptr);
+    /** @brief 更新指针落点与反馈；松键、键盘及定时器重采样不推断丢失松键。 */
     void OnMouseMoveAt(
         WPARAM wp, POINT point,
         bool* dragPreviewSynced = nullptr);

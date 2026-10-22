@@ -205,7 +205,7 @@ void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
     PresentDesktopPointerUpdate();
 }
 
-void DesktopApp::OnMouseMoveAt(
+void DesktopApp::OnNativeMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
@@ -237,6 +237,18 @@ void DesktopApp::OnMouseMoveAt(
         WriteDiagnosticLogEntry(recovery);
         return;
     }
+    OnMouseMoveAt(wp, current, dragPreviewSynced);
+}
+
+void DesktopApp::OnMouseMoveAt(
+    WPARAM wp, POINT current,
+    bool* dragPreviewSynced)
+{
+    if (dragPreviewSynced)
+        *dragPreviewSynced = false;
+    // This updater is also called after button-up was dequeued and by keyboard,
+    // dwell and OLE resampling. Only the native move entry above can infer a
+    // missing release; doing so here discards the gesture before its commit.
     // Lua hover invalidations and native chrome can request the same child
     // several times in one move. Merge their final state and subsequent
     // passive samples within a bounded presentation interval.

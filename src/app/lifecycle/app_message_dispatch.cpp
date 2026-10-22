@@ -458,7 +458,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         bool dragPreviewSynced = false;
-        OnMouseMoveAt(wp, pt, &dragPreviewSynced);
+        OnNativeMouseMoveAt(wp, pt, &dragPreviewSynced);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through

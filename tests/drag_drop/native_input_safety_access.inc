@@ -10,6 +10,8 @@
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
                 reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
         auto* context = reinterpret_cast<InputSafetyWindowContext*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (context && !context->popup && !context->dock && (message == WM_LBUTTONUP || message == WM_MBUTTONUP))
+            return context->app->HandleMessage(window, message, wp, lp);
         if (context && message == WM_NULL)
             return context->app->HandleControlMessage(window, message, wp, lp);
         if (context && (message == WM_CANCELMODE || message == WM_CAPTURECHANGED || message == WM_NCHITTEST ||
@@ -100,6 +102,83 @@
         inputSafetyLogChanged.notify_all();
     }
 
+    static void RunWidgetReleaseSafety(const wchar_t* windowClass)
+    {
+        std::vector<std::string> failures;
+        const auto check = [&](bool value, const char* message) {
+            if (!value) { failures.emplace_back(message); std::cerr << "FAIL: " << message << '\n'; }
+        };
+        // Seed only the established drag and isolated layout. Completion goes
+        // through the actual HWND dispatcher, release resample, displacement,
+        // persistence and reload. Only physical/queued button state is supplied.
+        InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+        InputSafetyImport queuedButtons("GetQueueStatus", reinterpret_cast<ULONG_PTR>(&InputSafetyQueueStatus));
+        inputSafetyPhysicalButton = 0;
+        inputSafetyQueuedButtons = 0;
+        for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::LuaScript})
+        for (const bool middle : {false, true})
+        {
+            auto* app = new DesktopApp;
+            app->instance_ = GetModuleHandleW(nullptr);
+            app->initializationExperimentDirectory_ = std::filesystem::path(GetDataDirectoryPath()) /
+                (std::wstring(type == DesktopWidgetType::LuaScript ? L"lua-release" : L"native-release") +
+                    (middle ? L"-middle" : L"-left"));
+            std::filesystem::create_directories(app->initializationExperimentDirectory_);
+            app->generalSettings_.dockEnabled = false;
+            app->generalSettings_.statusBar.enabled = false;
+            GridPage page;
+            page.id = L"__page:1"; page.monitorId = L"release-monitor";
+            page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
+            page.columns = 12; page.rows = 8;
+            page.cellWidth = page.cellHeight = 80;
+            page.itemPitchWidth = page.itemPitchHeight = 100;
+            page.gapX = page.gapY = 20; page.marginX = page.marginY = 10;
+            app->gridPages_ = {page}; app->savedPageIds_ = {page.id};
+            app->savedPageColumns_[page.id] = 12; app->savedPageRows_[page.id] = 8;
+            DesktopWidget widget;
+            widget.id = L"release-component"; widget.type = type;
+            if (type == DesktopWidgetType::LuaScript) widget.packageId = L"test.release";
+            widget.gridCell = {page.id, 0, 0}; widget.gridSpan = {3, 2}; widget.autoCollect = false;
+            widget.bounds = {10, 10, 290, 190}; widget.selected = true;
+            app->widgets_ = {widget}; app->desktopItemsReady_ = true;
+            InputSafetyWindowContext context{app};
+            HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                windowClass, L"Isolated widget release", WS_POPUP, 0, 0, 1200, 800,
+                nullptr, nullptr, app->instance_, &context);
+            if (!window) throw std::runtime_error("create widget release fixture");
+            app->hwnd_ = window;
+            app->RebuildContainersAndItems();
+            if (!app->SaveLayoutSlots(false)) throw std::runtime_error("save original release fixture");
+            app->mouseDown_ = true; app->mouseDownWidgetIndex_ = 0;
+            app->widgetAction_ = DesktopApp::WidgetAction::Move;
+            app->middleButtonWidgetMove_ = middle;
+            app->widgetDragOriginalCell_ = widget.gridCell;
+            app->widgetDragOriginalSpan_ = widget.gridSpan;
+            app->widgetPreviewCell_ = widget.gridCell; app->widgetPreviewSpan_ = widget.gridSpan;
+            app->widgetDragAnchor_ = CaptureGridDragAnchor(widget.bounds, {50, 50});
+            SetCapture(window);
+            if (GetCapture() != window) throw std::runtime_error("capture widget release fixture");
+            // The release is already dequeued, so neither a physical down bit
+            // nor a pending button message exists. This is a normal release.
+            SendMessageW(window, middle ? WM_MBUTTONUP : WM_LBUTTONUP, 0, MAKELPARAM(350, 250));
+            const auto& moved = app->widgets_.front();
+            check(moved.gridCell.pageId == page.id && moved.gridCell.column == 3 && moved.gridCell.row == 2,
+                "normal widget release commits the final cell instead of cancelling the move");
+            check(!app->mouseDown_ && app->widgetAction_ == DesktopApp::WidgetAction::None && !GetCapture(),
+                "completed widget release retires gesture and capture");
+            app->LoadLayoutSlots();
+            const auto index = app->FindWidgetIndexById(widget.id);
+            check(index < app->widgets_.size() && app->widgets_[index].gridCell.pageId == page.id &&
+                app->widgets_[index].gridCell.column == 3 && app->widgets_[index].gridCell.row == 2,
+                "widget release cell survives the real layout reload");
+            app->HideDragHintWindow();
+            if (app->hintHwnd_) DestroyWindow(app->hintHwnd_);
+            app->hintHwnd_ = nullptr;
+            ReleaseCapture(); DestroyWindow(window); app->hwnd_ = nullptr;
+        }
+        if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " widget release assertions failed");
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
@@ -109,6 +188,7 @@
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        RunWidgetReleaseSafety(cls.lpszClassName);
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
         app->instance_ = cls.hInstance;
         std::vector<HWND> windows;
@@ -175,7 +255,10 @@
                 // No button-up was delivered. A queued pressed move still
                 // belongs to the gesture and must not be treated as loss.
                 inputSafetyPhysicalButton = 0;
-                app->OnMouseMoveAt(MK_LBUTTON, {0, 0});
+                app->OnMouseMoveAt(0, {0, 0});
+                check(GetCapture() == window && app->mouseDown_,
+                    "internal pointer resampling must not infer a lost button release");
+                app->OnNativeMouseMoveAt(MK_LBUTTON, {0, 0});
                 check(GetCapture() == window && app->mouseDown_,
                     "a queued button-down move preserves the current press");
                 // Conversely, an old button-free message can precede a newer
@@ -184,7 +267,7 @@
                 for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
                 {
                     inputSafetyPhysicalButton = button;
-                    app->OnMouseMoveAt(0, {0, 0});
+                    app->OnNativeMouseMoveAt(0, {0, 0});
                     check(GetCapture() == window && app->mouseDown_,
                         "a physically held button protects a live gesture from stale movement");
                 }
@@ -194,13 +277,13 @@
                 for (const DWORD queued : {MAKELONG(0, QS_MOUSEBUTTON), MAKELONG(QS_MOUSEBUTTON, QS_MOUSEBUTTON)})
                 {
                     inputSafetyQueuedButtons = queued;
-                    app->OnMouseMoveAt(0, {0, 0});
+                    app->OnNativeMouseMoveAt(0, {0, 0});
                     check(GetCapture() == window && app->mouseDown_,
                         "pending native button messages must be processed before stale-press cancellation");
                 }
                 // LOW-only changes describe history, not a queued release.
                 inputSafetyQueuedButtons = MAKELONG(QS_MOUSEBUTTON, 0);
-                app->OnMouseMoveAt(0, {0, 0});
+                app->OnNativeMouseMoveAt(0, {0, 0});
                 check(GetCapture() == nullptr && !app->mouseDown_,
                     "button-free pointer return cancels a press whose release was lost");
                 check(!app->rightButtonItemDrag_ && !app->middleButtonWidgetMove_,
@@ -213,14 +296,14 @@
                 app->rightButtonItemDrag_ = !middle;
                 app->middleButtonWidgetMove_ = middle;
                 capture(dockWindow);
-                app->OnMouseMoveAt(0, {0, 0});
+                app->OnNativeMouseMoveAt(0, {0, 0});
                 check(!GetCapture() && !app->mouseDown_ &&
                     !app->rightButtonItemDrag_ && !app->middleButtonWidgetMove_,
                     "lost right/middle release is cancelled without committing a drop or click");
             }
             app->mouseDown_ = true;
             capture(control);
-            app->OnMouseMoveAt(0, {0, 0});
+            app->OnNativeMouseMoveAt(0, {0, 0});
             check(GetCapture() == control, "button-free recovery preserves capture owned by another window");
             ReleaseCapture();
             app->mouseDown_ = false;

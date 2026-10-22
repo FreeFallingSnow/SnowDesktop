@@ -418,7 +418,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         bool dragPreviewSynced = false;
-        OnMouseMoveAt(
+        OnNativeMouseMoveAt(
             wp, latestDesktopPointer(),
             &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
