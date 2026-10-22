@@ -899,7 +899,11 @@ void TestSearchHeightFollow()
         const auto velocity = follow.Velocity();
         latest.bottom = time % 32 ? 500 : 800;
         follow.Retarget(latest, time);
-        Check(follow.Advance(time, true) == before && follow.Velocity() == velocity,
+        const auto handoff = follow.Advance(time, true);
+        const auto handoffVelocity = follow.Velocity();
+        // Normalizing and restoring double coefficients may differ by one ULP.
+        Check(handoff == before && std::equal(velocity.begin(), velocity.end(), handoffVelocity.begin(),
+            [](double expected, double actual) { return std::abs(actual - expected) <= 1e-9; }),
             "streaming search results retarget the current frame and velocity without queueing old heights");
     }
     Check(follow.Advance(2192, true) == latest && !follow.IsAnimating(),
