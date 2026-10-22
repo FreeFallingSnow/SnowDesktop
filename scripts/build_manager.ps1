@@ -369,7 +369,7 @@ try {
         $buildLease = $null
         $selected = $null
         $checkSelected = $null
-        $commitSelected = $null; $gitLease = $null
+        $commitSelected = $null; $gitLease = $null; $waitingForGit = $false
         try {
             $state = Read-State
             $current = $state.current
@@ -448,7 +448,21 @@ try {
                 $outputProbe.Dispose()
             }
             if($Command -in 'begin','ready','finish','plan','claim','recover','repair','repair-abandon') {
-                $gitProbe=Try-Lease 'git.lock';if(-not $gitProbe){throw 'A Git transaction is running; retry after its receipt is durable.'};$gitProbe.Dispose()
+                $gitProbe=Try-Lease 'git.lock'
+                if(-not $gitProbe){
+                    if($Command -eq 'finish' -and $current -and $current.id -eq $Batch){
+                        $members=@($current.participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'})
+                        if($members.Count -ne 1){throw 'Participant is not active.'}
+                        Assert-EditRevision $members[0] $Revision
+                        $urgent=@(Get-TaskEvents (Get-Field $state 'taskLedger') $Participant 0 -UrgentUnacknowledged)
+                        if($urgent.Count){[pscustomobject]@{attention='urgent-event';events=$urgent;batchId=$Batch;editRevision=$Revision;registrationRetained=$true;next='Read event, acknowledge explicitly, then re-evaluate current revision.'}|ConvertTo-Json -Depth 20;exit 6}
+                        # Continue only after finally releases the state transaction.
+                        # The same observer, revision and deadline remain active.
+                        $waitingForGit=$true;continue
+                    }
+                    throw 'A Git transaction is running; retry after its receipt is durable.'
+                }
+                $gitProbe.Dispose()
             }
             $result = if ($Batch) { Read-Result $Batch } else { $null }
             if ($Command -eq 'event-wait') { # Its bounded observation loop resumes after releasing metadata, below.
@@ -794,6 +808,7 @@ try {
         finally {
             $metadata.Dispose()
             if ($null -eq $selected -and $null -ne $buildLease) { $buildLease.Dispose() }
+            if($waitingForGit){Wait-Again 'Waiting for the cooperating Git transaction; registration and edit revision are retained.'}
         }
         if ($commitSelected) {
             try {
