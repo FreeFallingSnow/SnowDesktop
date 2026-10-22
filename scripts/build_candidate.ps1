@@ -255,7 +255,11 @@ function Set-CandidateSlotSource($Snapshot,$Lease) {
         $object=Resolve-CandidatePath $Snapshot.store.root ('objects/'+$file.sha256)
         [IO.File]::Copy($object,$path,$true)
         if((Get-FileDigest $path) -ne $file.sha256){throw 'Candidate copied content failed integrity verification.'}
-        [IO.File]::SetLastWriteTimeUtc($path,[DateTime]::new([long]$file.lastWriteTicks,[DateTimeKind]::Utc));$copied++
+        # A newer candidate may have been edited while its predecessor was
+        # compiling. Its captured timestamp can predate that predecessor's
+        # objects. Mark changed bytes as materialized now so timestamp-based
+        # generators rebuild them; unchanged managed inputs keep their times.
+        [IO.File]::SetLastWriteTimeUtc($path,[DateTime]::UtcNow);$copied++
     }
     $record=[pscustomobject]@{schemaVersion=1;slot=$Lease.key;snapshot=$manifest.id;manifestDigest=$Snapshot.digest;contextDigest=$manifest.context.digest;
         sourceDigest=$manifest.sourceDigest;source=$Lease.source;output=$Lease.output;files=$manifest.files;materializedUtc=[DateTime]::UtcNow.ToString('o')}

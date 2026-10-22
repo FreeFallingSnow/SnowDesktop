@@ -36,7 +36,7 @@ std::vector<std::string> execution(const std::string& snapshot,const std::string
 }
 void program(const fs::path& output,int expected) {
     const auto result=run({(output/L"Release/tests/SnowDesktopCandidateFixtureTests.exe").wstring()},output);
-    require(result.code==expected,"Candidate program used live checkout inputs: "+std::to_string(result.code));
+    require(result.code==expected,"Candidate program has incorrect frozen inputs or stale outputs: expected "+std::to_string(expected)+", got "+std::to_string(result.code));
 }
 void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
     for(const auto& file:fs::directory_iterator(repo/L"scripts")){
