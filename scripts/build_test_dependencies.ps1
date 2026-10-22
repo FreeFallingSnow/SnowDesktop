@@ -21,7 +21,7 @@ function Read-TestDependencyProject($Context,[string]$Project) {
     $absolute=[IO.Path]::GetFullPath($Project);$key=$absolute.ToLowerInvariant()
     if($Context.projects.ContainsKey($key)){return $Context.projects[$key]}
     if($Context.projects.Count -ge 4096){throw 'Observed test dependency project budget exceeded.'}
-    $node=[pscustomobject]@{project=$absolute;files=@();references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0}
+    $node=[pscustomobject]@{project=$absolute;files=@();references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0;sourceFiles=@();reportedSources=@();sourceReports=0}
     $Context.projects[$key]=$node # Cache before descending through references.
     $node.files+=Add-TestDependencyFile $Context $absolute
     if(-not [IO.File]::Exists($absolute)){$node.issues+='missing-project';return $node}
@@ -33,13 +33,35 @@ function Read-TestDependencyProject($Context,[string]$Project) {
         $path=$item.GetAttribute('Include').Replace('$(Configuration)',$Context.configuration).Replace('$(ProjectDir)',$directory+'\')
         if($path.Contains('$(') -or $path.Contains('*') -or $path.Contains('?')){$node.issues+=('unresolved-project-item:'+ $path);continue}
         if(-not [IO.Path]::IsPathRooted($path)){$path=Join-Path $directory $path};$path=[IO.Path]::GetFullPath($path)
+        if($item.LocalName -eq 'ClCompile'){$node.sourceFiles+=$path.ToLowerInvariant()}
         if($item.LocalName -eq 'ProjectReference'){$node.references+=$path}else{$node.files+=Add-TestDependencyFile $Context $path}
     }
     $trackingRoot=Join-Path $directory ([IO.Path]::GetFileNameWithoutExtension($absolute)+'.dir/'+$Context.configuration)
     if([IO.Directory]::Exists($trackingRoot)){
+        # Unlike FileTracker, /sourceDependencies reports includes under Temp
+        # and AppData too. A report is associated with its declared source.
+        # https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies
+        foreach($report in @(Get-ChildItem -LiteralPath $trackingRoot -Filter '*.json' -File -Recurse|Where-Object Name -match '\.(c|cc|cpp|cxx|ixx)\.json$')){
+            try {
+                if($report.Length -gt 64MB){throw 'source-report-too-large'}
+                $json=[IO.File]::ReadAllText($report.FullName)|ConvertFrom-Json
+                if($json.Version -notin '1.0','1.1','1.2'){throw 'unsupported-source-report-version'}
+                $data=$json.Data;$source=[IO.Path]::GetFullPath([string]$data.Source).ToLowerInvariant()
+                if($node.sourceFiles -notcontains $source){throw 'source-report-not-in-generated-project'}
+                $inputs=@($data.Source)+@(Get-TestDependencyField $data 'Includes' @())+@(Get-TestDependencyField $data 'PCH' @())
+                foreach($module in @(Get-TestDependencyField $data 'ImportedModules' @())){$inputs+=Get-TestDependencyField $module 'BMI'}
+                foreach($unit in @(Get-TestDependencyField $data 'ImportedHeaderUnits' @())){$inputs+=@(Get-TestDependencyField $unit 'Header')+@(Get-TestDependencyField $unit 'BMI')}
+                foreach($reportInput in @($inputs|Where-Object {$_})){
+                    if(-not [IO.Path]::IsPathRooted([string]$reportInput)){throw 'relative-source-report-input'}
+                    $node.files+=Add-TestDependencyFile $Context ([string]$reportInput)
+                }
+                $node.files+=Add-TestDependencyFile $Context $report.FullName
+                $node.reportedSources+=$source;$node.sourceReports++
+            }catch{$node.issues+=('invalid-source-report:'+ $report.FullName+':'+$_.Exception.Message)}
+        }
         foreach($log in @(Get-ChildItem -LiteralPath $trackingRoot -Filter '*.read.*.tlog' -File -Recurse)){
             if($log.Length -gt 64MB){$node.issues+='tracking-log-too-large';continue}
-            if($log.Name -match '(?i)(^|\.)CL\.read\.'){$node.compilerReadLogs++};if($log.Name -match '(?i)^link\.read\.'){$node.linkerReadLogs++}
+            if($log.Name -match '(?i)(^|\.)CL\.read\.'){$node.compilerReadLogs++};if($log.Name -match '(?i)^(Lib-)?link\.read\.'){$node.linkerReadLogs++}
             foreach($line in [IO.File]::ReadLines($log.FullName)){foreach($inputPath in $line.TrimStart('^').Split('|')){
                 if(-not $inputPath){continue};if(-not [IO.Path]::IsPathRooted($inputPath)){$node.issues+=('unresolved-tracking-input:'+ $inputPath);continue}
                 $node.files+=Add-TestDependencyFile $Context $inputPath
@@ -48,6 +70,7 @@ function Read-TestDependencyProject($Context,[string]$Project) {
     }
     $node.files=@($node.files|Sort-Object -Unique);$node.references=@($node.references|Sort-Object -Unique)
     if(@($document.SelectNodes('//*[local-name()="ClCompile"][@Include]')).Count -and $node.compilerReadLogs -eq 0){$node.issues+='missing-compiler-read-log'}
+    if(@($node.sourceFiles|Where-Object {$node.reportedSources -notcontains $_}).Count){$node.issues+='missing-compiler-source-report'}
     foreach($reference in $node.references){[void](Read-TestDependencyProject $Context $reference)};return $node
 }
 function Get-TestDependencyManifest {
@@ -55,7 +78,7 @@ function Get-TestDependencyManifest {
     $Root=[IO.Path]::GetFullPath($Root).TrimEnd('\','/');if($Configuration -notin 'Release','Debug'){throw 'Explicit Release/Debug configuration required.'}
     $context=[pscustomobject]@{root=$Root;configuration=$Configuration;files=@{};projects=@{}};$build=Join-Path $Root '.build';$rows=@();$projectIndex=$null
     foreach($test in @($Tests|Sort-Object name)){
-        $issues=@();$project=$null;$keys=@();$visited=@{};$projectNames=@();$compilerLogs=0;$linkerLogs=0
+        $issues=@();$project=$null;$keys=@();$visited=@{};$projectNames=@();$compilerLogs=0;$linkerLogs=0;$sourceReports=0
         $command=@(Get-TestDependencyField $test 'command' @());$required=@($test.properties|Where-Object name -eq 'REQUIRED_FILES'|ForEach-Object value)
         $executables=@(@($command|Select-Object -First 1)+$required|Where-Object {[IO.Path]::IsPathRooted([string]$_) -and [IO.Path]::GetExtension([string]$_) -eq '.exe'}|Sort-Object -Unique)
         if($executables.Count -eq 1){
@@ -69,23 +92,25 @@ function Get-TestDependencyManifest {
             [void](Read-TestDependencyProject $context $project);$pending=New-Object 'System.Collections.Generic.Queue[string]';$pending.Enqueue($project)
             while($pending.Count){
                 $next=$pending.Dequeue();$id=$next.ToLowerInvariant();if($visited.ContainsKey($id)){continue};$visited[$id]=$true
-                $node=$context.projects[$id];$keys+=@($node.files);$issues+=@($node.issues);$projectNames+=$node.project;$compilerLogs+=$node.compilerReadLogs;$linkerLogs+=$node.linkerReadLogs
+                $node=$context.projects[$id];$keys+=@($node.files);$issues+=@($node.issues);$projectNames+=$node.project;$compilerLogs+=$node.compilerReadLogs;$linkerLogs+=$node.linkerReadLogs;$sourceReports+=$node.sourceReports
                 foreach($reference in $node.references){$pending.Enqueue($reference)}
             }
         }
         foreach($relative in @('CMakeLists.txt','CMakePresets.json','CMakeUserPresets.json','.build/CMakeCache.txt')){$path=Join-Path $Root $relative;if([IO.File]::Exists($path)){$keys+=Add-TestDependencyFile $context $path}}
         foreach($path in @($command)+$required){if([IO.Path]::IsPathRooted([string]$path)){
-            if([IO.File]::Exists([string]$path)){$keys+=Add-TestDependencyFile $context ([string]$path)}elseif($required -contains $path){$issues+=('missing-explicit-runtime:'+ $path)}
+            if([IO.File]::Exists([string]$path)){$keys+=Add-TestDependencyFile $context ([string]$path)}elseif($required -contains $path){$issues+=($(if([IO.Directory]::Exists([string]$path)){'unclosed-runtime-directory:'}else{'missing-explicit-runtime:'})+$path)}
         }}
         $keys=@($keys|Sort-Object -Unique);foreach($key in $keys){if($context.files[$key].status -ne 'observed'){$issues+=('missing-observed-input:'+ $context.files[$key].path)}}
         $canonical=($keys|ForEach-Object {$key=$_;$file=$context.files[$key];$key+[char]0+$file.status+[char]0+$file.sha256}) -join "`n"
         $rows+=[pscustomobject]@{test=$test.name;target=$(if($project){[IO.Path]::GetFileNameWithoutExtension($project)}else{$null});status=$(if($issues.Count){'incomplete'}else{'observed'});
-            fileIds=$keys;projects=@($projectNames|Sort-Object -Unique);compilerReadLogs=$compilerLogs;linkerReadLogs=$linkerLogs;digest=(Get-TestDependencyDigest $canonical);issues=@($issues|Sort-Object -Unique);
+            fileIds=$keys;projects=@($projectNames|Sort-Object -Unique);compilerReadLogs=$compilerLogs;linkerReadLogs=$linkerLogs;sourceReports=$sourceReports;sourceClosure='unproven';digest=(Get-TestDependencyDigest $canonical);issues=@($issues|Sort-Object -Unique);
             runtimeClosure='unclosed';reuseAllowed=$false;reason='Generated projects and compiler/linker reads are observed; runtime loads, external state and semantic dependencies require a reviewed closure contract.'}
     }
     $files=@($context.files.Keys|Sort-Object|ForEach-Object {$key=$_;[pscustomobject]@{id=$key;path=$context.files[$key].path;status=$context.files[$key].status;sha256=$context.files[$key].sha256;bytes=$context.files[$key].bytes}})
-    return [pscustomobject]@{schemaVersion=1;root=$Root;configuration=$Configuration;files=$files;tests=$rows;reuseAllowed=$false;
-        provenance='Generated MSBuild references and actual read tracking plus explicit CTest runtime files; all project configurations conservatively included.'}
+    $excluded=@([IO.Path]::GetTempPath(),[Environment]::GetFolderPath('ApplicationData'),[Environment]::GetFolderPath('LocalApplicationData'),[Environment]::GetFolderPath('CommonApplicationData'),(Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData/LocalLow'))
+    $excluded=@($excluded|Where-Object {$_}|ForEach-Object {[IO.Path]::GetFullPath($_).TrimEnd('\','/').ToLowerInvariant()+'\'}|Sort-Object -Unique)
+    return [pscustomobject]@{schemaVersion=1;root=$Root;configuration=$Configuration;files=$files;tests=$rows;reuseAllowed=$false;trackingExcludedRoots=$excluded;
+        provenance='Generated MSBuild references, compiler source reports and actual read tracking plus explicit CTest runtime files; tracking filters and unclosed runtime semantics prohibit reuse.'}
 }
 function Get-TestDependencyAdvice($Manifest,[string[]]$ChangedPaths) {
     $changes=@($ChangedPaths|ForEach-Object {if([IO.Path]::IsPathRooted($_)){[IO.Path]::GetFullPath($_).ToLowerInvariant()}else{[IO.Path]::GetFullPath((Join-Path $Manifest.root $_)).ToLowerInvariant()}}|Sort-Object -Unique)
@@ -96,10 +121,12 @@ function Get-TestDependencyAdvice($Manifest,[string[]]$ChangedPaths) {
     return [pscustomobject]@{schemaVersion=1;tests=$rows;unmappedPaths=$unmapped;advisoryOnly=$true;selectionChanged=$false;reason='Advice never removes explicitly requested tests; unclosed runtime dependencies cannot authorize reuse.'}
 }
 function Save-TestDependencyManifest([string]$Root,$Tests) {
-    $timer=[Diagnostics.Stopwatch]::StartNew();$manifest=Get-TestDependencyManifest -Root $Root -Tests $Tests;$directory=Join-Path $Root '.build/Testing';[void][IO.Directory]::CreateDirectory($directory)
+    $timer=[Diagnostics.Stopwatch]::StartNew()
+    try{$manifest=Get-TestDependencyManifest -Root $Root -Tests $Tests}catch{return [pscustomobject]@{status='unavailable';reason=$_.Exception.Message;elapsedSeconds=$timer.Elapsed.TotalSeconds;reuseAllowed=$false;tests=@()}}
+    $directory=Join-Path $Root '.build/Testing';[void][IO.Directory]::CreateDirectory($directory)
     $path=Join-Path $directory ('dependencies-'+[Guid]::NewGuid().ToString('N')+'.json');$text=$manifest|ConvertTo-Json -Depth 12 -Compress
     [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($false)));$sha=[Security.Cryptography.SHA256]::Create()
     try{$digest=[BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
     return [pscustomobject]@{schemaVersion=1;path=$path;sha256=$digest;elapsedSeconds=$timer.Elapsed.TotalSeconds;uniqueFiles=$manifest.files.Count;
-        tests=@($manifest.tests|Select-Object test,target,status,digest,compilerReadLogs,linkerReadLogs,issues,runtimeClosure,reuseAllowed)}
+        tests=@($manifest.tests|Select-Object test,target,status,digest,compilerReadLogs,linkerReadLogs,sourceReports,sourceClosure,issues,runtimeClosure,reuseAllowed)}
 }
