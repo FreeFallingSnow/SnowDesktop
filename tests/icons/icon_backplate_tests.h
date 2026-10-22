@@ -70,6 +70,10 @@ inline int RunIconBackplateTests()
         const auto discFill = beauty::DetectPlateFill(disc, size, size);
         check(!discFill && beauty::Render(disc, size, size, style, discFill)[static_cast<size_t>(margin) * size + size / 2] == 0,
             "shaded circular disc keeps its contour instead of becoming a ghost circle in an invented square plate");
+        auto discColor = discFill;
+        if (!discColor) discColor = beauty::DetectEdgeFill(disc, size, size);
+        check(discColor.has_value(),
+            "a protected disc can still supply the large-icon color picker without authorizing smart clipping");
 
         auto hollow = solid;
         for (int cy = size * 3 / 8; cy < size * 5 / 8; ++cy)

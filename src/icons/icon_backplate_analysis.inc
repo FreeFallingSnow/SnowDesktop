@@ -36,7 +36,39 @@ EdgeColor DominantPlateColor(const std::vector<PlateSample>& samples, int band =
     const auto best = std::max_element(buckets.begin(), buckets.end(),
         [](const auto& a, const auto& b) { return a.count < b.count; });
     if (!best->count) return {};
-    return {best->r / best->count, best->g / best->count, best->b / best->count};
+    return {(best->r + best->count / 2) / best->count,
+        (best->g + best->count / 2) / best->count, (best->b + best->count / 2) / best->count};
+}
+
+std::vector<PlateSample> SamplePlateContour(const std::vector<std::uint32_t>& pixels, int width, int height,
+    int left, int top, int right, int bottom)
+{
+    constexpr int directions = 128, bands = 4;
+    const int span = std::max(right - left + 1, bottom - top + 1);
+    const auto opaque = [&](int x, int y) { return x >= 0 && y >= 0 && x < width && y < height && PixelA(pixels[static_cast<size_t>(y) * width + x]) >= 160; };
+    constexpr double pi = 3.14159265358979323846;
+    const double cx = (left + right) * .5, cy = (top + bottom) * .5;
+    std::vector<PlateSample> samples;
+    samples.reserve(directions * bands);
+    constexpr std::array<double, bands> depths{0, .012, .03, .06};
+    for (int angle = 0; angle < directions; ++angle)
+    {
+        const double dx = std::cos(angle * 2 * pi / directions), dy = std::sin(angle * 2 * pi / directions);
+        for (double distance = span * .75; distance >= 0; distance -= .5)
+        {
+            if (!opaque(static_cast<int>(std::lround(cx + dx * distance)), static_cast<int>(std::lround(cy + dy * distance)))) continue;
+            for (int band = 0; band < bands; ++band)
+            {
+                const double inner = std::max(0., distance - depths[band] * span);
+                const int x = static_cast<int>(std::lround(cx + dx * inner)), y = static_cast<int>(std::lround(cy + dy * inner));
+                if (!opaque(x, y)) continue;
+                samples.push_back({PlateColor(pixels[static_cast<size_t>(y) * width + x]),
+                    (x + .5) / width - .5, (y + .5) / height - .5, angle, band});
+            }
+            break;
+        }
+    }
+    return samples;
 }
 
 // Solve RGB affine planes together. Angular coverage is checked separately so a
@@ -140,28 +172,7 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     result.kind = BackplateKind::Artwork;
 
     constexpr int directions = 128, bands = 4, sectors = 16;
-    constexpr double pi = 3.14159265358979323846;
-    const double cx = (left + right) * .5, cy = (top + bottom) * .5;
-    std::vector<PlateSample> samples;
-    samples.reserve(directions * bands);
-    constexpr std::array<double, bands> depths{0, .012, .03, .06};
-    for (int angle = 0; angle < directions; ++angle)
-    {
-        const double dx = std::cos(angle * 2 * pi / directions), dy = std::sin(angle * 2 * pi / directions);
-        for (double distance = span * .75; distance >= 0; distance -= .5)
-        {
-            if (!opaque(static_cast<int>(std::lround(cx + dx * distance)), static_cast<int>(std::lround(cy + dy * distance)))) continue;
-            for (int band = 0; band < bands; ++band)
-            {
-                const double inner = std::max(0., distance - depths[band] * span);
-                const int x = static_cast<int>(std::lround(cx + dx * inner)), y = static_cast<int>(std::lround(cy + dy * inner));
-                if (!opaque(x, y)) continue;
-                samples.push_back({PlateColor(pixels[static_cast<size_t>(y) * width + x]),
-                    (x + .5) / width - .5, (y + .5) / height - .5, angle, band});
-            }
-            break;
-        }
-    }
+    const auto samples = SamplePlateContour(pixels, width, height, left, top, right, bottom);
     if (samples.size() < directions * bands * .95) return result;
     const auto base = DominantPlateColor(samples);
     std::array<EdgeColor, bands> bandColors{};
@@ -255,7 +266,130 @@ std::optional<PlateFill> DetectPlateFill(const std::vector<std::uint32_t>& pixel
     return AnalyzeBackplate(pixels, width, height).fill;
 }
 
-std::optional<PlateFill> DetectEdgeFill(const std::vector<std::uint32_t>& pixels, int width, int height)
+// Edge color extraction also accepts rectangular artwork; it is not an
+// authorization to extend or clip an icon. Smart callers use DetectPlateFill.
+std::optional<PlateFill> DetectEdgeFill(
+    const std::vector<std::uint32_t>& pixels, int width, int height)
 {
-    return DetectPlateFill(pixels, width, height);
+    if (width <= 2 || height <= 2 ||
+        pixels.size() != static_cast<std::size_t>(width) * height)
+        return std::nullopt;
+
+    // A disc may supply a color picker even though its outline must remain
+    // intact in automatic beautification. Never pass this fallback to clipping.
+    if (AnalyzeBackplate(pixels, width, height).kind == BackplateKind::Contour)
+    {
+        const auto bounds = VisibleBounds(pixels, width, height);
+        const auto samples = SamplePlateContour(pixels, width, height,
+            bounds.left, bounds.top, bounds.right, bounds.bottom);
+        const auto color = DominantPlateColor(samples);
+        const auto matches = std::count_if(samples.begin(), samples.end(),
+            [&](const auto& sample) { return PlateDistance(sample.color, color) <= 30 * 30; });
+        if (samples.size() >= 128 * 4 * .95 && matches >= samples.size() * .90)
+            return PlateFill(color);
+    }
+
+    constexpr int kAlphaThreshold = 16;
+    constexpr int kReliableAlpha = 160;
+    constexpr int kBucketSize = 24;
+    constexpr int kToleranceSq = 30 * 30 * 3;
+    constexpr float kMinimumDominantRatio = 0.86f;
+    constexpr int kMinimumSectors = 7;
+    constexpr int kSectorCount = 8;
+
+    struct Bucket
+    {
+        int count = 0;
+        int red = 0;
+        int green = 0;
+        int blue = 0;
+        unsigned sectors = 0;
+    };
+    std::unordered_map<int, Bucket> buckets;
+    int reliableSamples = 0;
+    auto sample = [&](int x, int y, int sector) {
+        const std::uint32_t pixel = pixels[static_cast<std::size_t>(y) * width + x];
+        const int alpha = static_cast<int>((pixel >> 24) & 0xff);
+        if (alpha < kReliableAlpha) return;
+        const int red = std::clamp(
+            (static_cast<int>((pixel >> 16) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int green = std::clamp(
+            (static_cast<int>((pixel >> 8) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int blue = std::clamp(
+            (static_cast<int>(pixel & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int key = (red / kBucketSize) << 16 |
+            (green / kBucketSize) << 8 | (blue / kBucketSize);
+        auto& bucket = buckets[key];
+        ++bucket.count;
+        bucket.red += red;
+        bucket.green += green;
+        bucket.blue += blue;
+        bucket.sectors |= 1u << sector;
+        ++reliableSamples;
+    };
+
+    for (int x = 0; x < width; ++x)
+    {
+        const int sector = std::min(kSectorCount - 1,
+            x * kSectorCount / std::max(1, width));
+        sample(x, 0, sector);
+        sample(x, height - 1, sector);
+    }
+    for (int y = 1; y + 1 < height; ++y)
+    {
+        const int sector = std::min(kSectorCount - 1,
+            y * kSectorCount / std::max(1, height));
+        sample(0, y, sector);
+        sample(width - 1, y, sector);
+    }
+    if (reliableSamples == 0) return std::nullopt;
+
+    const Bucket* dominant = nullptr;
+    for (const auto& [_, bucket] : buckets)
+        if (!dominant || bucket.count > dominant->count)
+            dominant = &bucket;
+    if (!dominant ||
+        static_cast<float>(dominant->count) / reliableSamples <
+            kMinimumDominantRatio ||
+        std::popcount(dominant->sectors) < kMinimumSectors)
+        return std::nullopt;
+
+    const EdgeColor average{
+        dominant->red / dominant->count,
+        dominant->green / dominant->count,
+        dominant->blue / dominant->count };
+    int matching = 0;
+    auto matches = [&](std::uint32_t pixel) {
+        const int alpha = static_cast<int>((pixel >> 24) & 0xff);
+        if (alpha <= kAlphaThreshold) return false;
+        const int red = std::clamp(
+            (static_cast<int>((pixel >> 16) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int green = std::clamp(
+            (static_cast<int>((pixel >> 8) & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int blue = std::clamp(
+            (static_cast<int>(pixel & 0xff) * 255 + alpha / 2) / alpha,
+            0, 255);
+        const int dr = red - average.r;
+        const int dg = green - average.g;
+        const int db = blue - average.b;
+        return dr * dr + dg * dg + db * db <= kToleranceSq;
+    };
+    const int perimeter = width * 2 + std::max(0, height - 2) * 2;
+    for (int x = 0; x < width; ++x)
+    {
+        matching += matches(pixels[x]);
+        matching += matches(pixels[static_cast<std::size_t>(height - 1) * width + x]);
+    }
+    for (int y = 1; y + 1 < height; ++y)
+    {
+        matching += matches(pixels[static_cast<std::size_t>(y) * width]);
+        matching += matches(pixels[static_cast<std::size_t>(y) * width + width - 1]);
+    }
+    return static_cast<float>(matching) / std::max(1, perimeter) >= 0.86f
+        ? std::optional<PlateFill>(average) : std::nullopt;
 }
