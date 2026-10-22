@@ -5,6 +5,22 @@ using namespace build_test;
 namespace {
 Json foreground(Coordinator& c,const std::string& task,const std::string& batch,int revision=0,int code=0){auto args=c.bound("ready-and-wait",task,batch,revision);args.insert(args.end(),{"-WaitSeconds","30"});return c.call(args,code);}
 bool checked(Coordinator& c,size_t index,const std::string& status){auto state=c.state();auto& task=state.at("current").at("participants").items.at(index);return task.has("check")&&task.at("check").at("status").str()==status;}
+void input_identity_tests(const fs::path& repo){
+    // steam_bridge consumes SDK_ROOT. A different SDK location must invalidate
+    // candidate identity even when repository bytes and the legacy PATH agree.
+    Coordinator c(repo,"input-context");
+    write(c.root/L"identity.ps1",". $PSScriptRoot/scripts/build_inputs.ps1;Get-BuildInputIdentity $PSScriptRoot|ConvertTo-Json\n",true);
+    const auto identity=[&](const std::wstring& sdk,const std::wstring& legacy){
+        return c.bridge->call(c.root/L"identity.ps1",{},0,{{L"SNOWDESKTOP_STEAMWORKS_SDK_ROOT",sdk},{L"SNOWDESKTOP_STEAMWORKS_SDK_PATH",legacy}});
+    };
+    const auto first=identity(L"C:/sdk/first",L"C:/legacy"),second=identity(L"C:/sdk/second",L"C:/legacy");
+    require(first.at("digest").str()!=second.at("digest").str(),"Actual Steamworks SDK_ROOT change reused the repository input identity");
+    require(first.at("digest").str()==identity(L"C:/sdk/first",L"C:/legacy").at("digest").str(),"Unchanged actual SDK context did not retain its identity");
+    require(first.at("digest").str()!=identity(L"C:/sdk/first",L"C:/other-legacy").at("digest").str(),"Legacy SDK_PATH binding was silently removed");
+    require(first.at("digest").str()!=identity(L"",L"C:/legacy").at("digest").str(),"Removing actual SDK_ROOT retained its identity");
+    require(first.at("algorithm").str()=="sha256-repository-inputs-v3","Changed environment input policy retained its old identity version");
+    std::cout<<"PASS actual Steamworks SDK_ROOT invalidation, stable context, absent root and retained legacy binding; external file closure is not claimed\n";
+}
 void run_tests(const fs::path& repo){
     entry_tests(repo);shell_recovery_tests(repo);
     Coordinator c(repo,"workflow");
@@ -41,4 +57,4 @@ try{Resolve-PlanTests $p $inv|Out-Null}catch{$missing=$true}
     std::cout<<"PASS barriers, revisions, foreground recovery, ownership, repair, literal plans, legacy and input freshness\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,run_tests);}
+int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:run_tests);}

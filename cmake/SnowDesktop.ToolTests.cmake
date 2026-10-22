@@ -42,6 +42,9 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildWorkflowTests build_workflow
         build_workflow_tests.cpp "integration;tools" 300
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
+    add_test(NAME build_input_identity COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --input-identity)
+    set_tests_properties(build_input_identity PROPERTIES TIMEOUT 45 LABELS "tools;core;contract"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildPlanExecutionTests build_plan_execution
         build_plan_execution_tests.cpp "tools;core" 120)
     target_sources(SnowDesktopBuildPlanExecutionTests PRIVATE tests/build_tools/build_records_tests.cpp tests/build_tools/build_verification_tests.cpp)
