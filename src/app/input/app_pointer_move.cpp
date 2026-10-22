@@ -7,6 +7,7 @@
 #include "widget/view/widget_scroll_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/drag_input_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "native_item_drag_source.h"
@@ -205,7 +206,7 @@ void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
     PresentDesktopPointerUpdate();
 }
 
-void DesktopApp::OnNativeMouseMoveAt(
+bool DesktopApp::OnNativeMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
@@ -235,9 +236,18 @@ void DesktopApp::OnNativeMouseMoveAt(
             static_cast<void*>(captured), static_cast<void*>(GetCapture()),
             static_cast<unsigned long long>(wp & mouseButtons));
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, recovery);
-        return;
+        return true;
     }
+    // Physical release can precede its queued button-up by many old moves.
+    // Keep that real release authoritative without replaying its preceding
+    // coordinates, hit tests or synchronous presentation. Lost-release
+    // recovery above must still retire a button-free captured gesture.
+    if (snowdesktop::drag_input_rules::IsNativeDragActive(
+            dragSession_.IsActive(), dragDropController_.IsTransportActive()) &&
+        (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
+        return false;
     OnMouseMoveAt(wp, current, dragPreviewSynced);
+    return true;
 }
 
 void DesktopApp::OnMouseMoveAt(

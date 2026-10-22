@@ -418,11 +418,12 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         bool dragPreviewSynced = false;
-        OnNativeMouseMoveAt(
+        const bool pointerUpdated = OnNativeMouseMoveAt(
             wp, latestDesktopPointer(),
             &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
+        if (!pointerUpdated) return 0;
         // The pointer presenter refreshes both region and pixels at its
         // deadline. An invalidation here would bypass that limit and feed
         // stationary region-generated moves back into WM_PAINT.

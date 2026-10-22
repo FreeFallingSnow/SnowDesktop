@@ -359,7 +359,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool primaryButtonDown =
             latencySensitivePointerActive &&
             !middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         const bool middleButtonDown =
             latencySensitivePointerActive &&
             middleButtonWidgetMove_ &&
@@ -458,7 +458,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         bool dragPreviewSynced = false;
-        OnNativeMouseMoveAt(wp, pt, &dragPreviewSynced);
+        if (!OnNativeMouseMoveAt(wp, pt, &dragPreviewSynced))
+            return 0;
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through

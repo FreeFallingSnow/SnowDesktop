@@ -376,8 +376,11 @@ void DesktopApp::OnRightButtonDown(
 
 int DesktopApp::PointerGestureVirtualKey() const
 {
-    return middleButtonWidgetMove_ ? VK_MBUTTON :
-        rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON;
+    if (middleButtonWidgetMove_) return VK_MBUTTON;
+    // Mouse messages name logical buttons; GetAsyncKeyState reads physical
+    // buttons even when the system's primary/secondary mapping is swapped.
+    const bool swapped = GetSystemMetrics(SM_SWAPBUTTON) != 0;
+    return rightButtonItemDrag_ != swapped ? VK_RBUTTON : VK_LBUTTON;
 }
 
 bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,

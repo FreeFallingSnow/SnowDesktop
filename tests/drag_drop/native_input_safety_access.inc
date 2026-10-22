@@ -98,6 +98,10 @@
     static inline DWORD inputSafetyQueuedButtons = 0;
     static DWORD WINAPI InputSafetyQueueStatus(UINT)
     { return inputSafetyQueuedButtons; }
+    static inline bool inputSafetySwappedButtons = false;
+    static inline decltype(&GetSystemMetrics) inputSafetyOriginalMetrics = nullptr;
+    static int WINAPI InputSafetyMetrics(int index)
+    { return index == SM_SWAPBUTTON ? static_cast<int>(inputSafetySwappedButtons) : inputSafetyOriginalMetrics(index); }
     static inline std::mutex inputSafetyLogMutex;
     static inline std::condition_variable inputSafetyLogChanged;
     static inline std::vector<std::wstring> inputSafetyLogs;
@@ -112,14 +116,19 @@
     {
         InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
         InputSafetyImport queuedButtons("GetQueueStatus", reinterpret_cast<ULONG_PTR>(&InputSafetyQueueStatus));
+        inputSafetyOriginalMetrics = &GetSystemMetrics;
+        InputSafetyImport metrics("GetSystemMetrics", reinterpret_cast<ULONG_PTR>(&InputSafetyMetrics));
         snowdesktop::test::TemporaryDirectory temporary;
         const auto file = temporary.path / L"drag.txt";
         { std::ofstream stream(file); stream << "release backlog fixture"; }
         for (int surface = 0; surface < 3; ++surface)
         for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON})
+        for (const bool swapped : {false, true})
         {
+            inputSafetySwappedButtons = swapped;
             auto& app = Scene(false);
-            ConfigureModel(app, temporary.path / (std::to_wstring(surface) + L"-" + std::to_wstring(button)));
+            ConfigureModel(app, temporary.path / (std::to_wstring(surface) + L"-" +
+                std::to_wstring(button) + (swapped ? L"-swapped" : L"-ordinary")));
             PopulateModel(app, {file}, 0);
             InputSafetyWindowContext mainContext{&app}, popupContext{&app, nullptr, true};
             auto host = std::make_unique<DesktopApp::PersistentDockHost>();
@@ -163,9 +172,18 @@
             app.rightButtonItemDrag_ = button == VK_RBUTTON;
             SetCapture(inputWindow);
             if (GetCapture() != inputWindow) throw std::runtime_error("capture queued drag release window");
+            const WPARAM held = button == VK_LBUTTON ? MK_LBUTTON : button == VK_RBUTTON ? MK_RBUTTON : MK_MBUTTON;
+            inputSafetyPhysicalButton = button == VK_MBUTTON ? VK_MBUTTON :
+                swapped ? (button == VK_LBUTTON ? VK_RBUTTON : VK_LBUTTON) : button;
+            inputSafetyQueuedButtons = 0;
+            // A physically held initiating button must keep ordinary drag
+            // updates working, including swapped logical left/right buttons.
+            if (!app.OnNativeMouseMoveAt(held, {150, 50}) || app.dragSession_.CurrentPoint().x != 150)
+                throw std::runtime_error("held initiating button incorrectly suppresses ordinary native dragging");
+            app.dragSession_.UpdatePoint({50, 50});
+            app.lastMousePoint_ = {50, 50};
             inputSafetyPhysicalButton = 0;
             inputSafetyQueuedButtons = MAKELONG(0, QS_MOUSEBUTTON);
-            const WPARAM held = button == VK_LBUTTON ? MK_LBUTTON : button == VK_RBUTTON ? MK_RBUTTON : MK_MBUTTON;
             // Physical release has happened, but its real queued message is
             // still behind historical moves. Exercise each production HWND
             // route; neither pointer/model feedback nor presentation may replay.
@@ -180,9 +198,11 @@
             if (button == VK_RBUTTON)
             {
                 // Right-drag menu choice is covered separately. Keep this
-                // inactive-desktop test independent of interactive menu UI.
-                app.CancelPointerPressWithoutCaptureRelease();
-                ReleaseCapture();
+                // test independent of menu UI, and exercise actual lost-up
+                // recovery after the queue reports no pending release.
+                if (!app.OnNativeMouseMoveAt(0, {350, 250}) || app.dragSession_.IsActive() || GetCapture() ||
+                    app.items_.front().gridCell.column != 0 || app.items_.front().gridCell.row != 0)
+                    throw std::runtime_error("lost-release recovery must cancel without dropping at a historical point");
             }
             else
             {

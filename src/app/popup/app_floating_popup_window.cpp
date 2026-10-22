@@ -1381,10 +1381,11 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         TrackMouseEvent(&tracking);
         handlingFloatingPopupInput_ = true;
         bool dragPreviewSynced = false;
-        OnNativeMouseMoveAt(
+        const bool pointerUpdated = OnNativeMouseMoveAt(
             wp, latestDesktopPointer(),
             &dragPreviewSynced);
         handlingFloatingPopupInput_ = false;
+        if (!pointerUpdated) return 0;
         UpdateFloatingPopupWindowBounds(false);
         PresentPointerInteractionFrame(
             dragPreviewSynced);
