@@ -726,7 +726,7 @@ try {
                         if ($plan.editRevision -ne $Revision) { throw 'Plan belongs to an older revision; update it before ready.' }
                         $plan.inputIdentity=Get-TaskIdentity $plan
                         Set-Field $entry 'testPlan' $plan
-                        if(@(Get-Field $entry 'ownedFiles' @()).Count){Set-Field $entry 'commitIdentity' (Get-TaskIdentity ([pscustomobject]@{inputs=$entry.ownedFiles}))}
+                        if(@(Get-Field $entry 'ownedFiles' @()).Count){Set-Field $entry 'commitIdentity' (Get-OwnedCommitIdentity $entry)}
                         $entry.state='finished'; $entry.finishedUtc=[DateTime]::UtcNow.ToString('o')
                         if((Get-Field $current 'protocolVersion' 1) -ge 4){Set-Field $current 'membershipSealed' $true}
                         Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$Revision;reason='Post-ready lightweight check is queued.'})
@@ -836,7 +836,7 @@ try {
                             $plan.inputIdentity=Get-TaskIdentity $plan;Set-Field $entries[0] 'testPlan' $plan
                             Set-Field $entries[0] 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$currentRevision;reason='Foreground lightweight check queued.'})
                         }
-                        if(@(Get-Field $entries[0] 'ownedFiles' @()).Count){Set-Field $entries[0] 'commitIdentity' (Get-TaskIdentity ([pscustomobject]@{inputs=$entries[0].ownedFiles}))}
+                        if(@(Get-Field $entries[0] 'ownedFiles' @()).Count){Set-Field $entries[0] 'commitIdentity' (Get-OwnedCommitIdentity $entries[0])}
                         $entries[0].state = 'finished'
                         if((Get-Field $current 'protocolVersion' 1) -ge 4){Set-Field $current 'membershipSealed' $true}
                         $entries[0].finishedUtc = [DateTime]::UtcNow.ToString('o')

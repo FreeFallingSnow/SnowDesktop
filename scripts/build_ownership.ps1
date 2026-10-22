@@ -87,10 +87,24 @@ function Get-SourceChangeAudit($State) {
     }
     return [pscustomobject]@{checkedUtc=[DateTime]::UtcNow.ToString('o');changes=$changes;limitation='Ownership follows recorded claims; pre-upgrade and unregistered edits remain unassigned.'}
 }
+function Get-OwnedCommitIdentity($Entry) {
+    $scopes=@(Get-Field $Entry 'ownedFiles' @())
+    $listing=Invoke-InputGit $repositoryRoot 'ls-files -z --cached --others --exclude-standard'
+    if($listing.code -ne 0){throw 'Cannot enumerate Git checkpoint inputs.'}
+    $paths=@($scopes)+@($listing.output.Split([char]0)|Where-Object {
+        $file=$_;$file -and @($scopes|Where-Object {$file -ieq $_ -or $file.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count
+    })
+    $paths=@($paths|Sort-Object -Unique)
+    $identity=Get-TaskIdentity ([pscustomobject]@{inputs=$paths})
+    # Keep explicit missing/deleted inputs even after Git updates the index.
+    # New files under the owned scopes still enter the fresh identity check.
+    Set-Field $identity 'paths' $paths
+    return $identity
+}
 function Assert-CommitIdentity($Entry) {
     $expected=Get-Field $Entry 'commitIdentity'
     if(-not $expected){throw 'This frozen registration predates Git checkpoints; begin/claim reviewed changes in a new editing window.'}
-    $actual=Get-TaskIdentity ([pscustomobject]@{inputs=@(Get-Field $Entry 'ownedFiles' @())})
+    $actual=Get-TaskIdentity ([pscustomobject]@{inputs=@(Get-Field $Entry 'ownedFiles' @())+@(Get-Field $expected 'paths' @())})
     if($actual.digest -ne $expected.digest){throw 'Claimed source changed after ready; frozen Git checkpoint refused. Begin/claim the new revision.'}
 }
 function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
