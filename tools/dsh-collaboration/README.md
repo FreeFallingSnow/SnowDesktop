@@ -1,5 +1,8 @@
 # SnowDesktop DSH 协作插件
 
+网页与悬浮窗共同读取第4版活动候选列表：当前编辑与旧候选的排队/运行分别展示，点击候选仍查看其原批次。
+运行记录展示保存的运行文件和清单摘要；旧服务未提供新字段时保留原界面。客户端不新增调度权威或进程操作。
+
 此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。运行接口按本机 DSH `0.2.1-rc.2` 随包的插件、工具、文件写入与 Typert API 编写；其他版本须重新核对接口。
 
 插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `fs/write-intent` / `fs/edit-intent` 在受支持文件写入前校验当前批次、编辑轮次和路径归属。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。

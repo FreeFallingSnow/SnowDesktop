@@ -46,7 +46,7 @@ function Assert-CandidateToolset($Snapshot,$Runtime) {
         }
     }
 }
-function Initialize-CandidateOutput($Slot,[string]$Configuration) {
+function Initialize-CandidateOutput($Slot,[string]$Configuration,[switch]$Existing) {
     # Standard presets/scripts keep their .build paths. Both aliases resolve to
     # this configuration-specific slot output, never the originating checkout.
     foreach($name in @('.build','.build_debug')){
@@ -58,11 +58,12 @@ function Initialize-CandidateOutput($Slot,[string]$Configuration) {
             $item=Get-Item -LiteralPath $path -Force
             if(-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or @($item.Target).Count -ne 1 -or
                 [IO.Path]::GetFullPath([string]@($item.Target)[0]) -ne $expected){throw 'Candidate output alias changed; preserve the slot for investigation.'}
-        }else{New-Item -ItemType Junction -Path $path -Target $expected -ErrorAction Stop|Out-Null}
+        }elseif($Existing){throw 'Verification candidate output alias is missing.'}
+        else{New-Item -ItemType Junction -Path $path -Target $expected -ErrorAction Stop|Out-Null}
     }
-    [void][IO.Directory]::CreateDirectory((Join-Path $Slot.output 'collaboration/runs'))
+    if(-not $Existing){[void][IO.Directory]::CreateDirectory((Join-Path $Slot.output 'collaboration/runs'))}
 }
-function Enter-CandidateExecution([string]$Root,$Request) {
+function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExisting) {
     $snapshot=Read-CandidateManifest $Root $Request.snapshot
     if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration){throw 'Candidate snapshot/configuration identity changed.'}
     Assert-CandidateToolset $snapshot $Request.runnerRuntime
@@ -70,12 +71,17 @@ function Enter-CandidateExecution([string]$Root,$Request) {
     try {
         $slot=Enter-CandidateSlot $snapshot $Request.candidateSlot
         $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects -StoreContext $snapshot.store
-        $prepared=Set-CandidateSlotSource $snapshot $slot
-        Initialize-CandidateOutput $slot $Request.configuration
+        if($RequireExisting){
+            $old=Read-CandidateJson $slot.state
+            if($old.snapshot -ne $Request.snapshot -or $old.manifestDigest -ne $Request.snapshotManifestDigest){throw 'Verification candidate slot changed; use a matching new baseline.'}
+            $prepared=[pscustomobject]@{snapshot=$old.snapshot;slot=$slot.key;source=$slot.source;output=$slot.output;copied=0;kept=@($old.files).Count;removed=0;noBuild=$true}
+        }else{$prepared=Set-CandidateSlotSource $snapshot $slot}
+        Initialize-CandidateOutput $slot $Request.configuration -Existing:$RequireExisting
         $buildLock=[IO.File]::Open((Join-Path $slot.output 'collaboration/build.lock'),'OpenOrCreate','ReadWrite','None')
         $entry=[pscustomobject]@{lease=$buildLock;oldToken=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')}
         $context=[pscustomobject]@{schemaVersion=1;runRoot=$Root;runId=$Request.id;nonce=$Request.nonce;snapshot=$snapshot.manifest.id;
             manifest=$snapshot.path;manifestDigest=$snapshot.digest;source=$slot.source;output=$slot.output;slot=$slot.key;configuration=$Request.configuration}
+        if((Get-Field $Request 'candidateBatch' $false)){Set-Field $context 'batchId' $Request.batch}
         $null=Start-EntryCredential $slot.source '' $context
         # The caller retains every captured source handle for the whole Run.
         foreach($file in $snapshot.manifest.files){
@@ -102,7 +108,19 @@ function Get-CandidateExecutionInputIdentity([string]$Root) {
     $context=Get-CandidateEntryContext $Root
     if(-not $context){throw 'Candidate inputs require their live private execution credential.'}
     Initialize-CandidateOutput ([pscustomobject]@{source=$context.source;output=$context.output;directory=[IO.Path]::GetDirectoryName($context.source)}) $context.configuration
+    return Get-CandidateSourceIdentity $Root $context
+}
+function Get-CandidateSourceIdentity([string]$Root,$Context) {
+    # This read-only provenance check installs no execution credential.
+    $context=$Context
     $snapshot=Read-CandidateManifest $context.runRoot $context.snapshot
+    $directory=Resolve-CandidatePath $snapshot.store.slots $context.slot
+    if($Root -ne (Resolve-CandidatePath $directory 'source') -or $context.source -ne $Root -or
+        $context.output -ne (Resolve-CandidatePath $directory 'output')){throw 'Verification candidate path changed.'}
+    $material=Read-CandidateJson (Resolve-CandidatePath $directory 'materialization.json')
+    if($material.snapshot -ne $context.snapshot -or $material.manifestDigest -ne $context.manifestDigest -or
+        $material.sourceDigest -ne $snapshot.manifest.sourceDigest){throw 'Verification candidate slot changed; use a matching new baseline.'}
+    Initialize-CandidateOutput ([pscustomobject]@{source=$context.source;output=$context.output;directory=$directory}) $context.configuration -Existing
     if($snapshot.digest -ne $context.manifestDigest -or $snapshot.path -ne $context.manifest){throw 'Candidate source manifest changed.'}
     $actual=Get-CandidateContext $snapshot.manifest.files $context.configuration
     if($actual.digest -ne $snapshot.manifest.context.digest){throw 'Candidate observed environment/tools changed.'}
@@ -141,5 +159,6 @@ function Write-CandidateTestCoverage([string]$Root,$Selection,[string]$Report,[i
     $data=[pscustomobject]@{schemaVersion=1;candidate=$context.snapshot;runId=$context.runId;sourceDigest=(Get-CandidateExecutionInputIdentity $Root).digest;
         selected=@($Selection.Tests.name);definitions=$definitions;binaries=$binaries;runtimeFiles=@(Get-VerificationRuntimeFiles $Root $Selection.Tests);
         report=$Report;reportSha256=$(if([IO.File]::Exists($Report)){Get-FileDigest $Report}else{$null});exitCode=$Code;reuseAllowed=$false}
-    Write-CandidateJson $data (Join-Path $context.runRoot ('.build/collaboration/runs/'+$context.runId+'.candidate-tests.json')) -Immutable
+    $suffix=if(Get-Field $context 'batchId'){'.candidate-tests.'+(Get-VerificationTextDigest $Report)+'.json'}else{'.candidate-tests.json'}
+    Write-CandidateJson $data (Join-Path $context.runRoot ('.build/collaboration/runs/'+$context.runId+$suffix)) -Immutable
 }

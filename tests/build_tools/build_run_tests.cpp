@@ -251,13 +251,13 @@ void durable_cancel(const fs::path& repo,bool oldObservation=false,bool oldPubli
         // The result must be durable before retiring metadata, so existence is
         // not the Run's completion signal. Hold that real publication window.
         auto manager=read(c.scripts/L"build_manager.ps1");
-        replace(manager,"    $State.current = $null",R"PS(    [IO.File]::WriteAllText((Join-Path $stateRoot 'publication-paused'),'paused')
+        replace(manager,"    Retire-BoundBatch $State $Result.batchId",R"PS(    [IO.File]::WriteAllText((Join-Path $stateRoot 'publication-paused'),'paused')
     $pause=[Diagnostics.Stopwatch]::StartNew()
     while([IO.File]::Exists((Join-Path $stateRoot 'hold-publication'))){
         if($pause.Elapsed.TotalSeconds -gt 10){throw 'Publication fixture gate not released'}
         Start-Sleep -Milliseconds 20
     }
-    $State.current = $null)PS");
+    Retire-BoundBatch $State $Result.batchId)PS");
         write(c.scripts/L"build_manager.ps1",manager,true);
         write(c.stateRoot/L"hold-publication","hold");
         const auto batch=c.begin("runner").at("batchId").str();c.begin("peer");

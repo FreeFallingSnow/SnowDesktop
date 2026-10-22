@@ -298,13 +298,14 @@ $script:lastReportPath=$null
 if($Mode -eq 'verify'){
     $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if($runId -notmatch '^[a-f0-9]{32}$'){throw 'Verification must execute inside its admitted durable Run.'}
-    $runRoot=Join-Path $repositoryRoot '.build/collaboration/runs'
+    $originRoot=Get-EntryRunRoot $repositoryRoot
+    $runRoot=Join-Path $originRoot '.build/collaboration/runs'
     $request=Read-EntryJson (Join-Path $runRoot ($runId+'.request.json'))
     $coveragePath=Join-Path $runRoot ($runId+'.verification.json')
     $coverage=[pscustomobject]@{schemaVersion=1;runId=$runId;baseline=$PlanBatch;mode='verify';status='not-run';selected=@();completed=@();tasks=@();report=$null;error='';noBuild=$true}
     $code=5;$admitted=$false
     try {
-        if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $repositoryRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
+        if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $originRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
         $verificationBudget=Get-EntryResourceBudget $repositoryRoot
         $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget
         Set-Field $coverage 'observedExecutionContext' $snapshot.executionContext

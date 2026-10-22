@@ -8,12 +8,12 @@ import re
 import secrets
 import shutil
 import subprocess
-from powershell_runtime import powershell_executable, run as run_process
 import sys
 import time
 import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
+from powershell_runtime import powershell_executable, run as run_process
 from build_wait_tasks import atomic, lease, process_owner, reader, utc
 
 # Reviewed tests only. A label by itself cannot opt an arbitrary test into retries.

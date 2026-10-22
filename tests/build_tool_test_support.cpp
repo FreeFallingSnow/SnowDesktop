@@ -274,20 +274,31 @@ Write-Output "controlled $Phase passed";exit 0
     bridge=std::make_unique<Bridge>(repo,root,false,true);
 }
 Coordinator::~Coordinator(){for(const auto& worker:workers)stop_owner(worker);}
-Json Coordinator::call(std::vector<std::string> args,int code){return bridge->call(scripts/L"build_manager.ps1",args,code);}
+Json Coordinator::call(std::vector<std::string> args,int code){
+    auto value=bridge->call(scripts/L"build_manager.ps1",args,code);
+    if(code==0&&!args.empty()&&args.front()=="begin"){
+        // These existing synthetic fixtures deliberately retain v2/v3 input
+        // state. Dedicated candidate-batch fixtures call the real bridge
+        // directly to exercise production's new default protocol.
+        auto existing=state();const int protocol=durableBatches_?3:2;
+        if(existing.at("current").at("protocolVersion").integer()!=protocol){existing["current"]["protocolVersion"]=protocol;atomic(stateRoot/L"state.json",existing.dump());}
+    }
+    return value;
+}
 std::unique_ptr<Child> Coordinator::start(std::vector<std::string> args){std::vector<std::wstring> command={powershell().wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(scripts/L"build_manager.ps1").wstring()};for(const auto& arg:args)command.push_back(wide(arg));return std::make_unique<Child>(command,root);}
 Json Coordinator::state() const{return Json::parse(read(stateRoot/L"state.json"));}
 Json Coordinator::result(const std::string& batch) const{return Json::parse(read(stateRoot/wide(batch+".json")));}
 Json Coordinator::begin(const std::string& task){
     auto value=call({"begin",task});
-    if(!durableBatches_){
+    {
         // Seed a legacy registration as input, rather than changing production
-        // routing. Its existing owner/crash tests must retain v2 semantics.
+        // routing. Existing owner/crash tests retain their v2/v3 semantics.
         auto existing=state();
         // A reopened v2 registration is already legacy. Replacing its state
         // outside the coordinator transaction races its live waiter for no
         // semantic change. Seed the retained protocol only on first conversion.
-        if(existing.at("current").at("protocolVersion").integer()!=2){existing["current"]["protocolVersion"]=2;atomic(stateRoot/L"state.json",existing.dump());}
+        const int retainedProtocol=durableBatches_?3:2;
+        if(existing.at("current").at("protocolVersion").integer()!=retainedProtocol){existing["current"]["protocolVersion"]=retainedProtocol;atomic(stateRoot/L"state.json",existing.dump());}
     }
     // Lifecycle fixtures deliberately request complete synthetic coverage.
     // Production registrations have no default plan; missing-plan cases use call directly.

@@ -212,7 +212,18 @@ function renderStandaloneRun(snapshot){
  if(run.log){logView=run.log;text("logHint",run.log.prefixOmitted?"运行日志尾部":"运行日志");text("log",run.log.lines.join("\n")||"尚无运行日志。");}
 }
 function renderRunRecords(snapshot,batch){
+ Object.assign(names,{"candidate-capture":"捕获源码","artifact-publish":"保存运行文件","private-output-pending":"等待私有输出预检"});
  const target=$("runTelemetry");target.replaceChildren();
+ const candidates=snapshot.activeCandidates||[];
+ if(candidates.length)target.append(element("h3","候选运行 · "+candidates.length));
+ for(const candidate of candidates){
+  const box=element("details");retainFold(box,JSON.stringify(["candidate",candidate.id]));
+  box.append(element("summary",(candidate.tasks||[]).join("、")+" · "+label(candidate.status)));
+  detail(box,"候选批次 / Run",candidate.id+" / "+candidate.runId);
+  detail(box,"捕获时间",time(candidate.capturedUtc));detail(box,"候选输入",candidate.sourceDigest);
+  if(candidate.waitingFor)detail(box,"等待原因",candidate.waitingFor,"warn");
+  const open=element("button","查看候选");open.type="button";open.addEventListener("click",()=>selectBatch(candidate.id));box.append(open);target.append(box);
+ }
  const runs=batch?.historical?(batch.run?[batch.run]:[]):batch?.run?[batch.run,...(snapshot.runs||[]).filter(item=>item.id!==batch.run.id)]:(snapshot.runs||[]);
  if(!runs.length)return;
  target.append(element("h3","运行记录"));
@@ -221,6 +232,7 @@ function renderRunRecords(snapshot,batch){
   box.append(element("summary",(run.task||run.id.slice(0,8))+" · "+label(run.status)));
   if(run.error)detail(box,"运行错误",run.error,"bad");if(run.waitingFor)detail(box,"等待原因",run.waitingFor,"warn");
   detail(box,"Run",run.id+(run.batchId?" · 批次 "+run.batchId.slice(0,8):""));detail(box,"执行者",(run.ownerPid?"PID "+run.ownerPid+" · ":"")+label(run.ownerState));
+  if(run.artifact){detail(box,"保存产物",(run.artifact.productRuntime?"产品运行文件":"所选测试输出")+" · "+run.artifact.files+" 文件");detail(box,"保存位置",run.artifact.runtime);detail(box,"产物清单摘要",run.artifact.manifestDigest);}
   if(run.verification){
    detail(box,"独立补验","仅执行既有产物");detail(box,"来源批次",run.verification.baseline);detail(box,"测试选择",(run.verification.names||[]).join(", "));
    for(const item of run.verification.subscriptions||[])detail(box,item.task+" / 需求 r"+item.requirementsRevision,item.withdrawnUtc?"已撤回等待":"订阅共同结果");

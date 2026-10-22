@@ -71,14 +71,26 @@ function Get-VerificationNames([string]$Filter) {
 }
 function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filter,$ResourceBudget=$null) {
     if($Baseline -notmatch '^[a-f0-9]{32}$'){throw 'Verification requires -PlanBatch with an immutable baseline batch ID.'}
-    $result=Read-EntryJson (Join-Path $Root ('.build/collaboration/'+$Baseline+'.json'))
-    if(-not $result -or $result.repositoryRoot -ne $Root -or $result.batchId -ne $Baseline -or $result.inputCheck -ne 'stable' -or $result.outcome -notin 'passed','failed'){throw 'Verification baseline is not a stable, completed candidate.'}
-    $source=Get-BuildInputIdentity $Root
+    $origin=Get-EntryRunRoot $Root
+    $result=Read-EntryJson (Join-Path $origin ('.build/collaboration/'+$Baseline+'.json'))
+    if(-not $result -or $result.repositoryRoot -ne $origin -or $result.batchId -ne $Baseline -or $result.inputCheck -ne 'stable' -or $result.outcome -notin 'passed','failed'){throw 'Verification baseline is not a stable, completed candidate.'}
+    $candidate=$null
+    if((Get-Field $result 'protocolVersion' 1) -ge 4){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        $context=$result.candidateExecution
+        if(-not $context -or $context.runRoot -ne $origin -or $context.snapshot -ne $result.candidateBinding.snapshot -or $context.manifestDigest -ne $result.candidateBinding.manifestDigest){throw 'Verification candidate binding is missing or changed.'}
+        $Root=$context.source;$source=Get-CandidateSourceIdentity $Root $context
+        $candidate=[pscustomobject]@{snapshot=$context.snapshot;manifestDigest=$context.manifestDigest;source=$context.source;output=$context.output;slot=$context.slot;runRoot=$origin}
+    }else{$source=Get-BuildInputIdentity $Root}
     if($source.digest -ne $result.inputEnd.digest){throw 'Verification source no longer matches the baseline candidate; build the changed inputs first.'}
     $names=@(Get-VerificationNames $Filter)
     $pattern='^('+ (($names|ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
-    $output=& ctest --preset all-tests --test-dir (Join-Path $Root '.build') -C Release --show-only=json-v1 -R $pattern
-    if($LASTEXITCODE -ne 0){throw 'Unable to query existing configured tests; verification never configures or builds.'}
+    Push-Location -LiteralPath $Root
+    try{
+        $output=& ctest --preset all-tests --test-dir (Join-Path $Root '.build') -C Release --show-only=json-v1 -R $pattern
+        if($LASTEXITCODE -ne 0){throw 'Unable to query existing configured tests; verification never configures or builds.'}
+    }finally{Pop-Location}
     $tests=@((($output -join [Environment]::NewLine)|ConvertFrom-Json).tests)
     if($tests.Count -ne $names.Count -or @(Compare-Object $names @($tests.name|Sort-Object)).Count){throw 'Verification selection differs from the requested existing tests.'}
     $definitions=@(Get-VerificationDefinitions $tests);$artifacts=@()
@@ -99,6 +111,7 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     $oldRuntime=@(Get-Field $result.coverage 'testRuntimeFilesBeforeRun' @()|Where-Object {$names -contains $_.test})
     if(($runtimeFiles|ConvertTo-Json -Depth 8 -Compress) -ne ($oldRuntime|ConvertTo-Json -Depth 8 -Compress)){throw 'Explicit verification runtime files changed or their baseline identity is unavailable.'}
     $binding=[pscustomobject]@{sourceDigest=$source.digest;configuration='Release';names=$names;definitions=$definitions;artifacts=$artifacts;runtimeFiles=$runtimeFiles;environmentDigest=$context.digest}
+    if($candidate){Set-Field $binding 'candidate' $candidate}
     if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}
     return [pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
 }

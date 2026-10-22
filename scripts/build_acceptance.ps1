@@ -35,6 +35,21 @@ function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevi
     Assert-EditRevision $member[0] $EditRevision
     $requirement=Get-Field (Get-Field $member[0] 'testPlan') 'requirementsRevision'
     if($null -eq $requirement -or $requirement -ne $Task.requirementsRevision){throw 'Candidate requirements are missing or stale; do not infer manual acceptance.'}
+    if((Get-Field $Result 'protocolVersion' 1) -ge 4){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
+        $runId=Get-Field $Result 'runId'
+        $request=Read-EntryJson (Join-Path $Root ('.build/collaboration/runs/'+$runId+'.request.json'))
+        $run=Read-EntryJson (Join-Path $Root ('.build/collaboration/runs/'+$runId+'.json'))
+        $artifact=Get-RunAcceptanceArtifact $Root $request $run $runId
+        if($request.batch -ne $Result.batchId -or $artifact.manifest.sourceDigest -ne $Result.inputEnd.digest -or
+            $Result.artifact.manifestDigest -ne $artifact.digest){throw 'Saved runtime does not belong to the accepted batch.'}
+        $runtimeFiles=(@($Files.Split(',')|ForEach-Object {
+            $relative=$_.Replace('\','/')
+            if($relative.StartsWith('.build/Release/',[StringComparison]::OrdinalIgnoreCase)){$relative.Substring(15)}else{$relative}
+        }) -join ',')
+        return New-SavedRuntimeAcceptance $Root $State $Task $artifact $runId $Criterion $runtimeFiles $Result.batchId $EditRevision
+    }
     $current=Get-BuildInputIdentity $Root
     if($current.digest -ne $Result.inputEnd.digest){throw 'Candidate inputs differ from current inputs.'}
     $ledger=Get-TaskLedger $State;$records=@(Get-AcceptanceRecords $ledger)
@@ -64,13 +79,18 @@ function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevi
 function Get-RunAcceptanceArtifact([string]$Root,$Request,$Run,[string]$Id) {
     if(-not $Request -or -not $Run -or $Request.id -ne $Id -or $Run.id -ne $Id -or
         $Request.repositoryRoot -ne $Root -or $Run.repositoryRoot -ne $Root -or $Request.nonce -ne $Run.nonce -or
-        $Request.action -ne 'candidate' -or $Run.status -ne 'passed' -or $Run.exitCode -ne 0 -or -not $Run.completedUtc -or
+        $Request.action -notin 'candidate','batch' -or $Run.status -ne 'passed' -or $Run.exitCode -ne 0 -or -not $Run.completedUtc -or
         -not $Run.inputStart -or -not $Run.inputEnd -or $Run.inputStart.digest -ne $Run.inputEnd.digest){throw 'Acceptance requires its passed stable candidate Run.'}
     $summary=Get-Field $Run 'artifact';$context=Get-Field $Run 'candidateExecution'
+    if($Request.action -eq 'batch'){
+        if(-not (Get-Field $Request 'candidateBatch' $false)){throw 'This batch did not save an independent candidate runtime.'}
+        . (Join-Path $PSScriptRoot 'build_candidate_batch.ps1')
+        $binding=Read-CandidateBatchBinding $Root $Request;$snapshot=$binding.snapshot;$manifestDigest=$binding.manifestDigest
+    }else{$snapshot=$Request.snapshot;$manifestDigest=$Request.snapshotManifestDigest}
     if(-not $summary -or -not $context -or $context.runId -ne $Id -or $context.nonce -ne $Request.nonce -or
-        $summary.id -ne $Id -or $context.snapshot -ne $Request.snapshot -or $summary.candidate -ne $Request.snapshot){throw 'Candidate Run has no saved runtime binding.'}
+        $summary.id -ne $Id -or $context.snapshot -ne $snapshot -or $summary.candidate -ne $snapshot){throw 'Candidate Run has no saved runtime binding.'}
     $artifact=Read-CandidateArtifact $Root $Id $summary.manifestDigest -VerifyFiles
-    if($artifact.manifest.candidate -ne $Request.snapshot -or $artifact.manifest.sourceManifestDigest -ne $Request.snapshotManifestDigest -or
+    if($artifact.manifest.candidate -ne $snapshot -or $artifact.manifest.sourceManifestDigest -ne $manifestDigest -or
         $artifact.manifest.sourceDigest -ne $Run.inputEnd.digest -or $artifact.manifest.contextDigest -eq '' -or
         $artifact.manifest.configuration -ne $Request.configuration -or $summary.runtime -ne $artifact.runtime -or
         $summary.manifest -ne $artifact.path -or $summary.profile -ne $artifact.manifest.profile){throw 'Candidate Run and saved runtime disagree.'}
@@ -83,6 +103,9 @@ function Start-RunAcceptance([string]$Root,$State,$Task,[string]$Id,$Request,$Ru
     . (Join-Path $PSScriptRoot 'build_candidate.ps1')
     . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
     $artifact=Get-RunAcceptanceArtifact $Root $Request $Run $Id
+    return New-SavedRuntimeAcceptance $Root $State $Task $artifact $Id $Criterion $Files
+}
+function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string]$Id,[string]$Criterion,[string]$Files,$BatchId=$null,$EditRevision=$null) {
     $ledger=Get-TaskLedger $State;$records=@(Get-AcceptanceRecords $ledger)
     if($records.Count -ge 4096){throw 'Acceptance ledger is full; preserve its history.'}
     if(@($records|Where-Object {$_.task -eq $Task.id -and $_.status -eq 'running'}).Count){throw 'This task already has an open acceptance interval.'}
@@ -98,7 +121,7 @@ function Start-RunAcceptance([string]$Root,$State,$Task,[string]$Id,$Request,$Ru
     }
     $clock=Get-AcceptanceClock
     $entry=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');task=$Task.id;requirementsRevision=$Task.requirementsRevision;
-        editRevision=$null;batchId=$null;runId=$Id;sourceDigest=$artifact.manifest.sourceDigest;criterion=$Criterion;
+        editRevision=$EditRevision;batchId=$BatchId;runId=$Id;sourceDigest=$artifact.manifest.sourceDigest;criterion=$Criterion;
         candidate=$artifact.manifest.candidate;artifactManifestDigest=$artifact.digest;artifactRuntime=$artifact.runtime;
         artifacts=$selected;status='running';startedUtc=$clock.utc;completedUtc=$null;clock=$clock;
         elapsedSeconds=$null;durationStatus='running';reporter=$null;reference=$null;notes=$null}

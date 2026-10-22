@@ -434,6 +434,9 @@ class Store:
                             "noBuild": True, "reuseAllowed": False,
                             "subscriptions": [{**{k: x.get(k) for k in ("id", "task", "requirementsRevision", "baseline", "subscribedUtc", "withdrawnUtc")}, "reason": redact(x.get("reason", ""))} for x in entries[0].get("subscriptions", [])[:128]]}
         return {"id": run_id, "batchId": request.get("batch"), "task": redact(request.get("task", "")),
+                "artifact": ({key: record["artifact"].get(key) for key in
+                              ("id", "candidate", "manifestDigest", "runtime", "profile", "files", "bytes", "productRuntime", "publicationComplete", "reuseAllowed")}
+                             if isinstance(record.get("artifact"), dict) else None),
                 "verification": verification, "evidence": evidence_view(record.get("evidence")),
                 "action": request.get("action"), "mode": request.get("mode"), "configuration": request.get("configuration"),
                 "status": status, "persistedStatus": record.get("status"), "ownerState": process, "ownerPid": (record.get("owner") or {}).get("pid"),
@@ -474,6 +477,10 @@ class Store:
         result = read_json(self.root, batch_id + ".json")
         if result and result.get("batchId") != batch_id:
             raise ValueError("Result batch mismatch")
+        if current is None and result is None:
+            state = read_json(self.root, "state.json") or {}
+            attempts = [state.get("current")] + (state.get("activeCandidates") or [])
+            current = next((item for item in attempts if isinstance(item, dict) and item.get("id") == batch_id), None)
         data = result or current
         if not data:
             return None
@@ -582,6 +589,26 @@ class Store:
                 if not HEX.fullmatch(str(current.get("id", ""))):
                     raise ValueError("Invalid current batch identity")
                 active = self.batch(current["id"], current)
+            candidates = []
+            attempts = state.get("activeCandidates", [])
+            if not isinstance(attempts, list) or len(attempts) > 32:
+                raise ValueError("Invalid active candidate registry")
+            task_names = {item.get("id"): item.get("displayName") for item in ((state.get("taskLedger") or {}).get("tasks") or [])}
+            for attempt in attempts:
+                if not isinstance(attempt, dict) or not HEX.fullmatch(str(attempt.get("id", ""))) or not HEX.fullmatch(str(attempt.get("runId", ""))):
+                    raise ValueError("Invalid active candidate identity")
+                record = read_json(safe_path(self.root, "runs"), attempt["runId"] + ".json") or {}
+                if record and record.get("id") != attempt["runId"]:
+                    raise ValueError("Candidate Run identity mismatch")
+                owner = owner_state(record.get("owner") or attempt.get("owner"))
+                status = record.get("status", "starting")
+                if status not in ("passed", "failed", "cancelled", "invalidated", "interrupted") and owner == "exited":
+                    status = "interrupted"
+                binding = attempt.get("candidateBinding") or {}
+                candidates.append({"id": attempt["id"], "runId": attempt["runId"], "status": status, "ownerState": owner,
+                                   "waitingFor": redact(record.get("waitingFor", "")), "capturedUtc": attempt.get("capturedUtc"),
+                                   "snapshot": binding.get("snapshot"), "sourceDigest": binding.get("sourceDigest"),
+                                   "tasks": [redact(task_names.get(member.get("id")) or member.get("id", "")) for member in attempt.get("participants", []) if member.get("state") != "withdrawn"]})
             files = sorted((x for x in self.root.glob("*.json") if HEX.fullmatch(x.stem) and not x.is_symlink()),
                            key=lambda x: x.stat().st_mtime, reverse=True)[:20]
             history = []
@@ -611,7 +638,7 @@ class Store:
                                "adapterReceived": sum(any(r.get("task") == who and r.get("level") == "adapter" for r in receipts) for who in recipients),
                                "agentAcknowledged": sum(any(r.get("task") == who and r.get("level") == "agent" for r in receipts) for who in recipients)})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                          "current": active, "history": history, "waits": self.waits(),
+                          "current": active, "activeCandidates": candidates, "history": history, "waits": self.waits(),
                           "taskPresence": presence, "taskPresenceTotal": len(ledger.get("tasks") or []),
                           "events": events, "eventTotal": len(ledger.get("events") or []), "runs": self.runs(),
                           "acceptances": acceptance_view(ledger),

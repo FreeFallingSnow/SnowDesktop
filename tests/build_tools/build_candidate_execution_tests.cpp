@@ -48,7 +48,8 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
         "\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Candidate fixture has no dashboard'}}\n",true);
     if(control=="checkout-lock"){
         auto script=read(c.scripts/L"build_run.ps1");
-        replace(script,"$candidateExecution=Enter-CandidateExecution $root $request","$originalEntry=Enter-BuildEntry $root; $candidateExecution=Enter-CandidateExecution $root $request");
+        replace(script,"$candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification",
+            "$originalEntry=Enter-BuildEntry $root; $candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification");
         replace(script,"$runnerLocks=@();$stage=$null","$runnerLocks=@();$stage=$null;$originalEntry=$null");
         replace(script,"foreach($stream in $runnerLocks){$stream.Dispose()}","foreach($stream in $runnerLocks){$stream.Dispose()}; if($originalEntry){Exit-BuildEntry $originalEntry}");
         write(c.scripts/L"build_run.ps1",script,true);
@@ -63,6 +64,11 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
         replace(script,"runtime=$payload;profile=$selection.profile;files=$records.Count",
             "runtime=$selection.root;profile=$selection.profile;files=$records.Count");
         write(c.scripts/L"build_candidate_artifacts.ps1",script,true);
+    }else if(control=="batches-held-window"){
+        auto script=read(c.scripts/L"build_candidate_batch.ps1");
+        replace(script,"Set-Field $state 'activeCandidates' (@($active)+@($batch));$state.current=$null",
+            "# Controlled old behavior retains the original frozen editing window during compilation.");
+        write(c.scripts/L"build_candidate_batch.ps1",script,true);
     }else{require(control.empty(),"Unknown executor negative control");}
     write(c.root/L".gitignore",read(c.root/L".gitignore")+"!/CMakeLists.txt\n!/cmake/\n");
     write(c.root/L"CMakeLists.txt",R"CMAKE(cmake_minimum_required(VERSION 3.24)
@@ -170,6 +176,118 @@ $repositoryRoot=$ProbeRoot
         require(control.code==1&&control.err.find("Private output preflight falsely reported")!=std::string::npos,"Old logical-only preflight did not reach the ownership assertion: "+control.out+control.err);
     }
     std::cout<<"PASS physical/logical candidate output owners, Release/Debug separation, neighbor exclusion, PowerShell7/5.1 and original-path negative control\n";
+}
+void candidate_batches(const fs::path& repo,bool heldWindow) {
+    Coordinator c(repo,"candidate-batches",true,fixture_parent(repo));
+    prepare(c,repo,heldWindow?"batches-held-window":"");
+    auto begin=[&](const std::string& task){return c.bridge->call(c.scripts/L"build_manager.ps1",{"begin",task});};
+    const auto empty=begin("empty-requirement").at("batchId").str();
+    c.plan("empty-requirement",empty,0,"none","","docs","src/value.h");
+    const auto exempt=c.bridge->call(c.scripts/L"build_manager.ps1",{"ready-and-wait","empty-requirement","-Batch",empty,"-Revision","0","-WaitSeconds","15"});
+    require(exempt.at("outcome").str()=="skipped"&&exempt.at("runId").kind==Json::Kind::Null&&exempt.at("commands").items.empty(),
+        "Explicit empty requirements captured or launched an unnecessary candidate");
+    const auto first=begin("candidate"),peer=begin("peer");const auto batch=first.at("batchId").str();
+    require(peer.at("batchId").str()==batch&&c.state().at("current").at("protocolVersion").integer()==4,"New batch did not use the candidate protocol");
+    c.plan("candidate",batch,0,"selected","candidate_rule","tool","src/value.h");
+    c.plan("peer",batch,0,"none","","docs","src/value.h");
+    auto ready=[&](const std::string& task,const std::string& id,const Env& env={}){
+        const auto result=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait",task,"-Batch",id,"-Revision","0","-WaitSeconds","1"},env,15);
+        require(result.code==2,"Fixture ready observer unexpectedly terminated its running candidate: "+result.out+result.err);
+    };
+    ready("candidate",batch);
+    const auto outsider=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","outsider","-WaitSeconds","1"});
+    require(outsider.code==2&&c.state().at("current").at("participants").items.size()==2,
+        "A new editor extended a cohort after its first member became ready");
+    const auto gate=c.stateRoot/L"v4-gate";write(gate,"hold");
+    const Env env={{L"CANDIDATE_FIXTURE_GATE",gate.wstring()}};
+    ready("peer",batch,env);
+    auto runId=[&](const std::string& id){
+        std::string found;
+        until([&]{
+            if(fs::exists(c.stateRoot/wide(id+".json"))){found=c.result(id).at("runId").str();return !found.empty();}
+            const auto state=c.state();
+            if(state.at("current").kind==Json::Kind::Object&&state.at("current").at("id").str()==id&&state.at("current").has("runId"))found=state.at("current").at("runId").str();
+            if(state.has("activeCandidates"))for(const auto& item:state.at("activeCandidates").items)if(item.at("id").str()==id)found=item.at("runId").str();
+            return !found.empty();
+        },15);
+        const auto receipt=c.stateRoot/L"runs"/wide(found+".launch.json");until([&]{return fs::exists(receipt);},12);
+        c.workers.push_back(Json::parse(read(receipt)));return found;
+    };
+    const auto firstRun=runId(batch);
+    until([&]{return fs::exists(gate.wstring()+L".ready")||view(c,firstRun).at("terminal").boolean;},35);
+    require(fs::exists(gate.wstring()+L".ready"),"Candidate batch never reached its real private build child");
+    const auto editing=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","next","-WaitSeconds","1"});
+    require(editing.code==0,"Source capture did not release the editing window while its candidate compiled");
+    if(heldWindow)return;
+    const auto next=Json::parse(editing.out);const auto nextBatch=next.at("batchId").str();
+    c.call({"claim","next","-Batch",nextBatch,"-Revision","0","-Files","src/value.h,CMakePresets.json"});
+    write(c.root/L"src/value.h","#pragma once\ninline constexpr int value=11;\n");
+    fs::remove(gate);wait(c,firstRun);
+    const auto state=c.state(),result=c.result(batch);
+    require(state.at("current").at("id").str()==nextBatch&&state.at("current").at("participants").items.front().at("state").str()=="editing",
+        "An old candidate result retired the newer editing window");
+    require(result.at("outcome").str()=="passed"&&result.at("inputCheck").str()=="stable"&&result.at("candidateBinding").at("runId").str()==firstRun,
+        "Original checkout edits invalidated or rebound the frozen batch result");
+    const auto saved=fs::path(wide(result.at("artifact").at("runtime").str()))/L"tests/SnowDesktopCandidateFixtureTests.exe";
+    require(run({saved.wstring()},c.root).code==7,"Candidate batch did not preserve its passing program");
+    const auto candidateOutput=fs::path(wide(result.at("candidateExecution").at("output").str()));
+    const auto candidateProgram=candidateOutput/L"Release/tests/SnowDesktopCandidateFixtureTests.exe";
+    const auto compiledTime=fs::last_write_time(candidateProgram);
+    const auto originalPresets=read(c.root/L"CMakePresets.json");
+    write(c.root/L"CMakePresets.json","An editor has not finished the next preset yet\n");
+    const auto verified=wait(c,submit(c,{"-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Verify the captured candidate while the original checkout continues editing"}));
+    write(c.root/L"CMakePresets.json",originalPresets);
+    require(verified.at("record").at("verification").at("noBuild").boolean&&fs::last_write_time(candidateProgram)==compiledTime,
+        "Candidate verification rebuilt its program or lost the no-build result");
+    bool executed=false;
+    for(const auto& event:verified.at("stageEvents").items){if(!event.has("name"))continue;const auto name=event.at("name").str();if(name=="test-execute")executed=true;require(name!="configure"&&name!="test-target-build"&&name!="arrange"&&name!="compile",
+        "Execution-only candidate verification configured, built or arranged outputs");}
+    require(executed&&verified.at("record").at("evidence").at("tests").items.size()==1&&
+        verified.at("record").at("evidence").at("tests").items.front().at("attempts").items.front().at("report").str()!=result.at("coverage").at("report").str(),
+        "Candidate verification reused an old report instead of executing the selected test");
+    auto revision=[&](){const auto tasks=c.call({"task-list"});for(const auto& task:tasks.at("tasks").items)if(task.at("id").str()=="candidate")return std::to_string(task.at("revision").integer());throw std::runtime_error("Missing candidate task");};
+    const auto acceptance=c.call({"acceptance-start","candidate","-Batch",batch,"-Revision","0","-TaskRevision",revision(),
+        "-AcceptanceCriterion","Saved candidate returns7 while the live source contains11","-Files",".build/Release/tests/SnowDesktopCandidateFixtureTests.exe"}).at("acceptance");
+    c.call({"acceptance-complete","candidate","-TaskRevision",revision(),"-AcceptanceId",acceptance.at("id").str(),"-Reporter","agent",
+        "-Reference","native-fixture:captured-batch-runtime","-Notes","Executed saved7 after editing live source11; fixture evidence only"});
+    c.plan("next",nextBatch,0,"selected","candidate_rule","tool","src/value.h");ready("next",nextBatch);
+    const auto secondRun=runId(nextBatch);wait(c,secondRun,1);
+    require(c.result(nextBatch).at("outcome").str()=="failed"&&run({saved.wstring()},c.root).code==7,
+        "New candidate failure changed an older passing program or lost the actual failure");
+    const auto stale=c.bridge->invoke(c.scripts/L"build_run.ps1",{"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Do not rewind a compiler slot to verify a stale candidate"});
+    require(stale.code==2&&stale.err.find("Verification candidate slot changed")!=std::string::npos,
+        "Verification accepted a reused slot or failed for an unrelated reason: "+stale.out+stale.err);
+    program(candidateOutput,11);
+    Child unrelated({standin().wstring(),L"--wait",L"--marker",(c.stateRoot/L"unrelated-v4-process").wstring()},c.root);
+    for(const auto& mode:{std::string("cancel"),std::string("owner-loss")}){
+        const auto task="lifecycle-"+mode,opened=begin(task).at("batchId").str();
+        c.call({"claim",task,"-Batch",opened,"-Revision","0","-Files","src/value.h","-AdoptExistingChanges"});
+        write(c.root/L"src/value.h","#pragma once\ninline constexpr int value=7;\n");
+        c.plan(task,opened,0,"selected","candidate_rule","tool","src/value.h");
+        fs::remove(gate.wstring()+L".ready");write(gate,"hold");ready(task,opened,env);
+        const auto id=runId(opened);
+        until([&]{return fs::exists(gate.wstring()+L".ready")||view(c,id).at("terminal").boolean;},35);
+        require(fs::exists(gate.wstring()+L".ready"),"Lifecycle candidate batch did not reach its owned child");
+        const auto child=Json::parse(read(gate.wstring()+L".ready"));
+        if(mode=="cancel"){
+            c.bridge->call(c.scripts/L"build_run.ps1",{"-Command","cancel","-Task",task,"-RunId",id});wait(c,id,4);
+            require(c.result(opened).at("outcome").str()=="cancelled","Candidate cancellation lost the shared cancelled outcome");
+        }else{
+            stop_owner(view(c,id).at("record").at("owner"));until([&]{return view(c,id).at("status").str()=="interrupted";});
+            const auto after=begin("after-owner-loss").at("batchId").str();
+            const auto unrelatedLease=CreateFileW((c.stateRoot/L"build.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+            require(unrelatedLease!=INVALID_HANDLE_VALUE,"Cannot hold unrelated original-output lease");
+            const auto recovered=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"recover","-Batch",opened,"-ConfirmStopped","-Reason","Fixture owner exited; preserve captured source and interrupted result"});
+            CloseHandle(unrelatedLease);
+            require(recovered.code==0&&c.state().at("current").at("id").str()==after&&c.result(opened).at("outcome").str()=="interrupted",
+                "Interrupted candidate recovery depended on an unrelated output lease or cleared a newer editing window");
+        }
+        until([&]{return !owner_alive(child);});require(unrelated.running(),"Candidate cleanup terminated an unrelated process");fs::remove(gate);
+    }
+    const auto control=run({executable().wstring(),repo.wstring(),L"--batches-held-window"},c.root,80,{},true);
+    require(control.code==1&&control.err.find("Source capture did not release the editing window while its candidate compiled")!=std::string::npos,
+        "Frozen-window control did not reach the original editing-blocked assertion: "+control.out+control.err);
+    std::cout<<"PASS v4 cohort sealing, source capture, editing/build overlap, isolated result retirement, saved batch acceptance, failed next inputs and held-window control\n";
 }
 void artifacts(const fs::path& repo,bool slotReference) {
     Coordinator c(repo,"candidate-artifacts",true,fixture_parent(repo));
@@ -309,7 +427,8 @@ void scenario(const fs::path& repo,const std::string& control) {
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
-    if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
+    if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
+    else if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
     else scenario(repo,mode.empty()?"":mode.substr(2));
 });}

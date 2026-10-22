@@ -273,8 +273,21 @@ function Get-CandidateEntryContext([string]$Root) {
     $directory=Join-Path $context.runRoot '.build/collaboration/runs'
     $request=Read-EntryJson (Join-Path $directory ($context.runId+'.request.json'))
     $record=Read-EntryJson (Join-Path $directory ($context.runId+'.json'))
-    if(-not $request -or -not $record -or $request.repositoryRoot -ne $context.runRoot -or $request.action -ne 'candidate' -or
-        $request.snapshot -ne $context.snapshot -or $request.snapshotManifestDigest -ne $context.manifestDigest -or
+    $snapshot=$null;$manifestDigest=$null
+    if($request -and $request.action -eq 'candidate'){$snapshot=$request.snapshot;$manifestDigest=$request.snapshotManifestDigest}
+    elseif($request -and $request.action -eq 'batch' -and $request.PSObject.Properties['candidateBatch'] -and $request.candidateBatch){
+        . (Join-Path $PSScriptRoot 'build_candidate_batch.ps1')
+        $binding=Read-CandidateBatchBinding $context.runRoot $request
+        $snapshot=$binding.snapshot;$manifestDigest=$binding.manifestDigest
+    }
+    elseif($request -and $request.action -eq 'tests' -and $request.mode -eq 'verify' -and $request.PSObject.Properties['candidateVerification'] -and $request.candidateVerification){
+        $binding=$request.verification.binding.candidate
+        if($binding.runRoot -ne $context.runRoot -or $binding.source -ne $context.source -or $binding.output -ne $context.output -or $binding.slot -ne $context.slot){throw 'Verification candidate context changed.'}
+        $snapshot=$request.snapshot;$manifestDigest=$request.snapshotManifestDigest
+        if($snapshot -ne $binding.snapshot -or $manifestDigest -ne $binding.manifestDigest){throw 'Verification candidate source binding changed.'}
+    }
+    if(-not $request -or -not $record -or $request.repositoryRoot -ne $context.runRoot -or -not $snapshot -or
+        $snapshot -ne $context.snapshot -or $manifestDigest -ne $context.manifestDigest -or
         $request.nonce -ne $context.nonce -or $record.nonce -ne $context.nonce -or $record.status -notin 'queued','running' -or
         $record.owner.pid -ne $credential.owner.pid -or $record.owner.startTicks -ne $credential.owner.startTicks){throw 'Candidate execution has no matching live parent Run.'}
     return $context
