@@ -19,6 +19,25 @@ local function fixture()
 end
 
 return {
+    ["playing a library item selects local ownership before starting audio"] = function()
+        local p,calls=fixture()
+        local model={player=p,source="system"}
+        local persisted
+        local host={available=function() return true end,persist=function(source)
+            assert(#calls==0);persisted=source
+        end}
+        assert(localPlayback.playTrack(model,p.tracks[2].key,host))
+        assert(model.source=="local" and persisted=="local" and p.index==2 and p.playingTask)
+        assert(#calls==1)
+    end,
+    ["stale library keys and missing capabilities preserve the system source without starting audio"] = function()
+        local p,calls=fixture()
+        local model={player=p,source="system"}
+        local host={available=function() return false end,persist=function() error("must not persist") end}
+        assert(not localPlayback.playTrack(model,"removed",host))
+        assert(not localPlayback.playTrack(model,p.tracks[1].key,host))
+        assert(model.source=="system" and #calls==0 and not p.playingTask)
+    end,
     ["playlist insertion uses item midpoints and matches final move indices"] = function()
         local target,boundary=queue.dropTarget(1,4,124,50)
         assert(target==2 and boundary==2)

@@ -166,6 +166,12 @@ end
 local function indexOf(p,key)
     for i,track in ipairs(p.tracks) do if track.key==key then return i end end
 end
+function M.playTrack(model,key,host)
+    local index=indexOf(model.player,key)
+    if not index or not M.select(model,"local",host) then return false end
+    model.player:play(index)
+    return true
+end
 function M.event(_context,model,e)
     local p=model.player
     if model.preview then return false end
@@ -231,7 +237,7 @@ function M.event(_context,model,e)
             p:setRate(target)
         elseif id and id:sub(1,5)=="rate." then p:setRate(tonumber(id:sub(6)) or 1)
         elseif id=="track" then
-            if not model.suppressClick then local i=indexOf(p,e.value);if i then p:play(i) end end
+            if not model.suppressClick then M.playTrack(model,e.value) end
             model.suppressClick=nil
         elseif id=="track.remove" then local i=indexOf(p,e.value);if i then p:remove(i) end
         elseif id=="track.top" then local i=indexOf(p,e.value);if i then p:move(i,1) end

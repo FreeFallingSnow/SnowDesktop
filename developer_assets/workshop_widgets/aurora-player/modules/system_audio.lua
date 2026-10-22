@@ -138,7 +138,8 @@ function M.open(model,anchor,localActive)
     if not (model.api.hasFeature("widget.popover") and model.api.hasFeature("view.surface.popover") and
         model.api.openPopover(options)) then
         model.surface="panel"
-        model.api.openPanel({title=model.api.translate("shared.audio"),width=options.width+8,height=options.height+46})
+        model.api.openPanel({title=model.api.translate("shared.audio"),width=options.width+8,
+            height=math.floor(options.height+46-row*1.6)})
     end
     M.sync(model,true)
     return true
@@ -202,10 +203,11 @@ function M.view(model,localModel)
     local state=M.state(model)
     local row=ui.metrics().layoutRowHeight
     local c=panel.theme()
-    local children={view.row({key="system.audio.header",width="fill",height=row*1.15,
+    local children={}
+    if model.surface~="panel" then children[1]=view.row({key="system.audio.header",width="fill",height=row*1.15,
         alignItems="center",children={
             panel.text("system.audio.title",l10n.tr("shared.audio"),row,{fontSize=row*0.68,fontWeight=700,height=row}),
-            panel.iconButton("system.audio.close",0xF00D,l10n.tr("shared.close"),row*0.85,"system.audio.close")}})}
+            panel.iconButton("system.audio.close",0xF00D,l10n.tr("shared.close"),row*0.85,"system.audio.close")}}) end
     if state.volumeSupported then
         local scalar=state.volume
         if model.draft and model.draft.endpoint==state.id then scalar=model.draft.volume end
