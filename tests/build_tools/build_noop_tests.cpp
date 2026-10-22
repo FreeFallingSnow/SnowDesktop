@@ -33,6 +33,7 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
 snowdesktop_check_shared_output()
 project(ProductOutputFixture LANGUAGES CXX)
+option(BUILD_TESTING "Fixture test discovery is owned by the native driver" OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ProductBuild.cmake")
 include(ExternalProject)
@@ -50,6 +51,7 @@ foreach(target SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopMan
 endforeach()
 add_dependencies(SnowDesktop SnowDesktopSteamBridge snowwidget)
 foreach(target SnowDesktop SnowDesktopHookEntry SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopManager snowwidget)
+ target_compile_features(${target} PRIVATE cxx_std_20)
  target_compile_options(${target} PRIVATE /W4 /WX /Z7)
 endforeach()
 add_custom_target(FixtureArrange
