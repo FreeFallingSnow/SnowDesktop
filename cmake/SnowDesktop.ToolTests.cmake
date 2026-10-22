@@ -5,6 +5,7 @@ if(BUILD_TESTING AND WIN32)
     add_library(SnowDesktopBuildToolTestSupport STATIC tests/build_tool_test_support.cpp)
     target_include_directories(SnowDesktopBuildToolTestSupport PUBLIC tests src)
     target_compile_features(SnowDesktopBuildToolTestSupport PUBLIC cxx_std_20)
+    target_link_libraries(SnowDesktopBuildToolTestSupport PUBLIC shell32)
     target_compile_definitions(SnowDesktopBuildToolTestSupport PUBLIC _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(SnowDesktopBuildToolTestSupport PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"

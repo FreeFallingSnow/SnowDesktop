@@ -40,14 +40,14 @@ $rows=@([pscustomobject]@{test='Alpha';target='Alpha';status='observed';fileIds=
 $manifest=[pscustomobject]@{root=$PSScriptRoot;tests=$rows;files=@($context.files.Keys|ForEach-Object {@{id=$_}})}
 $path=Join-Path $PSScriptRoot 'before.json';$reference=Join-Path $PSScriptRoot 'before-reference.json'
 if($Capture){[IO.File]::WriteAllText($path,($manifest|ConvertTo-Json -Depth 15),(New-Object Text.UTF8Encoding($false)));@{path=$path;sha256=(Get-FileHash -LiteralPath $path).Hash}|ConvertTo-Json|Set-Content -LiteralPath $reference -Encoding UTF8}
-$check=Compare-TestRuntimeInputs $PSScriptRoot @(@{name='Alpha'},@{name='Beta'}) (Get-Content -LiteralPath $reference -Raw|ConvertFrom-Json)
+$check=Compare-TestRuntimeInputs $PSScriptRoot @(@{name='Alpha'},@{name='Beta'}) (Get-Content -LiteralPath $reference -Raw -Encoding UTF8|ConvertFrom-Json)
 @{alpha=$alpha;beta=$beta;unknown=$unknown;advice=(Get-TestDependencyAdvice $manifest @($Changed));check=$check}|ConvertTo-Json -Depth 18
 )PS",true);
     Bridge bridge(repo,root);bridge.call(root/L"setup.ps1",{});
     const auto inspect=[&](const std::string& changed="data/message.txt"){return bridge.call(root/L"inspect.ps1",{"-Changed",changed});};
     const auto program=[&]{return run({executable().wstring(),root.wstring(),L"--runtime-fixture"},root);};
     const auto baseline=bridge.call(root/L"inspect.ps1",{"-Capture"});
-    require(program().code==0,"Initial runtime business fixture failed");
+    const auto initialProgram=program();require(initialProgram.code==0,"Initial runtime business fixture failed: "+initialProgram.out+initialProgram.err);
     require(baseline.at("alpha").at("status").str()=="observed"&&baseline.at("alpha").at("sourceReview").str()=="valid"&&baseline.at("unknown").at("status").str()=="unreviewed","Declared/unknown runtime contracts were confused: "+baseline.dump());
     require(named(baseline.at("check").at("tests"),"Alpha").at("status").str()=="stable"&&!baseline.at("alpha").at("reuseAllowed").boolean&&baseline.at("alpha").at("runtimeClosure").str()=="unclosed","Observed file inputs falsely closed runtime dependencies");
     const auto alphaDigest=baseline.at("alpha").at("digest").str(),betaDigest=baseline.at("beta").at("digest").str();
@@ -64,12 +64,14 @@ $check=Compare-TestRuntimeInputs $PSScriptRoot @(@{name='Alpha'},@{name='Beta'})
     write(root/L"optional.txt","appeared");require(program().code==1&&inspect("optional.txt").at("alpha").at("digest").str()!=alphaDigest,"Optional absence was confused with an unobserved input");fs::remove(root/L"optional.txt");
     write(root/L"tree/nested/value.txt","changed");require(program().code==1&&inspect("tree/nested/value.txt").at("alpha").at("digest").str()!=alphaDigest,"Recursive runtime content was omitted");write(root/L"tree/nested/value.txt","expected");
     const auto source=read(root/L"runtime_rules.cpp");write(root/L"runtime_rules.cpp",source+"\n// changed reader\n");const auto stale=inspect();require(stale.at("alpha").at("status").str()=="incomplete"&&stale.at("alpha").at("sourceReview").str()=="stale","Reader source changed without invalidating its review");write(root/L"runtime_rules.cpp",source);
-    Bridge ps5(repo,root,true);const auto legacy=ps5.call(root/L"inspect.ps1",{});require(legacy.at("alpha").at("digest").str()==alphaDigest&&legacy.at("beta").at("digest").str()==betaDigest,"PowerShell5.1 and7 runtime fingerprints differ");
+    Bridge ps5(repo,root,true);const auto legacy=ps5.call(root/L"inspect.ps1",{});require(legacy.at("alpha").at("digest").str()==alphaDigest&&legacy.at("beta").at("digest").str()==betaDigest&&named(legacy.at("check").at("tests"),"Alpha").at("status").str()=="stable","PowerShell5.1 and7 runtime fingerprints/endpoints differ");
     const auto before=read(root/L"before.json");write(root/L"before.json",before+" ");require(inspect().at("check").at("status").str()=="unavailable","Changed baseline bytes were trusted");write(root/L"before.json",before);
     const auto registryPath=root/L"scripts/test_runtime_contracts.json";auto registry=read(registryPath);if(registry.starts_with("\xef\xbb\xbf"))registry.erase(0,3);
     write(registryPath,"invalid json");require(inspect().at("alpha").at("status").str()=="incomplete","Invalid registry silently authorized file coverage");
     auto escaped=Json::parse(registry);escaped["tests"].items[0]["inputs"].items[0]["path"]="../outside.txt";write(registryPath,escaped.dump());require(inspect().at("alpha").at("status").str()=="incomplete","Runtime contract escaped the repository boundary");
     auto unknown=Json::parse(registry);unknown["tests"].items[0]["kind"]="closed-by-label";write(registryPath,unknown.dump());require(inspect().at("alpha").at("status").str()=="incomplete","Unsupported runtime contract was accepted");
+    write(root/L"junction.ps1","New-Item -ItemType Junction -Path (Join-Path $PSScriptRoot 'alias') -Target (Join-Path $PSScriptRoot 'tree')|Out-Null;@{created=$true}|ConvertTo-Json\n",true);bridge.call(root/L"junction.ps1",{});
+    auto aliased=Json::parse(registry);aliased["tests"].items[0]["inputs"].items[0]["path"]="alias/nested/value.txt";write(registryPath,aliased.dump());require(inspect().at("alpha").at("status").str()=="incomplete","Unreviewed runtime reparse point was traversed");
     write(registryPath,registry);fs::rename(registryPath,registryPath.wstring()+L".saved");require(inspect().at("alpha").at("status").str()=="unreviewed","Missing registry retained earlier imported contracts");fs::rename(registryPath.wstring()+L".saved",registryPath);
     require(program().code==0&&inspect().at("alpha").at("digest").str()==alphaDigest,"Restored runtime inputs did not restore the original identity");
     std::cout<<"PASS semantic files, directory entries/content, absent lookups, source reviews, endpoint invalidation, advice, PowerShell5.1/7 and conservative unknown/error behavior\n";

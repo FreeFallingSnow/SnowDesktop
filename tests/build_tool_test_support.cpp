@@ -1,5 +1,6 @@
 #include "build_tool_test_support.h"
 #include "common/json_value.h"
+#include <shellapi.h>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -240,7 +241,17 @@ Json Bridge::call(const fs::path& script,const std::vector<std::string>& args,in
 Json owner(DWORD pid) {HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);require(handle!=nullptr,"Cannot inspect fixture owner");auto time=birth(handle);CloseHandle(handle);return Json::object({{"pid",static_cast<double>(pid)},{"startTicks",std::to_string(time+504911232000000000ULL)}});}
 bool owner_alive(const Json& value) {if(!value.has("pid")||!value.has("startTicks"))return false;HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return false;bool alive=WaitForSingleObject(handle,0)==WAIT_TIMEOUT&&std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str();CloseHandle(handle);return alive;}
 void stop_owner(const Json& value) {if(!owner_alive(value))return;HANDLE handle=OpenProcess(PROCESS_TERMINATE|PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return;if(std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str()){TerminateProcess(handle,4);WaitForSingleObject(handle,5000);}CloseHandle(handle);}
-int test_main(int argc,char** argv,const std::function<void(const fs::path&)>& test) {try {require(argc>=2,"Repository argument required");test(fs::path(wide(argv[1])));std::cout<<"PASSED"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}}
+int test_main(int argc,char**,const std::function<void(const fs::path&)>& test) {
+    try {
+        require(argc>=2,"Repository argument required");
+        // Narrow CRT argv uses the active Windows code page, not necessarily
+        // UTF-8. Preserve the original Unicode repository argument.
+        int count=0;
+        std::unique_ptr<wchar_t*,decltype(&LocalFree)> arguments(CommandLineToArgvW(GetCommandLineW(),&count),LocalFree);
+        require(arguments&&count>=2,"Wide repository argument unavailable");
+        test(fs::path(arguments.get()[1]));std::cout<<"PASSED"<<std::endl;return 0;
+    }catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}
+}
 Coordinator::Coordinator(const fs::path& repo,const std::string& label,bool durableBatches,const fs::path& fixtureParent):root(temporary(label,fixtureParent)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration"),durableBatches_(durableBatches) {
     copy(repo,root,{"scripts/build_test_dependencies.ps1","scripts/build_test_runtime_inputs.ps1","scripts/test_runtime_contracts.json"});
     copy(repo,root,{"scripts/build_entry.ps1","scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_command.ps1","scripts/build_msbuild_logger.cs","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_evidence.ps1","scripts/build_verification.ps1","scripts/build_acceptance.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
