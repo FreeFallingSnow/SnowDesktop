@@ -138,6 +138,47 @@ void request_publication(const fs::path& repo,bool oldPublication=false){
     std::cout<<"PASS request producer termination and create-only collision\n";
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
+void project_resources(const fs::path& repo){
+    Coordinator c(repo,"project-resources");setup_run(c,repo);
+    const auto other=c.root/L"second worktree";
+    require(c.git({L"worktree",L"add",L"--detach",other.wstring(),L"HEAD"}).code==0,"Could not create the real shared-common-dir worktree");
+    fs::copy(c.scripts,other/L"scripts",fs::copy_options::recursive|fs::copy_options::overwrite_existing);
+    copy(c.root,other,{"leaf.ps1","tools/build-dashboard/server.py"});
+    Bridge second(repo,other,false,true);
+    second.call(other/L"scripts/build_manager.ps1",{"task-open","runner","-TaskName","second worktree heavy execution"});
+    ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
+    require(parent.wait()==0,"First resource fixture launch failed");
+    const auto firstId=Json::parse(read(c.root/L"submitted.json")).at("id").str();
+    const auto first=await_running(c,firstId);parent.close();
+    const auto otherCommand=[&](const std::string& id,const std::vector<std::string>& arguments,int code=0){
+        auto args=arguments;args.insert(args.end(),{"-RunId",id});
+        return second.call(other/L"scripts/build_run.ps1",args,code);
+    };
+    const auto submit=[&]{return second.call(other/L"scripts/build_run.ps1",{"-Command","start","-Task","runner","-Action","release"}).at("id").str();};
+    const auto awaitQueued=[&](const std::string& id){
+        until([&]{const auto value=Json::parse(read(other/L".build/collaboration/runs"/wide(id+".json")));return value.at("status").str()!="starting";},10);
+        auto view=otherCommand(id,{"-Command","status"});
+        if(view.at("record").at("owner").kind!=Json::Kind::Null)c.workers.push_back(view.at("record").at("owner"));
+        require(view.at("status").str()=="queued"&&!fs::exists(other/L"build-started"),"Independent worktrees admitted heavy pipelines simultaneously");
+        require(view.at("record").at("waitingFor").str().find("Shared project resources busy:")==0,"Cross-worktree queue did not report its real resource");
+        return view;
+    };
+    const auto cancelledId=submit();const auto queued=awaitQueued(cancelledId);
+    require(first.at("record").at("resourceAdmission").at("commonGitDirectory").str()==queued.at("record").at("resourceAdmission").at("commonGitDirectory").str(),"Real worktrees did not share their resource identity");
+    const auto requestPath=other/L".build/collaboration/runs"/wide(cancelledId+".request.json");const auto request=read(requestPath);
+    otherCommand(cancelledId,{"-Command","cancel","-Task","runner"});
+    const auto cancelled=otherCommand(cancelledId,{"-Command","wait","-Seconds","10"},4);
+    require(cancelled.at("status").str()=="cancelled"&&read(requestPath)==request&&owner_alive(first.at("record").at("owner")),"Queued resource cancellation lost identity or affected the current owner");
+    const auto nextId=submit();awaitQueued(nextId);
+    stop_owner(first.at("record").at("owner"));
+    await_dead(Json::parse(read(c.root/L"child.json")));await_dead(Json::parse(read(c.root/L"grandchild.json")));
+    const auto completed=otherCommand(nextId,{"-Command","wait","-Seconds","15"});
+    require(completed.at("status").str()=="passed"&&read(other/L"calls.txt")=="build\n"&&c.calls()==1,"Owner loss failed to release the project lease or duplicated execution");
+    bool resourceWait=false;
+    for(const auto& interval:completed.at("record").at("waitIntervals").items)resourceWait=resourceWait||(interval.at("resource").str()=="project-execution"&&interval.at("elapsedSeconds").number>=0);
+    require(resourceWait&&status(c,firstId).at("status").str()=="interrupted","Project resource wait timing or interrupted owner evidence was lost");
+    std::cout<<"PASS real worktree heavy execution exclusion, queued cancellation, owner-loss release and one execution per request\n";
+}
 void observer_snapshot(const fs::path& repo){
     Coordinator c(repo,"observer-snapshot");setup_run(c,repo);
     auto entry=read(c.scripts/L"build_entry.ps1");
@@ -385,4 +426,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--observer-snapshot"){observer_snapshot(repo);return;}if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--project-resources"){project_resources(repo);return;}if(argc>2&&std::string(argv[2])=="--observer-snapshot"){observer_snapshot(repo);return;}if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}

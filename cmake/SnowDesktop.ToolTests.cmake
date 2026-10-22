@@ -94,6 +94,10 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
         build_tools/build_run_tests.cpp "tools;core;integration" 180)
+    add_test(NAME build_project_resources COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --project-resources)
+    set_tests_properties(build_project_resources PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
     add_test(NAME build_run_observer COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --observer-snapshot)
     set_tests_properties(build_run_observer PROPERTIES TIMEOUT 90 LABELS "tools;integration"
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
