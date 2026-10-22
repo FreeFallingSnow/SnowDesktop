@@ -179,6 +179,27 @@
             static_cast<UINT>(trajectory.durationMilliseconds), 0, &trajectory) && app.FlushPendingCompositionCommit(),
             "DirectComposition accepts the production zero-to-one spring segments");
         app.dcompVisual_->RemoveVisual(overlay.visual.Get());
+        // Exercise the real warmup against a test-owned, never-shown HWND.
+        // It must initialize storage without publishing popup state or input.
+        const HWND savedPopupWindow = app.floatingPopupHwnd_;
+        const bool savedGlass = app.collectionPopupGlassTheme_;
+        app.collectionPopupGlassTheme_ = false;
+        app.floatingPopupHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"isolated-popup-warmup", WS_POPUP, 0, 0, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        check(app.floatingPopupHwnd_ != nullptr && app.WarmFloatingPopupResources(),
+            "prepare the actual popup composition infrastructure in a hidden test window");
+        const auto warmedTarget = app.floatingPopupDcompTarget_;
+        const auto warmedSurface = app.floatingPopupDcompSurface_;
+        check(app.WarmFloatingPopupResources() && app.floatingPopupDcompTarget_.Get() == warmedTarget.Get() &&
+            app.floatingPopupDcompSurface_.Get() == warmedSurface.Get(),
+            "repeated infrastructure warmup reuses its native target and storage");
+        check(!IsWindowVisible(app.floatingPopupHwnd_) && !app.ShouldShowFloatingPopupWindow() &&
+            IsRectEmpty(&app.floatingPopupWindowBounds_) && !app.floatingPopupMouseHookNotificationWindow_.load(),
+            "warmup cannot reveal a popup, establish input bounds or install an outside-click hook");
+        app.DestroyFloatingPopupWindow();
+        app.floatingPopupHwnd_ = savedPopupWindow;
+        app.collectionPopupGlassTheme_ = savedGlass;
         app.dcompVisual_ = savedRoot;
         app.dcompDevice_ = savedDevice;
 

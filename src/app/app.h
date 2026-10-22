@@ -1379,6 +1379,7 @@ private:
     static LRESULT CALLBACK FloatingPopupMouseHookProc(
         int code, WPARAM message, LPARAM data);
     bool CreateFloatingPopupWindow();
+    bool WarmFloatingPopupResources();
     void DestroyFloatingPopupWindow();
     HRESULT SyncFloatingPopupCompositionRootZOrder();
     void ResetFloatingPopupCompositionResources();

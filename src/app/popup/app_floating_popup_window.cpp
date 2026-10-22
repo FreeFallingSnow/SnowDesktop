@@ -5,6 +5,7 @@
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
 #include "platform/shell_overlay_window.h"
+#include "diagnostics/performance_trace.h"
 
 #include <array>
 #include <bit>
@@ -355,6 +356,31 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
         bounds = UnionRects(bounds, panelBounds);
     }
     return bounds;
+}
+
+bool DesktopApp::WarmFloatingPopupResources()
+{
+    if (exitRequested_ || graphicsDeviceRecovery_.Pending() || !dcompDevice_ ||
+        ShouldShowFloatingPopupWindow())
+        return false;
+    snowdesktop::performance::Scope scope("popup", "infrastructure.warmup.ui");
+    if (collectionPopupGlassTheme_)
+        (void)collectionPopupBackdropCompositor_.PrepareBlurFactoryInBackground(collectionPopupBlurRadius_);
+    if (!CreateFloatingPopupWindow() ||
+        FAILED(CreateOrResizeFloatingPopupCompositionSurface()))
+        return false;
+    // A fresh DComp surface has no valid content until EndDraw. Initialize its
+    // tiny hidden target without touching popup models, input regions or hooks.
+    ComPtr<ID2D1DeviceContext> context;
+    POINT offset{};
+    const HRESULT draw = floatingPopupDcompSurface_->BeginDraw(nullptr,
+        __uuidof(ID2D1DeviceContext), reinterpret_cast<void**>(context.GetAddressOf()), &offset);
+    if (FAILED(draw)) return false;
+    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+    context.Reset();
+    if (FAILED(floatingPopupDcompSurface_->EndDraw())) return false;
+
+    return CommitCompositionAnimationFrame() && FlushPendingCompositionCommit();
 }
 
 bool DesktopApp::CreateFloatingPopupWindow()

@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <string>
 
@@ -42,6 +43,8 @@ public:
     bool InitializePopup(
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
+    /** @brief 从窗口线程发起后台效果工厂准备；future 仅用于观察，打开弹窗不等待。 */
+    std::shared_future<bool> PrepareBlurFactoryInBackground(float blurRadius);
     /**
      * @brief 安全同步 popup 内容与 backdrop 的 Z 序及 TOPMOST 状态。
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "diagnostics/performance_trace.h"
 
 // Popup open/close lifecycle and animation.
 
@@ -415,6 +416,7 @@ void DesktopApp::OpenDockFolderPopupAt(
 void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
+    snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
     std::vector<RECT> previousDockTitles;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -464,9 +466,15 @@ void DesktopApp::StartCollectionPopupAnimation(
     // and size that host before preparing the animation cache so the snapshot
     // can be attached to the correct DComp tree instead of falling back to
     // UI-thread frame rendering.
-    UpdateFloatingPopupWindowBounds(false);
+    {
+        snowdesktop::performance::Scope hostScope("popup", "host.prepare");
+        UpdateFloatingPopupWindowBounds(false);
+    }
     const double cacheStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    PrepareCollectionPopupAnimationCache();
+    {
+        snowdesktop::performance::Scope snapshotScope("popup", "snapshot.prepare");
+        PrepareCollectionPopupAnimationCache();
+    }
     const double cacheElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - cacheStarted;
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::

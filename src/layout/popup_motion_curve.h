@@ -27,31 +27,6 @@ inline bool AtRest(Sample sample, double target)
         std::abs(sample.velocity) <= 0.01;
 }
 
-inline double SettlingMilliseconds(Sample initial, double target, double frequency)
-{
-    if (AtRest(initial, target)) return 0.0;
-    double upper = 1.0 / frequency;
-    double lower = 0.0;
-    // Test after the velocity extremum too: a reversal may briefly pass the
-    // target's rest tolerance before moving away from it.
-    const double linear = initial.velocity + frequency * (initial.position - target);
-    if (std::abs(linear) > 1e-12)
-    {
-        lower = std::max(0.0, initial.velocity / (frequency * linear) + 1.0 / frequency);
-        upper = std::max(upper, lower);
-    }
-    for (unsigned count = 0; count < 24 && !AtRest(Evaluate(initial, target, frequency, upper), target); ++count)
-        upper *= 2.0;
-    if (AtRest(Evaluate(initial, target, frequency, lower), target)) lower = 0.0;
-    for (unsigned count = 0; count < 32; ++count)
-    {
-        const double middle = (lower + upper) * 0.5;
-        if (AtRest(Evaluate(initial, target, frequency, middle), target)) upper = middle;
-        else lower = middle;
-    }
-    return std::max(1.0, std::ceil(upper * 1000.0));
-}
-
 struct CubicSegment
 {
     double startSeconds = 0.0, durationSeconds = 0.0;
@@ -82,6 +57,14 @@ struct Timeline
     double target = 0.0;
 };
 
+inline CubicSegment Interpolate(double begin, double end, Sample first, Sample last)
+{
+    const double span = end - begin, delta = last.position - first.position;
+    return {begin, span, first.position, first.velocity,
+        3.0 * delta / (span * span) - (2.0 * first.velocity + last.velocity) / span,
+        -2.0 * delta / (span * span * span) + (first.velocity + last.velocity) / (span * span)};
+}
+
 inline Timeline Build(Sample initial, double target, double frequency, double milliseconds)
 {
     Timeline result;
@@ -89,15 +72,18 @@ inline Timeline Build(Sample initial, double target, double frequency, double mi
     result.target = target;
     if (milliseconds <= 0.0) return result;
     const double endSeconds = milliseconds / 1000.0;
+    const double tailStart = endSeconds * 0.75;
+    const auto tail = Interpolate(tailStart, endSeconds,
+        Evaluate(initial, target, frequency, tailStart), {target, 0.0});
     const auto sample = [&](double seconds) {
-        return seconds >= endSeconds ? Sample{target, 0.0} : Evaluate(initial, target, frequency, seconds);
+        if (seconds >= endSeconds) return Sample{target, 0.0};
+        if (seconds >= tailStart) return tail.EvaluateLocal(seconds - tailStart);
+        return Evaluate(initial, target, frequency, seconds);
     };
     const auto append = [&](auto&& self, double begin, double end, unsigned depth) -> void {
         const auto first = sample(begin), last = sample(end);
-        const double span = end - begin, delta = last.position - first.position;
-        CubicSegment segment{begin, span, first.position, first.velocity,
-            3.0 * delta / (span * span) - (2.0 * first.velocity + last.velocity) / span,
-            -2.0 * delta / (span * span * span) + (first.velocity + last.velocity) / (span * span)};
+        const double span = end - begin;
+        const auto segment = Interpolate(begin, end, first, last);
         double error = 0.0;
         for (const double fraction : {0.25, 0.5, 0.75})
             error = std::max(error, std::abs(segment.EvaluateLocal(span * fraction).position - sample(begin + span * fraction).position));
@@ -114,12 +100,50 @@ inline Timeline Build(Sample initial, double target, double frequency, double mi
     const double turn = std::abs(linear) > 1e-12 ? initial.velocity / (frequency * linear) : 0.0;
     // A zero-net-displacement keyframe cannot represent a turn. Both native
     // backends therefore share an explicit boundary at the velocity's zero.
-    if (turn > 0.000001 && turn < endSeconds - 0.000001)
+    std::vector<double> boundaries{0.0, tailStart, endSeconds};
+    if (turn > 0.000001 && turn < tailStart - 0.000001)
+        boundaries.push_back(turn);
+    if (std::abs(tail.cubic) > 1e-12)
     {
-        append(append, 0.0, turn, 0);
-        append(append, turn, endSeconds, 0);
+        const double discriminant = 4.0 * tail.quadratic * tail.quadratic - 12.0 * tail.cubic * tail.linear;
+        if (discriminant > 0)
+            for (const double sign : {-1.0, 1.0})
+            {
+                const double root = (-2.0 * tail.quadratic + sign * std::sqrt(discriminant)) / (6.0 * tail.cubic);
+                if (root > 0.000001 && root < tail.durationSeconds - 0.000001)
+                    boundaries.push_back(tailStart + root);
+            }
     }
-    else append(append, 0.0, endSeconds, 0);
+    std::sort(boundaries.begin(), boundaries.end());
+    for (std::size_t index = 1; index < boundaries.size(); ++index)
+        append(append, boundaries[index - 1], boundaries[index], 0);
+    return result;
+}
+
+inline Sample Evaluate(const Timeline& timeline, double seconds)
+{
+    for (const auto& segment : timeline.segments)
+        if (seconds < segment.startSeconds + segment.durationSeconds)
+            return segment.EvaluateLocal(std::max(0.0, seconds - segment.startSeconds));
+    return {timeline.target, 0.0};
+}
+
+inline Timeline Remainder(const Timeline& timeline, double elapsedMilliseconds)
+{
+    Timeline result;
+    result.target = timeline.target;
+    result.durationMilliseconds = std::max(0.0, timeline.durationMilliseconds - elapsedMilliseconds);
+    const double elapsed = elapsedMilliseconds / 1000.0;
+    for (const auto& segment : timeline.segments)
+    {
+        const double end = segment.startSeconds + segment.durationSeconds;
+        if (end <= elapsed) continue;
+        const double begin = std::max(elapsed, segment.startSeconds);
+        const double local = begin - segment.startSeconds;
+        const auto first = segment.EvaluateLocal(local);
+        result.segments.push_back({begin - elapsed, end - begin, first.position, first.velocity,
+            segment.quadratic + 3.0 * segment.cubic * local, segment.cubic});
+    }
     return result;
 }
 }

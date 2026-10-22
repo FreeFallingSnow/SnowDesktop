@@ -120,9 +120,8 @@ public:
     [[nodiscard]] double DurationMilliseconds(bool opening) const
     {
         if (spring_)
-            return popup_motion_curve::SettlingMilliseconds(
-                {opening ? 0.0 : 1.0, 0.0}, opening ? 1.0 : 0.0, SpringFrequency(opening));
-        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
+            return std::ceil((opening ? 160.0 : 110.0) * durationScale_ / (opening ? 1.0 : closingSpeed_));
+        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_ / (opening ? 1.0 : closingSpeed_);
     }
     [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : spring_ ? 0.0f : kMinimumScale; }
     [[nodiscard]] float EndpointOpacity(bool opening) const { return fade_ && !opening ? 0.0f : 1.0f; }
@@ -130,13 +129,13 @@ public:
     [[nodiscard]] double Velocity() const { return motion_.velocity; }
     [[nodiscard]] popup_motion_curve::Timeline RemainingTimeline() const
     {
-        return popup_motion_curve::Build(motion_, targetVisible_ ? 1.0 : 0.0,
-            SpringFrequency(targetVisible_), std::max(0.0, springDuration_ - springElapsed_));
+        return popup_motion_curve::Remainder(springTimeline_, springElapsed_);
     }
     void Open(std::uint64_t now)
     {
         Advance(now);
         if (spring_) { RetargetSpring(true, now); return; }
+        closingSpeed_ = 1.0;
         targetVisible_ = true;
         animating_ = progress_ < 1.0f;
         lastTick_ = now;
@@ -149,6 +148,15 @@ public:
         targetVisible_ = false;
         animating_ = progress_ > 0.0f;
         lastTick_ = now;
+    }
+
+    void AccelerateCloseForSwitch(std::uint64_t now)
+    {
+        Advance(now);
+        if (!IsClosing() || closingSpeed_ > 1.0) return;
+        closingSpeed_ = 2.0;
+        lastTick_ = now;
+        if (spring_) StartSpringSegment(false);
     }
 
     bool Advance(std::uint64_t now)
@@ -168,8 +176,7 @@ public:
         if (spring_)
         {
             springElapsed_ += static_cast<double>(elapsed);
-            motion_ = popup_motion_curve::Evaluate(springInitial_, targetVisible_ ? 1.0 : 0.0,
-                SpringFrequency(targetVisible_), springElapsed_ / 1000.0);
+            motion_ = popup_motion_curve::Evaluate(springTimeline_, springElapsed_ / 1000.0);
             if (springElapsed_ >= springDuration_)
             {
                 motion_ = {targetVisible_ ? 1.0 : 0.0, 0.0};
@@ -200,8 +207,10 @@ public:
         targetVisible_ = false;
         animating_ = false;
         lastTick_ = 0;
-        motion_ = springInitial_ = {};
+        motion_ = {};
         springElapsed_ = springDuration_ = 0.0;
+        springTimeline_ = {};
+        closingSpeed_ = 1.0;
     }
 
     void ShowImmediately()
@@ -210,8 +219,10 @@ public:
         targetVisible_ = true;
         animating_ = false;
         lastTick_ = 0;
-        motion_ = springInitial_ = {1.0, 0.0};
+        motion_ = {1.0, 0.0};
         springElapsed_ = springDuration_ = 0.0;
+        springTimeline_ = {};
+        closingSpeed_ = 1.0;
     }
 
     [[nodiscard]] Visual GetVisual() const
@@ -247,24 +258,38 @@ public:
 private:
     [[nodiscard]] double SpringFrequency(bool opening) const
     {
-        // 99% displacement at the perceptual duration. The small tail runs
-        // independently in the compositor until both rest tolerances pass.
-        return 6.638352067994 / ((opening ? 0.260 : 0.170) * durationScale_);
+        // Reach 99% in the first 75%, then finish with a short C1 tail.
+        // The visible endpoint and the actual completion deadline coincide.
+        return 6.638352067994 / (DurationMilliseconds(opening) * 0.00075);
+    }
+    void StartSpringSegment(bool opening)
+    {
+        springElapsed_ = 0.0;
+        springDuration_ = popup_motion_curve::AtRest(motion_, opening ? 1.0 : 0.0)
+            ? 0.0 : DurationMilliseconds(opening);
+        springTimeline_ = popup_motion_curve::Build(motion_, opening ? 1.0 : 0.0,
+            SpringFrequency(opening), springDuration_);
+        animating_ = springDuration_ > 0.0;
+        if (!animating_)
+        {
+            motion_ = {opening ? 1.0 : 0.0, 0.0};
+            progress_ = opening ? 1.0f : 0.0f;
+        }
     }
     void RetargetSpring(bool opening, std::uint64_t now)
     {
         if (targetVisible_ == opening && animating_) return;
         targetVisible_ = opening;
-        springInitial_ = motion_;
-        springElapsed_ = 0.0;
-        springDuration_ = popup_motion_curve::SettlingMilliseconds(motion_, opening ? 1.0 : 0.0, SpringFrequency(opening));
-        animating_ = springDuration_ > 0.0;
+        closingSpeed_ = 1.0;
+        StartSpringSegment(opening);
         lastTick_ = now;
     }
     bool fade_ = false;
     bool spring_ = false;
-    popup_motion_curve::Sample motion_, springInitial_;
+    popup_motion_curve::Sample motion_;
     double springElapsed_ = 0.0, springDuration_ = 0.0;
+    popup_motion_curve::Timeline springTimeline_;
+    double closingSpeed_ = 1.0;
     double durationScale_ = 1.0;
     float progress_ = 0.0f;
     bool targetVisible_ = false;

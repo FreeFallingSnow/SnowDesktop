@@ -201,6 +201,13 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                 anchorPoint,
                 categoryId,
             };
+        popupAnimation_.AccelerateCloseForSwitch(static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+        if (!StartCollectionPopupCompositionAnimation())
+        {
+            UpdateCollectionPopupCompositionAnimation();
+            EnsureUiAnimationFrame();
+        }
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::ReopenExisting:

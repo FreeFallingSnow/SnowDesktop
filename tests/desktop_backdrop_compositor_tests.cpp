@@ -4,6 +4,7 @@
 #include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
 #include "layout/popup_motion_curve.h"
+#include "diagnostics/performance_trace.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
 #include "dock/floating_dock_rules.h"
@@ -25,6 +26,7 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <atomic>
 #include <algorithm>
 #include <iostream>
 #include <string_view>
@@ -35,6 +37,48 @@ namespace
 {
 
 constexpr UINT kCommitCompleted = WM_APP + 471;
+
+std::atomic<DWORD> warmupThread{0};
+std::atomic<unsigned> warmupBuilds{0}, warmupReuses{0};
+const snowdesktop::performance::Hooks warmupHooks{
+    [](snowdesktop::performance::ScopeToken&, std::string_view, std::string_view phase,
+        std::wstring_view, std::uint64_t) noexcept {
+        if (phase == "backdrop.warmup.background")
+        {
+            warmupThread.store(GetCurrentThreadId());
+            ++warmupBuilds;
+        }
+    },
+    [](snowdesktop::performance::ScopeToken&) noexcept {},
+    [](std::string_view, std::string_view name, std::wstring_view, double, std::uint64_t) noexcept {
+        if (name == "backdrop.warmup.reused") ++warmupReuses;
+    },
+    [](std::string_view, std::wstring_view, bool) noexcept {}
+};
+
+struct WarmupObservation
+{
+    const snowdesktop::performance::Hooks* previous = snowdesktop::performance::captureHooks.exchange(&warmupHooks);
+    ~WarmupObservation() { snowdesktop::performance::captureHooks.store(previous); }
+};
+
+bool WaitForWarmup(const std::shared_future<bool>& result)
+{
+    if (!result.valid()) return false;
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    while (result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (GetTickCount64() >= deadline) return false;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+    return result.get();
+}
 
 struct PopupWindow
 {
@@ -753,21 +797,36 @@ int RunDesktopBackdropCompositorTests()
 
     failures += CheckPopupRoundedEdgeCoverage();
     {
+        WarmupObservation observe;
+        warmupThread = 0;
+        warmupBuilds = warmupReuses = 0;
+        std::shared_future<bool> prepared;
+        {
+            DesktopBackdropCompositor prewarmer;
+            prepared = prewarmer.PrepareBlurFactoryInBackground(24);
+            check(prewarmer.PrepareBlurFactoryInBackground(24).valid(),
+                "duplicate requests reuse one background factory job");
+        }
+        check(WaitForWarmup(prepared) && warmupThread.load() != 0 &&
+            warmupThread.load() != GetCurrentThreadId() && warmupBuilds.load() == 1,
+            "real blur-factory creation runs once off the UI thread and survives initiator destruction");
         DesktopBackdropCompositor springGlass;
         if (check(springGlass.InitializePopup(content.handle, false, false),
                 "spring glass initializes on a hidden test-owned window"))
         {
             springGlass.BeginFrame(true);
             check(springGlass.AddPanel({10, 10, 300, 220}, 18, 24), "spring fixture creates its actual native glass panel");
+            check(warmupReuses.load() == 1,
+                "popup initialization consumes the actual background-created factory across target reset");
             springGlass.EndFrame(false);
-            const auto trajectory = snowdesktop::popup_motion_curve::Build({}, 1.0, 6.638352067994 / .260, 480.0);
+            const auto trajectory = snowdesktop::popup_motion_curve::Build({}, 1.0, 6.638352067994 / .120, 160.0);
             check(springGlass.StartVisualTransformAnimation(0.0f, 1.0f, 1.0f, 1.0f,
-                160.0f, 240.0f, 480, 0.0f, &trajectory),
+                160.0f, 240.0f, 160, 0.0f, &trajectory),
                 "Windows Composition accepts the shared zero-to-one spring keyframes");
-            const auto initial = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, 6.638352067994 / .260, .06);
-            const auto reversed = snowdesktop::popup_motion_curve::Build(initial, 0.0, 6.638352067994 / .170, 360.0);
+            const auto initial = snowdesktop::popup_motion_curve::Evaluate(trajectory, .06);
+            const auto reversed = snowdesktop::popup_motion_curve::Build(initial, 0.0, 6.638352067994 / .0825, 110.0);
             check(springGlass.StartVisualTransformAnimation(static_cast<float>(initial.position), 0.0f,
-                1.0f, 1.0f, 160.0f, 240.0f, 360, 0.0f, &reversed),
+                1.0f, 1.0f, 160.0f, 240.0f, 110, 0.0f, &reversed),
                 "Windows Composition accepts a velocity-preserving reverse through its turning point");
             springGlass.SetVisualTransform(0.0f, 0.0f, 160.0f, 240.0f);
             springGlass.CommitVisualChanges();

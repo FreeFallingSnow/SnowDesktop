@@ -1701,6 +1701,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         LogDesktopWidgetBackdropState(L"shown");
     }
     startupAnimation.Finish();
+    // Queue background blur-factory work after the first frame. Only the
+    // hidden HWND and host-device binding remain on their owning UI thread.
+    uiAnimationScheduler_.ScheduleOnce(250.0, [this](snowdesktop::UiScheduleToken) {
+        if (!exitRequested_ && !mouseDown_ && !dragSession_.IsActive() &&
+            !HasActiveContextMenuSession())
+            (void)WarmFloatingPopupResources();
+    });
     logStartupStage(L"desktop handoff complete");
     snowdesktop::steam_runtime::startup::Ready();
     snowdesktop::InputDiagnostics inputDiagnostics(controlHwnd_);

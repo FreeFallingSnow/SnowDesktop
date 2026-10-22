@@ -12,6 +12,7 @@
  */
 #include "desktop_backdrop_compositor.h"
 #include "layout/popup_motion_curve.h"
+#include "diagnostics/performance_trace.h"
 
 #include "desktop_backdrop_update_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -28,6 +29,7 @@
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
 #include <dwmapi.h>
+#include <roapi.h>
 #include <windows.graphics.effects.interop.h>
 #include <windows.graphics.interop.h>
 #include <windows.ui.composition.interop.h>
@@ -51,7 +53,9 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -315,18 +319,38 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
     ABI::Windows::System::IDispatcherQueueController**);
 
+struct BackgroundBlurFactory
+{
+    int radius = 0;
+    std::mutex mutex;
+    wuc::CompositionEffectFactory factory{nullptr};
+    std::promise<bool> completion;
+    std::shared_future<bool> result = completion.get_future().share();
+};
+
+wuc::CompositionEffectFactory CreateBlurFactory(const wuc::Compositor& compositor, int radius)
+{
+    auto blur = winrt::make_self<GaussianBlurEffect>();
+    blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
+    blur->blurAmount = static_cast<float>(radius);
+    return compositor.CreateEffectFactory(*blur);
+}
+
 struct SharedBackdropCompositionContext
 {
     ws::DispatcherQueueController dispatcherController{nullptr};
     wucc::CompositorController compositorController{nullptr};
     wuc::Compositor compositor{nullptr};
+    // Only this UI thread owns the slot. The worker owns a copied shared_ptr
+    // and publishes an agile factory under the short result lock.
+    std::shared_ptr<BackgroundBlurFactory> warmup;
 };
 
 SharedBackdropCompositionContext& SharedBackdropContext()
 {
-    // Every DesktopBackdropCompositor is created and used on the desktop UI
-    // thread. Sharing one compositor lets desktop and popup targets change
-    // panel opacity in the same transactional visual update.
+    // Window/visual-tree operations stay on the desktop UI thread. Sharing
+    // one compositor keeps their updates transactional; an agile effect
+    // factory can be prepared separately without editing either visual tree.
     static thread_local SharedBackdropCompositionContext context;
     return context;
 }
@@ -740,10 +764,20 @@ struct DesktopBackdropCompositor::Impl
         if (found != blurFactories.end())
             return found->second;
 
-        auto blur = winrt::make_self<GaussianBlurEffect>();
-        blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
-        blur->blurAmount = static_cast<float>(blurRadius);
-        auto factory = compositor.CreateEffectFactory(*blur);
+        wuc::CompositionEffectFactory factory{nullptr};
+        auto& shared = SharedBackdropContext();
+        if (const auto ready = shared.warmup; ready && ready->radius == blurRadius)
+        {
+            std::unique_lock lock(ready->mutex, std::try_to_lock);
+            if (lock.owns_lock() && ready->factory &&
+                winrt::get_abi(ready->factory.Compositor()) == winrt::get_abi(compositor))
+            {
+                factory = ready->factory;
+                snowdesktop::performance::Value("popup", "backdrop.warmup.reused", {}, 1);
+            }
+        }
+        // Opening never waits for a queued/in-flight warmup.
+        if (!factory) factory = CreateBlurFactory(compositor, blurRadius);
         blurFactories.emplace(blurRadius, factory);
         blurFactoriesDirty = true;
         return factory;
@@ -866,6 +900,57 @@ bool DesktopBackdropCompositor::InitializePopup(
     return InitializeInternal(
         contentWindow, true, topmost,
         initiallyVisible);
+}
+
+std::shared_future<bool> DesktopBackdropCompositor::PrepareBlurFactoryInBackground(float blurRadius)
+{
+    if (!impl_ || !std::isfinite(blurRadius) || !impl_->EnsureDispatcherQueue()) return {};
+    auto& shared = SharedBackdropContext();
+    const int radius = std::clamp(static_cast<int>(std::lround(blurRadius)), 0, 48);
+    if (shared.warmup)
+    {
+        if (shared.warmup->radius == radius) return shared.warmup->result;
+        if (shared.warmup->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return {}; // At most one background factory build per UI compositor.
+    }
+    const auto work = std::make_shared<BackgroundBlurFactory>();
+    work->radius = radius;
+    shared.warmup = work;
+    try
+    {
+        // Compositor and CompositionEffectFactory are Agile/Both. The worker
+        // never touches an HWND, visual tree, D2D context, or DesktopApp state.
+        std::thread([work, compositor = shared.compositor]() mutable {
+            const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
+            const bool background = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) != FALSE;
+            const bool lowerPriority = background ||
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) != FALSE;
+            bool prepared = false;
+            {
+                snowdesktop::performance::Scope scope("popup", "backdrop.warmup.background");
+                if (SUCCEEDED(apartment) && lowerPriority)
+                {
+                    try
+                    {
+                        auto factory = CreateBlurFactory(compositor, work->radius);
+                        std::lock_guard lock(work->mutex);
+                        work->factory = std::move(factory);
+                        prepared = true;
+                    }
+                    catch (...) { /* A failed warmup leaves the normal path available. */ }
+                }
+                compositor = nullptr;
+            }
+            if (background) SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+            if (SUCCEEDED(apartment)) RoUninitialize();
+            work->completion.set_value(prepared);
+        }).detach();
+    }
+    catch (...)
+    {
+        work->completion.set_value(false);
+    }
+    return work->result;
 }
 
 bool DesktopBackdropCompositor::SetPopupWindowPairZOrder(

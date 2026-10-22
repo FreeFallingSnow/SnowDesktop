@@ -47,6 +47,17 @@ int main()
         const auto timeline = spring.RemainingTimeline();
         Check(!timeline.segments.empty() && timeline.segments.size() <= 64,
             "spring creates a bounded native track instead of UI frame callbacks");
+        const double clipAt = timeline.durationMilliseconds * .83;
+        const auto clipped = snowdesktop::popup_motion_curve::Remainder(timeline, clipAt);
+        for (const double fraction : {0.0, .25, .5, 1.0})
+        {
+            const double local = clipped.durationMilliseconds * fraction / 1000.0;
+            const auto full = snowdesktop::popup_motion_curve::Evaluate(timeline, clipAt / 1000.0 + local);
+            const auto remainder = snowdesktop::popup_motion_curve::Evaluate(clipped, local);
+            Check(std::abs(full.position - remainder.position) < .000001 &&
+                std::abs(full.velocity - remainder.velocity) < .000001,
+                "resuming in the smooth tail keeps its original position, velocity and completion deadline");
+        }
         double previousPosition = 0.0;
         for (const auto& segment : timeline.segments)
         {
@@ -56,11 +67,20 @@ int main()
             {
                 const double local = segment.durationSeconds * step / 32.0;
                 const double seconds = segment.startSeconds + local;
-                const auto exact = snowdesktop::popup_motion_curve::Evaluate({}, 1.0,
-                    6.638352067994 / (.260 * speed), seconds);
+                const double duration = timeline.durationMilliseconds / 1000.0;
+                const double tailStart = duration * .75, tailSpan = duration - tailStart;
+                const double frequency = 6.638352067994 / tailStart;
+                auto exact = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, frequency, seconds);
+                if (seconds >= tailStart)
+                {
+                    const auto start = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, frequency, tailStart);
+                    const double u = std::clamp((seconds - tailStart) / tailSpan, 0.0, 1.0);
+                    exact.position = (2*u*u*u - 3*u*u + 1)*start.position +
+                        (u*u*u - 2*u*u + u)*tailSpan*start.velocity + (-2*u*u*u + 3*u*u);
+                }
                 const auto native = segment.EvaluateLocal(local);
                 Check(std::abs(native.position - exact.position) < 0.0002,
-                    "native spring stays within a subpixel error at a 1000px span");
+                    "native spring and its bounded smooth tail stay within a subpixel error at a 1000px span");
                 Check(native.position >= previousPosition - 0.00001 && native.position <= 1.00001,
                     "a spring started at rest opens monotonically without overshoot");
                 previousPosition = native.position;
@@ -80,6 +100,37 @@ int main()
         spring.Advance(20000 + static_cast<std::uint64_t>(closing.durationMilliseconds));
         Check(spring.IsHidden() && spring.GetVisual().scale == 0.0f && !OccludesSurface(spring),
             "spring closes to exact zero and releases input occlusion");
+    }
+    {
+        State quick;
+        quick.Configure(false, 1.0, true);
+        quick.Open(1000);
+        quick.Advance(1016);
+        Check(quick.GetVisual().scale > .13f, "normal-speed spring has visible displacement within its first frame");
+        quick.Advance(1100);
+        Check(quick.GetVisual().scale > .91f, "opening covers most displacement within 100ms");
+        quick.Advance(1160);
+        Check(quick.GetVisual().scale == 1.0f && !quick.IsAnimating(),
+            "opening actually completes within 160ms without an invisible settling tail");
+        quick.ShowImmediately();
+        quick.Close(2000);
+        quick.Advance(2110);
+        Check(quick.IsHidden() && !quick.IsAnimating() && quick.GetVisual().scale == 0.0f,
+            "closing actually completes within 110ms and releases input");
+        quick.ShowImmediately();
+        quick.Close(3000);
+        quick.Advance(3020);
+        const auto beforeSwitch = quick.GetVisual();
+        const double beforeVelocity = quick.Velocity();
+        quick.AccelerateCloseForSwitch(3020);
+        Check(quick.GetVisual().scale == beforeSwitch.scale && quick.Velocity() == beforeVelocity &&
+            quick.RemainingTimeline().durationMilliseconds <= 55,
+            "switching accelerates outgoing motion without jumping position or velocity");
+        quick.AccelerateCloseForSwitch(3030);
+        Check(quick.RemainingTimeline().durationMilliseconds <= 45,
+            "a newer switch target cannot restart the outgoing deadline");
+        quick.Advance(3075);
+        Check(quick.IsHidden(), "another popup can start within 55ms of the switch request");
     }
     {
         State spring;
