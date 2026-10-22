@@ -1111,6 +1111,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 const int x = std::min(width - 1, (2 * gx + 1) * width / 96);
                 const int y = std::min(height - 1, (2 * gy + 1) * height / 96);
                 if (mask[static_cast<size_t>(y) * width + x] < 192) continue;
+                if (gx >= 8 && gx < 40 && gy >= 8 && gy < 40) continue;
                 const float sx = tileBounds.left + (tileInset + (x + .5f) / width * (1 - 2 * tileInset)) * tw - .5f;
                 const float sy = tileBounds.top + (tileInset + (y + .5f) / height * (1 - 2 * tileInset)) * th - .5f;
                 ++tested; opaque += PixelA(SampleBilinear(source, width, height, sx, sy)) >= 240;
@@ -1128,10 +1129,12 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         if (detectedEdgeFill && !detectedEdgeFill->gradient)
             solidBackground = ApplyFilter(PackPremultiplied(detectedEdgeFill->r,
                 detectedEdgeFill->g, detectedEdgeFill->b, 255), settings);
-        if (!detectedEdgeFill) FillPlate(output, width, height, settings, legacyExact, rasterScale);
+        if (!detectedEdgeFill || detectedEdgeFill->cover)
+            FillPlate(output, width, height, settings, legacyExact, rasterScale);
         for (size_t i = 0; i < output.size(); ++i)
         {
             std::uint32_t background = solidBackground;
+            if (detectedEdgeFill && detectedEdgeFill->cover) background = output[i];
             if (detectedEdgeFill && detectedEdgeFill->gradient)
             {
                 const auto& fill = *detectedEdgeFill;

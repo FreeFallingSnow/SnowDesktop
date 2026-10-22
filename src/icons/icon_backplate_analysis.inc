@@ -145,7 +145,8 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     int core = 0;
     for (int y = 8; y < grid - 8; ++y) for (int x = 8; x < grid - 8; ++x) core += mask[y][x];
     const bool opaqueCore = core >= 48 * 48 * .995;
-    if (!count || double(count) / std::max(1, hull) < (opaqueCore ? .96 : .985)) return result;
+    const bool completeTile = opaqueCore || (count >= grid * grid * .965 && core >= 48 * 48 * .93);
+    if (!count || double(count) / std::max(1, hull) < (completeTile ? .96 : .985)) return result;
     for (int y = 0; y < grid; ++y) for (int x = 0; x < grid; ++x)
         if (mask[y][x]) symmetric += mask[y][grid - 1 - x] + mask[grid - 1 - y][x];
     if (double(symmetric) / (2 * count) < .965) return result;
@@ -172,7 +173,7 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     // Geometry authorizes cropping a complete image tile; color continuity
     // separately authorizes extension. Photographs need no fictitious fill.
     result.kind = circle ? BackplateKind::Contour : BackplateKind::Artwork;
-    if (!circle && opaqueCore)
+    if (!circle && completeTile)
     {
         PlateFill tile;
         tile.cover = true;

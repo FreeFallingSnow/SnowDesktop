@@ -100,6 +100,20 @@ inline int RunIconBackplateTests()
             (photoResult[static_cast<size_t>(margin) * size + size / 2] >> 24) == 255,
             "complete photographic tiles crop real image pixels to the theme without requiring a uniform fill or shrinking");
 
+        // Some pixel-art tiles encode their eyes as transparent cutouts. Keep
+        // those holes transparent over the theme, while fitting the full tile.
+        auto cutouts = std::vector<std::uint32_t>(static_cast<size_t>(size) * size, rgb(40, 140, 230));
+        for (int cy = size * 7 / 16; cy < size * 9 / 16; ++cy)
+            for (int cx = size * 5 / 16; cx < size * 7 / 16; ++cx) cutouts[static_cast<size_t>(cy) * size + cx] = 0;
+        for (int cy = size * 7 / 16; cy < size * 9 / 16; ++cy)
+            for (int cx = size * 10 / 16; cx < size * 12 / 16; ++cx) cutouts[static_cast<size_t>(cy) * size + cx] = 0;
+        const auto cutoutFill = beauty::DetectPlateFill(cutouts, size, size);
+        const auto cutoutResult = beauty::Render(cutouts, size, size, style, cutoutFill);
+        check(cutoutFill && cutoutFill->cover &&
+            cutoutResult[static_cast<size_t>(size / 2) * size + size * 6 / 16] == 0 &&
+            (cutoutResult[static_cast<size_t>(size / 2) * size + size / 12] >> 24) == 255,
+            "small transparent details in a complete image tile keep the theme visible without shrinking");
+
         auto hollow = solid;
         for (int cy = size * 3 / 8; cy < size * 5 / 8; ++cy)
             for (int cx = size * 3 / 8; cx < size * 5 / 8; ++cx) hollow[static_cast<size_t>(cy) * size + cx] = 0;
