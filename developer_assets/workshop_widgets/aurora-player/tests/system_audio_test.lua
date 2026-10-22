@@ -165,6 +165,15 @@ return {
         f.permissions["audio.output.control"]=false
         f:action("volume.wheel",{delta=120});assert(#f.calls==3)
     end,
+    ["small wheel increments accumulate before the shared output snapshot catches up"] = function()
+        local f=fixture()
+        f:action("volume.wheel",{delta=15})
+        f:action("volume.wheel",{delta=15})
+        assert(#f.calls==2 and math.abs(f.calls[1].args.volume-0.6025)<0.000001)
+        assert(math.abs(f.calls[2].args.volume-0.605)<0.000001,"stale snapshots must not swallow fractional wheel increments")
+        f:action("volume.wheel",{delta=-15})
+        assert(math.abs(f.calls[3].args.volume-0.6025)<0.000001)
+    end,
     ["untrusted pointer movement keeps a draft until release and a changed endpoint aborts that drag"] = function()
         local f=fixture();f:open()
         f:action("volume",{source="pointer",controlValue=0.2,trustedGesture=false})

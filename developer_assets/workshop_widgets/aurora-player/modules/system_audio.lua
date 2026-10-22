@@ -94,7 +94,7 @@ function M.state(model)
     local muted=matched and volume.muted==true or false
     if optimistic and matched then
         if optimistic.volume~=nil then
-            if math.abs(optimistic.volume-scalar)>0.005 then scalar=optimistic.volume
+            if math.abs(optimistic.volume-scalar)>0.000001 then scalar=optimistic.volume
             else optimistic.volume=nil end
         end
         if optimistic.muted~=nil then
