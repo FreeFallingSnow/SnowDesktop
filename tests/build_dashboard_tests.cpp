@@ -208,6 +208,27 @@ void dashboard(const fs::path& repo,bool browser){
         !references.at("reuseAllowed").boolean,"Compatible-reference HTTP projection lost origin identity or granted new execution authorization");
     require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,
         "Compatible-reference HTTP projection changed the original execution");
+    auto precisionFile=reference;precisionFile["id"]=std::string(32,'b');precisionFile["checkedUtc"]="2026-10-02T10:04:00.1234560Z";
+    auto precisionIndex=precisionFile;precisionIndex["checkedUtc"]="2026-10-02T10:04:00.123456Z";
+    const auto precisionPath=referenceRoot/wide(precisionFile.at("id").str()+".json");write(precisionPath,precisionFile.dump());
+    auto changedTick=precisionFile;changedTick["id"]=std::string(32,'c');write(referenceRoot/wide(changedTick.at("id").str()+".json"),changedTick.dump());changedTick["checkedUtc"]="2026-10-02T10:04:00.1234561Z";
+    auto zeroFile=reference;zeroFile["id"]=std::string(32,'d');zeroFile["checkedUtc"]="2026-10-02T10:04:00.0000000Z";
+    const auto zeroPath=referenceRoot/wide(zeroFile.at("id").str()+".json");write(zeroPath,zeroFile.dump());auto zeroIndex=zeroFile;zeroIndex["checkedUtc"]="2026-10-02T10:04:00Z";
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({precisionIndex,changedTick,zeroIndex});save("state.json",subscribed);refresh();
+    const auto checkReferenceTimes=[](const Json& snapshot){const auto& times=snapshot.at("runs").items[0].at("verification").at("references").items;
+        require(times.size()==3&&times[0].at("status").str()=="recorded"&&times[1].at("status").str()=="unavailable"&&times[2].at("status").str()=="recorded",
+            "Equivalent UTC precision was displayed as missing reference evidence");};
+    checkReferenceTimes(Json::parse(http(port).body));
+    require(read(precisionPath)==precisionFile.dump()&&read(zeroPath)==zeroFile.dump(),"Reference time normalization rewrote an immutable receipt");
+    {
+        auto strict=read(repo/L"tools/build-dashboard/server.py");
+        replace(strict,"if not reference_receipt_matches(read_json(directory, item[\"id\"] + \".json\"), item):","if read_json(directory, item[\"id\"] + \".json\") != item:");
+        const auto controlFile=root/L"tools/build-dashboard/server-reference-time-control.py";write(controlFile,strict);
+        const int controlPort=free_port();Child control({production_python().wstring(),controlFile.wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(controlPort)},root);
+        until([&]{try{return http(controlPort).code==200;}catch(...){return false;}},10);
+        bool rejected=false;try{checkReferenceTimes(Json::parse(http(controlPort).body));}catch(const std::exception& error){rejected=std::string(error.what())=="Equivalent UTC precision was displayed as missing reference evidence";}
+        require(rejected,"Former strict receipt equality escaped the actual HTTP timestamp assertion");
+    }
     runRequest["mode"]="list";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());save("state.json",current());refresh();
     auto wrongRun=runRecord;wrongRun["nonce"]=std::string(32,'8');atomic(runRoot/wide(observedRunId+".json"),wrongRun.dump());save("state.json",current());refresh();
     auto badRuns=Json::parse(http(port).body).at("runs");require(badRuns.items[0].at("status").str()=="unavailable","Mismatched Run nonce was projected as valid");

@@ -1,5 +1,10 @@
 # Completed references have their own receipts. They never manufacture a new
 # execution, alter the original evidence, or grant candidate editing authority.
+function Format-VerificationUtcTimestamp([DateTime]$Value) {
+    # ConvertFrom-Json may promote UTC strings to DateTime. Use the same
+    # lossless fractional representation when the state is serialized again.
+    return $Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",[Globalization.CultureInfo]::InvariantCulture)
+}
 function Get-ReviewedVerificationContext([string]$Root,$Tests,$Candidate) {
     try {
         if(-not $Candidate -or $Candidate.source -ne $Root){return $null}
@@ -232,7 +237,7 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
                 if(-not $valid -or $proofs.Count -ne @($current.tests).Count){continue}
                 $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;originKey=$entry.key;scope=$(if($crossCandidate){'candidate-compatible-reviewed-binary'}else{'exact-candidate-reviewed-binary'});
                     currentCandidate=$current.binding.candidate;originCandidate=$origin.binding.candidate;compatibleTests=@(Get-Field (Get-Field $current 'compatibility') 'tests' @()|Select-Object test,key);
-                    runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=[DateTime]::UtcNow.ToString('o');lease=$lease.lease}
+                    runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=(Format-VerificationUtcTimestamp ([DateTime]::UtcNow));lease=$lease.lease}
                 Set-Field $Verification 'referenceCheck' 'completed-origin-validated'
                 $lease=$null;return $proposal
             }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));continue} # Corrupt/incomplete history never suppresses execution.

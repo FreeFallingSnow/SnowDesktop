@@ -320,6 +320,27 @@ def evidence_view(value):
                      "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "runnerExitCode", "seconds", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
     return {"status": value.get("status", "not-recorded"), "tests": rows, "totalCount": len(entries)}
 
+def reference_receipt_matches(saved, recorded):
+    if not isinstance(saved, dict) or not isinstance(recorded, dict):
+        return False
+    # Historical receipts remain immutable. Only normalize an equivalent UTC
+    # representation of checkedUtc; retain all seven fractional digits when
+    # they are significant and compare every other field exactly.
+    def checked_time(value):
+        if not isinstance(value, str):
+            raise ValueError("Reference check time is invalid")
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?Z", value)
+        if not match:
+            raise ValueError("Reference check time is invalid")
+        dt.datetime.fromisoformat(match[1])
+        fraction = (match[2] or "").rstrip("0")
+        return match[1] + ("." + fraction if fraction else "") + "Z"
+    first, second = dict(saved), dict(recorded)
+    first["checkedUtc"] = checked_time(first.get("checkedUtc"))
+    second["checkedUtc"] = checked_time(second.get("checkedUtc"))
+    return first == second
+
+
 def verification_references(root, run_id, key, entries, record):
     # Display historical receipts, never a current reuse authorization. The
     # execution and its original Evidence remain separate from later callers.
@@ -364,7 +385,7 @@ def verification_references(root, run_id, key, entries, record):
                     or any(not isinstance(test, dict) or not HEX.fullmatch(str(test.get("evidenceId", ""))) for test in tests)):
                 raise ValueError("Reference test evidence is invalid")
             directory = safe_path(safe_path(root.parent, "verification"), "references")
-            if read_json(directory, item["id"] + ".json") != item:
+            if not reference_receipt_matches(read_json(directory, item["id"] + ".json"), item):
                 raise ValueError("Reference receipt is missing or differs from the ledger")
             if origin is None:
                 origin = []

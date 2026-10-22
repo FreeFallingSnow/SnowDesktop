@@ -544,6 +544,31 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
         replace(review,"inputs=@()","inputs=@(@{kind='file';path='src/runtime.txt';required=$true})");
         replace(review,"kind='reviewed-native-files-v1'","kind='reviewed-native-files-v2';crossCandidate=$true");
         write(c.scripts/L"review-cache.ps1",review,true);
+        write(c.scripts/L"check-receipt-time.ps1",R"PS(param([string]$Stamps,[switch]$Legacy)
+. (Join-Path $PSScriptRoot 'build_verification_reuse.ps1')
+if($Legacy){function Format-VerificationUtcTimestamp([DateTime]$Value){return $Value.ToUniversalTime().ToString('o')}}
+$rows=@(foreach($stamp in $Stamps.Split(',')){
+ $value=[DateTime]::ParseExact($stamp,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
+ $text=Format-VerificationUtcTimestamp $value
+ $before=@{checkedUtc=$text}|ConvertTo-Json -Compress
+ $after=$before|ConvertFrom-Json|ConvertTo-Json -Compress
+ $decoded=[DateTime]::Parse($text,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
+ @{before=$before;after=$after;originalTicks=$value.Ticks.ToString([Globalization.CultureInfo]::InvariantCulture);formattedTicks=$decoded.Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)}
+})
+@{rows=$rows}|ConvertTo-Json -Depth 4
+)PS",true);
+        const auto checkTimes=[](const Json& values){require(values.at("rows").items.size()==4,"Receipt time cases were not all executed");
+            for(const auto& row:values.at("rows").items)require(row.at("before").str()==row.at("after").str()&&row.at("originalTicks").str()==row.at("formattedTicks").str(),
+                "Completed reference time changed during the real JSON round trip");};
+        const auto stamps=L"2026-10-22T23:33:47.0000000Z,2026-10-22T23:33:47.1000000Z,2026-10-22T23:33:47.1126790Z,2026-10-22T23:33:47.1234567Z";
+        for(const bool legacyShell:{false,true}){
+            const auto times=run({powershell(legacyShell).wstring(),L"-NoProfile",L"-File",(c.scripts/L"check-receipt-time.ps1").wstring(),L"-Stamps",stamps},c.root,20);
+            require(times.code==0,"Receipt JSON round trip could not execute: "+times.err);checkTimes(Json::parse(times.out));
+        }
+        const auto oldTimes=run({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"check-receipt-time.ps1").wstring(),L"-Stamps",stamps,L"-Legacy"},c.root,20);
+        require(oldTimes.code==0,"Former time formatter failed outside JSON round trip: "+oldTimes.err);
+        bool rejected=false;try{checkTimes(Json::parse(oldTimes.out));}catch(const std::exception& error){rejected=std::string(error.what())=="Completed reference time changed during the real JSON round trip";}
+        require(rejected,"Former fixed-width UTC formatter escaped the JSON round-trip assertion");
     }
     c.bridge->call(c.scripts/L"review-cache.ps1",{});
     auto baseline=[&]{
