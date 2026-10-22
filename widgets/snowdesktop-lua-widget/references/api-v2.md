@@ -2087,6 +2087,15 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioEnumeratorUnavailable`、`audioEndpointUnavailable`、`audioVolumeUnavailable`、
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
+探测 `task.audio.output.coalescedVolume` 后，`audio.output.setVolume` 可传
+`coalesce=true`，用于滑块拖动和音量滚轮。每次仍须有权限和可信手势；宿主先取消该实例
+尚未完成的音量任务，再接纳最新值，任务 ID 仍各自独立，旧任务通过 `canceled` 完成。
+后台按至少 100 ms 间隔执行最新音量，输入停止后也会提交最后一值，不要求组件在非可信
+`task.complete/schedule` 回调中继续发起控制。已按下且尚未释放的宿主滑块 `change`
+属于可信手势；普通悬停移动不属于。取消、卸载和权限撤销仍停止未执行的值。
+不传 `coalesce` 或传 `false` 时保留原有并发和 `rateLimited` 行为；旧宿主与同版本早期
+构建缺少该 capability 时不得传新参数，应降级为松手提交。此为 API v2 可选增量，
+无需提高 `apiVersion`，不能仅凭 `minHostVersion` 判断支持。
 
 #### 组件音频播放（宿主 1.0.12.0 增量能力）
 

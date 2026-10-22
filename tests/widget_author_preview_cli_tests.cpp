@@ -724,6 +724,23 @@ void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
         catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
     };
     const auto noFiles = [](const std::filesystem::path&) {};
+    preview("audio-volume-coalesce-type", R"lua(
+assert(widget.hasFeature("task.audio.output.coalescedVolume"))
+return widget.define({setup=function()
+local ok=pcall(task.start,"audio.output.setVolume",{volume=0.5,coalesce=true})
+assert(ok,"the typed task parser accepts an optional coalesce boolean")
+local invalid=pcall(task.start,"audio.output.setVolume",{volume=0.5,coalesce="true"})
+assert(not invalid,"coalesce must not accept a string")
+end,render=function() draw.text(8,8,"volume arguments",14,0xFFFFFF) end})
+)lua", [](const std::filesystem::path& source) {
+        Write(source/L"widget.json",R"json({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"0512c95b-d176-4aa9-aa91-89d76015e7e6","slug":"volume-coalesce-type",
+            "version":"1.0.0","entry":"main.lua","minHostVersion":"1.0.12.0",
+            "name":"Volume arguments","description":"Typed continuous volume arguments",
+            "author":"SnowDesktop","license":"MIT","defaultSize":{"columns":2,"rows":1},
+            "permissions":["audio.output.control"],"requiredFeatures":["draw.immediate","lifecycle.model",
+                "task.audio.output.control","task.audio.output.coalescedVolume"]})json");
+    });
     preview("media-playback-modes", R"lua(
 local current,sessions,timeline
 return widget.define({

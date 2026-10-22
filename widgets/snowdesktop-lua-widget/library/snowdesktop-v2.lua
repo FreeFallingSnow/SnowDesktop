@@ -1784,6 +1784,7 @@ function data.subscribe(topic, options) end
 
 ---@class SnowAudioOutputVolumeArguments
 ---@field volume number Finite scalar clamped by the host to 0.0 through 1.0.
+---@field coalesce? boolean Requires task.audio.output.coalescedVolume. Supersede this instance's pending volume task with the latest trusted input; superseded tasks complete as canceled. The final value runs in the background even after input stops.
 
 ---@class SnowAudioOutputMuteArguments
 ---@field muted boolean Requested master mute state.

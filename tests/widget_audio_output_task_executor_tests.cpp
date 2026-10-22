@@ -148,12 +148,70 @@ void TestCancellationOverridesLateResult()
             completions[0].error == "canceled",
         "cancellation must override a late successful audio result");
 }
+
+void TestCoalescedVolumeKeepsFinalIntent()
+{
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool entered=false,release=false;
+    std::vector<double> applied;
+    std::vector<WidgetAudioOutputTaskExecutor::Clock::time_point> started;
+    WidgetAudioOutputTaskExecutor executor([&](const WidgetAudioOutputTaskRequest& request) {
+        std::unique_lock lock(mutex);
+        applied.push_back(*request.volume);
+        started.push_back(WidgetAudioOutputTaskExecutor::Clock::now());
+        if (applied.size()==1)
+        {
+            entered=true;condition.notify_all();
+            condition.wait_for(lock,2s,[&]{return release;});
+        }
+        return WidgetAudioOutputTaskRunResult{true,{}};
+    });
+    Check(static_cast<bool>(executor.Start(1,"continuous",{
+        .action="audio.output.setVolume",.volume=0.2,.coalesce=true})),"first continuous volume accepted");
+    {
+        std::unique_lock lock(mutex);
+        Check(condition.wait_for(lock,1s,[&]{return entered;}),"controlled first volume enters runner");
+    }
+    for (std::uint64_t id=2;id<=100;++id)
+    {
+        Check(static_cast<bool>(executor.Start(id,"continuous",{
+            .action="audio.output.setVolume",.volume=static_cast<double>(id)/100,.coalesce=true})),
+            "rapid volume inputs are accepted instead of rateLimited");
+        Check(executor.ActiveCount()<=2,"only executing and latest queued volume remain active");
+    }
+    {
+        std::scoped_lock lock(mutex);release=true;
+    }
+    condition.notify_all();
+    std::vector<snowdesktop::widget_runtime::WidgetAudioOutputTaskCompletion> completions;
+    Check(WaitUntil([&]{auto batch=executor.DrainCompletions();
+        completions.insert(completions.end(),batch.begin(),batch.end());return completions.size()==100;}),
+        "the last value completes without any later gesture or Lua callback");
+    {
+        std::scoped_lock lock(mutex);
+        Check(applied.size()==2 && applied.front()==0.2 && applied.back()==1.0,
+            "obsolete intermediate inputs never reach the output runner");
+        Check(started.back()-started.front()>=WidgetAudioOutputTaskExecutor::MinimumActionInterval-5ms,
+            "continuous output remains bounded by the action interval (callback boundary tolerance 5 ms)");
+    }
+    std::size_t accepted=0;
+    for (const auto& result:completions)
+    {
+        if (result.accepted) ++accepted;
+        else Check(result.error=="canceled","superseded task IDs complete as canceled");
+    }
+    Check(accepted==2 && executor.ActiveCount()==0,"all independent task identities retire exactly once");
+    Check(!WidgetAudioOutputTaskExecutor::ValidateRequest({
+        .action="audio.output.setMute",.muted=true,.coalesce=true}),"coalescing is limited to scalar volume");
+}
 }
 
 int main()
 {
     TestValidationCompletionAndRateLimit();
     TestCancellationOverridesLateResult();
+    TestCoalescedVolumeKeepsFinalIntent();
     std::cout << "widget audio output task executor tests passed\n";
     return 0;
 }

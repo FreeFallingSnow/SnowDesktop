@@ -5552,7 +5552,8 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
                 state, -2, &keyLength);
             const std::string_view key(
                 keyValue ? keyValue : "", keyLength);
-            if (key != expectedKey)
+            if (key != expectedKey &&
+                !(taskName == "audio.output.setVolume" && key == "coalesce"))
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
@@ -5564,6 +5565,14 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
 
         if (taskName == "audio.output.setVolume")
         {
+            lua_getfield(state, 2, "coalesce");
+            if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
+            {
+                lua_pop(state, 1);
+                return luaL_error(state, "task.start: audio.output.setVolume coalesce must be boolean");
+            }
+            if (lua_toboolean(state, -1)) arguments.emplace("coalesce", "1");
+            lua_pop(state, 1);
             lua_getfield(state, 2, "volume");
             if (lua_type(state, -1) != LUA_TNUMBER)
             {
@@ -14768,6 +14777,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             snowdesktop::widget_runtime::WidgetAudioOutputTaskRequest
                 audioRequest;
             audioRequest.action = action.name;
+            audioRequest.coalesce = action.arguments.contains("coalesce") &&
+                action.arguments.at("coalesce") == "1";
             bool validAudioRequest = true;
             if (action.name == "audio.output.setVolume")
             {
@@ -25779,7 +25790,7 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     std::optional<std::vector<std::string>> selectedKeys;
     std::optional<bool> previousExpanded;
     std::optional<bool> expanded;
-    const bool trustedGesture = trustedGestureState_.Active();
+    bool trustedGesture = trustedGestureState_.Active();
     const std::string eventSource = source && *source ? source : "pointer";
     const std::string eventSurface =
         NormalizeWidgetSurface(surface);
@@ -25837,6 +25848,17 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
         previousExpanded = resolved->previousExpanded;
         expanded = resolved->expanded;
     }
+    // Only a host-owned pressed slider extends the initiating pointer gesture.
+    // Merely moving over an element never grants task privileges.
+    if (!trustedGesture && resolvedEventName == "change" && eventSource == "pointer" &&
+        interactionRegions.PressedKey() == targetKey)
+    {
+        const auto* range = interactionRegions.Find(targetKey);
+        trustedGesture = range && range->controlKind ==
+            snowdesktop::widget_runtime::InteractionControlKind::Slider;
+    }
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope actionGesture(
+        trustedGestureState_, trustedGesture);
     (void)InvokeLifecycleEvent(widget, "action",
         [&action, &targetKey, &resolvedEventName,
             previousChecked, checked, previousIndeterminate, indeterminate,
@@ -26830,6 +26852,24 @@ WidgetEngine::RuntimeStartTask(
     options.trustedGesture = trustedGestureState_.Active();
     options.preview = widget.preview;
     options.arguments = std::move(arguments);
+    if (name == "audio.output.setVolume" && options.arguments.contains("coalesce") &&
+        options.arguments.at("coalesce") == "1" && options.permissionGranted &&
+        options.trustedGesture)
+    {
+        if (widget.taskIds.size() >= snowdesktop::widget_runtime::WidgetTaskBroker::MaximumTasks)
+            return { 0, "per-instance task limit exceeded" };
+        // Retire superseded tasks before quota checks. Keep unique task IDs,
+        // cancellation notifications, instance ownership and gesture checks.
+        for (const auto id : widget.taskIds)
+        {
+            const auto previous = taskBroker_->Snapshot(id);
+            if (previous && previous->ownerToken == ownerToken && previous->name == name)
+            {
+                (void)RuntimeCancelTask(widgetId, ownerToken, id);
+                (void)taskBroker_->Complete(id, false, "canceled");
+            }
+        }
+    }
     auto result = taskBroker_->Start(
         WidgetWideToUtf8(widgetId), name, options);
     if (result)

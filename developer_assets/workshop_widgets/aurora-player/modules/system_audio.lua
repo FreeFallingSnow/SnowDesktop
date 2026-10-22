@@ -23,7 +23,8 @@ end
 function M.sync(model, active)
     model.opened=active==true
     for _,spec in ipairs(topics) do
-        local allowed=model.opened and model.api.hasFeature(spec[2]) and model.api.hasPermission(spec[3])
+        local needed=model.opened or (spec[1]~="audio.devices" and model.visible)
+        local allowed=needed and model.api.hasFeature(spec[2]) and model.api.hasPermission(spec[3])
         if allowed and not model.subscriptions[spec[1]] then
             model.subscriptions[spec[1]]=model.api.subscribe(spec[1],{maxAgeMs=1000,whenHidden="pause"})
         elseif not allowed and model.subscriptions[spec[1]] then
@@ -34,7 +35,7 @@ function M.sync(model, active)
 end
 
 function M.new(context, api)
-    local model={subscriptions={},pending={},preview=context.preview==true,
+    local model={subscriptions={},pending={},visible=true,deviceKeys={},nextDeviceKey=0,preview=context.preview==true,
         api=api or {
             hasFeature=function(name) return widget.hasFeature(name) end,
             hasPermission=function(name) return widget.hasPermission(name) end,
@@ -51,7 +52,7 @@ function M.new(context, api)
             translate=function(key) return l10n.tr(key) end,
             rowHeight=function() return ui.metrics().layoutRowHeight end,
         }}
-    if model.preview then M.sync(model,true) end
+    M.sync(model,model.preview)
     return model
 end
 
@@ -73,6 +74,18 @@ function M.state(model)
             seen[device.id]=true;devices[#devices+1]=device
         end
     end
+    -- Partition a fresh array; never reorder the provider's shared snapshot.
+    local ordered={}
+    for _,device in ipairs(devices) do if device.id==id then ordered[#ordered+1]=device end end
+    for _,device in ipairs(devices) do if device.id~=id then ordered[#ordered+1]=device end end
+    devices=ordered
+    for deviceId in pairs(model.deviceKeys) do if not seen[deviceId] then model.deviceKeys[deviceId]=nil end end
+    for _,device in ipairs(devices) do
+        if not model.deviceKeys[device.id] then
+            model.nextDeviceKey=model.nextDeviceKey+1
+            model.deviceKeys[device.id]="system.audio.device."..model.nextDeviceKey
+        end
+    end
     local optimistic=model.optimistic
     if optimistic and (optimistic.endpoint~=id or optimistic.expires<api.now()) then
         model.optimistic=nil;optimistic=nil
@@ -89,25 +102,49 @@ function M.state(model)
         end
     end
     local busy=next(model.pending)~=nil
+    local volumeBusy,muteBusy,deviceBusy=false,false,false
+    for _,pending in pairs(model.pending) do
+        if not pending.superseded then
+            volumeBusy=volumeBusy or pending.name=="audio.output.setVolume"
+            muteBusy=muteBusy or pending.name=="audio.output.setMute"
+            deviceBusy=deviceBusy or pending.name=="audio.output.selectDevice"
+        end
+    end
+    local coalesced=api.hasFeature("task.audio.output.coalescedVolume")
+    local canVolume=matched and api.hasFeature("task.audio.output.control") and
+        api.hasPermission("audio.output.control") and not deviceBusy and (coalesced or not volumeBusy)
     if #devices>0 then model.lastDeviceCount=#devices end
     return {
         id=id,name=endpoint and endpoint.name,volume=scalar,muted=muted,devices=devices,
-        selected=model.expectedEndpoint or id or "",busy=busy,
+        selected=id or "",busy=busy,coalesced=coalesced,canMute=canVolume and not muteBusy,
         volumeSupported=api.hasFeature("data.audio.output.default") and api.hasFeature("data.audio.output.volume"),
         devicesSupported=api.hasFeature("data.audio.devices"),
-        canVolume=matched and api.hasFeature("task.audio.output.control") and api.hasPermission("audio.output.control") and not busy,
-        canChoose=api.hasFeature("task.audio.devices.control") and api.hasPermission("audio.devices.control") and #devices>0 and not busy,
+        canVolume=canVolume,
+        canChoose=api.hasFeature("task.audio.devices.control") and api.hasPermission("audio.devices.control") and #devices>0 and not deviceBusy,
         needsPermission=not api.hasPermission("audio.output.read") or not api.hasPermission("audio.output.control") or
             not api.hasPermission("audio.devices.read") or not api.hasPermission("audio.devices.control"),
     }
 end
 
 local function send(model, name, args, endpoint)
-    if model.preview or next(model.pending) then return false end
+    if model.preview then return false end
+    if name=="audio.output.setVolume" and model.api.hasFeature("task.audio.output.coalescedVolume") then
+        args.coalesce=true
+    elseif name=="audio.output.selectDevice" then
+        for id,pending in pairs(model.pending) do
+            if pending.name~="audio.output.selectDevice" then model.api.cancel(id);model.pending[id]=nil end
+        end
+        model.draft=nil
+    else
+        for _,pending in pairs(model.pending) do if pending.name==name then return false end end
+    end
     local id,err=model.api.start(name,args)
     if not id then
         if err~="rateLimited" then model.error=err or "failed" end
         return false
+    end
+    if args.coalesce then
+        for _,pending in pairs(model.pending) do if pending.name==name then pending.superseded=true end end
     end
     model.pending[id]={name=name,endpoint=endpoint}
     model.error=nil
@@ -146,10 +183,12 @@ function M.open(model,anchor,localActive)
 end
 
 function M.event(model, event,localModel)
-    if event.kind=="panel" or event.kind=="popover" then
+    if event.kind=="visibility" then
+        model.visible=event.visible==true;M.sync(model,model.opened);return false
+    elseif event.kind=="panel" or event.kind=="popover" then
         if event.kind~=model.surface then return false end
         if event.action=="opened" then M.sync(model,true)
-        elseif event.action=="closed" then M.sync(model,false);model.draft=nil;model.surface=nil end
+        elseif event.action=="closed" then M.sync(model,false);model.draft=nil;model.dragAborted=nil;model.surface=nil end
         return false
     elseif event.kind=="settings.changed" then
         M.sync(model,model.opened);return false
@@ -157,11 +196,17 @@ function M.event(model, event,localModel)
         local pending=model.pending[event.taskId]
         if not pending then return false end
         model.pending[event.taskId]=nil
-        if event.ok~=true then
+        if event.ok~=true and not pending.superseded then
             model.optimistic=nil;model.expectedEndpoint=nil;model.expectedUntil=nil;model.error=event.error or "failed"
         end
         model.api.invalidate();return true
     elseif event.kind=="data.change" then
+        local current=M.state(model)
+        for id,pending in pairs(model.pending) do
+            if pending.name=="audio.output.setVolume" and pending.endpoint~=current.id then
+                model.api.cancel(id);model.pending[id]=nil
+            end
+        end
         if model.opened then model.api.invalidate() end
         return false
     end
@@ -174,18 +219,28 @@ function M.event(model, event,localModel)
     elseif event.id=="system.audio.close" then
         if model.surface=="popover" then model.api.closePopover() else model.api.closePanel() end
     elseif event.id=="system.audio.permissions" then model.api.openSettings()
+    elseif event.id=="system.audio.volume.wheel" and state.canVolume and finite(event.delta) then
+        local scalar=clamp(state.volume+math.max(-1200,math.min(1200,event.delta))/120*0.02)
+        if math.abs(scalar-state.volume)>0.000001 then send(model,"audio.output.setVolume",{volume=scalar},state.id) end
     elseif event.id=="system.audio.volume" and state.canVolume and finite(event.controlValue) then
         local scalar=clamp(event.controlValue)
-        if event.source=="pointer" then model.draft={volume=scalar,endpoint=state.id}
+        if event.source=="pointer" then
+            if model.dragAborted then return true end
+            if model.draft and model.draft.endpoint~=state.id then
+                model.draft=nil;model.dragAborted=true;return true
+            end
+            model.draft={volume=scalar,endpoint=state.id}
+            if state.coalesced and event.trustedGesture~=false then send(model,"audio.output.setVolume",{volume=scalar},state.id) end
         else send(model,"audio.output.setVolume",{volume=scalar},state.id) end
     elseif event.id=="system.audio.volume.commit" then
         local draft=model.draft;model.draft=nil
+        model.dragAborted=nil
         if draft and state.canVolume and draft.endpoint==state.id then
             send(model,"audio.output.setVolume",{volume=draft.volume},state.id)
         end
-    elseif event.id=="system.audio.mute" and state.canVolume and type(event.checked)=="boolean" then
+    elseif event.id=="system.audio.mute" and state.canMute and type(event.checked)=="boolean" then
         send(model,"audio.output.setMute",{muted=event.checked},state.id)
-    elseif event.id=="system.audio.mute.toggle" and state.canVolume then
+    elseif event.id=="system.audio.mute.toggle" and state.canMute then
         send(model,"audio.output.setMute",{muted=not state.muted},state.id)
     elseif event.id=="system.audio.device" and state.canChoose then
         local selection=event.selection or event.value
@@ -214,7 +269,7 @@ function M.view(model,localModel)
         children[#children+1]=panel.volume("system.audio.volume",l10n.tr("shared.system_volume"),scalar,row,
             "system.audio.volume","system.audio.volume.commit",
             panel.iconButton("system.audio.mute",state.muted and 0xF6A9 or 0xF028,l10n.tr("shared.mute"),row*1.1,
-                "system.audio.mute.toggle",state.canVolume,state.muted),state.canVolume)
+                "system.audio.mute.toggle",state.canMute,state.muted),state.canVolume)
     end
     if localModel and localModel.source=="local" then
         children[#children+1]=panel.volume("music.volume",l10n.tr("music.volume"),localModel.player.volume,row,
@@ -227,7 +282,7 @@ function M.view(model,localModel)
                 height=row*0.55,style={foreground=c.secondary}})}})
         local devices={}
         for index,device in ipairs(state.devices) do
-            local key="system.audio.device."..index
+            local key=model.deviceKeys[device.id]
             local chosen=device.id==state.selected
             local label=device.name~="" and device.name or device.id
             if model.api.hasFeature("view.collection.basic") then
@@ -265,6 +320,7 @@ function M.view(model,localModel)
 end
 
 function M.dispose(model)
+    model.visible=false
     M.sync(model,false)
     for id in pairs(model.pending) do model.api.cancel(id) end
     model.pending={}

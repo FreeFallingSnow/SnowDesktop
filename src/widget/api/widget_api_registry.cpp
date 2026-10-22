@@ -167,6 +167,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.app.launch",
     "task.app.search",
     "task.audio.output.control",
+    "task.audio.output.coalescedVolume",
     "task.audio.devices.control",
     "task.audio.input.control",
     "task.system.display.control",

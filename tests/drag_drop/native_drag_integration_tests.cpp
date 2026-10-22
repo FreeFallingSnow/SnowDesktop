@@ -5,6 +5,8 @@
 #include "desktop/desktop_namespace_registry.h"
 #include "app/widgets/widget_pair_drag_source.h"
 #include "diagnostics/input_diagnostics.h"
+#include "../test_temporary_directory.h"
+#include <fstream>
 
 #include <cstdlib>
 #include <cstring>

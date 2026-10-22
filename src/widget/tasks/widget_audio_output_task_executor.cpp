@@ -52,13 +52,27 @@ WidgetAudioOutputTaskStartResult WidgetAudioOutputTaskExecutor::Start(
     std::scoped_lock lock(mutex_);
     if (stopping_ || active_.contains(id))
         return { false, "taskExecutorUnavailable" };
-    if (const auto last = lastStarts_.find(instanceId);
+    if (const auto last = lastStarts_.find(instanceId); !request.coalesce &&
         last != lastStarts_.end() && now >= last->second &&
         now - last->second < MinimumActionInterval)
     {
         return { false, "rateLimited" };
     }
-    lastStarts_.insert_or_assign(instanceId, now);
+    if (!request.coalesce) lastStarts_.insert_or_assign(instanceId, now);
+    if (request.coalesce)
+    {
+        for (auto it = requests_.begin(); it != requests_.end();)
+        {
+            if (it->instanceId == instanceId && it->request.coalesce)
+            {
+                active_.erase(it->id);
+                canceled_.erase(it->id);
+                completions_.push_back({ it->id, false, "canceled" });
+                it = requests_.erase(it);
+            }
+            else ++it;
+        }
+    }
     active_.insert(id);
     requests_.push_back(
         { id, std::move(instanceId), std::move(request) });
@@ -87,6 +101,7 @@ void WidgetAudioOutputTaskExecutor::ForgetInstance(
 {
     std::scoped_lock lock(mutex_);
     lastStarts_.erase(std::string(instanceId));
+    lastVolumeRuns_.erase(std::string(instanceId));
 }
 
 std::vector<WidgetAudioOutputTaskCompletion>
@@ -118,7 +133,7 @@ bool WidgetAudioOutputTaskExecutor::ValidateRequest(
         return request.volume && std::isfinite(*request.volume) &&
             !request.muted;
     }
-    return request.muted.has_value() && !request.volume;
+    return request.muted.has_value() && !request.volume && !request.coalesce;
 }
 
 WidgetAudioOutputTaskRunResult
@@ -186,6 +201,24 @@ void WidgetAudioOutputTaskExecutor::WorkerMain(
                 return stopToken.stop_requested() || !requests_.empty();
             });
             if (stopToken.stop_requested()) break;
+            const auto waitingId = requests_.front().id;
+            const auto& waiting = requests_.front();
+            if (waiting.request.coalesce && !canceled_.contains(waitingId))
+            {
+                const auto last = lastVolumeRuns_.find(waiting.instanceId);
+                if (last != lastVolumeRuns_.end())
+                {
+                    const auto deadline = last->second + MinimumActionInterval;
+                    if (Clock::now() < deadline)
+                    {
+                        condition_.wait_until(lock, deadline, [&] {
+                            return stopToken.stop_requested() || requests_.empty() ||
+                                requests_.front().id != waitingId || canceled_.contains(waitingId);
+                        });
+                        continue;
+                    }
+                }
+            }
             request = std::move(requests_.front());
             requests_.pop_front();
             if (canceled_.contains(request.id))
@@ -196,6 +229,8 @@ void WidgetAudioOutputTaskExecutor::WorkerMain(
                     { request.id, false, "canceled" });
                 continue;
             }
+            if (request.request.coalesce)
+                lastVolumeRuns_.insert_or_assign(request.instanceId, Clock::now());
         }
 
         WidgetAudioOutputTaskRunResult result;

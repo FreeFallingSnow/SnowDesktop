@@ -252,6 +252,8 @@ widget={define=function(d) definition=d;return d end,invalidate=function() end,o
     theme=function() return {contentTheme=0} end}
 data={subscribe=function(topic) return {value=function()
     if topic=='media.current' and mediaSession then return {available=true,value={session=mediaSession}} end
+    if topic=='audio.output.default' then return {available=true,value={id='shared-output',name='Shared speakers'}} end
+    if topic=='audio.output.volume' then return {available=true,value={endpointId='shared-output',volume=0.6,muted=false}} end
     return {available=false}
 end,unsubscribe=function() end} end}
 slots={binding=function() return {item=function() return nil end} end}
@@ -334,6 +336,17 @@ function checkEntry(d)
     localModel.player:stop()
     assert(not contains(d.view(context,model),'aurora.utilities'))
     hovered='aurora.surface';assert(contains(d.view(context,model),'aurora.utilities'))
+    local function findNode(node,key)
+        if node.key==key then return node end
+        for _,child in ipairs(node.children or {}) do local found=findNode(child,key);if found then return found end end
+    end
+    local sound=findNode(d.view(context,model),'system.audio.open')
+    assert(sound.events.wheel.id=='system.audio.volume.wheel','the exposed sound icon binds native wheel input')
+    before=#calls
+    d.event(context,model,{kind='action',id=sound.events.wheel.id,delta=120})
+    assert(#calls==before+1 and calls[#calls].name=='audio.output.setVolume' and calls[#calls].args.coalesce)
+    assert(math.abs(calls[#calls].args.volume-0.62)<0.00001 and localModel.player.volume==1,
+        'the exposed icon changes shared system volume while local playback retains its own volume')
     hovered='media.toggle';assert(contains(d.view(context,model),'aurora.utilities'))
     hovered='';localModel.player.status='playing';assert(contains(d.view(context,model),'aurora.utilities'))
     localModel.player.status='loading';assert(contains(d.view(context,model),'aurora.utilities'))

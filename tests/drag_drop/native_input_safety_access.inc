@@ -179,12 +179,83 @@
         if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " widget release assertions failed");
     }
 
+    static void RunWidgetVolumeGestures()
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        {
+            std::ofstream manifest(temporary.path / "widget.json");
+            manifest << R"json({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+                "id":"79413e45-4abc-4c08-afc0-93a9f23426fe","slug":"volume-gesture-fixture",
+                "version":"1.0.0","entry":"main.lua","minHostVersion":"1.0.12.0",
+                "name":"Volume gestures","description":"Isolated gesture and task replacement regression",
+                "author":"SnowDesktop","license":"MIT","defaultSize":{"columns":2,"rows":1},
+                "permissions":["audio.output.control"],"requiredFeatures":["draw.immediate","lifecycle.model",
+                    "task.audio.output.coalescedVolume","task.audio.output.control"]})json";
+            std::ofstream script(temporary.path / "main.lua");
+            script << R"lua(
+return widget.define({setup=function() return {clicks=0,moves=0,probes=0} end,render=function() end,
+event=function(_,m,e)
+    if e.kind=='pointer' and e.action=='click' then
+        m.clicks=m.clicks+1
+        if m.clicks==2 then
+            local id,err=task.start('audio.output.setVolume',{volume=0.5,coalesce=true})
+            assert(not id and err=='permissionDenied');return
+        end
+        m.last=assert(task.start('audio.output.setVolume',{volume=0.2}))
+        local id,err=task.start('audio.output.setVolume',{volume=0.3})
+        assert(not id and err=='task concurrency limit exceeded','legacy concurrency remains bounded')
+        for i=1,40 do
+            local nextId=assert(task.start('audio.output.setVolume',{volume=i/40,coalesce=true}))
+            assert(nextId>m.last,'each accepted intent keeps a distinct task identity');m.last=nextId
+        end
+    elseif e.kind=='action' and e.id=='range.volume' then
+        assert(e.trustedGesture and e.source=='pointer','a pressed host slider is a trusted gesture')
+        m.moves=m.moves+1
+        m.last=assert(task.start('audio.output.setVolume',{volume=e.controlValue,coalesce=true}))
+    elseif e.kind=='pointer' and e.action=='pointerMove' and e.x==300 then
+        local id,err=task.start('audio.output.setVolume',{volume=0.9,coalesce=true})
+        assert(not id and err=='userGestureRequired','ordinary pointer movement stays untrusted')
+        assert(task.cancel(m.last),'an untrusted replacement must preserve the existing task')
+        m.probes=m.probes+1
+        if m.probes==2 then assert(m.moves>=2,'pointer down and captured move reached the real change route') end
+    end
+end})
+)lua";
+        }
+        WidgetEngine engine;
+        if (!engine.InitPreview(nullptr, nullptr) ||
+            !engine.EnsureWidgetDirectoryPreviewLoaded(L"volume-gesture", temporary.path))
+            throw std::runtime_error("load isolated volume gesture fixture");
+        auto& widget = const_cast<LuaWidget&>(engine.GetWidgets().front());
+        using namespace snowdesktop::widget_runtime;
+        InteractionRegion slider;
+        slider.key="volume.range"; slider.shape={InteractionShapeType::Rect,0,0,100,24,0};
+        slider.controlKind=InteractionControlKind::Slider;
+        slider.minimum=0;slider.maximum=1;slider.step=0.01f;slider.controlValue=0.5f;
+        slider.events.emplace("change", InteractionAction{"range.volume",{}});
+        std::string error;
+        widget.interactionRegions.BeginFrame();
+        if (!widget.interactionRegions.Submit(std::move(slider),error)) throw std::runtime_error(error);
+        (void)widget.interactionRegions.CommitFrame();
+        engine.InvokeClick(L"volume-gesture",300,12);
+        engine.InvokeMouseEvent(L"volume-gesture","onMouseMove",300,12);
+        engine.InvokeMouseEvent(L"volume-gesture","onMouseDown",20,12,1);
+        engine.InvokeMouseEvent(L"volume-gesture","onMouseMove",80,12,1);
+        engine.InvokeMouseEvent(L"volume-gesture","onMouseUp",80,12,1);
+        engine.InvokeMouseEvent(L"volume-gesture","onMouseMove",300,12);
+        widget.permissions.clear();
+        engine.InvokeClick(L"volume-gesture",300,12);
+        for (const auto& failure : engine.GetWidgetErrors())
+            throw std::runtime_error("volume gesture production route: "+failure.message);
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
         const auto check = [&](bool value, const char* message) {
             if (!value) { failures.emplace_back(message); std::cerr << "FAIL: " << message << '\n'; }
         };
+        RunWidgetVolumeGestures();
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");

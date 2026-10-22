@@ -410,6 +410,10 @@ end
 local function controlButton(key, glyph, label, enabled, colors, primary,
     plan)
     local size = primary and plan.primaryButton or plan.secondaryButton
+    local events={pointerEnter={id="media.hover"},pointerLeave={id="media.hover"}}
+    if key=="system.audio.open" and widget.hasFeature("view.pointer.events") then
+        events.wheel={id="system.audio.volume.wheel"}
+    end
     return view.iconButton({
         key = key,
         glyph = glyph,
@@ -419,7 +423,7 @@ local function controlButton(key, glyph, label, enabled, colors, primary,
         fontSize = size * (primary and 0.38 or 0.36),
         enabled = enabled,
         action = { id = key },
-        events = { pointerEnter={id="media.hover"}, pointerLeave={id="media.hover"} },
+        events = events,
         accessibility = { role = "button", label = label },
         style = {
             background = primary and colors.button or colors.secondaryButton,
