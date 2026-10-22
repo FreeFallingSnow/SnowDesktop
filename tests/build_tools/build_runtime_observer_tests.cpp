@@ -31,7 +31,7 @@ void raw(const fs::path& root,const std::string& mode){
     using Function=int(__cdecl*)();Function value=nullptr;static_assert(sizeof(value)==sizeof(symbol));std::memcpy(&value,&symbol,sizeof(value));
     const int result=value();FreeLibrary(loaded);require(result==std::stoi(read(root/L"expected.txt")),"Loaded DLL behavior differs from the selected fixture");
 }
-void tests(const fs::path& repo,bool initialProbeControl=false){
+void tests(const fs::path& repo){
     const auto root=temporary("module 观察");const auto observed=root/L"运行 测试.exe";fs::copy_file(executable(),observed);
     const auto observer=executable().parent_path()/L"SnowDesktopTestRuntimeObserver.exe";
     const auto fixtureA=executable().parent_path()/L"SnowDesktopRuntimeObserverFixtureA.dll",fixtureB=executable().parent_path()/L"SnowDesktopRuntimeObserverFixtureB.dll";
@@ -57,9 +57,14 @@ void tests(const fs::path& repo,bool initialProbeControl=false){
             if(!boundary.empty())command.push_back(boundary);command.insert(command.end(),{L"--",target.wstring(),repo.wstring()});
             const auto result=run(command,repo,15);require(result.code==0,"Real rule observation failed: "+result.out+result.err);return Json::parse(read(path));
         };
-        const auto full=observeRule(L"",L"-full"),beforeEntry=observeRule(initialProbeControl?L"--probe":L"--entry-probe",L"-entry");
-        require(root_modules(full)==root_modules(beforeEntry),"Image-entry probe omitted real rule root modules loaded during initialization: "+utf8(name));
-        std::cout<<"PASS root module identities at image entry match full run: "<<utf8(name)<<" ("<<root_modules(full).size()<<")\n";
+        const auto full=observeRule(L"",L"-full"),beforeEntry=observeRule(L"--entry-probe",L"-entry");
+        const auto fullModules=root_modules(full),entryModules=root_modules(beforeEntry);
+        // Entry is a bounded observation, not proof that CRT/main cannot load
+        // more DLLs. Keep the measured gap visible instead of accepting it as
+        // complete runtime closure or making equality an invalid expectation.
+        require(beforeEntry.at("imageEntryReached").boolean&&beforeEntry.at("runtimeClosure").str()=="unclosed"&&!beforeEntry.at("reuseAllowed").boolean,"Real rule probe claimed reusable runtime closure");
+        for(const auto& image:entryModules)require(fullModules.contains(image),"Entry image identity was absent or changed in the full rule observation");
+        std::cout<<"Observed root modules at entry/full: "<<utf8(name)<<" "<<entryModules.size()<<"/"<<fullModules.size()<<"; closure unclosed\n";
     }
     const Env telemetry={{L"SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT",(root/L"telemetry").wstring()}};
     const auto env=run({observer.wstring(),L"--test",L"Env",L"--",observed.wstring(),root.wstring(),L"--env-check"},root,15,telemetry);
@@ -99,4 +104,4 @@ Get-TestRuntimeModuleObservations $PSScriptRoot $tests (Join-Path $PSScriptRoot 
     std::cout<<"PASS actual startup/transient/descendant DLL loads, Unicode paths, DLL replacement, probe isolation, exit codes, report collision, endpoint validation and contained timeout/observer loss\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){const std::string mode=argc>2?argv[2]:"";if(mode.empty()||mode=="--initial-probe-control")tests(repo,!mode.empty());else raw(repo,mode);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){const std::string mode=argc>2?argv[2]:"";if(mode.empty())tests(repo);else raw(repo,mode);});}
