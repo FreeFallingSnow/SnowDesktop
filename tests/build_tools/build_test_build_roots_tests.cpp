@@ -25,10 +25,14 @@ file(READ "${CMAKE_SOURCE_DIR}/expected.txt" expected)
 add_test(NAME alpha COMMAND SnowDesktopRootAlphaTests "${expected}")
 add_test(NAME beta COMMAND SnowDesktopRootBetaTests "${expected}")
 add_test(NAME gamma COMMAND SnowDesktopRootGammaTests "${expected}")
+set_tests_properties(alpha PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopRootAlphaTests>")
+set_tests_properties(beta PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopRootBetaTests>")
+set_tests_properties(gamma PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopRootGammaTests>")
 )CMAKE");
     write(c.root/L"CMakePresets.json",R"JSON({"version":3,"configurePresets":[{"name":"release","generator":"Visual Studio 18 2026","architecture":"x64","binaryDir":"${sourceDir}/.build"},{"name":"tests","inherits":"release"}],"buildPresets":[{"name":"tests","configurePreset":"tests","configuration":"Release","jobs":1}],"testPresets":[{"name":"tests","configurePreset":"tests","configuration":"Release","output":{"outputOnFailure":true},"execution":{"jobs":1}},{"name":"all-tests","inherits":"tests"}]})JSON");
     write(c.root/L"main.cpp","#include <cstdlib>\nint value(); int main(int n,char** a){return n==2&&value()==std::atoi(a[1])?0:7;}\n");
     write(c.root/L"value.cpp","int value(){return 13;}\n");write(c.root/L"expected.txt","13");
+    write(c.root/L".gitignore",read(c.root/L".gitignore")+"\n!/CMakeLists.txt\n!/main.cpp\n!/value.cpp\n!/expected.txt\n");
     const auto original=read(c.scripts/L"test_manager.ps1");
     auto unpruned=original;
     replace(unpruned,"$buildRoots=Get-TestBuildRoots $repositoryRoot $selection.Targets","$buildRoots=[pscustomobject]@{targets=$selection.Targets;omitted=@();reason='original-targets-control'}");
