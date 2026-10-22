@@ -1,6 +1,7 @@
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/input_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
+#include "icons/icon_load_diagnostics.h"
 
 #include <windows.h>
 #include <cstring>
@@ -70,6 +71,33 @@ int main()
         Check(value == 37 && callbacks == 1, "disabled startup probes preserve operations and return values");
     }
     Check(!std::filesystem::exists(path), "disabled nested startup probes do not emit records");
+    // Replay the observed startup sample at the logger used by QueueIconTask:
+    // 625 ms queued, 0 ms bitmap read, successful bitmap. Only the output path
+    // is isolated; formatting, severity, filtering and file I/O are production.
+    const snowdesktop::icon_diagnostics::ShellIconLoadTiming queuedIcon{
+        1, 625, 0, 0, 0, 625, true, 503, L"C:\\Captured\\example.lnk"};
+    snowdesktop::icon_diagnostics::LogShellIconLoadTiming(queuedIcon);
+    Check(!std::filesystem::exists(path), "successful queued icons do not create logs while all modules are off");
+    SetLogModules(ModuleBit(DiagnosticLogModule::Shell));
+    snowdesktop::icon_diagnostics::LogShellIconLoadTiming(queuedIcon);
+    Check(!std::filesystem::exists(path), "the Shell switch does not enable Icons timing records");
+    SetLogModules(ModuleBit(DiagnosticLogModule::Icons));
+    snowdesktop::icon_diagnostics::LogShellIconLoadTiming(queuedIcon);
+    const auto iconLog = ReadLog();
+    Check(iconLog.find(L"[INFO] Shell icon slow: phase=1 queueMs=625") != std::wstring::npos &&
+        iconLog.find(L"bitmapMs=0") != std::wstring::npos && iconLog.find(L"bitmap=1") != std::wstring::npos &&
+        iconLog.find(L"[WARN]") == std::wstring::npos,
+        "enabled Icons logs the captured successful queue delay as Info");
+    SetLogModules(0);
+    const auto afterIconEnabled = std::filesystem::file_size(path);
+    snowdesktop::icon_diagnostics::LogShellIconLoadTiming(queuedIcon);
+    Check(std::filesystem::file_size(path) == afterIconEnabled, "disabling Icons stops the next real icon timing record");
+    auto failedIcon = queuedIcon;
+    failedIcon.hasBitmap = false;
+    snowdesktop::icon_diagnostics::LogShellIconLoadTiming(failedIcon);
+    Check(ReadLog().find(L"[WARN] Shell icon slow:") != std::wstring::npos &&
+        ReadLog().find(L"bitmap=0") != std::wstring::npos,
+        "unsuccessful slow icon loads retain warnings while all modules are off");
     for (const auto& descriptor : LogModules)
     {
         SetLogModules(ModuleBit(descriptor.module));

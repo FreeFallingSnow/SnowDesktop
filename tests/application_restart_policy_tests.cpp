@@ -201,6 +201,21 @@ void TestSlowShellDiagnostics()
 {
     using namespace snowdesktop::shell_call_diagnostics;
     startupMessages.clear();
+    snowdesktop::diagnostics::SetLogModules(0);
+    diagnosticTick = 1000;
+    {
+        Context disabled(L"desktop.full", L"C:\\Desktop", &DiagnosticClock);
+        const HRESULT result = Call(L"Enum.Next", [] {
+            diagnosticTick += 625;
+            SetLastError(ERROR_NOT_READY);
+            return E_PENDING;
+        });
+        Expect(result == E_PENDING && GetLastError() == ERROR_NOT_READY,
+            "disabled Shell timing preserves provider results and errors");
+    }
+    Expect(startupMessages.empty(), "disabled Shell timing emits no per-call or total records");
+    snowdesktop::diagnostics::SetLogModules(
+        snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Shell));
     diagnosticTick = 1000;
     {
         Context trace(L"icon.phase1", L"C:\\app.lnk", &DiagnosticClock);
@@ -250,6 +265,7 @@ void TestSlowShellDiagnostics()
         "slow tasks retain a total for uninstrumented gaps");
     Call(L"outside", [] {});
     Expect(startupMessages.size() == 6, "completed tasks leave later callers uninstrumented");
+    snowdesktop::diagnostics::SetLogModules(0);
 }
 
 HANDLE StartChild(std::wstring_view argument)

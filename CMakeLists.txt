@@ -454,6 +454,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/shell_overlay_window.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
+    src/icons/icon_load_diagnostics.h
     src/common/utils.cpp
     src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp

@@ -71,6 +71,7 @@ private:
     void Emit(const wchar_t* step, ULONGLONG call, ULONGLONG parentCall,
         ULONGLONG started, ULONGLONG elapsed, std::wstring_view detail) const noexcept
     {
+        if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Shell)) return;
         const DWORD savedError = GetLastError();
         try
         {
@@ -92,7 +93,7 @@ private:
             // File names must not inject extra log records.
             for (auto& ch : message)
                 if (ch == L'\r' || ch == L'\n') ch = L' ';
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str(), DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str());
         }
         catch (...) {} // Preserve the provider's result/error even if logging fails.
         SetLastError(savedError);

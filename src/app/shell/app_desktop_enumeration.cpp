@@ -224,11 +224,11 @@ static bool ReadDesktopSource(
                         },
                         parsingName) != 0;
                 const auto elapsed = GetTickCount64() - started;
-                if (elapsed >= 250)
+                if (elapsed >= 250 && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Shell))
                 {
                     const auto message = L"Shell desktop metadata slow: elapsed_ms=" +
                         std::to_wstring(elapsed) + L" path=" + parsingName;
-                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str(), DiagnosticLogLevel::Warning);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str());
                 }
                 return success;
             });

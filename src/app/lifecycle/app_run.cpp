@@ -37,6 +37,7 @@ constexpr const wchar_t* slowCallPhaseNames[] = {
 void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
     const MSG* message = nullptr) noexcept try
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Runtime)) return;
     const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started;
     if (elapsed <= 50.0) return;
     const auto summary = slowCallLimiter.Record(phase,
@@ -51,7 +52,7 @@ void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
         message ? static_cast<void*>(message->hwnd) : nullptr,
         message ? message->message : 0U,
         message && message->message == WM_TIMER ? static_cast<unsigned long long>(message->wParam) : 0ULL);
-    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line, DiagnosticLogLevel::Warning);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line);
 }
 catch (...) { /* Diagnostics must not interrupt the message pump. */ }
 
@@ -1880,7 +1881,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             wchar_t line[224]{};
             swprintf_s(line, L"MessageLoopSlowCallSummary phase=%ls suppressed=%llu maxSuppressedMs=%.3f",
                 slowCallPhaseNames[phase], static_cast<unsigned long long>(summary->count), summary->maximumMs);
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line, DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line);
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");

@@ -4,6 +4,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "shell/shell_call_diagnostics.h"
+#include "icons/icon_load_diagnostics.h"
 #include "diagnostics/performance_trace.h"
 
 #include "layout/popup_icon_load_rules.h"
@@ -407,18 +408,10 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         if (!result->iconIsMediaThumbnail)
             cache->Put(cacheKey, result->bitmap, result->bitmapSize, task.phase == IconLoadPhase::Phase2);
         const auto finished = GetTickCount64();
-        if (finished - queuedAt >= 250)
-        {
-            wchar_t timing[512]{};
-            swprintf_s(
-                timing,
-                L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
-                L"pidlMs=%llu bitmapMs=%llu shortcutMs=0 totalMs=%llu bitmap=%d trace=%llu path=",
-                task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
-                metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
-                finished - queuedAt, result->bitmap ? 1 : 0, trace.Id());
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + std::wstring(representationName)).c_str(), DiagnosticLogLevel::Warning);
-        }
+        snowdesktop::icon_diagnostics::LogShellIconLoadTiming({
+            task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
+            metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
+            finished - queuedAt, result->bitmap != nullptr, trace.Id(), representationName});
         return result;
     };
     auto apply = [this, key, queuedAt](std::shared_ptr<IconLoadResult> result) {
@@ -538,14 +531,14 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                     ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, result->shortcutTarget);
             result->shortcutTarget.application = result->isApplicationShortcut;
             const auto elapsed = GetTickCount64() - started;
-            if (elapsed >= 250)
+            if (elapsed >= 250 && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Icons))
             {
                 wchar_t timing[256]{};
                 swprintf_s(timing,
                            L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu "
                            L"totalMs=%llu trace=%llu path=",
                            loadMs, classifyMs, targetMs, elapsed, trace.Id());
-                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str(), DiagnosticLogLevel::Warning);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str());
             }
             return result;
         };
