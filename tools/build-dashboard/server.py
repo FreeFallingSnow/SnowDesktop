@@ -256,6 +256,51 @@ def acceptance_view(ledger, batch_id=None):
                        "artifacts": [{key: redact(x.get(key, "")) for key in ("file", "sha256", "sourceAssociation")} for x in (entry.get("artifacts") or [])[:64]]})
     return result
 
+def evidence_dependencies(entry):
+    def obj(value):
+        return value if isinstance(value, dict) else {}
+
+    def digest(value):
+        return value.lower() if isinstance(value, str) and re.fullmatch(r"[a-fA-F0-9]{64}", value) else None
+
+    def count(value):
+        number = record_seconds(value)
+        return int(number) if number is not None and number.is_integer() and number <= 2**53 else None
+
+    def state(value):
+        return redact(value)[:160] if isinstance(value, str) and value else "not-recorded"
+
+    def issues(value):
+        values = value if isinstance(value, list) else []
+        return {"issues": [redact(item)[:800] for item in values[:12]], "issueCount": len(values)}
+
+    dependency = obj(entry.get("dependencies"))
+    observation = obj(dependency.get("observation"))
+    inputs = obj(entry.get("runtimeInputs"))
+    modules = obj(entry.get("runtimeModules"))
+    return {
+        "dependencies": {
+            "status": state(observation.get("status", dependency.get("status"))),
+            "sourceClosure": state(observation.get("sourceClosure")),
+            "manifestSha256": digest(dependency.get("manifestSha256")),
+            **{key: count(observation.get(key)) for key in ("compilerReadLogs", "linkerReadLogs", "sourceReports")},
+            **issues(observation.get("issues")),
+        },
+        "runtimeInputs": {
+            **{key: state(inputs.get(key)) for key in ("status", "runtimeClosure")},
+            **{key: digest(inputs.get(key)) for key in ("beforeDigest", "afterDigest")},
+            **issues(inputs.get("issues")),
+        },
+        "runtimeModules": {
+            **{key: state(modules.get(key)) for key in ("status", "runtimeClosure")},
+            **{key: digest(modules.get(key)) for key in ("digest", "reportSha256")},
+            **{key: count(modules.get(key)) for key in ("imageCount", "processCount", "rootExitCode")},
+            "timingComparableToUnobservedRun": modules.get("timingComparableToUnobservedRun") if isinstance(modules.get("timingComparableToUnobservedRun"), bool) else None,
+            **issues(modules.get("issues")),
+        },
+    }
+
+
 def evidence_view(value):
     value = value or {}
     if value.get("schemaVersion") != 1:
@@ -268,6 +313,7 @@ def evidence_view(value):
         if not isinstance(entry, dict) or not HEX.fullmatch(str(entry.get("id", ""))):
             raise ValueError("Invalid per-test evidence identity")
         rows.append({**{key: entry.get(key) for key in ("id", "test", "status", "batchId", "runId", "logicalBatchId", "attempt", "bindingDigest", "inputCheck", "identityStatus")},
+                     **evidence_dependencies(entry),
                      "seconds": record_seconds(entry.get("seconds")), "requesters": [redact(x) for x in (entry.get("requesters") or [])[:80]],
                      "binding": {key: (entry.get("binding") or {}).get(key) for key in ("sourceDigest", "configuration", "assertionBinary", "invocationDigest", "environmentDigest")},
                      "reuseAllowed": entry.get("reuseAllowed") is True,

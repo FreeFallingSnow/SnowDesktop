@@ -90,14 +90,37 @@ function render(snapshot,batch){
  text("logHint",log.bytesTotal!=null?"已读取 "+log.bytesRead+" / "+log.bytesTotal+" 字节"+(log.prefixOmitted?" · 省略早期日志":""):"尚无日志");const logPosition=paused?(logView===batch.id?$("log").scrollTop:view.logs[batch.id]||0):null;text("log",log.lines.length?log.lines.join("\n"):"尚无本批日志。");logView=batch.id;$("log").scrollTop=paused?logPosition:$("log").scrollHeight;
 }
 function appendRecordedChecks(target,snapshot,batch){
- const items=batch?.evidence?.tests||[];
- if(batch){
-  const list=element("details");retainFold(list,JSON.stringify(["test-evidence",batch.id]));list.append(element("summary","逐条测试证据 · "+items.length+" / "+(batch.evidence?.totalCount||0)));
-  if(!items.length)list.append(element("p","尚无逐条记录。","muted"));
-  for(const item of items){const row=element("details");retainFold(row,JSON.stringify(["test-observation",item.id]));row.append(element("summary",item.test+" · "+label(item.status)+" · "+preciseTime(item.seconds)));detail(row,"证据 / Run",item.id+" / "+(item.runId||"未记录"));detail(row,"请求任务",(item.requesters||[]).join("、")||"未记录");for(const [key,title] of [["sourceDigest","输入"],["assertionBinary","测试二进制"],["invocationDigest","测试定义"],["environmentDigest","执行环境"]])detail(row,title+" SHA-256",item.binding?.[key]||"未记录");detail(row,"复用",item.reuseAllowed?"可复用范围已记录":"依赖范围待确认，尚未自动复用");list.append(row);}target.append(list);
- }
+ if(batch)appendTestEvidence(target,batch.evidence,batch.id);
  const records=batch?.acceptances||snapshot.acceptances||[];
  if(records.length){const list=element("details");retainFold(list,JSON.stringify(["acceptances",batch?.id||"all"]));list.append(element("summary","人工验收 · "+records.length));for(const item of records){const row=element("details");retainFold(row,JSON.stringify(["acceptance",item.id]));row.append(element("summary",item.criterion+" · "+label(item.status)));detail(row,"任务 / 需求修订",item.task+" / "+item.requirementsRevision);detail(row,"开始 / 结束",time(item.startedUtc)+" / "+(item.completedUtc?time(item.completedUtc):"进行中"));detail(row,"验收区间",item.durationStatus==="monotonic"?preciseTime(item.elapsedSeconds):item.status==="running"?"进行中":"未记录（跨重启或时钟不可用）");detail(row,"结果来源",item.reporter==="user"?"用户反馈":item.reporter==="agent"?"智能体观察":"待反馈");for(const artifact of item.artifacts||[])detail(row,"运行文件 · "+artifact.file,artifact.sha256);if(item.reference)detail(row,"证据引用",item.reference);if(item.notes)detail(row,"观察",item.notes);detail(row,"候选输入",item.sourceDigest);list.append(row);}target.append(list);}
+}
+function appendTestEvidence(target,evidence,scope){
+ const items=evidence?.tests||[],list=element("details");list.dataset.testEvidence=scope;
+ retainFold(list,JSON.stringify(["test-evidence",scope]));list.append(element("summary","逐条测试证据 · "+items.length+" / "+(evidence?.totalCount||0)));
+ if(!items.length)list.append(element("p","尚无逐条记录。","muted"));
+ const state=value=>({observed:"已采集",stable:"起止一致",changed:"输入已改变",incomplete:"采集不完整",unclosed:"依赖未闭合",unreviewed:"尚未审阅",unavailable:"记录不可用","not-instrumented":"未启用模块观察","not-recorded":"未记录",unproven:"完整性未证明",closed:"范围已闭合",recorded:"身份已记录",invalidated:"输入已改变"}[value]||value||"未记录");
+ const number=value=>typeof value==="number"&&Number.isFinite(value)?value:"未记录";
+ for(const item of items){
+  const row=element("details"),build=item.dependencies||{},inputs=item.runtimeInputs||{},modules=item.runtimeModules||{};row.dataset.evidenceId=item.id;
+  retainFold(row,JSON.stringify(["test-observation",item.id]));row.append(element("summary",item.test+" · "+label(item.status)+" · "+preciseTime(item.seconds)));
+  detail(row,"测试执行",label(item.status),tone(item.status));detail(row,"输入身份",state(item.identityStatus),item.identityStatus==="invalidated"?"bad":"");
+  detail(row,"编译依赖",state(build.status)+" · "+state(build.sourceClosure)+" · 编译器报告 "+number(build.sourceReports));
+  detail(row,"运行时文件",state(inputs.status),inputs.status==="changed"?"bad":"");
+  detail(row,"实际模块",state(modules.status)+" · 加载图像 "+number(modules.imageCount)+" / 进程 "+number(modules.processCount),modules.status==="incomplete"?"warn":"");
+  if(modules.timingComparableToUnobservedRun===false)row.append(element("p","模块观察改变计时，不能直接与普通运行比较。","muted"));
+  detail(row,"结果复用",item.reuseAllowed?"记录允许复用；此处没有复用执行记录":"依赖范围尚未闭合，未自动复用结果");
+  for(const [name,record] of [["编译依赖",build],["运行时文件",inputs],["实际模块",modules]]){
+   for(const issue of record.issues||[])detail(row,name+" · 原因",issue,"warn");
+   if(record.issueCount>(record.issues||[]).length)row.append(element("p",name+"另有 "+(record.issueCount-record.issues.length)+" 条原因未展开。","muted"));
+  }
+  const identity=element("details");retainFold(identity,JSON.stringify(["test-identities",item.id]));identity.append(element("summary","输入身份与报告"));
+  detail(identity,"证据 / Run",item.id+" / "+(item.runId||"未记录"));detail(identity,"批次 / 逻辑轮次",(item.batchId||"未记录")+" / "+(item.logicalBatchId||"未记录"));detail(identity,"请求任务",(item.requesters||[]).join("、")||"未记录");
+  for(const [key,title] of [["sourceDigest","输入"],["assertionBinary","测试二进制"],["invocationDigest","测试定义"],["environmentDigest","执行环境"]])detail(identity,title+" SHA-256",item.binding?.[key]||"未记录");
+  for(const [title,value] of [["编译依赖清单",build.manifestSha256],["文件输入 · 开始",inputs.beforeDigest],["文件输入 · 结束",inputs.afterDigest],["模块报告",modules.reportSha256],["模块集合",modules.digest]])detail(identity,title+" SHA-256",value||"未记录");
+  for(const attempt of item.attempts||[])detail(identity,"第 "+attempt.attempt+" 次执行",label(attempt.status)+" · "+preciseTime(attempt.seconds)+" · JUnit SHA-256 "+(attempt.reportSha256||"未记录"),tone(attempt.status));
+  row.append(identity);list.append(row);
+ }
+ target.append(list);
 }
 function renderPresence(snapshot){
  const phases={investigating:"调查中",editing:"报告正在编辑",waiting:"等待中",awaiting_input:"等待用户",blocked:"有阻塞",validating:"验证中",completed:"任务结束",cancelled:"任务取消"};
@@ -236,9 +259,8 @@ function renderRunRecords(snapshot,batch){
   if(run.verification){
    detail(box,"独立补验","仅执行既有产物");detail(box,"来源批次",run.verification.baseline);detail(box,"测试选择",(run.verification.names||[]).join(", "));
    for(const item of run.verification.subscriptions||[])detail(box,item.task+" / 需求 r"+item.requirementsRevision,item.withdrawnUtc?"已撤回等待":"订阅共同结果");
-   for(const item of run.evidence?.tests||[])detail(box,item.test,label(item.status)+" · "+preciseTime(item.seconds),tone(item.status));
-   box.append(element("small","依赖范围待确认，尚未自动复用已结束的结果。","muted"));
   }
+  if(run.evidence?.tests?.length)appendTestEvidence(box,run.evidence,"run-"+run.id);
   for(const stage of run.stages||[])detail(box,label(stage.name),preciseTime(stage.elapsedSeconds)+(stage.completedUtc?"":" · "+(run.completedUtc?"未完成":"进行中")));
   const resource=run.resources||{},resourceState={sampling:"采集中",complete:"完整",incomplete:"不完整（仅有过程采样）",unrecorded:"未采集",unavailable:"统计不可用",unknown:"状态未记录"}[resource.status]||"状态未记录";
   detail(box,"资源统计",resourceState+(resource.sampledUtc?" · "+time(resource.sampledUtc):""),["incomplete","unavailable"].includes(resource.status)?"warn":"");

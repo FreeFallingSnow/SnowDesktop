@@ -184,8 +184,14 @@ displayedVersions(panel);const rootVersion=panel.props['data-version'];
 // by the web dashboard. This carrier observes content, not native layout.
 const originalState=React.useState,originalEffect=React.useEffect;
 const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
-function renderBudget(){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?{snapshot:{runs:[run]}}:index===3?{...value,tab:'validation'}:value,()=>{}];};const rendered=Panel(props),values=[];function visit(node){if(typeof node==='string')values.push(node);else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
+function renderBudget(model,lang='en'){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===3?{...value,tab:'validation'}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
 const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
+const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
+const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
+const changed={...rich,id:'e'.repeat(32),test:'Changed input observation',identityStatus:'invalidated',runtimeInputs:{status:'changed'},runtimeModules:{status:'incomplete',imageCount:null,processCount:null,issues:['loaded-module-file-changed:fixture.dll'],issueCount:14}};
+const evidence={status:'recorded',totalCount:3,tests:[rich,legacy,changed]};run.evidence=evidence;
+const runEvidenceText=renderBudget(),evidenceModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),evidence}};
+const batchEvidenceText=renderBudget(evidenceModel),batchEvidenceZh=renderBudget(evidenceModel,'zh');
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -200,7 +206,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -208,6 +214,13 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     const auto budgetText=clientObserved.at("budgetText").str(),missingBudgetText=clientObserved.at("missingBudgetText").str();
     require(budgetText.find("CPU reservation / capacity")!=std::string::npos&&budgetText.find("2 / 6 CPU slots")!=std::string::npos&&budgetText.find("25.00% / 3072 MiB")!=std::string::npos&&budgetText.find("Insufficient CPU capacity")!=std::string::npos,"Overlay lost budget, kernel limit or queue content from the public Run projection");
     require(missingBudgetText.find("Not recorded / Not recorded CPU slots")!=std::string::npos&&missingBudgetText.find("25.00% / 3072 MiB")==std::string::npos,"Overlay inferred or retained missing budget values");
+    for(const auto* key:{"runEvidenceText","batchEvidenceText"}){
+        const auto text=clientObserved.at(key).str();
+        require(text.find("Completeness unproven")!=std::string::npos&&text.find("Compiler reports 3")!=std::string::npos&&text.find("Loaded images 23 / Processes 2")!=std::string::npos&&text.find("Endpoints match")!=std::string::npos&&text.find("Dependency closure pending; no automatic reuse")!=std::string::npos,"Overlay batch/Run evidence lost observed scope or inferred reuse permission");
+        require(text.find("Loaded images Not recorded / Processes Not recorded")!=std::string::npos&&text.find("loaded-module-file-changed:fixture.dll")!=std::string::npos&&text.find("Inputs changed")!=std::string::npos&&text.find("Attempt 1 Failed")!=std::string::npos&&text.find("Attempt 2 Passed")!=std::string::npos,"Overlay lost legacy absence, invalidation reasons or original execution attempts");
+    }
+    const auto chinese=clientObserved.at("batchEvidenceZh").str();
+    require(chinese.find("完整性未证明")!=std::string::npos&&chinese.find("编译器报告 3")!=std::string::npos&&chinese.find("加载图像 23 / 进程 2")!=std::string::npos&&chinese.find("尚未自动复用")!=std::string::npos,"Overlay Chinese evidence fields were missing or untranslated");
     bool rootRemote=false,unavailableRemote=false;
     for(const auto& value:clientObserved.at("inject").items){rootRemote|=value.str()=="remote";unavailableRemote|=value.str()=="remote.snowCollaboration";}
     require(rootRemote&&!unavailableRemote&&clientObserved.at("events").items[0].str()=="mount"&&clientObserved.at("events").items[1].str()=="slot","Client waited on an unmounted namespace or registered its slot before mounting");
