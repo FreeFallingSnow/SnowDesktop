@@ -1,5 +1,7 @@
 # 项目脚本
 
+工具回归按可独立补验的场景登记。`build_dashboard` 覆盖 HTTP/状态投影，`build_dashboard_startup` 覆盖启动、调用者退出及旧行为对照；`build_wait_retry` 覆盖重试策略，`build_retry_ctest_selection` 和 `build_retry_repairs` 分别覆盖真实 CTest 选择和失败续修；`build_run` 覆盖共同批次持久执行，`build_run_plans`、`build_run_batch_lifetime`、`build_run_default_entry`、`build_run_process_lifetime` 分别覆盖工具计划、批次进程归属、普通入口和独立 Run 生命周期。相关驱动保留 `--all` 供明确要求逐项串行诊断时使用。原有断言和负向对照保留在对应场景，CTest 按资源预算调度；同一驱动的多个条目仍只构建一次。显式定向选择时，应选齐修改影响的场景，不再把其中一项通过写成整组通过。
+
 本目录统一保存开发、测试和发布入口及其实现：
 
 普通 Release、Debug、测试及 IDE 包装入口先核对共享输出是否空闲，再提交持久 Run 并观察结果；退出观察方不会取消已提交执行。新协作批次使用第4版候选协议，所有等待方读取同一冻结尝试的结果；活动第1～3版批次保留原执行方式。独立启动、观察和显式取消仍可用 `build.bat run`：

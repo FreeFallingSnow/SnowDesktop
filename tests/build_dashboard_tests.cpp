@@ -251,4 +251,14 @@ void dashboard(const fs::path& repo,bool browser){
     auto info=Json::parse(read(root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json")));write(root/L".build/dashboard"/wide("stop-"+info.at("instance").str()+".request"),info.at("instance").str());require(server.wait(8).code==0,"Verified nonce stop failed");std::cout<<"PASS readonly dashboard HTTP, native metadata failures, bounded history/logs, wait/repair/retry evidence"<<(browser?" and real browser":"")<<"\n";
 }
 }
-int main(int argc,char** argv){try{require(argc>=2,"Repository argument required");const auto repo=fs::path(wide(argv[1]));const bool browser=argc>=3&&std::string(argv[2])=="--browser",former=argc>=3&&std::string(argv[2])=="--old-dashboard-startup",lifetime=argc>=3&&std::string(argv[2])=="--old-dashboard-lifetime";if(former||lifetime){dashboard_startup(repo,former,lifetime);return 0;}if(!browser)dashboard_startup(repo);dashboard(repo,browser);return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return std::string(error.what())=="RESOURCE-RACE-75"?75:1;}}
+int main(int argc,char** argv){try{
+    require(argc>=2&&argc<=3,"Repository argument and at most one dashboard fixture mode required");
+    const auto repo=fs::path(wide(argv[1]));const std::string mode=argc==3?argv[2]:"";
+    if(mode=="--old-dashboard-startup"||mode=="--old-dashboard-lifetime"){
+        dashboard_startup(repo,mode=="--old-dashboard-startup",mode=="--old-dashboard-lifetime");
+    }else if(mode=="--startup")dashboard_startup(repo);
+    else if(mode.empty()||mode=="--browser")dashboard(repo,mode=="--browser");
+    else if(mode=="--all"){dashboard_startup(repo);dashboard(repo,false);}
+    else throw std::runtime_error("Unknown dashboard fixture mode");
+    return 0;
+}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return std::string(error.what())=="RESOURCE-RACE-75"?75:1;}}

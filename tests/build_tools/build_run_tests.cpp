@@ -294,7 +294,7 @@ void durable_cancel(const fs::path& repo,bool oldObservation=false,bool oldPubli
         await_dead(Json::parse(read(c.root/L"child.json")));await_dead(Json::parse(read(c.root/L"grandchild.json")));
         std::cout<<"PASS concurrent durable finishers, observer loss, urgent return, explicit cancellation and shared terminal release\n";
 }
-void test(const fs::path& repo) {
+void test_durable(const fs::path& repo) {
     durable_cancel(repo);
     {
         const auto controlRoot=temporary("early-result-control");
@@ -306,6 +306,8 @@ void test(const fs::path& repo) {
         require(publication.code==1&&publication.err.find("Cancelled batch disagrees with terminal Run")!=std::string::npos&&publication.err.find("Batch result publication failed")!=std::string::npos,"Restored nonzero publication rejection was not caught: "+publication.out+publication.err);
         std::cout<<"PASS restored cancellation publication rejection fails the Run/batch consistency assertion\n";
     }
+}
+void test_plans(const fs::path& repo) {
     {
         tool_plan(repo);
         const auto controlRoot=temporary("old-host-plan-control");
@@ -313,6 +315,8 @@ void test(const fs::path& repo) {
         require(control.code==1&&control.err.find("Tool plan invoked unnecessary host compilation")!=std::string::npos,"Restored host-build coupling was not caught by its actual invocation assertion: "+control.out+control.err);
         std::cout<<"PASS tool-only batch avoids host compilation and rejects restored old behavior\n";
     }
+}
+void test_batch_lifetime(const fs::path& repo) {
     {
         Coordinator c(repo,"batch-refusal",true);
         const auto batch=c.begin("tool").at("batchId").str();c.plan("tool",batch,0,"selected","Alpha","tool");
@@ -336,6 +340,8 @@ void test(const fs::path& repo) {
         require(c.result(batch).at("outcome").str()=="interrupted"&&c.result(batch).at("runId").str()==id&&c.calls()==1,"Explicit recovery lost the Run link or repeated work");
         std::cout<<"PASS batch executor loss cleans children and requires explicit shared recovery\n";
     }
+}
+void test_default_entry(const fs::path& repo) {
     {
         Coordinator c(repo,"default-entry");setup_run(c,repo);
         write(c.root/L"launch-entry.ps1","[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$null,'Process')\n[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$null,'Process')\n& "+ps_literal(c.scripts/L"build_entry.ps1")+" -Action release\nexit $LASTEXITCODE\n",true);
@@ -371,6 +377,8 @@ void test(const fs::path& repo) {
         const auto control=run({executable().wstring(),repo.wstring(),L"--old-entry-edit"},controlRoot,40,{},true);
         require(control.code==1&&control.err.find("Active ordinary Run allowed a source-edit grant")!=std::string::npos,"Former ordinary-Run edit overlap escaped its actual grant assertion: "+control.out+control.err);
     }
+}
+void test_process_lifetime(const fs::path& repo) {
     {
         Coordinator c(repo,"run-cancel");setup_run(c,repo);
         ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
@@ -430,4 +438,23 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--project-resources"){project_resources(repo);return;}if(argc>2&&std::string(argv[2])=="--observer-snapshot"){observer_snapshot(repo);return;}if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    require(argc<=3,"Unexpected build Run fixture arguments");
+    const std::string mode=argc>2?argv[2]:"";
+    if(mode=="--project-resources")project_resources(repo);
+    else if(mode=="--observer-snapshot")observer_snapshot(repo);
+    else if(mode=="--request-publication")request_publication(repo);
+    else if(mode=="--old-request-publication")request_publication(repo,true);
+    else if(mode=="--old-entry-edit")old_entry_edit_control(repo);
+    else if(mode=="--old-host-plan")tool_plan(repo,true);
+    else if(mode=="--early-result-control")durable_cancel(repo,true);
+    else if(mode=="--old-cancel-publication")durable_cancel(repo,false,true);
+    else if(mode.empty())test_durable(repo);
+    else if(mode=="--plans")test_plans(repo);
+    else if(mode=="--batch-lifetime")test_batch_lifetime(repo);
+    else if(mode=="--default-entry")test_default_entry(repo);
+    else if(mode=="--process-lifetime")test_process_lifetime(repo);
+    else if(mode=="--all"){
+        test_durable(repo);test_plans(repo);test_batch_lifetime(repo);test_default_entry(repo);test_process_lifetime(repo);
+    }else throw std::runtime_error("Unknown build Run fixture mode");
+});}

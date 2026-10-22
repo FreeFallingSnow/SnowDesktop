@@ -68,12 +68,24 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
         build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
+    add_test(NAME build_dashboard_startup COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --startup)
+    set_tests_properties(build_dashboard_startup PROPERTIES TIMEOUT 60 LABELS "tools;core;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     add_test(NAME build_dashboard_browser COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
     set_tests_properties(build_dashboard_browser PROPERTIES TIMEOUT 180
         LABELS "manual;integration;tools;retry-isolated-resource"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildWaitRetryTests build_wait_retry
         build_wait_retry_tests.cpp "integration;tools" 240)
+    add_test(NAME build_retry_ctest_selection COMMAND SnowDesktopBuildWaitRetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --ctest-selection)
+    set_tests_properties(build_retry_ctest_selection PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWaitRetryTests>")
+    add_test(NAME build_retry_repairs COMMAND SnowDesktopBuildWaitRetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --repairs)
+    set_tests_properties(build_retry_repairs PROPERTIES TIMEOUT 180 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWaitRetryTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildSharedResourcesTests build_shared_resources
         build_shared_resources_tests.cpp "tools;core" 90)
     snowdesktop_add_native_tool_test(SnowDesktopBuildForegroundWaitTests build_foreground_wait
@@ -94,6 +106,13 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
         build_tools/build_run_tests.cpp "tools;core;integration" 180)
+    foreach(run_case IN ITEMS plans batch-lifetime default-entry process-lifetime)
+        string(REPLACE "-" "_" run_name "${run_case}")
+        add_test(NAME build_run_${run_name} COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --${run_case})
+        set_tests_properties(build_run_${run_name} PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
+    endforeach()
     snowdesktop_add_native_tool_test(SnowDesktopBuildResourceBudgetTests build_resource_budget
         build_tools/build_resource_budget_tests.cpp "tools;integration" 240)
     set_tests_properties(build_resource_budget PROPERTIES PROCESSORS 6)
