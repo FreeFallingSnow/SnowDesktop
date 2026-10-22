@@ -107,7 +107,7 @@ try {
     require(c.bridge->call(probe,{"-Relative","src\\nested/file.cpp"}).at("relative").str()=="src/nested/file.cpp","Candidate relative path normalization changed");
     for(const std::string invalid:{"","../outside","./source","src//a","src/a.","src/a ","C:/outside","src/COM1.txt","src/a:stream","src/<","src/*"}){
         const auto result=c.bridge->invoke(probe,{"-Relative",invalid});
-        require(result.code==2&&result.err.find("Unsafe candidate relative path")!=std::string::npos,"Candidate metadata accepted an unsafe relative path");
+        require(result.code==2&&result.err.find("Unsafe candidate relative path")!=std::string::npos,"Candidate metadata accepted an unsafe relative path ["+invalid+"] (exit "+std::to_string(result.code)+"): "+result.err);
     }
     const auto outside=temporary("metadata-outside");write(outside/L"keep.txt","foreign content unchanged\n");
     const auto validation=c.root/L".build/candidate-slots/validation/source";

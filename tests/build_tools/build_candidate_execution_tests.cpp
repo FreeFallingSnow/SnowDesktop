@@ -443,10 +443,13 @@ void scenario(const fs::path& repo,const std::string& control) {
     }
     wait(c,submit(c,execution(snapshot)));program(output,7);
     auto weightedArguments=execution(snapshot);
-    weightedArguments.insert(weightedArguments.end(),{"-CpuSlots","2","-MemoryMiB","2048"});
+    // This one-file compiler fixture measured under 344 MiB. Keep more than
+    // twice that peak without reserving an unrelated 2 GiB of host capacity.
+    weightedArguments.insert(weightedArguments.end(),{"-CpuSlots","2","-MemoryMiB","768"});
     const auto weighted=wait(c,submit(c,weightedArguments));program(output,7);
     require(weighted.at("record").at("resourceAdmission").at("bindingValid").boolean&&
-        weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==2048&&
+        weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==768&&
+        weighted.at("resources").at("committedMemoryLimitBytes").number==805306368.0&&
         weighted.at("resources").at("finished").boolean&&weighted.at("resources").at("accountingAvailable").boolean,
         "Candidate private entry did not reuse its admitted runtime and parent CPU/memory budget");
     std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";

@@ -106,9 +106,20 @@ $p=Start-BuildPowerShellScript -Script $Target -Arguments ('-Value "async guard,
 @{pid=$p.Id;startTicks=$p.StartTime.ToUniversalTime().Ticks.ToString()}|ConvertTo-Json -Compress|Set-Content (Join-Path $PSScriptRoot 'guard-child.json') -Encoding UTF8
 $p.WaitForExit();$code=$p.ExitCode;$p.Dispose();exit $code
 )PS",true);
+    write(root/L"bridge-arguments.ps1",R"PS(param([string]$First,[string]$Middle,[string]$Last)
+@{count=$PSBoundParameters.Count;values=@($First,$Middle,$Last);extra=@($args)}|ConvertTo-Json -Compress
+)PS",true);
     for(bool old:{true,false}) {
         if(!old&&preferred==legacy)continue;
         Bridge bridge(repo,root,old);
+        const auto argumentProbe=root/L"bridge-arguments.ps1";
+        const auto noArguments=bridge.call(argumentProbe,{});
+        require(noArguments.at("count").integer()==0&&noArguments.at("extra").items.empty(),"Bridge invented an argument from the trailing frame delimiter");
+        const std::string literal="comma, quote' and space";
+        for(const auto& args:std::vector<std::vector<std::string>>{{"",literal,""},{"-First","","-Middle",literal,"-Last",""}}){
+            const auto observed=bridge.call(argumentProbe,args);const auto& values=observed.at("values").items;
+            require(observed.at("count").integer()==3&&values.size()==3&&values[0].str().empty()&&values[1].str()==literal&&values[2].str().empty()&&observed.at("extra").items.empty(),"Bridge dropped empty leading/trailing or named arguments, or changed literal quoting");
+        }
         for(const auto& candidate:{broken,delayed}) {
             fs::remove(root/L"executed.txt");
             auto result=bridge.invoke(root/L"guard.ps1",{"-Entry",utf8((repo/L"scripts/build_entry.ps1").wstring()),"-Target",utf8((root/L"target.ps1").wstring()),"-Runtime",utf8(candidate.wstring())});
