@@ -34,10 +34,13 @@ $timer=[Diagnostics.Stopwatch]::StartNew())PS");
     write(c.scripts/L"fake.ps1",fake,true);
     c.gate("hold-build");c.gate("hold-test");
     const auto batch=c.begin("worker").at("batchId").str();
-    auto first=c.start(c.bound("ready-and-wait","worker",batch));
-    until([&]{return fs::exists(c.root/L"build-started");},18);
+    std::vector<std::wstring> command={powershell().wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(c.scripts/L"build_manager.ps1").wstring()};
+    for(const auto& argument:c.bound("ready-and-wait","worker",batch))command.push_back(wide(argument));
+    auto first=std::make_unique<Child>(command,c.root,Env{},false,false,true);
+    until([&]{const bool started=fs::exists(c.root/L"build-started");require(started||first->running(),"Durable fixture exited before build: "+first->err());return started;},18);
     const auto state=c.state();const auto id=state.at("current").at("runId").str();
     const auto ownerBefore=Json::parse(read(c.stateRoot/L"runs"/wide(id+".launch.json")));
+    c.workers.push_back(ownerBefore);
     auto observe=[&](const std::string& stage){
         auto args=c.bound("wait","worker",batch);args.insert(args.end(),{"-WaitSeconds","30"});auto p=c.start(args);
         until([&]{const auto text=p->err();return text.find("Waiting for this batch")!=std::string::npos||text.find("Waiting for batch ")!=std::string::npos;},8);
