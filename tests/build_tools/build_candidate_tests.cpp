@@ -167,7 +167,8 @@ try{
     require(legacyInspect.code==0&&Json::parse(legacyInspect.out).at("id").str()==legacyId,"Windows PowerShell snapshot inspection failed: "+legacyInspect.out+legacyInspect.err);
     const auto target=temporary("candidate-reparse-target");write(target/L"outside.txt","outside bytes must survive\n");
     const auto junction=c.root/L"src/escape";
-    const auto link=run({L"cmd.exe",L"/d",L"/c",L"mklink",L"/J",junction.wstring(),target.wstring()},c.root);
+    const auto linkCommand="New-Item -ItemType Junction -Path "+ps_literal(junction)+" -Target "+ps_literal(target)+" -ErrorAction Stop | Out-Null";
+    const auto link=run({powershell().wstring(),L"-NoProfile",L"-Command",wide(linkCommand)},c.root);
     require(link.code==0,"Cannot establish candidate reparse boundary fixture: "+link.out+link.err);
     const auto escaped=finish(c,start(c,"src/escape/outside.txt"),2);
     require(escaped.at("status").str()=="failed"&&!escaped.at("record").has("candidate")&&read(target/L"outside.txt")=="outside bytes must survive\n","Candidate followed or modified an escaped source");
