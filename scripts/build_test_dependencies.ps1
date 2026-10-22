@@ -6,6 +6,12 @@ function Get-TestDependencyDigest([string]$Text) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try{return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
+function Get-TestDependencyOrdered([string[]]$Values) {
+    $unique=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach($value in $Values){[void]$unique.Add($value)}
+    [string[]]$ordered=@($unique);[Array]::Sort($ordered,[StringComparer]::Ordinal)
+    return $ordered
+}
 function Add-TestDependencyFile($Context,[string]$Path) {
     $absolute=[IO.Path]::GetFullPath($Path);$key=$absolute.ToLowerInvariant()
     if($Context.files.ContainsKey($key)){return $key}
@@ -100,13 +106,13 @@ function Get-TestDependencyManifest {
         foreach($path in @($command)+$required){if([IO.Path]::IsPathRooted([string]$path)){
             if([IO.File]::Exists([string]$path)){$keys+=Add-TestDependencyFile $context ([string]$path)}elseif($required -contains $path){$issues+=($(if([IO.Directory]::Exists([string]$path)){'unclosed-runtime-directory:'}else{'missing-explicit-runtime:'})+$path)}
         }}
-        $keys=@($keys|Sort-Object -Unique);foreach($key in $keys){if($context.files[$key].status -ne 'observed'){$issues+=('missing-observed-input:'+ $context.files[$key].path)}}
+        $keys=@(Get-TestDependencyOrdered $keys);foreach($key in $keys){if($context.files[$key].status -ne 'observed'){$issues+=('missing-observed-input:'+ $context.files[$key].path)}}
         $canonical=($keys|ForEach-Object {$key=$_;$file=$context.files[$key];$key+[char]0+$file.status+[char]0+$file.sha256}) -join "`n"
         $rows+=[pscustomobject]@{test=$test.name;target=$(if($project){[IO.Path]::GetFileNameWithoutExtension($project)}else{$null});status=$(if($issues.Count){'incomplete'}else{'observed'});
             fileIds=$keys;projects=@($projectNames|Sort-Object -Unique);compilerReadLogs=$compilerLogs;linkerReadLogs=$linkerLogs;sourceReports=$sourceReports;sourceClosure='unproven';digest=(Get-TestDependencyDigest $canonical);issues=@($issues|Sort-Object -Unique);
             runtimeClosure='unclosed';reuseAllowed=$false;reason='Generated projects and compiler/linker reads are observed; runtime loads, external state and semantic dependencies require a reviewed closure contract.'}
     }
-    $files=@($context.files.Keys|Sort-Object|ForEach-Object {$key=$_;[pscustomobject]@{id=$key;path=$context.files[$key].path;status=$context.files[$key].status;sha256=$context.files[$key].sha256;bytes=$context.files[$key].bytes}})
+    $files=@((Get-TestDependencyOrdered @($context.files.Keys))|ForEach-Object {$key=$_;[pscustomobject]@{id=$key;path=$context.files[$key].path;status=$context.files[$key].status;sha256=$context.files[$key].sha256;bytes=$context.files[$key].bytes}})
     $excluded=@([IO.Path]::GetTempPath(),[Environment]::GetFolderPath('ApplicationData'),[Environment]::GetFolderPath('LocalApplicationData'),[Environment]::GetFolderPath('CommonApplicationData'),(Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData/LocalLow'))
     $excluded=@($excluded|Where-Object {$_}|ForEach-Object {[IO.Path]::GetFullPath($_).TrimEnd('\','/').ToLowerInvariant()+'\'}|Sort-Object -Unique)
     return [pscustomobject]@{schemaVersion=1;root=$Root;configuration=$Configuration;files=$files;tests=$rows;reuseAllowed=$false;trackingExcludedRoots=$excluded;
