@@ -23,11 +23,24 @@ function Add-TestDependencyFile($Context,[string]$Path) {
     }
     $Context.files[$key]=[pscustomobject]@{path=$absolute;status=$status;sha256=$digest;bytes=$bytes};return $key
 }
+function Get-TestDependencyMetadata($Item,[string]$Name,[string]$Configuration) {
+    foreach($node in $Item.SelectNodes('*[local-name()="'+$Name+'"]')){
+        $condition=$node.GetAttribute('Condition')
+        if(-not $condition -or $condition.Contains("'"+$Configuration+'|')){return $node.InnerText}
+    }
+    return $null
+}
+function Resolve-TestDependencyPath([string]$Value,[string]$Directory,[string]$TrackingRoot,[string]$Configuration) {
+    $path=$Value.Replace('$(IntDir)',$TrackingRoot+'\').Replace('$(ProjectDir)',$Directory+'\').Replace('$(Configuration)',$Configuration)
+    if($path.Contains('$(') -or $path.Contains('%(')){return $null}
+    if(-not [IO.Path]::IsPathRooted($path)){$path=Join-Path $Directory $path}
+    return [IO.Path]::GetFullPath($path)
+}
 function Read-TestDependencyProject($Context,[string]$Project) {
     $absolute=[IO.Path]::GetFullPath($Project);$key=$absolute.ToLowerInvariant()
     if($Context.projects.ContainsKey($key)){return $Context.projects[$key]}
     if($Context.projects.Count -ge 4096){throw 'Observed test dependency project budget exceeded.'}
-    $node=[pscustomobject]@{project=$absolute;files=@();references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0;sourceFiles=@();reportedSources=@();sourceReports=0}
+    $node=[pscustomobject]@{project=$absolute;files=@();references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0;sourceFiles=@();reportedSources=@();sourceReports=0;expectedReports=@{}}
     $Context.projects[$key]=$node # Cache before descending through references.
     $node.files+=Add-TestDependencyFile $Context $absolute
     if(-not [IO.File]::Exists($absolute)){$node.issues+='missing-project';return $node}
@@ -35,25 +48,40 @@ function Read-TestDependencyProject($Context,[string]$Project) {
     $reader=$null;$document=New-Object Xml.XmlDocument;$document.XmlResolver=$null
     try{$reader=[Xml.XmlReader]::Create($absolute,$settings);$document.Load($reader)}finally{if($reader){$reader.Dispose()}}
     $directory=[IO.Path]::GetDirectoryName($absolute)
+    $trackingRoot=Join-Path $directory ([IO.Path]::GetFileNameWithoutExtension($absolute)+'.dir/'+$Context.configuration)
     foreach($item in $document.SelectNodes('//*[local-name()="ClCompile" or local-name()="ClInclude" or local-name()="ResourceCompile" or local-name()="Midl" or local-name()="CustomBuild" or local-name()="ProjectReference"][@Include]')){
         $path=$item.GetAttribute('Include').Replace('$(Configuration)',$Context.configuration).Replace('$(ProjectDir)',$directory+'\')
         if($path.Contains('$(') -or $path.Contains('*') -or $path.Contains('?')){$node.issues+=('unresolved-project-item:'+ $path);continue}
         if(-not [IO.Path]::IsPathRooted($path)){$path=Join-Path $directory $path};$path=[IO.Path]::GetFullPath($path)
-        if($item.LocalName -eq 'ClCompile'){$node.sourceFiles+=$path.ToLowerInvariant()}
+        if($item.LocalName -eq 'ClCompile'){
+            $sourceKey=$path.ToLowerInvariant();$node.sourceFiles+=$sourceKey
+            $spec=Get-TestDependencyMetadata $item 'SourceDependenciesFile' $Context.configuration
+            if($spec){
+                if($spec.StartsWith('$([System.IO.Path]::GetDirectoryName(')){
+                    $objectSpec=Get-TestDependencyMetadata $item 'ObjectFileName' $Context.configuration
+                    if(-not $objectSpec){$objectSpec='$(IntDir)'}
+                    $objectPath=Resolve-TestDependencyPath $objectSpec $directory $trackingRoot $Context.configuration
+                    $expected=if($objectPath){Join-Path ([IO.Path]::GetDirectoryName($objectPath)) ([IO.Path]::GetFileName($path)+'.json')}else{$null}
+                }else{$expected=Resolve-TestDependencyPath $spec $directory $trackingRoot $Context.configuration}
+                if($expected){$node.expectedReports[$sourceKey]=$expected.ToLowerInvariant()}else{$node.issues+=('unresolved-source-report-path:'+ $path)}
+            }
+        }
         if($item.LocalName -eq 'ProjectReference'){$node.references+=$path}else{$node.files+=Add-TestDependencyFile $Context $path}
     }
-    $trackingRoot=Join-Path $directory ([IO.Path]::GetFileNameWithoutExtension($absolute)+'.dir/'+$Context.configuration)
+    if($Context.reportingDisabled -and $node.sourceFiles.Count){$node.issues+='compiler-source-reporting-disabled'}
     if([IO.Directory]::Exists($trackingRoot)){
         # Unlike FileTracker, /sourceDependencies reports includes under Temp
         # and AppData too. A report is associated with its declared source.
         # https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies
         foreach($report in @(Get-ChildItem -LiteralPath $trackingRoot -Filter '*.json' -File -Recurse|Where-Object Name -match '(^sd-[a-f0-9]{16}\.json$)|\.(c|cc|cpp|cxx|ixx)\.json$')){
+            if($Context.reportingDisabled){continue}
             try {
                 if($report.Length -gt 64MB){throw 'source-report-too-large'}
                 $json=[IO.File]::ReadAllText($report.FullName)|ConvertFrom-Json
                 if($json.Version -notin '1.0','1.1','1.2'){throw 'unsupported-source-report-version'}
                 $data=$json.Data;$source=[IO.Path]::GetFullPath([string]$data.Source).ToLowerInvariant()
                 if($node.sourceFiles -notcontains $source){throw 'source-report-not-in-generated-project'}
+                if($node.expectedReports.ContainsKey($source) -and $node.expectedReports[$source] -ne $report.FullName.ToLowerInvariant()){continue} # Retained output from an older report layout.
                 $inputs=@($data.Source)+@(Get-TestDependencyField $data 'Includes' @())+@(Get-TestDependencyField $data 'PCH' @())
                 foreach($module in @(Get-TestDependencyField $data 'ImportedModules' @())){$inputs+=Get-TestDependencyField $module 'BMI'}
                 foreach($unit in @(Get-TestDependencyField $data 'ImportedHeaderUnits' @())){$inputs+=@(Get-TestDependencyField $unit 'Header')+@(Get-TestDependencyField $unit 'BMI')}
@@ -82,7 +110,9 @@ function Read-TestDependencyProject($Context,[string]$Project) {
 function Get-TestDependencyManifest {
     param([string]$Root,$Tests,[string]$Configuration='Release')
     $Root=[IO.Path]::GetFullPath($Root).TrimEnd('\','/');if($Configuration -notin 'Release','Debug'){throw 'Explicit Release/Debug configuration required.'}
-    $context=[pscustomobject]@{root=$Root;configuration=$Configuration;files=@{};projects=@{}};$build=Join-Path $Root '.build';$rows=@();$projectIndex=$null
+    $build=Join-Path $Root '.build';$cache=Join-Path $build 'CMakeCache.txt'
+    $disabled=[IO.File]::Exists($cache) -and [IO.File]::ReadAllText($cache) -match '(?m)^SNOWDESKTOP_SOURCE_DEPENDENCIES:BOOL=OFF\r?$'
+    $context=[pscustomobject]@{root=$Root;configuration=$Configuration;files=@{};projects=@{};reportingDisabled=$disabled};$rows=@();$projectIndex=$null
     foreach($test in @($Tests|Sort-Object name)){
         $issues=@();$project=$null;$keys=@();$visited=@{};$projectNames=@();$compilerLogs=0;$linkerLogs=0;$sourceReports=0
         $command=@(Get-TestDependencyField $test 'command' @());$required=@($test.properties|Where-Object name -eq 'REQUIRED_FILES'|ForEach-Object value)

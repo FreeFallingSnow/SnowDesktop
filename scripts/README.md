@@ -1,6 +1,6 @@
 # 项目脚本
 
-标准 Visual Studio/MSVC 目标默认启用 `SNOWDESKTOP_SOURCE_DEPENDENCIES`。报告由每个源码的 `VS_SETTINGS` 元数据生成，路径身份命名，保存在目标与配置各自的 `IntDir`，覆盖 C/C++、子目录库和 CMake PCH；独立32位 Hook 也接入同一模块。已有 XAML/源码元数据保留。`test_dependency_reports` 实际验证并行同名源码、PCH复用、Release/Debug/MultiToolTask、无变化调用不改对象/报告时间及缺失报告恢复。关闭选项仅供明确的兼容/性能对照，缺少报告的证据保持不完整；报告启用不等于源码/运行时语义已闭合或可以自动复用结果。
+标准 Visual Studio/MSVC 目标默认启用 `SNOWDESKTOP_SOURCE_DEPENDENCIES`。源码 `VS_SETTINGS` 沿实际对象目录生成报告，普通编译单元共享目录以保留 `/MP` 批次，同名源码沿 CMake 的独立对象目录隔离；目标/配置、C/C++、子目录库和 CMake PCH 均覆盖，独立32位 Hook 接入同一模块。已有 XAML/源码元数据保留。`test_dependency_reports` 实际验证同名源码、编译命令保留多源批次、PCH复用、Release/Debug/MultiToolTask、无变化对象/运行文件/报告时间及缺失报告恢复仅重编相应用例。关闭选项仅供明确的兼容/性能对照，缺少报告的证据保持不完整；报告启用不等于源码/运行时语义已闭合或可自动复用结果。
 
 逐测试依赖观察保存在 coverage 的 `dependencyManifest`：共享文件身份只保存一份，逐条证据引用清单路径、SHA256 和测试摘要。`build_test_dependencies.ps1` 读取生成的 MSBuild 项目引用、编译器 `/sourceDependencies` JSON（存在时）、编译/链接读取日志及 CTest 显式运行文件，记录具体缺口和采集时间。FileTracker 会过滤 Temp/AppData 等目录，缺少源码报告不能推导依赖完整；标准目标尚未统一启用报告。`Get-TestDependencyAdvice` 可按变化路径给出目标/用例建议；未映射变化或记录不完整时保留运行建议，不删除显式计划。源码闭合、运行时动态加载、外部状态与语义依赖仍未全部闭合，`reuseAllowed=false`，不据此跳过构建或测试。`test_dependencies` 在真实临时目录中编译静态库和间接头，验证报告补足过滤盲区。
 

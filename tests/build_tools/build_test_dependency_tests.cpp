@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <iostream>
 using namespace build_test;
-void source_report_tests(const fs::path& repo,bool disableReports);
+void source_report_tests(const fs::path& repo,bool disableReports,bool serializedReports=false);
 namespace {
 const Json& named(const Json& rows,const std::string& name){
     for(const auto& row:rows.items)if(row.at("test").str()==name)return row;
@@ -88,6 +88,6 @@ uniqueFiles=$manifest.files.Count;pathCount=@($manifest.files.id|Sort-Object -Un
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const std::string mode=argc>2?argv[2]:"";
-    if(mode=="--source-reports"||mode=="--without-standard-reports")source_report_tests(repo,mode=="--without-standard-reports");
+    if(mode=="--source-reports"||mode=="--without-standard-reports"||mode=="--serialized-source-reports")source_report_tests(repo,mode=="--without-standard-reports",mode=="--serialized-source-reports");
     else tests(repo,mode=="--without-compiler-reads");
 });}
