@@ -5,11 +5,12 @@ param(
     [ValidateSet('start','invoke','status','wait','cancel','unsubscribe','worker','budget')][string]$Command='status',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Task,
-    [ValidateSet('release','debug','tests','ide','batch')][string]$Action='tests',
+    [ValidateSet('release','debug','tests','ide','batch','snapshot')][string]$Action='tests',
     [ValidateSet('full','fast','core','tools','label','name','list','plan','verify')][string]$Mode='list',
     [string]$Filter='',
     [ValidateSet('Release','Debug')][string]$Configuration='Release',
     [string[]]$Targets=@(),
+    [string]$SnapshotInputs='',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$PlanBatch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [long]$EditRevision=-1,
@@ -165,6 +166,10 @@ try {
         }
         if(-not $Task){throw 'run start requires -Task from task-open.'}
         if($Action -eq 'batch' -and ($Command -ne 'start' -or -not $Batch -or $EditRevision -lt 0)){throw 'A batch Run requires a coordinator reservation and exact edit revision.'}
+        if($Action -eq 'snapshot' -and ($Mode -ne 'list' -or $Filter -or $Targets.Count -or $Batch -or $PlanBatch -or $ReloadShell -or $CloseApplication -or $CpuSlots -or $MemoryMiB)){
+            throw 'Snapshot capture accepts only its registered Task, configuration and optional SnapshotInputs; it does not build/test or perform process actions.'
+        }
+        if($SnapshotInputs -and ($Action -ne 'snapshot' -or $SnapshotInputs.Length -gt 4096)){throw 'SnapshotInputs is limited to snapshot capture and4096 characters.'}
         if($Filter.Length -gt 4096){throw 'Test filter exceeds its length budget.'}
         if($ReloadShell -and ($CloseApplication -or $Action -notin 'release','debug')){throw 'ReloadShell requires release/debug and cannot be combined with CloseApplication.'}
         if($CloseApplication -and $Action -ne 'release'){throw 'CloseApplication requires release.'}
@@ -178,9 +183,13 @@ try {
             launcher=[pscustomobject]@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()};
             action=$Action;mode=$Mode;filter=$Filter;configuration=$Configuration;targets=@($Targets);planBatch=$PlanBatch;automaticTask=$automaticTask;
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
+        if($Action -eq 'snapshot'){
+            $request|Add-Member NoteProperty snapshotInputs $SnapshotInputs
+            $request|Add-Member NoteProperty snapshotRequirementsRevision (Get-Field $tasks[0] 'requirementsRevision' 0)
+        }
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
             completedUtc=$null;exitCode=$null;error='';waitingFor='';waitIntervals=@();waitIntervalsTruncated=$false;stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
-        $heavy=-not ($request.action -eq 'tests' -and $request.mode -in 'list','plan')
+        $heavy=$request.action -ne 'snapshot' -and -not ($request.action -eq 'tests' -and $request.mode -in 'list','plan')
         $frozenResources=$null
         if($request.action -eq 'batch'){
             if($CpuSlots -or $MemoryMiB){throw 'A batch uses only its frozen aggregate resource plan.'}
@@ -463,10 +472,21 @@ try {
                 if($request.PSObject.Properties['planBatch'] -and $request.planBatch){$options.EntryPlanBatch=$request.planBatch}
                 if($request.reloadShell){$options.EntryReloadShell=$true};if($request.closeApplication){$options.EntryCloseApplication=$true}
                 $global:LASTEXITCODE=0
-                if($request.action -eq 'batch'){
+                if($request.action -eq 'snapshot'){
+                    . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+                    $captureStage=Start-RunStage $record 'candidate-capture'
+                    try{
+                        $captured=New-CandidateSnapshot $root $request.task $request.snapshotRequirementsRevision $request.configuration $request.snapshotInputs $record.inputStart.digest {
+                            if(Run-CancellationRequested $request){throw [OperationCanceledException]::new('Candidate capture cancelled by its owning Task.')}
+                        }
+                        Set-Field $record 'candidate' $captured
+                        $record.exitCode=0
+                        Complete-RunStage $record $captureStage 0
+                    }catch{Complete-RunStage $record $captureStage $(if(Run-CancellationRequested $request){4}else{2});throw}
+                }elseif($request.action -eq 'batch'){
                     & (Join-Path $PSScriptRoot 'build_manager.ps1') execute $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId
                 } else {& (Join-Path $PSScriptRoot 'build_entry.ps1') @options}
-                $record.exitCode=$global:LASTEXITCODE
+                if($request.action -ne 'snapshot'){$record.exitCode=$global:LASTEXITCODE}
             } finally {[Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$previousRun,'Process')}
             Complete-RunStage $record $stage $record.exitCode
             $record.inputEnd=Get-BuildInputIdentity $root
@@ -478,9 +498,10 @@ try {
     } catch {
         if(-not $ownsRun){throw}
         $invalidated=$record.PSObject.Properties['resourceAdmission'] -and $record.resourceAdmission.bindingValid -eq $false
-        $record.exitCode=if($invalidated){5}else{2};$record.error=$_.Exception.ToString()
+        $captureCancelled=$request.action -eq 'snapshot' -and (Run-CancellationRequested $request)
+        $record.exitCode=if($captureCancelled){4}elseif($invalidated){5}else{2};$record.error=$_.Exception.ToString()
         if($queue -and -not $queue.completedUtc){Complete-RunStage $record $queue $record.exitCode}
-        $record.status=if($invalidated){'invalidated'}else{'failed'}
+        $record.status=if($captureCancelled){'cancelled'}elseif($invalidated){'invalidated'}else{'failed'}
     } finally {
         # Terminal means that the leased output and automatic task transaction
         # have both finished. Observers may submit their next entry immediately.

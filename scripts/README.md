@@ -118,6 +118,33 @@ PDB 与导入库留在 Release/Debug 根目录，增量链接状态留在原中�
 重建私有运行时，但不会再移走链接器声明的输出。依赖整理前根目录 DLL 的外部工具应改用
 私有目录；发行目录与现有打包接口保持一致。首次采用新路径需重新链接，不能计作热构建样本。
 
+候选快照基础接口：
+
+```bat
+scripts\build.bat run start -Task task-a -Action snapshot -SnapshotInputs generated/config.h
+scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
+scripts\build.bat candidate inspect -Snapshot <snapshotId>
+scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId> -Slot release
+```
+
+快照使用持久 Run，等待当前编辑屏障和输出执行权；捕获时不会关闭应用、重载 Shell、配置或编译。
+它保存仓库内未提交及新增文件、删除记录和存在的 `CMakeUserPresets.json`；忽略的生成输入须通过
+`SnapshotInputs` 显式列出仓库相对文件路径（逗号分隔），不得将构建产物或协调状态作为源码输入。
+网站与商店资产等独立仓库、子模块目录及重解析路径不能隐式并入快照。
+
+捕获期间保持现存文件的只读共享句柄，拒绝写入、删除与替换，并复核输入名称及内容身份。
+内容对象和完整清单保存在 Git 公共目录的 `snowdesktop-candidates/`，发布清单最后写入；半成品
+不是成功结果。清单、对象损坏时保留证据并拒绝使用，不自动覆盖或删除。
+
+`materialize` 为同一配置上下文和 Slot 保留稳定源码、输出目录，只复制变化的受管文件；未变化文件
+时间及输出缓存保持原样。只删除上一个快照管理、且内容仍匹配的旧输入，不清理输出目录。活动 Slot
+由操作系统文件句柄互斥，外部修改或文件冲突会拒绝覆盖。失败的部分准备须检查并选择新 Slot，不把
+未完成目录当作有效候选。调用结束即释放本次准备租约；真正的执行者仍须重新校验并持有租约。
+
+此阶段返回 `snapshotReady=true`、`executionReady=false`。工具、预设和构建环境已绑定；SDK/包的
+传递文件依赖尚未闭合，仍为 `externalDependenciesClosed=false`。没有启用自动结果缓存、候选程序
+执行或编辑/构建重叠，也不迁移现有 batch；这些门禁将在一致性与执行隔离验证后接入。
+
 MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSVC 同时编译的源码数由
 `SNOWDESKTOP_COMPILE_JOBS` 控制。后者默认使用本机逻辑处理器数的一半，最少 1、最多 8，
 避免直接占满开发机。可按内存和其他任务负载，在实际使用的 `CMakePresets.json` preset 的

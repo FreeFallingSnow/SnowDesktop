@@ -8,6 +8,7 @@ cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
 if /i "%~1"=="run" goto persistent
+if /i "%~1"=="candidate" goto candidate
 if /i "%~1"=="task-open" goto collaboration
 if /i "%~1"=="task-stage" goto collaboration
 if /i "%~1"=="task-close" goto collaboration
@@ -67,6 +68,9 @@ if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
 exit /b %ERRORLEVEL%
 :persistent
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_run.ps1" %*
+exit /b %ERRORLEVEL%
+:candidate
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_candidate.ps1" %*
 exit /b %ERRORLEVEL%
 :leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify
