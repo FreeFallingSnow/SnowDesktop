@@ -674,7 +674,8 @@ void DesktopApp::ContinueCollectionPopupSwitch()
     // With effects disabled the finalizer may consume the request synchronously.
     if (popupAnimation_.IsInteractive()) BeginCollectionPopupClose(true);
     if (!pendingCollectionPopupOpen_) return;
-    popupAnimation_.AccelerateCloseForSwitch(static_cast<std::uint64_t>(
+    // Switching keeps the normal close trajectory and its original deadline.
+    popupAnimation_.Advance(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
     if (popupAnimation_.IsHidden())
     {

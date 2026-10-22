@@ -147,12 +147,18 @@
         app.popupAnimation_.Configure(false, 1.0, true);
         app.popupAnimation_.ShowImmediately();
         const POINT target{350, 270};
+        const double switchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
         app.OpenCollectionPopupAt(1, target);
+        const double switchElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - switchStarted;
         check(app.popupWidgetIndex_ == 0 && app.popupAnimation_.IsClosing() &&
             app.popupAnimation_.GetVisual().scale > 0.0f && app.popupAnchorPoint_.x == 50 &&
             app.pendingCollectionPopupOpen_ && app.pendingCollectionPopupOpen_->widgetId == L"switch-B",
             "actual collection switch retains visible outgoing content and anchor while closing");
         const double deadline = app.popupAnimation_.RemainingTimeline().durationMilliseconds;
+        // State ticks are integer milliseconds; the surrounding QPC sample is not.
+        check(app.popupAnimation_.DurationMilliseconds(false) == 110.0 &&
+            deadline + switchElapsed + 1.0 >= 110.0,
+            "actual switching retains the normal 110ms close instead of accelerating the outgoing popup");
         app.OpenCollectionPopupAt(2, target);
         check(app.popupWidgetIndex_ == 0 && app.pendingCollectionPopupOpen_ &&
             app.pendingCollectionPopupOpen_->widgetId == L"switch-folder" &&
@@ -261,6 +267,13 @@
         check(app.AnimateCompositionAnimationOverlay(overlay, 0, 1, POINT{40, 64}, 1, 1,
             static_cast<UINT>(trajectory.durationMilliseconds), 0, &trajectory) && app.FlushPendingCompositionCommit(),
             "DirectComposition accepts the production zero-to-one spring segments");
+        snowdesktop::quick_navigation_animation_rules::State quickMotion;
+        quickMotion.Configure(snowdesktop::quick_navigation_animation_rules::Effect::Scale, 1.0, false, true);
+        quickMotion.Open(1000);
+        const auto quickScale = quickMotion.RemainingScaleTimeline();
+        check(app.AnimateCompositionAnimationOverlay(overlay, quickMotion.HiddenScale(), 1, POINT{40, 64}, 1, 1,
+            static_cast<UINT>(quickScale.durationMilliseconds), 0, &quickScale) && app.FlushPendingCompositionCommit(),
+            "DirectComposition accepts the same responsive quick-panel scale coefficients as native glass");
         app.dcompVisual_->RemoveVisual(overlay.visual.Get());
         // Exercise the real warmup against a test-owned, never-shown HWND.
         // It must initialize storage without publishing popup state or input.

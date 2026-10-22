@@ -1802,6 +1802,25 @@ void CheckStatusBarFullscreenDockSession()
     timeline.Configure(quick_navigation_animation_rules::Effect::None, 1.0); timeline.Open(700);
     Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
         "disabled animations reveal the merged surface immediately without waiting for a frame");
+    quick_navigation_animation_rules::State responsiveBar;
+    responsiveBar.Configure(quick_navigation_animation_rules::Effect::Fade, 1.0, false, true);
+    responsiveBar.Open(1000); responsiveBar.Advance(1016);
+    const auto firstReveal = MergedDockPresentationFrame(responsiveBar);
+    Check(firstReveal.visible && firstReveal.opacity == 1.f && !firstReveal.inputEnabled &&
+        firstReveal.hiddenFraction < .87f,
+        "merged Dock and status bar reveal together from the first frame at full opacity");
+    const double revealVelocity = responsiveBar.Velocity();
+    responsiveBar.Close(1016);
+    Check(MergedDockPresentationFrame(responsiveBar).hiddenFraction == firstReveal.hiddenFraction &&
+        responsiveBar.Velocity() == revealVelocity,
+        "merged bar reversal retains shared position and velocity");
+    responsiveBar.Advance(1126);
+    Check(!MergedDockPresentationFrame(responsiveBar).visible,
+        "merged bar close retires both surfaces at the finite endpoint");
+    responsiveBar.Open(1200); responsiveBar.Advance(1360);
+    Check(MergedDockPresentationFrame(responsiveBar).inputEnabled &&
+        MergedDockPresentationFrame(responsiveBar).hiddenFraction == 0.f,
+        "merged bar restores input only at its exact revealed endpoint");
     const RECT monitorArea{1920, 0, 3840, 1080}, strip{1920, 1016, 3840, 1080};
     auto sliding = opening;
     PositionDockRevealFrame(sliding, DockPosition::Bottom, strip, monitorArea);

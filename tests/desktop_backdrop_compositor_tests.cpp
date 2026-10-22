@@ -4,6 +4,7 @@
 #include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
 #include "layout/popup_motion_curve.h"
+#include "navigation/quick_navigation_animation_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
@@ -829,6 +830,22 @@ int RunDesktopBackdropCompositorTests()
                 1.0f, 1.0f, 160.0f, 240.0f, 110, 0.0f, &reversed),
                 "Windows Composition accepts a velocity-preserving reverse through its turning point");
             springGlass.SetVisualTransform(0.0f, 0.0f, 160.0f, 240.0f);
+            for (const auto effect : {snowdesktop::quick_navigation_animation_rules::Effect::Scale,
+                snowdesktop::quick_navigation_animation_rules::Effect::Fade})
+            {
+                snowdesktop::quick_navigation_animation_rules::State quick;
+                quick.Configure(effect, 1.0, false, true); quick.Open(1000);
+                const auto reveal = quick.RemainingTimeline(), scale = quick.RemainingScaleTimeline();
+                check(springGlass.StartVisualTransformAnimation(quick.HiddenScale(), 1.0f, 0.0f, 1.0f,
+                    160.0f, 240.0f, 160, 0.0f, &scale, &reveal),
+                    "native glass accepts the exact responsive scale and opacity keyframes together");
+                quick.Advance(1060); quick.Close(1060);
+                const auto closeReveal = quick.RemainingTimeline(), closeScale = quick.RemainingScaleTimeline();
+                const auto visual = quick.GetVisual();
+                check(springGlass.StartVisualTransformAnimation(visual.scale, quick.HiddenScale(), visual.opacity, 0.0f,
+                    160.0f, 240.0f, 110, 0.0f, &closeScale, &closeReveal),
+                    "native glass accepts responsive scale and opacity reversal through their turning points");
+            }
             springGlass.CommitVisualChanges();
             check(springGlass.IsAvailable(), "zero-sized glass completion remains available for the next open");
         }

@@ -583,6 +583,61 @@ void TestTabDragWhileScrolling()
         "the drop frame must scroll with the destination slot rather than the floating tab");
 }
 
+void TestResponsiveAnimationRules()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    for (const auto effect : {Effect::Scale, Effect::Fade})
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    {
+        State state;
+        state.Configure(effect, speed, false, true);
+        state.Open(1000);
+        Check(state.UsesResponsiveMotion() && state.GetVisual().visible,
+            "non-Dock responsive reveal owns its surface from the first frame");
+        const auto reveal = state.RemainingTimeline(), scale = state.RemainingScaleTimeline();
+        Check(reveal.durationMilliseconds == std::ceil(160.0 * speed) && reveal.segments.size() <= 64,
+            "responsive opening has a bounded native track and an actual completion deadline");
+        for (unsigned step = 0; step <= 64; ++step)
+        {
+            const double seconds = reveal.durationMilliseconds * step / 64000.0;
+            const auto opacity = snowdesktop::popup_motion_curve::Evaluate(reveal, seconds);
+            const auto geometry = snowdesktop::popup_motion_curve::Evaluate(scale, seconds);
+            const double hidden = effect == Effect::Scale ? kMinimumScale : 1.0;
+            Check(std::abs(geometry.position - (hidden + (1.0 - hidden) * opacity.position)) < .000001 &&
+                opacity.position >= -.00001 && opacity.position <= 1.00001,
+                "content scale, glass scale and opacity share one non-overshooting reveal curve");
+        }
+        state.Advance(1000 + static_cast<std::uint64_t>(reveal.durationMilliseconds));
+        Check(!state.IsAnimating() && state.GetVisual().scale == 1.0f && state.GetVisual().opacity == 1.0f,
+            "responsive opening ends at full size and opacity without a settling tail");
+        state.Close(10000);
+        const auto close = state.RemainingTimeline();
+        Check(close.durationMilliseconds == std::ceil(110.0 * speed),
+            "responsive closing retains the normal close duration");
+        state.Advance(10000 + static_cast<std::uint64_t>(close.durationMilliseconds));
+        Check(state.IsHidden(), "responsive closing reaches zero and retires its surface");
+    }
+    State state;
+    state.Configure(Effect::Scale, 1.0, false, true);
+    state.Open(1000); state.Advance(1016);
+    Check(state.GetVisual().opacity > .13f, "responsive reveal makes visible progress within the first 16ms");
+    state.Advance(1060);
+    const auto before = state.GetVisual();
+    const double velocity = state.Velocity();
+    state.Close(1060);
+    Check(state.GetVisual().scale == before.scale && state.Velocity() == velocity &&
+        state.RemainingTimeline().segments.front().linear == velocity,
+        "rapid reversal preserves position and velocity in the native and UI tracks");
+    state.Advance(1061);
+    Check(state.GetVisual().scale > before.scale, "a reversal decelerates before changing direction");
+    state.Configure(Effect::Scale, 1.0, true, true);
+    Check(!state.UsesResponsiveMotion() && state.DurationMilliseconds(true) == 240.0,
+        "Dock invocation keeps its existing timing even when responsive motion is requested");
+    state.Configure(Effect::None, 1.0, false, true); state.Open(2000);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1.0f,
+        "disabled motion still opens immediately");
+}
+
 void TestAnimationRules()
 {
     using namespace
@@ -700,8 +755,9 @@ void TestResizeAnimation()
     Check(resize.IsAnimating() && resize.Advance(1000, true) == expanded,
         "collapse begins at the currently displayed bounds");
     const auto halfway = resize.Advance(1090, true);
-    Check(halfway.left == 150 && halfway.right == 690 && halfway.bottom == 465,
-        "collapse smoothly interpolates width and height");
+    Check(halfway.left > 150 && halfway.left < collapsed.left &&
+        halfway.right < 690 && halfway.bottom < 465 && halfway.bottom > collapsed.bottom,
+        "responsive collapse covers most width and height change before its soft finish");
     Check(halfway.top == expanded.top && halfway.left + halfway.right == expanded.left + expanded.right,
         "resize preserves the search header anchor and horizontal center");
     Check(resize.Envelope() == expanded,
@@ -717,17 +773,29 @@ void TestResizeAnimation()
         "reverse transition reaches exact final bounds and stops requesting frames");
 
     resize.Start(collapsed, expanded, 2000, true, 2.0);
-    Check(resize.Advance(2180, true) == halfway && resize.IsAnimating(),
+    const auto scaled = resize.Advance(2180, true);
+    Check(scaled.left < 150 && scaled.bottom > 465 && resize.IsAnimating(),
         "resize follows the global duration scale");
     Check(resize.Advance(2360, true) == expanded && !resize.IsAnimating(),
         "scaled expansion completes at the requested size");
 
     resize.Start(expanded, collapsed, 3000, true, 1.0);
     const auto beforeResults = resize.Advance(3045, true);
+    const auto velocity = resize.Velocity();
     const ResizeRect newResults{200, 80, 640, 400};
     resize.Retarget(newResults, 3045);
     Check(resize.Advance(3045, true) == beforeResults,
         "new search results retarget an active resize without a discontinuity");
+    Check(resize.Velocity() == velocity,
+        "new search results preserve the current resize velocity instead of restarting at rest");
+    const auto retained = resize.Envelope();
+    for (std::uint64_t time = 3045; time <= 3225; ++time)
+    {
+        const auto frame = resize.Advance(time, true);
+        Check(frame.left >= retained.left && frame.top >= retained.top &&
+            frame.right <= retained.right && frame.bottom <= retained.bottom,
+            "retargeted resize inertia remains inside its retained native surface");
+    }
     Check(resize.Advance(3225, true) == newResults && !resize.IsAnimating(),
         "resize settles at the updated search result height");
 
@@ -745,8 +813,8 @@ void TestResizeAnimation()
     const ResizeRect centeredExpanded{-420, -400, 220, 200};
     resize.Start(centeredCollapsed, centeredExpanded, 6500, true, 1.0);
     const auto centered = resize.Advance(6590, true);
-    Check(centered.left == -370 && centered.top == -300 &&
-        centered.right == 170 && centered.bottom == 100,
+    Check(centered.left < -370 && centered.left > centeredExpanded.left &&
+        centered.top < -300 && centered.right > 170 && centered.bottom > 100,
         "centered transitions interpolate position as well as size on negative-coordinate monitors");
     Check(resize.Envelope() == centeredExpanded &&
         resize.Advance(6680, true) == centeredExpanded,
@@ -1570,6 +1638,7 @@ int main()
     TestSectionLayout();
     TestTabDragWhileScrolling();
     TestAnimationRules();
+    TestResponsiveAnimationRules();
     TestResizeAnimation();
     TestResizePresentationLifetime();
     TestResizeHostOrigin();

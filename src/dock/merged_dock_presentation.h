@@ -37,7 +37,7 @@ inline StatusBarDockPresentation MergedDockPresentationFrame(
     frame.visible = visual.visible;
     frame.inputEnabled = animation.IsInteractive() && !animation.IsAnimating();
     frame.opacity = visual.visible ? 1.f : 0.f;
-    frame.hiddenFraction = 1.f - quick_navigation_animation_rules::EaseInOutSmooth(visual.progress);
+    frame.hiddenFraction = 1.f - visual.opacity;
     return frame;
 }
 

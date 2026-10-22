@@ -1380,7 +1380,8 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     float anchorX, float anchorY,
     std::uint32_t durationMilliseconds,
     float normalizedStartSlope,
-    const snowdesktop::popup_motion_curve::Timeline* springTimeline)
+    const snowdesktop::popup_motion_curve::Timeline* springTimeline,
+    const snowdesktop::popup_motion_curve::Timeline* opacityTimeline)
 {
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
@@ -1441,8 +1442,21 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
                 durationMilliseconds) * 10'000LL });
         opacityAnimation.InsertKeyFrame(
             0.0f, clampedFromOpacity);
-        opacityAnimation.InsertKeyFrame(
-            1.0f, clampedToOpacity, easing);
+        if (opacityTimeline)
+        {
+            if (opacityTimeline->segments.empty()) return false;
+            for (const auto& segment : opacityTimeline->segments)
+            {
+                const auto segmentEasing = impl_->compositor.CreateCubicBezierEasingFunction(
+                    wfn::float2{1.0f / 3.0f, static_cast<float>(segment.StartControl())},
+                    wfn::float2{2.0f / 3.0f, static_cast<float>(segment.EndControl())});
+                const float time = std::clamp(static_cast<float>((segment.startSeconds + segment.durationSeconds) *
+                    1000.0 / opacityTimeline->durationMilliseconds), 0.0f, 1.0f);
+                opacityAnimation.InsertKeyFrame(time,
+                    static_cast<float>(segment.EvaluateLocal(segment.durationSeconds).position), segmentEasing);
+            }
+        }
+        else opacityAnimation.InsertKeyFrame(1.0f, clampedToOpacity, easing);
 
         impl_->root.CenterPoint(wfn::float3{
             anchorX, anchorY, 0.0f });

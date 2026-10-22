@@ -30,7 +30,7 @@ void DesktopApp::ConfigureQuickNavigationAnimation()
     if (rules::IsDeformationEffect(effect) && quickNavigationDeformationFailed_)
         effect = rules::Effect::Scale;
     quickNavigationAnimation_.Configure(effect, motion::RuntimeDurationScale(),
-        dockSource && motion::RuntimeWindowEffect() != 0);
+        dockSource && motion::RuntimeWindowEffect() != 0, !dockSource);
 }
 
 // Quick-navigation hotkey, window, search edit and positioning lifecycle.

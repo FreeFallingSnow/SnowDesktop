@@ -120,8 +120,8 @@ public:
     [[nodiscard]] double DurationMilliseconds(bool opening) const
     {
         if (spring_)
-            return std::ceil((opening ? 160.0 : closingSpeed_ > 1.0 ? 75.0 : 110.0) * durationScale_);
-        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_ / (opening ? 1.0 : closingSpeed_);
+            return std::ceil((opening ? 160.0 : 110.0) * durationScale_);
+        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
     }
     [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : spring_ ? 0.0f : kMinimumScale; }
     [[nodiscard]] float EndpointOpacity(bool opening) const { return fade_ && !opening ? 0.0f : 1.0f; }
@@ -135,7 +135,6 @@ public:
     {
         Advance(now);
         if (spring_) { RetargetSpring(true, now); return; }
-        closingSpeed_ = 1.0;
         targetVisible_ = true;
         animating_ = progress_ < 1.0f;
         lastTick_ = now;
@@ -148,16 +147,6 @@ public:
         targetVisible_ = false;
         animating_ = progress_ > 0.0f;
         lastTick_ = now;
-    }
-
-    void AccelerateCloseForSwitch(std::uint64_t now)
-    {
-        Advance(now);
-        if (!IsClosing() || closingSpeed_ > 1.0) return;
-        const double remaining = std::max(0.0, springDuration_ - springElapsed_);
-        closingSpeed_ = 110.0 / 75.0;
-        lastTick_ = now;
-        if (spring_) StartSpringSegment(false, remaining);
     }
 
     bool Advance(std::uint64_t now)
@@ -211,7 +200,6 @@ public:
         motion_ = {};
         springElapsed_ = springDuration_ = 0.0;
         springTimeline_ = {};
-        closingSpeed_ = 1.0;
     }
 
     void ShowImmediately()
@@ -223,7 +211,6 @@ public:
         motion_ = {1.0, 0.0};
         springElapsed_ = springDuration_ = 0.0;
         springTimeline_ = {};
-        closingSpeed_ = 1.0;
     }
 
     [[nodiscard]] Visual GetVisual() const
@@ -257,15 +244,12 @@ public:
     }
 
 private:
-    void StartSpringSegment(bool opening, double maximumMilliseconds = 0.0)
+    void StartSpringSegment(bool opening)
     {
         springElapsed_ = 0.0;
         springDuration_ = popup_motion_curve::AtRest(motion_, opening ? 1.0 : 0.0)
             ? 0.0 : DurationMilliseconds(opening);
-        if (maximumMilliseconds > 0.0)
-            springDuration_ = std::min(springDuration_, maximumMilliseconds);
         // Reach 99% in the first 75%, then finish with a short C1 tail.
-        // A late switch may shorten the track, but cannot extend its deadline.
         const double frequency = springDuration_ > 0.0
             ? 6.638352067994 / (springDuration_ * 0.00075) : 0.0;
         springTimeline_ = popup_motion_curve::Build(motion_, opening ? 1.0 : 0.0,
@@ -281,7 +265,6 @@ private:
     {
         if (targetVisible_ == opening && animating_) return;
         targetVisible_ = opening;
-        closingSpeed_ = 1.0;
         StartSpringSegment(opening);
         lastTick_ = now;
     }
@@ -290,7 +273,6 @@ private:
     popup_motion_curve::Sample motion_;
     double springElapsed_ = 0.0, springDuration_ = 0.0;
     popup_motion_curve::Timeline springTimeline_;
-    double closingSpeed_ = 1.0;
     double durationScale_ = 1.0;
     float progress_ = 0.0f;
     bool targetVisible_ = false;

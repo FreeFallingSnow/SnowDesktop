@@ -468,24 +468,29 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ? 1.0f
         : quickNavigationAnimation_.HiddenScale();
     const float targetOpacity = opening ? 1.0f : 0.0f;
+    const bool responsive = quickNavigationAnimation_.UsesResponsiveMotion();
+    const auto revealTimeline = responsive ? quickNavigationAnimation_.RemainingTimeline()
+        : snowdesktop::popup_motion_curve::Timeline{};
+    const auto scaleTimeline = responsive ? quickNavigationAnimation_.RemainingScaleTimeline()
+        : snowdesktop::popup_motion_curve::Timeline{};
     const float normalizedStartSlope =
         snowdesktop::quick_navigation_animation_rules::
             SegmentNormalizedStartSlope(
                 visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
-    const UINT duration = std::max<UINT>(
+    const UINT duration = responsive ? std::max<UINT>(1, static_cast<UINT>(std::ceil(revealTimeline.durationMilliseconds))) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
             remaining * static_cast<float>(quickNavigationAnimation_.DurationMilliseconds(opening)))));
 
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
-    HRESULT hr = CreateSmoothStepAnimation(
+    HRESULT hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), scaleTimeline, &scaleAnimation) : CreateSmoothStepAnimation(
         quickNavDcompDevice_.Get(), visual.scale, targetScale,
         duration, &scaleAnimation, normalizedStartSlope);
     if (SUCCEEDED(hr))
     {
-        hr = CreateSmoothStepAnimation(
+        hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), revealTimeline, &opacityAnimation) : CreateSmoothStepAnimation(
             quickNavDcompDevice_.Get(), visual.opacity, targetOpacity,
             duration, &opacityAnimation, normalizedStartSlope);
     }
@@ -516,7 +521,8 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
             static_cast<float>(quickNavigationAnimationAnchorPoint_.x -
                 quickNavigationHostRect_.left),
             static_cast<float>(quickNavigationAnimationAnchorPoint_.y -
-                quickNavigationHostRect_.top), duration, normalizedStartSlope))
+                quickNavigationHostRect_.top), duration, normalizedStartSlope,
+            responsive ? &scaleTimeline : nullptr, responsive ? &revealTimeline : nullptr))
     {
         ApplyQuickNavigationAnimationFrame();
         return false;

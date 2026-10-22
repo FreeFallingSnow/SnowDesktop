@@ -117,28 +117,6 @@ int main()
         quick.Advance(2110);
         Check(quick.IsHidden() && !quick.IsAnimating() && quick.GetVisual().scale == 0.0f,
             "closing actually completes within 110ms and releases input");
-        quick.ShowImmediately();
-        quick.Close(3000);
-        quick.Advance(3020);
-        const auto beforeSwitch = quick.GetVisual();
-        const double beforeVelocity = quick.Velocity();
-        quick.AccelerateCloseForSwitch(3020);
-        Check(quick.GetVisual().scale == beforeSwitch.scale && quick.Velocity() == beforeVelocity &&
-            quick.RemainingTimeline().durationMilliseconds <= 75,
-            "switching accelerates outgoing motion without jumping position or velocity");
-        quick.AccelerateCloseForSwitch(3030);
-        Check(quick.RemainingTimeline().durationMilliseconds <= 65,
-            "a newer switch target cannot restart the outgoing deadline");
-        quick.Advance(3095);
-        Check(quick.IsHidden(), "another popup can start within 75ms of the switch request");
-        quick.ShowImmediately();
-        quick.Close(4000);
-        quick.Advance(4100);
-        quick.AccelerateCloseForSwitch(4100);
-        Check(quick.RemainingTimeline().durationMilliseconds <= 10,
-            "a late switch cannot extend the outgoing popup's remaining deadline");
-        quick.Advance(4110);
-        Check(quick.IsHidden(), "late switching still completes by the original close deadline");
     }
     {
         State spring;

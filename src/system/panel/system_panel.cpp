@@ -122,7 +122,7 @@ struct SystemPanel::Impl
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message.c_str(),DiagnosticLogLevel::Warning);
     }
     float SlideOffset()const
-    {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress))*height:0;}
+    {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-slide.GetVisual().opacity)*height:0;}
     bool ContainsClientPoint(POINT point)const
     {
         if(!current)return false;
@@ -397,7 +397,7 @@ struct SystemPanel::Impl
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
         if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();Pose();}else FinishClose();return;}
-        slide.Configure(quick_navigation_animation_rules::Effect::Fade,animation::RuntimeDurationScale());const auto now=static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
+        slide.Configure(quick_navigation_animation_rules::Effect::Fade,animation::RuntimeDurationScale(),false,true);const auto now=static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
         if(opening){slide.ResetHidden();slide.Open(now);}else{closing=true;input.Cancel();Tip(nullptr);slide.Close(now);}Pose();
         animationToken=scheduler->StartAnimation(UiAnimationSurface::Popup,[this](double time){slide.Advance(static_cast<std::uint64_t>(time));Pose();if(slide.IsAnimating())return true;animationToken=0;if(slide.IsHidden())FinishClose();else if(accessibility)accessibility->RefreshEvents();return false;});
     }

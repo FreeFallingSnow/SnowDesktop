@@ -87,7 +87,8 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f,
-        const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr);
+        const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
+        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。

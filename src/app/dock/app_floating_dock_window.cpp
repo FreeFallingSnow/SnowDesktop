@@ -519,7 +519,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
         const bool wasAnimating = host.mergedAnimation.IsAnimating();
         host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
-            ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()));
+            ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()), false, true);
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
         if (changed || (wasAnimating && !host.mergedAnimation.IsAnimating()))
         {
