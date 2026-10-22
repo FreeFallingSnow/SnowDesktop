@@ -50,7 +50,7 @@ function Get-CandidateBatchExecutionRequest([string]$Root,$Request) {
     Set-Field $execution 'candidateSlot' 'batches'
     return $execution
 }
-function Invoke-CandidateBatchPipeline([string]$Root,$Request,$Context) {
+function Invoke-CandidateBatchPipeline([string]$Root,$Request,$Context,$Record) {
     $binding=Read-CandidateBatchBinding $Root $Request
     $planPath=Join-Path $Root ('.build/collaboration/'+$Request.batch+'.plan.json')
     if((Get-FileDigest $planPath) -ne $Request.planHash.ToLowerInvariant()){throw 'Frozen candidate plan changed.'}
@@ -66,7 +66,34 @@ function Invoke-CandidateBatchPipeline([string]$Root,$Request,$Context) {
         [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE','1','Process')
         $code=0
         if($plan.buildRequired){$code=Invoke-EntryPreflight $Context.source $false $false 'Release' $log}
-        if($code -eq 0){$code=[SnowDesktop.Build.Job]::RunBatch($Context.source,$log,$Request.batch,[bool]$plan.buildRequired,$false,$false)}
+        if($code -eq 0 -and $plan.buildRequired){
+            $productLog=$log+'.product.log'
+            $code=[SnowDesktop.Build.Job]::RunLeasedCommand($Context.source,$productLog,'call scripts\build.bat')
+            if($Record){
+                Set-Field $Record 'productBuild' ([pscustomobject]@{exitCode=$code;completedUtc=[DateTime]::UtcNow.ToString('o');logPath=$productLog})
+                Set-Field $Record.productBuild 'resources' (Read-EntryJson (Join-Path $Root ('.build/collaboration/runs/'+$Request.id+'.resources.json')))
+                Write-RunRecord $Record
+            }
+            if($code -eq 0 -and -not [SnowDesktop.Build.Job]::RunWasCancelled){
+                if((Get-BuildInputIdentity $Context.source).digest -ne $Record.inputStart.digest){throw 'Candidate source changed before build activation.'}
+                . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
+                . (Join-Path $PSScriptRoot 'build_activate.ps1')
+                $published=Publish-CandidateRuntime $Context 'release' {
+                    if(Run-CancellationRequested $Request){throw [OperationCanceledException]::new('Product publication cancelled.')}
+                }
+                Set-Field $Record 'artifact' $published
+                # Persist a usable build before activation or any later test.
+                Write-RunRecord $Record
+                $activation=Invoke-CandidateRuntimeActivation $Root $Request.id {
+                    if(Run-CancellationRequested $Request){throw [OperationCanceledException]::new('Runtime activation cancelled.')}
+                }
+                Set-Field $Record 'activation' $activation
+                Write-RunRecord $Record
+            }
+        }
+        if($code -eq 0 -and -not [SnowDesktop.Build.Job]::RunWasCancelled){
+            $code=[SnowDesktop.Build.Job]::RunBatch($Context.source,$log,$Request.batch,$false,$false,$false)
+        }
         return [int]$code
     }finally{[Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE',$previousNodeReuse,'Process')}
 }
@@ -83,7 +110,8 @@ function Save-CandidateBatchPending([string]$Root,$Request,$Record,$Context) {
         participants=@($batch.participants);runId=$Request.id;logPath=$batch.logPath;
         commands=@('Captured scripts/build.bat and scripts/build_batch_tests.ps1 in the private candidate output');
         inputStart=$Record.inputStart;inputEnd=$Record.inputEnd;inputCheck=$inputCheck;pipelineExitCode=$Record.exitCode;
-        originalInputStart=$batch.inputStart;candidateBinding=(Get-Field $batch 'candidateBinding');artifact=(Get-Field $Record 'artifact')}
+        originalInputStart=$batch.inputStart;candidateBinding=(Get-Field $batch 'candidateBinding');artifact=(Get-Field $Record 'artifact');
+        productBuild=(Get-Field $Record 'productBuild');activation=(Get-Field $Record 'activation')}
     if($Context){
         Set-Field $result 'candidateExecution' $Context
         $coveragePath=Join-Path $Context.output ('collaboration/'+$Request.batch+'.coverage.json')

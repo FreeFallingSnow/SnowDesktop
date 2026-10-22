@@ -130,6 +130,9 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateTests build_candidate
         build_tools/build_candidate_tests.cpp "tools;integration" 180)
     set_tests_properties(build_candidate PROPERTIES PROCESSORS 4)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildActivationTests build_activation
+        build_tools/build_activation_tests.cpp "tools;integration" 120)
+    target_link_libraries(SnowDesktopBuildActivationTests PRIVATE user32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)

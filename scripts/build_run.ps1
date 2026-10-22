@@ -584,7 +584,7 @@ try {
                         Complete-RunStage $record $captureStage 0
                     }catch{Complete-RunStage $record $captureStage $(if(Run-CancellationRequested $request){4}else{2});throw}
                 }elseif($candidateBatch){
-                    $record.exitCode=Invoke-CandidateBatchPipeline $root $request $candidateExecution.context
+                    $record.exitCode=Invoke-CandidateBatchPipeline $root $request $candidateExecution.context $record
                     $global:LASTEXITCODE=$record.exitCode
                 }elseif($request.action -eq 'batch'){
                     & (Join-Path $PSScriptRoot 'build_manager.ps1') execute $request.task -Batch $request.batch -Revision $request.editRevision -ExecutionRun $RunId
@@ -596,7 +596,7 @@ try {
             $cancelled=('SnowDesktop.Build.Job' -as [type]) -and [SnowDesktop.Build.Job]::RunWasCancelled
             $runtimeAction=if($candidateBatch){if((Read-EntryJson (Join-Path $root ('.build/collaboration/'+$request.batch+'.plan.json'))).buildRequired){'release'}else{'tests'}}else{Get-Field $request 'candidateAction' ''}
             if($candidateBatch -and -not $cancelled -and $record.exitCode -eq 0){Complete-CandidateBatchCoverage $candidateExecution.context}
-            if($candidateExecution -and $runtimeAction -in 'release','debug','tests' -and
+            if($candidateExecution -and -not (Get-Field $record 'artifact') -and $runtimeAction -in 'release','debug','tests' -and
                 -not $cancelled -and $record.exitCode -eq 0 -and $record.inputStart.digest -eq $record.inputEnd.digest){
                 . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
                 $artifactStage=Start-RunStage $record 'artifact-publish';$artifactCode=2
