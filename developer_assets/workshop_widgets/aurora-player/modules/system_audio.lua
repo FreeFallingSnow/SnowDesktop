@@ -1,3 +1,4 @@
+local panel=module.require("modules/panel_ui.lua")
 local M = {}
 local topics = {
     {"audio.output.default", "data.audio.output.default", "audio.output.read"},
@@ -43,6 +44,12 @@ function M.new(context, api)
             now=function() return time.now() end,
             invalidate=function() widget.invalidate() end,
             openSettings=function() widget.openSettings() end,
+            openPopover=function(options) return widget.openPopover(options) end,
+            openPanel=function(options) widget.openPanel(options) end,
+            closePopover=function() widget.closePopover() end,
+            closePanel=function() widget.closePanel() end,
+            translate=function(key) return l10n.tr(key) end,
+            rowHeight=function() return ui.metrics().layoutRowHeight end,
         }}
     if model.preview then M.sync(model,true) end
     return model
@@ -82,8 +89,9 @@ function M.state(model)
         end
     end
     local busy=next(model.pending)~=nil
+    if #devices>0 then model.lastDeviceCount=#devices end
     return {
-        id=id,volume=scalar,muted=muted,devices=devices,
+        id=id,name=endpoint and endpoint.name,volume=scalar,muted=muted,devices=devices,
         selected=model.expectedEndpoint or id or "",busy=busy,
         volumeSupported=api.hasFeature("data.audio.output.default") and api.hasFeature("data.audio.output.volume"),
         devicesSupported=api.hasFeature("data.audio.devices"),
@@ -116,13 +124,34 @@ local function send(model, name, args, endpoint)
     return true
 end
 
-function M.event(model, event)
-    if event.kind=="panel" then
+function M.open(model,anchor,localActive)
+    if model.preview then return false end
+    M.sync(model,true)
+    local row=model.api.rowHeight()
+    local current=M.state(model)
+    local count=math.max(1,math.min(4,model.lastDeviceCount or 2))
+    local height=row*(7.68+count*1.85+(localActive and 3.9 or 0))+28
+    if current.needsPermission then height=height+row*1.57 end
+    local options={anchorKey=anchor,placement="bottomEnd",width=math.floor(row*12+28+0.5),height=math.floor(height+0.5),
+        dismissOnOutside=true,dismissOnEscape=true}
+    model.surface="popover"
+    if not (model.api.hasFeature("widget.popover") and model.api.hasFeature("view.surface.popover") and
+        model.api.openPopover(options)) then
+        model.surface="panel"
+        model.api.openPanel({title=model.api.translate("shared.audio"),width=options.width+8,height=options.height+46})
+    end
+    M.sync(model,true)
+    return true
+end
+
+function M.event(model, event,localModel)
+    if event.kind=="panel" or event.kind=="popover" then
+        if event.kind~=model.surface then return false end
         if event.action=="opened" then M.sync(model,true)
-        elseif event.action=="closed" then M.sync(model,false);model.draft=nil;model.deviceOpen=false end
+        elseif event.action=="closed" then M.sync(model,false);model.draft=nil;model.surface=nil end
         return false
     elseif event.kind=="settings.changed" then
-        M.sync(model,model.opened);model.deviceOpen=false;return false
+        M.sync(model,model.opened);return false
     elseif event.kind=="task.complete" then
         local pending=model.pending[event.taskId]
         if not pending then return false end
@@ -138,7 +167,12 @@ function M.event(model, event)
     if event.kind~="action" or type(event.id)~="string" or event.id:sub(1,13)~="system.audio." then return false end
     if model.preview then return true end
     local state=M.state(model)
-    if event.id=="system.audio.permissions" then model.api.openSettings()
+    if event.id=="system.audio.open" or event.id=="system.audio.menu" then
+        return M.open(model,event.id=="system.audio.open" and "system.audio.open" or "aurora.surface",
+            localModel and localModel.source=="local")
+    elseif event.id=="system.audio.close" then
+        if model.surface=="popover" then model.api.closePopover() else model.api.closePanel() end
+    elseif event.id=="system.audio.permissions" then model.api.openSettings()
     elseif event.id=="system.audio.volume" and state.canVolume and finite(event.controlValue) then
         local scalar=clamp(event.controlValue)
         if event.source=="pointer" then model.draft={volume=scalar,endpoint=state.id}
@@ -150,12 +184,12 @@ function M.event(model, event)
         end
     elseif event.id=="system.audio.mute" and state.canVolume and type(event.checked)=="boolean" then
         send(model,"audio.output.setMute",{muted=event.checked},state.id)
-    elseif event.id=="system.audio.device.open" then
-        model.deviceOpen=state.canChoose and event.expanded==true
-    elseif event.id=="system.audio.device" and state.canChoose and type(event.selection)=="string" then
-        model.deviceOpen=false
+    elseif event.id=="system.audio.mute.toggle" and state.canVolume then
+        send(model,"audio.output.setMute",{muted=not state.muted},state.id)
+    elseif event.id=="system.audio.device" and state.canChoose then
+        local selection=event.selection or event.value
         for _,device in ipairs(state.devices) do
-            if device.id==event.selection and device.id~=state.selected then
+            if device.id==selection and device.id~=state.selected then
                 send(model,"audio.output.selectDevice",{endpointId=device.id},device.id);break
             end
         end
@@ -164,53 +198,68 @@ function M.event(model, event)
     return true
 end
 
-function M.view(model)
+function M.view(model,localModel)
     local state=M.state(model)
-    if not state.volumeSupported and not state.devicesSupported then return nil end
     local row=ui.metrics().layoutRowHeight
-    local function label(key,text)
-        return view.text({key=key,text=text,width="fill",height=row*0.8,fontSize=row*0.43,
-            style={foreground="textSecondary"},textWrap="noWrap"})
-    end
-    local children={}
+    local c=panel.theme()
+    local children={view.row({key="system.audio.header",width="fill",height=row*1.15,
+        alignItems="center",children={
+            panel.text("system.audio.title",l10n.tr("shared.audio"),row,{fontSize=row*0.68,fontWeight=700,height=row}),
+            panel.iconButton("system.audio.close",0xF00D,l10n.tr("shared.close"),row*0.85,"system.audio.close")}})}
     if state.volumeSupported then
         local scalar=state.volume
         if model.draft and model.draft.endpoint==state.id then scalar=model.draft.volume end
-        children[#children+1]=label("system.audio.volume.label",l10n.tr("shared.system_volume")..
-            (scalar~=nil and "  "..math.floor(scalar*100+0.5).."%" or ""))
-        children[#children+1]=view.slider({key="system.audio.volume",width="fill",height=row,min=0,max=1,step=0.01,
-            value=scalar or 0,enabled=state.canVolume,style={foreground="textPrimary"},
-            events={change={id="system.audio.volume"},pointerUp={id="system.audio.volume.commit"}},
-            accessibility={label=l10n.tr("shared.system_volume")}})
-        if model.api.hasFeature("view.selectionControls") then
-            children[#children+1]=view.checkbox({key="system.audio.mute",width="fill",height=row,
-                label=l10n.tr("shared.mute"),checked=state.muted,enabled=state.canVolume,
-                events={change={id="system.audio.mute"}},style={foreground="textPrimary"}})
-        end
+        children[#children+1]=panel.volume("system.audio.volume",l10n.tr("shared.system_volume"),scalar,row,
+            "system.audio.volume","system.audio.volume.commit",
+            panel.iconButton("system.audio.mute",state.muted and 0xF6A9 or 0xF028,l10n.tr("shared.mute"),row*1.1,
+                "system.audio.mute.toggle",state.canVolume,state.muted),state.canVolume)
+    end
+    if localModel and localModel.source=="local" then
+        children[#children+1]=panel.volume("music.volume",l10n.tr("music.volume"),localModel.player.volume,row,
+            "local.volume","local.volume.commit",nil,widget.hasPermission("audio.playback"))
     end
     if state.devicesSupported then
-        children[#children+1]=label("system.audio.device.label",l10n.tr("shared.output_device"))
-        local options={}
+        children[#children+1]=view.column({key="system.audio.output.heading",width="fill",height="auto",gap=row*0.08,children={
+            panel.text("system.audio.output.label",l10n.tr("shared.output_devices"),row,{fontWeight=600,fontSize=row*0.49}),
+            panel.text("system.audio.output.scope",l10n.tr("shared.output_scope"),row,{fontSize=row*0.36,
+                height=row*0.55,style={foreground=c.secondary}})}})
+        local devices={}
         for index,device in ipairs(state.devices) do
-            options[#options+1]={key="output."..index,value=device.id,label=device.name~="" and device.name or device.id}
+            local key="system.audio.device."..index
+            local chosen=device.id==state.selected
+            local label=device.name~="" and device.name or device.id
+            if model.api.hasFeature("view.collection.basic") then
+                devices[#devices+1]=view.listItem({key=key,width="fill",height=row*1.65,enabled=state.canChoose,
+                    padding={horizontal=row*0.4},style={background=chosen and c.selected or c.surface,
+                        cornerRadius=row*0.38,borderWidth=0},events={click={id="system.audio.device",value=device.id}},
+                    accessibility={role="button",label=label..(chosen and " · "..l10n.tr("shared.current") or "")},children={
+                        view.row({key=key..".row",width="fill",height="fill",gap=row*0.28,alignItems="center",children={
+                            panel.icon(key..".icon",0xF028,row,chosen and c.accent or c.secondary),
+                            panel.text(key..".name",label,row,{fontSize=row*0.46}),
+                            chosen and panel.icon(key..".check",0xF00C,row*0.7,c.accent) or
+                                view.spacer({key=key..".space",width=row*0.7,height=row*0.7}),
+                        }})}})
+            else
+                devices[#devices+1]=panel.choice(key,label,row,"system.audio.device",chosen,state.canChoose,device.id)
+            end
         end
-        local selected=""
-        for _,option in ipairs(options) do if option.value==state.selected then selected=state.selected;break end end
-        if #options==0 then
-            options={{key="none",value="none",label=l10n.tr("shared.unavailable"),enabled=false}};selected="none"
+        if #devices==0 then devices[1]=panel.text("system.audio.devices.empty",l10n.tr("shared.unavailable"),row,
+            {height=row*1.65,style={foreground=c.secondary}}) end
+        if #state.devices>0 and model.api.hasFeature("view.collection.basic") then
+            children[#children+1]=view.list({key="system.audio.devices",width="fill",height=row*(#devices*1.85-0.2),
+                gap=row*0.2,children=devices})
+        else
+            children[#children+1]=view.column({key="system.audio.devices.fallback",width="fill",height="auto",gap=row*0.2,children=devices})
         end
-        children[#children+1]=view.select({key="system.audio.device",width="fill",height=row,
-            selectedValue=selected,options=options,enabled=state.canChoose,expanded=model.deviceOpen==true and state.canChoose,
-            events={click={id="system.audio.device.open"},change={id="system.audio.device"}},style={foreground="textPrimary"},
-            accessibility={label=l10n.tr("shared.output_device")}})
     end
     if state.needsPermission then
-        children[#children+1]=view.button({key="system.audio.permissions",width="fill",height=row,
-            label=l10n.tr("shared.permissions"),events={click={id="system.audio.permissions"}}})
+        children[#children+1]=panel.choice("system.audio.permissions",l10n.tr("shared.permissions"),row,
+            "system.audio.permissions",false)
     elseif model.error then
-        children[#children+1]=label("system.audio.error",l10n.tr("shared.error"))
+        children[#children+1]=panel.text("system.audio.error",l10n.tr("shared.error"),row,{style={foreground=c.secondary}})
     end
-    return view.column({key="system.audio.settings",width="fill",height="auto",gap=row*0.12,children=children})
+    return view.scroll({key="system.audio.scroll",width="fill",height="fill",children={
+        view.column({key="system.audio.settings",width="fill",height="auto",padding=row*0.3,gap=row*0.45,children=children})}})
 end
 
 function M.dispose(model)

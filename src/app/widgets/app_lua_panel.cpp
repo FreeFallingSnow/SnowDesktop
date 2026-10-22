@@ -31,6 +31,15 @@ void DesktopApp::OpenLuaWidgetPanel(
 {
     if (request.widgetId.empty())
         return;
+    // A repeated desktop opener is idempotent. Titles distinguish a widget's
+    // ordinary panels; stable anchor keys distinguish its titleless popovers.
+    // Leave the active scene, focus and animation generation untouched.
+    if (request.desktopGesture &&
+        luaWidgetPanelRequest_.widgetId == request.widgetId &&
+        luaWidgetPanelRequest_.surface == request.surface &&
+        luaWidgetPanelRequest_.title == request.title &&
+        luaWidgetPanelRequest_.anchorKey == request.anchorKey)
+        return;
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
     {
@@ -58,6 +67,8 @@ void DesktopApp::OpenLuaWidgetPanel(
                 request.surface &&
             luaWidgetPanelAnimation_.IsClosing())
         {
+            if (widgetEngine_)
+                widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
             AdvanceFloatingPopupContentGeneration();
             luaWidgetPanelRequest_ = request;
             if ((snowdesktop::animation::RuntimePopupEffect() != 0))
@@ -87,6 +98,8 @@ void DesktopApp::OpenLuaWidgetPanel(
         FinalizeCloseLuaWidgetPanel();
         return;
     }
+    if (widgetEngine_)
+        widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
     AdvanceFloatingPopupContentGeneration();
     luaWidgetPanelRequest_ = request;
     luaWidgetPanelAnchorPoint_ =

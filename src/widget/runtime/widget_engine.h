@@ -316,6 +316,7 @@ struct LuaWidgetPanelRequest
     std::wstring title;
     std::string surface = "panel";
     std::string placement = "auto";
+    std::string anchorKey;
     RECT anchorRect{};
     bool hasAnchor = false;
     bool showHeader = true;
@@ -324,6 +325,7 @@ struct LuaWidgetPanelRequest
     bool dismissOnOutside = true;
     bool dismissOnEscape = true;
     bool modal = false;
+    bool desktopGesture = false;
 };
 
 enum class LuaWidgetFilePickerKind
@@ -1580,6 +1582,7 @@ public:
         std::string placement, int width, int height,
         bool dismissOnOutside, bool dismissOnEscape);
     void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
+    void PrepareWidgetPanelFocus(const std::wstring& widgetId);
 
     /**
      * @brief 发送系统通知

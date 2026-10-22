@@ -14,6 +14,10 @@ struct RequestObserverScope
 inline void Run()
 {
     Profile profile;
+    {
+        auto& app = profile.Model(false, profile.root / L"lua-popup-reuse");
+        Access::CheckLuaPopupReuse(app);
+    }
     std::size_t scenes = 0;
     for (const bool multiple : {false, true})
     for (const int sequence : {0, 1, 2, 3, 4})

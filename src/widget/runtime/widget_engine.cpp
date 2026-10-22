@@ -31390,6 +31390,16 @@ std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntr
         });
 }
 
+void WidgetEngine::PrepareWidgetPanelFocus(const std::wstring& widgetId)
+{
+    if (const int index = FindWidget(widgetId); index >= 0)
+    {
+        widgets_[index].panelInitialKeyboardFocusPending = true;
+        widgets_[index].panelViewKeyboardFocusKey.clear();
+        widgets_[index].panelViewFocusCueVisible = false;
+    }
+}
+
 void WidgetEngine::RuntimeOpenWidgetPanel(
     const std::wstring& widgetId, std::wstring title,
     int width, int height)
@@ -31398,16 +31408,12 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
         return;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
+    request.desktopGesture = trustedGestureState_.Active() &&
+        CurrentWidgetSurface(d2dState_) == "desktop";
     request.title = std::move(title);
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
-    if (const int index = FindWidget(widgetId); index >= 0)
-    {
-        widgets_[index].panelInitialKeyboardFocusPending = true;
-        widgets_[index].panelViewKeyboardFocusKey.clear();
-        widgets_[index].panelViewFocusCueVisible = false;
-    }
     openWidgetPanelCallback_(request);
 }
 
@@ -31421,6 +31427,8 @@ void WidgetEngine::RuntimeOpenWidgetDialog(
         return;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
+    request.desktopGesture = trustedGestureState_.Active() &&
+        CurrentWidgetSurface(d2dState_) == "desktop";
     request.title = std::move(title);
     request.surface = "dialog";
     request.width = std::clamp(width, 320, 900);
@@ -31428,12 +31436,6 @@ void WidgetEngine::RuntimeOpenWidgetDialog(
     request.dismissOnOutside = dismissOnOutside;
     request.dismissOnEscape = dismissOnEscape;
     request.modal = true;
-    if (const int index = FindWidget(widgetId); index >= 0)
-    {
-        widgets_[index].panelInitialKeyboardFocusPending = true;
-        widgets_[index].panelViewKeyboardFocusKey.clear();
-        widgets_[index].panelViewFocusCueVisible = false;
-    }
     openWidgetPanelCallback_(request);
 }
 
@@ -31489,8 +31491,11 @@ bool WidgetEngine::RuntimeOpenWidgetPopover(
     const RECT ownerBounds = widgets_[index].lastBounds;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
+    request.desktopGesture = trustedGestureState_.Active() &&
+        CurrentWidgetSurface(d2dState_) == "desktop";
     request.title = std::move(title);
     request.surface = "popover";
+    request.anchorKey = anchorKey;
     request.placement = std::move(placement);
     request.anchorRect = {
         ownerBounds.left + static_cast<LONG>(std::floor(left)),
@@ -31504,9 +31509,6 @@ bool WidgetEngine::RuntimeOpenWidgetPopover(
     request.height = std::clamp(height, 120, 720);
     request.dismissOnOutside = dismissOnOutside;
     request.dismissOnEscape = dismissOnEscape;
-    widgets_[index].panelInitialKeyboardFocusPending = true;
-    widgets_[index].panelViewKeyboardFocusKey.clear();
-    widgets_[index].panelViewFocusCueVisible = false;
     openWidgetPanelCallback_(request);
     return true;
 }

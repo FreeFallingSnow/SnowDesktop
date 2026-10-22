@@ -17,6 +17,12 @@ local function fixture()
         now=function() return f.now end,
         invalidate=function() end,
         openSettings=function() f.opened=f.opened+1 end,
+        openPopover=function(options) f.popover=options;return f.allowPopover~=false end,
+        openPanel=function(options) f.panel=options end,
+        closePopover=function() f.closed="popover" end,
+        closePanel=function() f.closed="panel" end,
+        translate=function(key) return key end,
+        rowHeight=function() return 28 end,
     }
     f.model=shared.new({preview=false},api)
     function f:set(topic,data) self.snapshots[topic]={available=true,value=data} end
@@ -29,7 +35,10 @@ local function fixture()
         {id="gone",direction="output",available=false,state="unplugged"},
         {id="speakers",name="Duplicate",direction="output",available=true,state="active"},
     }})
-    function f:open() shared.event(self.model,{kind="panel",action="opened"}) end
+    function f:open()
+        shared.open(self.model,"system.audio.open",false)
+        shared.event(self.model,{kind=self.model.surface,action="opened"})
+    end
     function f:action(id,fields)
         local event=fields or {};event.kind="action";event.id="system.audio."..id
         assert(shared.event(self.model,event))
@@ -39,16 +48,32 @@ local function fixture()
 end
 
 return {
-    ["output selector expansion is controlled and closes on selection or panel dismissal"] = function()
-        local f=fixture();f:open();f:action("device.open",{expanded=true})
-        assert(f.model.deviceOpen and #f.calls==0)
-        f:action("device",{selection="speakers"})
-        assert(not f.model.deviceOpen and #f.calls==0)
-        f:action("device.open",{expanded=true})
-        shared.event(f.model,{kind="panel",action="closed"})
-        assert(not f.model.deviceOpen)
-        f.permissions["audio.devices.control"]=false;f:open()
-        f:action("device.open",{expanded=true});assert(not f.model.deviceOpen)
+    ["sound opens a titleless anchored popover with panel fallback and no playback changes"] = function()
+        local f=fixture();f:open()
+        assert(f.popover.anchorKey=="system.audio.open" and f.popover.title==nil and f.model.surface=="popover")
+        assert(f.popover.width==364 and f.popover.height<400 and f.popover.dismissOnOutside and f.popover.dismissOnEscape)
+        assert(#f.calls==0)
+        f:action("close");assert(f.closed=="popover")
+        shared.event(f.model,{kind="popover",action="closed"})
+        f.features["widget.popover"]=false;f:open()
+        assert(f.model.surface=="panel" and f.panel.width==372)
+        f:action("close");assert(f.closed=="panel")
+    end,
+    ["ordinary playback panels never subscribe shared audio and unrelated dismissals do not close sound"] = function()
+        local f=fixture()
+        shared.event(f.model,{kind="panel",action="opened"})
+        assert(next(f.model.subscriptions)==nil)
+        f:open();shared.event(f.model,{kind="panel",action="closed"})
+        assert(f.model.opened and f.model.surface=="popover")
+        f:action("open");assert(f.model.surface=="popover" and #f.calls==0)
+        shared.event(f.model,{kind="popover",action="closed"})
+        assert(next(f.model.subscriptions)==nil and f.model.surface==nil)
+    end,
+    ["device rows use validated tokens and mute buttons toggle the current system state"] = function()
+        local f=fixture();f:open();f:action("device",{value="headphones"})
+        assert(f.calls[1].name=="audio.output.selectDevice" and f.calls[1].args.endpointId=="headphones")
+        f:complete(false);f:action("mute.toggle")
+        assert(f.calls[2].name=="audio.output.setMute" and f.calls[2].args.muted==true)
     end,
     ["shared audio subscribes only while its panel is open and respects read permissions"] = function()
         local f=fixture();assert(next(f.model.subscriptions)==nil)
@@ -56,7 +81,7 @@ return {
         f.permissions["audio.devices.read"]=false
         shared.event(f.model,{kind="settings.changed"})
         assert(f.unsubscribed["audio.devices"] and not f.model.subscriptions["audio.devices"])
-        shared.event(f.model,{kind="panel",action="closed"})
+        shared.event(f.model,{kind="popover",action="closed"})
         assert(next(f.model.subscriptions)==nil and #f.calls==0)
     end,
     ["system controls accept only matching endpoint volume and active output device tokens"] = function()

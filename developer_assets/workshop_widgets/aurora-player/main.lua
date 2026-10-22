@@ -21,6 +21,7 @@ local glyphs = {
     music = utf8.char(0xF001),
     playlist = utf8.char(0xF03A),
     options = utf8.char(0xF141),
+    sound = utf8.char(0xF028),
 }
 
 local function settingEnabled(key, defaultValue)
@@ -801,16 +802,17 @@ local function viewTree(context, model)
     if visualizer then children[#children + 1] = visualizer end
     children[#children + 1] = content
     local utilitySize=plan.secondaryButton*0.68
-    local utilities={controlButton("local.options",glyphs.options,
+    local utilities={controlButton("system.audio.open",glyphs.sound,l10n.tr("shared.audio"),
+        widget.hasFeature("widget.panel"),colors,false,{secondaryButton=utilitySize}),controlButton("local.options",glyphs.options,
         l10n.tr("music.options"),widget.hasFeature("widget.panel"),colors,false,
         {secondaryButton=utilitySize})}
     if localActive then table.insert(utilities,1,controlButton("local.playlist",glyphs.playlist,
         l10n.tr("music.playlist"),true,colors,false,{secondaryButton=utilitySize})) end
-    local showUtilities=localActive and
+    local showUtilities=model.systemAudio.surface~=nil or localActive and
         (playing or model.localPlayback.player.status=="loading")
     if widget.hasFeature("interaction.pointerActions") then
         for _,key in ipairs({"aurora.surface","media.previous","media.toggle","media.next",
-            "aurora.progress","local.options","local.playlist"}) do
+            "aurora.progress","local.options","local.playlist","system.audio.open"}) do
             if interaction.isHovered(key) then showUtilities=true;break end
         end
     end
@@ -883,7 +885,7 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(context, model, value)
-    if systemAudio.event(model.systemAudio,value) then return end
+    if systemAudio.event(model.systemAudio,value,model.localPlayback) then return end
     local previousSource=model.localPlayback.source
     if localPlayback.event(context,model.localPlayback,value) then
         if previousSource~=model.localPlayback.source then
@@ -1192,8 +1194,10 @@ descriptor = {
     },
     view = viewTree,
     panel = function(context,model)
-        return localPlayback.panel(context,model.localPlayback,systemAudio.view(model.systemAudio))
+        if model.systemAudio.surface=="panel" then return systemAudio.view(model.systemAudio,model.localPlayback) end
+        return localPlayback.panel(context,model.localPlayback)
     end,
+    popover = function(_context,model) return systemAudio.view(model.systemAudio,model.localPlayback) end,
     event = event,
     menu = menu,
     dispose = dispose,

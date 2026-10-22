@@ -229,6 +229,12 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
+  从直接桌面手势重复打开当前辅助面板时，宿主复用现有场景，不重播动画、不重发 opened/closed，
+  并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
+  仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
+  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态面板所属组件的
+  内容区时，宿主先交给组件处理；其他外部点击和 Escape 继续关闭。关闭中的相同桌面请求
+  不会反向重播打开动画。此行为纠正保持 API/schema v2，不新增 feature；较早构建仍可能重开。
   `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
   由宿主在左下角显示紧凑移动手柄、右下角显示缩放手柄，其余桌面 surface 均由组件内容和
   指针交互使用。

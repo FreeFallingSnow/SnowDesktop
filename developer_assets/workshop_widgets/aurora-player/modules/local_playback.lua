@@ -1,4 +1,5 @@
 local player = module.require("modules/local_queue.lua")
+local panel=module.require("modules/panel_ui.lua")
 local M = {}
 local function readChunks(prefix)
     local count = tonumber(storage.get(prefix.."Count"))
@@ -58,80 +59,64 @@ function M.setup(context)
     end
     return model
 end
-local function palette()
-    local theme=widget.theme()
-    local dark=theme and theme.contentTheme==1
-    return dark and 0x182B38 or 0xEDF8FC,dark and 0x496675 or 0xC3DAE7,
-        dark and 0x007E89 or 0x80E6D6,dark and 0xE3EBED or 0x263B46
-end
 local function text(key,value,size,color,extra)
     local spec={key=key,text=value,width="fill",height=size*1.5,fontSize=size,
         textWrap="noWrap",style={foreground=color}}
     for k,v in pairs(extra or {}) do spec[k]=v end
     return view.text(spec)
 end
-local function button(id,label,height,color,enabled,icon)
-    local spec={key="music."..id,width="fill",height=height,fontSize=height*0.42,
-        enabled=enabled~=false,padding=height*0.2,textAlign="center",style={foreground=color,cornerRadius=height*0.25},
-        events={click={id="local."..id}},accessibility={label=label}}
-    if icon then spec.glyph=icon;spec.iconFont="fa";return view.iconButton(spec) end
-    spec.label=label;return view.button(spec)
-end
 local function modeKey(p)
     return p.shuffle and "shuffle" or p.repeatMode=="track" and "loop" or p.repeatMode=="list" and "repeat" or "sequential"
 end
 local rates={0.25,0.5,0.75,1,1.25,1.5,2,3,4}
-function M.panel(_context,model,sharedControls)
+function M.panel(_context,model)
     local p=model.player
     if model.drag and not model.preview and widget.hasFeature("interaction.pointerActions") then
         local track=p.tracks[model.drag.from]
         if not track or not interaction.isPressed(track.key) then model.drag=nil end
     end
     local row=ui.metrics().layoutRowHeight
-    local primary,secondary,accent,surface=palette()
-    local function label(key,value) return text(key,value,row*0.43,secondary) end
-    local function command(id,key,enabled) return button(id,l10n.tr(key),row,primary,enabled) end
-    local children={view.row({key="source.selector",width="fill",height=row,gap=row*0.2,children={
-        button("source.system",l10n.tr("workshop.aurora_player.source_system"),row,model.source=="system" and accent or primary),
-        button("source.local",l10n.tr("workshop.aurora_player.source_local"),row,model.source=="local" and accent or primary,M.available()),
-    }}),view.row({key="panel.toolbar",width="fill",height=row,gap=row*0.2,children={
-        command("files","music.files",M.available()),command("folder","music.folder",M.available()),
-        command(model.panelKind=="playlist" and "options" or "playlist",model.panelKind=="playlist" and "music.options" or "music.playlist"),
-    }})}
-    if model.panelKind=="options" and sharedControls then children[#children+1]=sharedControls end
-    if model.source~="local" then
-        if model.panelKind~="options" then
-            children[#children+1]=label("source.hint",l10n.tr(M.available() and "music.drop" or "workshop.aurora_player.local_unavailable"))
-        end
-    elseif model.panelKind=="options" then
-        children[#children+1]=label("volume.label",l10n.tr("music.volume").."  "..math.floor(p.volume*100+0.5).."%")
-        children[#children+1]=view.slider({key="music.volume",width="fill",height=row,min=0,max=1,step=0.01,value=p.volume,
-            events={change={id="local.volume"},pointerUp={id="local.volume.commit"}},style={foreground=accent},accessibility={label=l10n.tr("music.volume")}})
-        children[#children+1]=label("mode.label",l10n.tr("music.mode"))
-        local modeLabels={sequential=l10n.tr("music.sequential"),["repeat"]=l10n.tr("music.repeat"),
-            loop=l10n.tr("music.loop"),shuffle=l10n.tr("music.shuffle")}
+    local c=panel.theme()
+    local primary,secondary,accent,surface=c.primary,c.secondary,c.accent,c.surface
+    local function label(key,value) return panel.text(key,value,row,{style={foreground=c.secondary}}) end
+    local function command(id,key,enabled) return panel.choice("music."..id,l10n.tr(key),row,"local."..id,false,enabled) end
+    local children={}
+    if model.panelKind=="options" then
+        children[#children+1]=label("source.label",l10n.tr("workshop.aurora_player.source"))
+        children[#children+1]=view.row({key="source.selector",width="fill",height=row*1.12,gap=row*0.2,children={
+            panel.choice("source.system",l10n.tr("workshop.aurora_player.source_system"),row,"local.source.system",model.source=="system"),
+            panel.choice("source.local",l10n.tr("workshop.aurora_player.source_local"),row,"local.source.local",model.source=="local",M.available()),
+        }})
+        local modes={}
+        local labels={sequential="music.sequential",["repeat"]="music.repeat",loop="music.loop",shuffle="music.shuffle"}
         for _, keys in ipairs({{"sequential","repeat"},{"loop","shuffle"}}) do
-            local buttons={}
-            for _, key in ipairs(keys) do buttons[#buttons+1]=button("mode."..key,modeLabels[key],row,
-                modeKey(p)==key and accent or primary) end
-            children[#children+1]=view.row({key="mode."..keys[1],width="fill",height=row,gap=row*0.2,children=buttons})
+            local choices={}
+            for _,key in ipairs(keys) do choices[#choices+1]=panel.choice("mode."..key,l10n.tr(labels[key]),row,
+                "local.mode."..key,modeKey(p)==key,M.available()) end
+            modes[#modes+1]=view.row({key="mode.row."..keys[1],width="fill",height=row*1.12,gap=row*0.2,children=choices})
         end
-        children[#children+1]=label("rate.label",l10n.tr("music.rate").."  "..p.playbackRate.."×")
-        for first=1,#rates,3 do
-            local buttons={}
-            for i=first,math.min(first+2,#rates) do
-                local rate=rates[i]
-                buttons[#buttons+1]=button("rate."..rate,rate.."×",row,p.playbackRate==rate and accent or primary)
-            end
-            children[#children+1]=view.row({key="rates."..first,width="fill",height=row,gap=row*0.2,children=buttons})
-        end
-        children[#children+1]=command("stop","music.stop",p.playbackId~=nil)
+        children[#children+1]=view.spacer({key="options.section.gap",width="fill",height=row*0.16})
+        children[#children+1]=label("local.preferences",l10n.tr("music.local_settings"))
+        local localSettings={label("mode.label",l10n.tr("music.mode")),modes[1],modes[2],
+            view.row({key="rate.row",width="fill",height=row*1.2,gap=row*0.25,alignItems="center",children={
+                panel.text("rate.label",l10n.tr("music.rate"),row),
+                panel.iconButton("rate.down",0xF068,l10n.tr("music.slower"),row,"local.rate.down",M.available() and p.playbackRate>rates[1]),
+                panel.text("rate.value",p.playbackRate.."×",row,{width=row*1.5,textAlign="center",fontWeight=600}),
+                panel.iconButton("rate.up",0xF067,l10n.tr("music.faster"),row,"local.rate.up",M.available() and p.playbackRate<rates[#rates]),
+            }})}
+        children[#children+1]=panel.well("local.preferences.card",row,localSettings)
+        children[#children+1]=command("playlist","music.playlist",M.available())
     else
+        children[#children+1]=view.row({key="playlist.toolbar",width="fill",height=row*1.12,gap=row*0.2,alignItems="center",children={
+            panel.text("playlist.subtitle",tostring(#p.tracks).."  "..l10n.tr("music.tracks"),row,{style={foreground=c.secondary}}),
+            panel.iconButton("playlist.add.files",0xF067,l10n.tr("music.files"),row*1.1,"local.files",M.available()),
+            panel.iconButton("playlist.add.folder",0xF07B,l10n.tr("music.folder"),row*1.1,"local.folder",M.available()),
+        }})
         local extent=row*1.25
-        local viewport=math.max(row,layout.contentHeight()-row*4.4)
+        local viewport=math.max(row,layout.contentHeight()-row*3.28)
         local range=view.virtualRange({key="playlist.list",itemCount=#p.tracks,itemExtent=extent,viewportExtent=viewport,overscan=1})
         model.listOffset=range.offset;model.itemExtent=extent
-        model.listTop=row*2.7;model.listViewport=viewport
+        model.listTop=row*1.7;model.listViewport=viewport
         local items={}
         for i=math.max(1,range.firstIndex),range.lastIndex do
             local track=p.tracks[i]
@@ -141,7 +126,7 @@ function M.panel(_context,model,sharedControls)
             local boundary=drag and drag.moved and drag.boundary
             local layers={view.column({key=track.key..".padding",width="fill",height="fill",padding={vertical=row*0.07},children={
                 view.row({key=track.key..".row",width="fill",height="fill",padding={horizontal=row*0.45},gap=row*0.25,
-                    alignItems="center",style={background=surface,cornerRadius=row*0.2,opacity=dragging and 0.45 or 1},children={
+                    alignItems="center",style={background=i==p.index and c.selected or c.surface,cornerRadius=row*0.3,borderWidth=0,opacity=dragging and 0.45 or 1},children={
                         text(track.key..".index",tostring(i),row*0.4,color,{width=row*1.5,textAlign="end"}),
                         text(track.key..".title",track.name,row*0.43,color),
                         view.icon({key=track.key..".grip",glyph=utf8.char(0xF0C9),iconFont="fa",width=row*0.5,height=row*0.6,
@@ -156,7 +141,7 @@ function M.panel(_context,model,sharedControls)
                             view.box({key=track.key..".drop.rule",width="fill",height=row*0.075,style={background=accent,cornerRadius=row*0.04}}),
                         }})}})
             end
-            items[#items+1]=view.listItem({key=track.key,width="fill",height=extent,
+            items[#items+1]=view.listItem({key=track.key,width="fill",height=extent,style={borderWidth=0},
                 capturePointer=true,events={click={id="local.track",value=track.key},contextMenu={id="local.track.menu",value=track.key},
                     pointerDown={id="local.drag.start",value=track.key},pointerMove={id="local.drag.move"},pointerUp={id="local.drag.end"}},
                 accessibility={label=track.name},children={
@@ -165,10 +150,14 @@ function M.panel(_context,model,sharedControls)
         children[#children+1]=view.virtualList({key="playlist.list",width="fill",height=viewport,itemCount=#p.tracks,itemExtent=extent,
             firstIndex=range.firstIndex,children=items,emptyContent=label("playlist.empty",l10n.tr("music.empty"))})
         children[#children+1]=view.row({key="playlist.footer",width="fill",height=row,gap=row*0.2,alignItems="center",children={
-            label("playlist.count",tostring(#p.tracks).."  "..l10n.tr("music.tracks")),command("clear","music.clear",#p.sources>0)}})
+            view.spacer({key="playlist.footer.space",width="fill",height=row}),
+            view.button({key="music.clear",label=l10n.tr("music.clear"),width="auto",height=row,
+                fontSize=row*0.41,padding={horizontal=row*0.4},enabled=#p.sources>0,
+                style={foreground=c.secondary,background=c.surface,borderWidth=0,cornerRadius=row*0.3},
+                events={click={id="local.clear"}}})}})
     end
     local content=view.column({key="playlist.surface",width="fill",height=model.panelKind=="options" and "auto" or "fill",
-        padding=row*0.3,gap=row*0.2,children=children})
+        padding=row*0.3,gap=row*0.28,children=children})
     if model.panelKind=="options" then
         return view.scroll({key="options.scroll",width="fill",height="fill",children={content}})
     end
@@ -199,7 +188,8 @@ function M.event(_context,model,e)
         end
         if id=="options" and widget.hasFeature("widget.panel") then
             model.panelKind=id;model.drag=nil
-            widget.openPanel({title=l10n.tr("music.options"),width=540,height=520})
+            local row=ui.metrics().layoutRowHeight
+            widget.openPanel({title=l10n.tr("music.options"),width=math.floor(row*12.3+36),height=math.floor(row*11.8+74)})
             return true
         end
         if not M.available() then return true end
@@ -223,13 +213,22 @@ function M.event(_context,model,e)
             if e.source~="pointer" then p:setVolume(p.volume);storage.set("volume",p.volume) end
         elseif id=="volume.commit" then p:setVolume(p.volume);storage.set("volume",p.volume)
         elseif id=="playlist" or id=="options" then
-            if id=="playlist" then M.select(model,"local") end
             model.panelKind=id;model.drag=nil
-            widget.openPanel({title=id=="playlist" and l10n.tr("music.playlist") or l10n.tr("music.options"),width=540,height=520})
+            local row=ui.metrics().layoutRowHeight
+            widget.openPanel({title=l10n.tr("music.playlist"),width=math.floor(row*13.7+36),
+                height=math.floor(row*(3.28+math.max(1,math.min(#p.tracks,7))*1.25)+74)})
         elseif id=="mode.sequential" then p:setMode(false,"none")
         elseif id=="mode.repeat" then p:setMode(false,"list")
         elseif id=="mode.loop" then p:setMode(false,"track")
         elseif id=="mode.shuffle" then p:setMode(true,"list")
+        elseif id=="rate.down" or id=="rate.up" then
+            local target=id=="rate.up" and rates[#rates] or rates[1]
+            if id=="rate.up" then
+                for _,rate in ipairs(rates) do if rate>p.playbackRate+0.001 then target=rate;break end end
+            else
+                for i=#rates,1,-1 do if rates[i]<p.playbackRate-0.001 then target=rates[i];break end end
+            end
+            p:setRate(target)
         elseif id and id:sub(1,5)=="rate." then p:setRate(tonumber(id:sub(6)) or 1)
         elseif id=="track" then
             if not model.suppressClick then local i=indexOf(p,e.value);if i then p:play(i) end end
@@ -344,6 +343,7 @@ function M.menuItems(model)
     }},{id="local.files",label=l10n.tr("music.files"),enabled=M.available()},
         {id="local.folder",label=l10n.tr("music.folder"),enabled=M.available()},
         {id="local.playlist",label=l10n.tr("music.playlist"),enabled=M.available()},
+        {id="system.audio.menu",label=l10n.tr("shared.audio"),enabled=widget.hasFeature("widget.panel")},
         {id="local.options",label=l10n.tr("music.options"),enabled=widget.hasFeature("widget.panel")}}
 end
 
