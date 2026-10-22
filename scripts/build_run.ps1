@@ -20,7 +20,7 @@ param(
     [long]$EditRevision=-1,
     [ValidateRange(0,60)][int]$Seconds=30,
     [switch]$ReloadShell,[switch]$CloseApplication,
-    [string]$Reason='', [switch]$ConfirmSharedCancellation,
+    [string]$Reason='', [switch]$ConfirmSharedCancellation,[switch]$Fresh,
     [ValidateRange(0,4096)][int]$CpuSlots=0,[ValidateRange(0,1048576)][int]$MemoryMiB=0,
     [ValidateRange(0,4096)][int]$CpuCapacity=0,[ValidateRange(0,1048576)][int]$MemoryCapacityMiB=0
 )
@@ -105,13 +105,16 @@ function Get-RunView([string]$Id){
     $metrics=if([IO.File]::Exists((Run-Path $Id '.resources.json'))){Read-RunJson (Run-Path $Id '.resources.json')}else{$null}
     $stages=@();$stageError=''
     try {$stages=@(Read-BuildStageEvents $root $Id)}catch{$stageError=$_.Exception.Message}
-    $subscriptions=@()
+    $subscriptions=@();$references=@()
     if($request.mode -eq 'verify'){
         $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
         $ledger=Get-Field $state 'verificationLedger'
-        if($ledger){$subscriptions=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object subscriptions)}
+        if($ledger){
+            $subscriptions=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object subscriptions)
+            $references=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object {Get-Field $_ 'references' @()})
+        }
     }
-    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;
+    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;
         request=$request;record=$record;resources=$metrics;stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
 }
 function Run-CancellationRequested($Request){
@@ -232,7 +235,7 @@ try {
         $exclusive=$request.action -notin 'release','debug' -or $request.reloadShell -or $request.closeApplication
         if($Mode -eq 'verify'){$exclusive=$false}
         $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
-        $batchTransaction=$null;$joined=$false;$verification=$null
+        $batchTransaction=$null;$joined=$false;$verification=$null;$referenceProposal=$null;$referenceReceipt=$null;$reused=$false
         if($Mode -eq 'verify'){
             $verification=Get-VerificationSnapshot $root $PlanBatch $Filter $(if($request.projectResources.policy -eq 'project-weighted-v1'){$request.projectResources}else{$null})
             $candidateVerification=Get-Field $verification.binding 'candidate'
@@ -256,6 +259,7 @@ try {
             # not duplicate raw CTest environment/command contents in requests.
             $verification.PSObject.Properties.Remove('tests')
             $request|Add-Member NoteProperty verification $verification
+            if(-not $Fresh -and (Get-Command Get-CompletedVerificationProposal -ErrorAction SilentlyContinue)){$referenceProposal=Get-CompletedVerificationProposal $root $verification}
         }
         try {
         if($Mode -eq 'verify'){
@@ -264,6 +268,7 @@ try {
             $active=@($state.taskLedger.tasks|Where-Object {$_.id -eq $Task -and -not $_.closedUtc})
             if($active.Count -ne 1){throw 'Verification subscriber task is no longer active.'}
             $ledger=Get-VerificationLedger $state
+            if(-not $Fresh){
             foreach($candidate in @($ledger.entries|Where-Object key -eq $verification.key)){
                 $existing=Get-RunView $candidate.runId
                 if(-not $existing.terminal -and $existing.ownerState -eq 'alive' -and -not (Run-CancellationRequested $existing.request)){
@@ -272,6 +277,14 @@ try {
                     $id=$candidate.runId;$joined=$true;break
                 }
                 if(-not $existing.terminal -and $existing.ownerState -eq 'unknown'){throw 'Verification owner state is unknown; inspect the existing Run before submitting another attempt.'}
+            }
+            if(-not $joined -and $referenceProposal){
+                $matches=@($ledger.entries|Where-Object {$_.runId -eq $referenceProposal.runId -and $_.key -eq $verification.key})
+                if($matches.Count -eq 1 -and (Get-FileDigest (Run-Path $referenceProposal.runId '.json')) -eq $referenceProposal.runSha256){
+                    $referenceReceipt=Add-CompletedVerificationReference $root $matches[0] $active[0] $PlanBatch $referenceProposal
+                    $id=$referenceProposal.runId;$joined=$true;$reused=$true
+                }
+            }
             }
             if(-not $joined){
                 $candidate=[pscustomobject]@{key=$verification.key;runId=$id;createdUtc=$now;subscriptions=@()}
@@ -311,7 +324,7 @@ try {
             Write-NewRunRequest $request;Write-RunRecord $record
         }
         if($Action -eq 'batch' -or $Mode -eq 'verify'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
-        } finally {if($batchTransaction){$batchTransaction.Dispose()}}
+        } finally {if($batchTransaction){$batchTransaction.Dispose()};if($referenceProposal){$referenceProposal.lease.Dispose()}}
         $launched=$false
         if(-not $joined){
         try {
@@ -333,7 +346,7 @@ try {
         }
         }
         if($Command -eq 'start'){
-            [pscustomobject]@{id=$id;task=$Task;joined=$joined;requestPath=(Run-Path $id '.request.json');status='submitted';next='run status/wait; unsubscribe withdraws interest, only explicit owner cancellation stops execution'}|ConvertTo-Json -Depth 8
+            [pscustomobject]@{id=$id;task=$Task;joined=$joined;reused=$reused;reference=$referenceReceipt;requestPath=(Run-Path $id '.request.json');status=$(if($reused){'referenced'}else{'submitted'});next='run status/wait; unsubscribe withdraws interest, only explicit owner cancellation stops execution'}|ConvertTo-Json -Depth 12
             exit 0
         }
         $RunId=$id

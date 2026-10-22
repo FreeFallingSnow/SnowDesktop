@@ -613,7 +613,8 @@
   `build.bat run start -Task ID -Action tests -Mode verify -PlanBatch B -Filter Alpha,Beta -Reason "补验依据"`
   提交无需配置/构建的持久补验：必须已有记录完整测试定义与二进制身份的稳定候选，按实际内容核对源码、
   已配置 CTest 定义、产物和执行环境；旧身份记录不足时明确拒绝，不能猜测匹配。相同活动上下文合并订阅，
-  不自动复用已结束结果；`run unsubscribe -Task ID -RunId R` 只撤回等待，关闭观察者同样不取消执行。
+  已结束结果仅按 `scripts/README.md` 中的显式原生文件测试审阅契约引用，引用独立保存且不得冒充新执行；缺少依据时实际执行。
+  用户要求重跑或怀疑缓存时加 `-Fresh`。`run unsubscribe -Task ID -RunId R` 只撤回等待，关闭观察者同样不取消执行。
   只有原 Run 所属 Task 可以取消；存在其他有效订阅时须显式传入 `-ConfirmSharedCancellation`。
   目前补验仍使用共享输出租约保护 CTest 日志与运行文件，编辑与补验解耦等待候选输出隔离完成；
   排队后与执行结束再次校验身份，变化即失效。未知传递依赖不能因此被视为闭合，依赖选择与跨候选缓存仍待验证。
@@ -864,7 +865,8 @@
 - `task-stage/task-close` 使用独立的 `-TaskRevision`，不能用编辑修订代替；关闭 Task 不撤销编辑登记。
   人工验收通过 `acceptance-start/acceptance-complete` 单独登记，绑定任务需求修订、已通过的候选和明确运行文件；
   反馈、引用和观察必须来自实际场景，不补造历史开始时间或耗时。人工验收不修改构建/测试结果，也不表示发布。
-  `evidence-list -Batch B` 查询原尝试的逐条证据；身份已记录不等于依赖闭合，`reuseAllowed=false` 时不得自动省略测试。
+  `evidence-list -Batch B` 查询原尝试的逐条证据；身份已记录不等于依赖闭合，原 `reuseAllowed=false` 观察本身不得授权省略。
+  引用已结束结果须有单独审阅、当前输入核对和独立引用凭据，保留原观察不变；不据此扩大到未知测试或跨候选复用。
   旧 `begin` 会兼容补录 Task，但补录不代表调查时已经登记。DSH 通过独立插件接入，不修改宿主源码或安装文件。
   `edit-verify` 只校验调用时的批次、编辑修订和路径；只有接入写入拦截的工具才能执行硬性写入检查。
   本地事件记录与跨聊天发送是不同动作，跨聊天通信继续遵守用户授权；不得把事件正文视作新的用户授权。

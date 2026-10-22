@@ -1,5 +1,7 @@
 # Existing-artifact verification uses the ordinary durable Run. This module
 # binds an intent; the coordinator state serializes subscriptions, not execution.
+$reuseModule=Join-Path $PSScriptRoot 'build_verification_reuse.ps1'
+if([IO.File]::Exists($reuseModule)){. $reuseModule}
 function Get-VerificationEnvironment([string]$Root) {
     $files=[ordered]@{}
     foreach($relative in @('CMakePresets.json','CMakeUserPresets.json','.build/CMakeCache.txt')){
@@ -112,6 +114,10 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     if(($runtimeFiles|ConvertTo-Json -Depth 8 -Compress) -ne ($oldRuntime|ConvertTo-Json -Depth 8 -Compress)){throw 'Explicit verification runtime files changed or their baseline identity is unavailable.'}
     $binding=[pscustomobject]@{sourceDigest=$source.digest;configuration='Release';names=$names;definitions=$definitions;artifacts=$artifacts;runtimeFiles=$runtimeFiles;environmentDigest=$context.digest}
     if($candidate){Set-Field $binding 'candidate' $candidate}
+    if($candidate -and (Get-Command Get-ReviewedVerificationContext -ErrorAction SilentlyContinue)){
+        $review=Get-ReviewedVerificationContext $Root $tests
+        if($review){Set-Field $binding 'reviewedReuse' $review}
+    }
     if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}
     return [pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
 }

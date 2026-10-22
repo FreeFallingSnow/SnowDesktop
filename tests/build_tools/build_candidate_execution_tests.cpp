@@ -1,5 +1,6 @@
 #include "../build_tool_test_support.h"
 #include <iostream>
+#include <iterator>
 
 using namespace build_test;
 namespace {
@@ -453,10 +454,77 @@ void executor_control(const fs::path& repo,bool checkout) {
     require(result.code==1&&result.err.find(assertion)!=std::string::npos,"Executor "+mutation+" negative control did not reach its business assertion: "+result.out+result.err);
     std::cout<<"PASS executor "<<mutation<<" negative control reached its business assertion\n";
 }
+void completed_verification(const fs::path& repo,bool noReference=false) {
+    Coordinator c(repo,"completed-verification",true,fixture_parent(repo));prepare(c,repo,"");
+    if(noReference){auto source=read(c.scripts/L"build_run.ps1");replace(source,"$referenceProposal=Get-CompletedVerificationProposal $root $verification","$referenceProposal=$null");write(c.scripts/L"build_run.ps1",source,true);}
+    const auto observer=executable().parent_path()/L"SnowDesktopTestRuntimeObserver.exe";
+    require(fs::exists(observer),"Completed verification needs the actual native runtime observer");
+    auto cmake=read(c.root/L"CMakeLists.txt");replace(cmake,"VERSION 3.24","VERSION 3.29");
+    cmake+="\nconfigure_file(\""+utf8(observer.generic_wstring())+"\" \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe\" COPYONLY)\n"
+        "set_target_properties(SnowDesktopCandidateFixtureTests PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreaded TEST_LAUNCHER \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe;--test;candidate_rule;--\")\n";
+    write(c.root/L"CMakeLists.txt",cmake);
+    write(c.scripts/L"review-cache.ps1",R"PS(param([string]$Binary='')
+$root=Split-Path $PSScriptRoot -Parent
+$sources=@('src/main.cpp','src/value.h')|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $root $_)).Hash.ToLowerInvariant()}}
+$contract=@{test='candidate_rule';kind='reviewed-file-inputs-v1';reviewedSources=@($sources);inputs=@()}
+if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.build/Release/tests/SnowDesktopCandidateFixtureTests.exe';binarySha256=(Get-FileHash -LiteralPath $Binary).Hash.ToLowerInvariant();reviewedSources=@($sources)}}
+@{schemaVersion=1;tests=@($contract)}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $PSScriptRoot 'test_runtime_contracts.json') -Encoding UTF8
+@{reviewed=[bool]$Binary}|ConvertTo-Json
+)PS",true);
+    c.bridge->call(c.scripts/L"review-cache.ps1",{});
+    auto baseline=[&]{
+        const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});const auto id=opened.at("batchId").str();
+        c.plan("candidate",id,0,"selected","candidate_rule","tool","src/main.cpp,src/value.h");
+        const auto finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
+        require(finished.code==0,"Real native baseline failed: "+finished.out+finished.err);return c.result(id);
+    };
+    const auto original=baseline();
+    const auto binary=fs::path(wide(original.at("candidateExecution").at("output").str()))/L"Release/tests/SnowDesktopCandidateFixtureTests.exe";
+    c.bridge->call(c.scripts/L"review-cache.ps1",{"-Binary",utf8(binary.wstring())});
+    const auto reviewed=baseline();const auto batch=reviewed.at("batchId").str();
+    auto verify=[&](bool fresh=false){
+        std::vector<std::string> args={"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Review identical native execution evidence"};
+        if(fresh)args.push_back("-Fresh");return c.bridge->call(c.scripts/L"build_run.ps1",args);
+    };
+    const auto first=verify();require(!first.at("reused").boolean,"First verification invented completed evidence");
+    const auto id=first.at("id").str();const auto done=wait(c,id);
+    require(done.at("record").at("evidence").at("tests").items.front().at("runtimeModules").at("status").str()=="observed",
+        "Real native verification lost its actual runtime report");
+    const auto resultPath=c.stateRoot/L"runs"/wide(id+".json"),requestPath=c.stateRoot/L"runs"/wide(id+".request.json");
+    const auto coveragePath=c.stateRoot/L"runs"/wide(id+".verification.json");
+    const auto resultBytes=read(resultPath),requestBytes=read(requestPath),coverageBytes=read(coveragePath);
+    const auto report=fs::path(wide(Json::parse(coverageBytes).at("report").str()));const auto reportBytes=read(report);
+    const auto requestsBefore=static_cast<std::size_t>(std::distance(fs::directory_iterator(c.stateRoot/L"runs"),fs::directory_iterator{}));
+    const auto references=verify();
+    require(references.at("reused").boolean&&references.at("id").str()==id&&references.at("status").str()=="referenced"&&
+        !references.at("reference").at("newExecution").boolean,"Completed native verification executed again instead of referencing its original Run: "+references.dump());
+    require(verify().at("reference").at("id").str()==references.at("reference").at("id").str(),"Repeated completed citation was not idempotent");
+    require(static_cast<std::size_t>(std::distance(fs::directory_iterator(c.stateRoot/L"runs"),fs::directory_iterator{}))==requestsBefore,
+        "Completed reference created a new execution file");
+    require(read(resultPath)==resultBytes&&read(requestPath)==requestBytes&&read(coveragePath)==coverageBytes&&read(report)==reportBytes,
+        "Completed reference rewrote the original Run, request, coverage or JUnit");
+    const auto forced=verify(true);require(!forced.at("reused").boolean&&forced.at("id").str()!=id,"Explicit fresh verification reused completed evidence");
+    wait(c,forced.at("id").str());
+    // A changed raw report cannot authorize a cached pass. Preserve the other
+    // completed attempt too, so every available origin is checked.
+    const auto forcedCoverage=Json::parse(read(c.stateRoot/L"runs"/wide(forced.at("id").str()+".verification.json")));
+    const auto forcedReport=fs::path(wide(forcedCoverage.at("report").str()));
+    write(report,reportBytes+" ");write(forcedReport,read(forcedReport)+" ");
+    const auto corrupt=verify();require(!corrupt.at("reused").boolean&&corrupt.at("id").str()!=id,"Changed JUnit was reused as passing evidence");
+    wait(c,corrupt.at("id").str());
+    std::cout<<"PASS completed native verification references, immutable origin, idempotent citations, explicit fresh execution and corrupt-report fallback\n";
+}
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
-    if(mode=="--tool-verification"||mode=="--tool-verification-old-preset")candidate_batches(repo,false,true,mode=="--tool-verification-old-preset");
+    if(mode=="--completed-verification"||mode=="--completed-verification-without-reference")completed_verification(repo,mode=="--completed-verification-without-reference");
+    else if(mode=="--completed-verification-control"){
+        const auto negative=run({executable().wstring(),repo.wstring(),L"--completed-verification-without-reference"},repo,150,{},true);
+        require(negative.code==1&&negative.err.find("Completed native verification executed again instead of referencing its original Run")!=std::string::npos,
+            "Completed reference control failed outside the duplicate-execution assertion: "+negative.out+negative.err);
+        std::cout<<"PASS disabled completed-reference path fails the actual duplicate-execution assertion\n";
+    }
+    else if(mode=="--tool-verification"||mode=="--tool-verification-old-preset")candidate_batches(repo,false,true,mode=="--tool-verification-old-preset");
     else if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
     else if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
