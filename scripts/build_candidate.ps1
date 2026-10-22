@@ -18,7 +18,13 @@ function Resolve-CandidatePath([string]$Base,[string]$Relative) {
     if(-not $path.StartsWith($basePath+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Candidate path escaped its root.'}
     $cursor=$path
     while($cursor){
-        if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Candidate paths cannot traverse a reparse point.'}
+        try{
+            $attributes=[IO.File]::GetAttributes($cursor)
+            if($attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Candidate paths cannot traverse a reparse point.'}
+        }catch{
+            if($_.Exception -isnot [IO.FileNotFoundException] -and $_.Exception -isnot [IO.DirectoryNotFoundException] -and
+                $_.Exception.InnerException -isnot [IO.FileNotFoundException] -and $_.Exception.InnerException -isnot [IO.DirectoryNotFoundException]){throw}
+        }
         $parent=[IO.Path]::GetDirectoryName($cursor)
         if($parent -eq $cursor){break};$cursor=$parent
     }
@@ -117,6 +123,7 @@ function New-CandidateSnapshot([string]$Root,[string]$TaskId,[long]$Requirements
     $opened=[Collections.Generic.List[object]]::new();$temporary=@()
     try {
         $paths=@(Get-CandidatePaths $Root $ExtraInputs);$files=@();$total=0L;$reused=0
+        $buffer=New-Object byte[] 1048576
         foreach($path in $paths){
             & $CheckCancellation
             $absolute=Resolve-CandidatePath $Root $path
@@ -145,7 +152,7 @@ function New-CandidateSnapshot([string]$Root,[string]$TaskId,[long]$Requirements
                 $temp=$object+'.'+[Guid]::NewGuid().ToString('N')+'.tmp';$temporary+=@($temp)
                 $destination=[IO.File]::Open($temp,'CreateNew','Write','None')
                 try{
-                    $entry.stream.Position=0;$buffer=New-Object byte[] 1048576
+                    $entry.stream.Position=0
                     while(($count=$entry.stream.Read($buffer,0,$buffer.Length)) -gt 0){& $CheckCancellation;$destination.Write($buffer,0,$count)}
                     $destination.Flush($true)
                 }finally{$destination.Dispose()}
