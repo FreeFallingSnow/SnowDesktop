@@ -442,17 +442,35 @@ void scenario(const fs::path& repo,const std::string& control) {
         until([&]{return !owner_alive(child);});require(unrelated.running(),"Candidate lifecycle cleanup terminated an unrelated process");fs::remove(gate);
     }
     wait(c,submit(c,execution(snapshot)));program(output,7);
+    std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";
+}
+void weighted_candidate(const fs::path& repo) {
+    Coordinator c(repo,"weighted-candidate",true,fixture_parent(repo));prepare(c,repo,"");
+    const auto snapshot=capture(c);
     auto weightedArguments=execution(snapshot);
     // This one-file compiler fixture measured under 344 MiB. Keep more than
     // twice that peak without reserving an unrelated 2 GiB of host capacity.
     weightedArguments.insert(weightedArguments.end(),{"-CpuSlots","2","-MemoryMiB","768"});
-    const auto weighted=wait(c,submit(c,weightedArguments));program(output,7);
+    const auto id=submit(c,weightedArguments);Json weighted;
+    // Resource admission can legitimately outlive one bounded observation.
+    // Keep observing this exact Run, never create a replacement or disable
+    // headroom protection. The independent CTest case bounds the total wait.
+    for(int observation=0;observation<5;++observation){
+        const auto reply=c.bridge->invoke(c.scripts/L"build_run.ps1",{"-Command","wait","-Task","candidate","-RunId",id,"-Seconds","30"},{},40);
+        require(reply.code==0,"Weighted candidate observation failed: "+reply.out+reply.err);
+        weighted=Json::parse(reply.out);
+        require(weighted.at("stageError").str().empty(),"Weighted candidate lost its stage observations");
+        if(weighted.at("terminal").boolean)break;
+        require(weighted.at("id").str()==id&&weighted.at("ownerState").str()=="alive","Weighted candidate lost its live execution owner");
+    }
+    require(weighted.at("terminal").boolean&&weighted.at("status").str()=="passed","Weighted candidate remained nonterminal: "+id+" / "+weighted.at("status").str()+" / "+weighted.at("record").at("waitingFor").str());
+    program(fs::path(wide(weighted.at("record").at("candidateExecution").at("output").str())),7);
     require(weighted.at("record").at("resourceAdmission").at("bindingValid").boolean&&
         weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==768&&
         weighted.at("resources").at("committedMemoryLimitBytes").number==805306368.0&&
         weighted.at("resources").at("finished").boolean&&weighted.at("resources").at("accountingAvailable").boolean,
         "Candidate private entry did not reuse its admitted runtime and parent CPU/memory budget");
-    std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";
+    std::cout<<"PASS independent weighted candidate compiler execution, real admission and Job limits; bounded observers preserve the original Run\n";
 }
 void executor_control(const fs::path& repo,bool checkout) {
     const std::string mutation=checkout?"checkout-lock":"unlocked-source";
@@ -577,6 +595,7 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
     else if(mode=="--verify-checkout-lock")executor_control(repo,true);
     else if(mode=="--verify-source-lock")executor_control(repo,false);
-    else if(mode=="--all"){scenario(repo,"");executor_control(repo,true);executor_control(repo,false);}
+    else if(mode=="--weighted")weighted_candidate(repo);
+    else if(mode=="--all"){scenario(repo,"");weighted_candidate(repo);executor_control(repo,true);executor_control(repo,false);}
     else scenario(repo,mode.empty()?"":mode.substr(2));
 });}
