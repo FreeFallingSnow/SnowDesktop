@@ -5234,6 +5234,7 @@ void TestSurfaceScrollbarGutters()
         auto root = make(ViewOrientation::Vertical);
         auto nested = make(ViewOrientation::Vertical);
         nested.key = "nested";
+        nested.children.front().key = "nested-body";
         nested.width = nested.height = {ViewLengthKind::Fixed, 50};
         root.children.front().children = {nested};
         std::string error;
