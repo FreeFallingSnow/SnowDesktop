@@ -23,6 +23,7 @@
 
 #include "diagnostics/slow_call_limiter.h"
 #include "diagnostics/performance_trace.h"
+#include "diagnostics/input_diagnostics.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -1698,6 +1699,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
     snowdesktop::steam_runtime::startup::Ready();
+    snowdesktop::InputDiagnostics inputDiagnostics(controlHwnd_);
     ShowUsageGuideWelcome();
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
@@ -1747,6 +1749,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // requested by a nested tray/settings callback.
             if (exitRequested_) break;
             LogDelayedInputMessage(msg);
+            snowdesktop::InputDiagnostics::ObserveDequeued(msg);
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),

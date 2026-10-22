@@ -4,12 +4,14 @@
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "app/widgets/widget_pair_drag_source.h"
+#include "diagnostics/input_diagnostics.h"
 
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <condition_variable>
 
 // This fixture supplies models and the initial gesture only. Target selection
 // executes DesktopApp -> controller -> actual container virtual hit methods.

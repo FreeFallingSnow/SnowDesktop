@@ -216,6 +216,7 @@ void DesktopApp::OnMouseMoveAt(
     const HWND captured = GetCapture();
     if (!(wp & mouseButtons) && IsOwnedPointerCaptureWindow(captured) &&
         CanCancelPointerPressAfterCaptureLoss() &&
+        !(HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) & QS_MOUSEBUTTON) &&
         ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
             GetAsyncKeyState(VK_MBUTTON) | GetAsyncKeyState(VK_XBUTTON1) |
             GetAsyncKeyState(VK_XBUTTON2)) & 0x8000) == 0)
@@ -223,12 +224,17 @@ void DesktopApp::OnMouseMoveAt(
         // Device/connection changes can lose the matching button-up. Require
         // both a button-free pointer message and no physically held button:
         // a queued move alone must not cancel a live drag (including swapped
-        // buttons/chords). Native OLE and retained commits are excluded above.
+        // buttons/chords). Drain already queued native button messages first;
+        // their real release must retain click/drop semantics. Native OLE and
+        // retained commits are excluded above.
         CancelPointerPressWithoutCaptureRelease();
         if (GetCapture() == captured)
             ReleaseCapturePreservingPointerState();
-        WriteDiagnosticLogEntry(
-            L"Pointer input recovered: button-free move retired stale owned capture");
+        wchar_t recovery[192]{};
+        swprintf_s(recovery, L"Pointer input recovered reason=button-free-return oldCapture=%p newCapture=%p messageButtons=0x%llX physicalButtons=0 queuedButtons=0",
+            static_cast<void*>(captured), static_cast<void*>(GetCapture()),
+            static_cast<unsigned long long>(wp & mouseButtons));
+        WriteDiagnosticLogEntry(recovery);
         return;
     }
     // Lua hover invalidations and native chrome can request the same child

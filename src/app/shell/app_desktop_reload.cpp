@@ -4,6 +4,7 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_capture.h"
 #include "diagnostics/performance_trace.h"
+#include "diagnostics/input_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
@@ -364,6 +365,7 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (snowdesktop::InputDiagnostics::Acknowledge(hwnd, msg, wp, lp)) return 0;
     // The stable control HWND receives cross-process minimize preparation even
     // while Explorer reparents/recreates the desktop surface.
     if (dockShellHookMessage_ && msg == dockShellHookMessage_)
@@ -589,6 +591,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_DEVICECHANGE:
+        snowdesktop::InputDiagnostics::DeviceChange(wp);
         switch (wp)
         {
         case DBT_DEVNODES_CHANGED:

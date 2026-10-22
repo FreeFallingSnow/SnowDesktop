@@ -10,6 +10,8 @@
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
                 reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
         auto* context = reinterpret_cast<InputSafetyWindowContext*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (context && message == WM_NULL)
+            return context->app->HandleControlMessage(window, message, wp, lp);
         if (context && (message == WM_CANCELMODE || message == WM_CAPTURECHANGED || message == WM_NCHITTEST ||
             (context->popup && message == WM_TIMER)))
         {
@@ -85,6 +87,18 @@
     static inline int inputSafetyPhysicalButton = 0;
     static SHORT WINAPI InputSafetyAsyncKeyState(int key)
     { return key == inputSafetyPhysicalButton ? static_cast<SHORT>(0x8000) : 0; }
+    static inline DWORD inputSafetyQueuedButtons = 0;
+    static DWORD WINAPI InputSafetyQueueStatus(UINT)
+    { return inputSafetyQueuedButtons; }
+    static inline std::mutex inputSafetyLogMutex;
+    static inline std::condition_variable inputSafetyLogChanged;
+    static inline std::vector<std::wstring> inputSafetyLogs;
+    static void InputSafetyLog(const wchar_t* line)
+    {
+        std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
+        inputSafetyLogs.emplace_back(line);
+        inputSafetyLogChanged.notify_all();
+    }
 
     static void RunInputSafety()
     {
@@ -152,6 +166,8 @@
         }
         {
             InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            InputSafetyImport queuedButtons("GetQueueStatus", reinterpret_cast<ULONG_PTR>(&InputSafetyQueueStatus));
+            inputSafetyQueuedButtons = 0;
             for (const HWND window : {app->hwnd_, dockWindow, popupWindow})
             {
                 app->mouseDown_ = true;
@@ -173,11 +189,23 @@
                         "a physically held button protects a live gesture from stale movement");
                 }
                 inputSafetyPhysicalButton = 0;
+                // HIGH word means still queued, even when its LOW change bits
+                // were consumed by another query. Never preempt that release.
+                for (const DWORD queued : {MAKELONG(0, QS_MOUSEBUTTON), MAKELONG(QS_MOUSEBUTTON, QS_MOUSEBUTTON)})
+                {
+                    inputSafetyQueuedButtons = queued;
+                    app->OnMouseMoveAt(0, {0, 0});
+                    check(GetCapture() == window && app->mouseDown_,
+                        "pending native button messages must be processed before stale-press cancellation");
+                }
+                // LOW-only changes describe history, not a queued release.
+                inputSafetyQueuedButtons = MAKELONG(QS_MOUSEBUTTON, 0);
                 app->OnMouseMoveAt(0, {0, 0});
                 check(GetCapture() == nullptr && !app->mouseDown_,
                     "button-free pointer return cancels a press whose release was lost");
                 check(!app->rightButtonItemDrag_ && !app->middleButtonWidgetMove_,
                     "lost-release cleanup retires gesture button state");
+                inputSafetyQueuedButtons = 0;
             }
             for (const bool middle : {false, true})
             {
@@ -196,6 +224,57 @@
             check(GetCapture() == control, "button-free recovery preserves capture owned by another window");
             ReleaseCapture();
             app->mouseDown_ = false;
+        }
+        // Real background worker + real control dispatcher on the private
+        // desktop. Withhold dispatch to produce a late asynchronous probe;
+        // then resume it and observe recovery, without synthesizing input.
+        {
+            std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
+            inputSafetyLogs.clear();
+        }
+        const auto logged = [](const wchar_t* text) {
+            return std::any_of(inputSafetyLogs.begin(), inputSafetyLogs.end(),
+                [text](const std::wstring& line) { return line.find(text) != std::wstring::npos; });
+        };
+        {
+            snowdesktop::InputDiagnostics diagnostics(popupWindow, {20, 60000, 80}, InputSafetyLog);
+            check(!snowdesktop::InputDiagnostics::Acknowledge(control, WM_NULL, 0, 0),
+                "unrelated WM_NULL must not acknowledge an input probe");
+            MSG input{}; input.hwnd = popupWindow; input.message = WM_MOUSEMOVE;
+            snowdesktop::InputDiagnostics::ObserveDequeued(input);
+            input.message = WM_LBUTTONDOWN;
+            snowdesktop::InputDiagnostics::ObserveDequeued(input);
+            snowdesktop::InputDiagnostics::DeviceChange(DBT_DEVNODES_CHANGED);
+            {
+                std::unique_lock<std::mutex> lock(inputSafetyLogMutex);
+                check(inputSafetyLogChanged.wait_for(lock, std::chrono::seconds(3),
+                    [&] { return logged(L"reason=probe-late"); }),
+                    "background diagnostics must record a late UI probe while dispatch is stopped");
+                check(logged(L"pumpMoves=1 pumpButtons=1") && logged(L"deviceCount=1"),
+                    "snapshot must retain delivered pointer counts and aggregated device changes");
+            }
+            const ULONGLONG deadline = GetTickCount64() + 3000;
+            bool recovered = false;
+            while (GetTickCount64() < deadline)
+            {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+                {
+                    std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
+                    recovered = logged(L"reason=probe-recovered");
+                }
+                if (recovered) break;
+                MsgWaitForMultipleObjects(0, nullptr, FALSE, 20, QS_ALLINPUT);
+            }
+            check(recovered, "real control dispatcher must acknowledge and log probe recovery");
+            std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
+            check(inputSafetyLogs.size() < 12, "diagnostics must keep late-probe logging bounded");
+        }
+        // A posted probe carries no object pointer and remains harmless after
+        // monitor destruction. Drain it before the rest of the input fixture.
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
         }
         app->luaWidgetPanelRequest_.widgetId = L"input-safety-dialog";
         app->luaWidgetPanelRequest_.surface = "dialog";
