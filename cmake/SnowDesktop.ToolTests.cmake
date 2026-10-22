@@ -120,6 +120,9 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_state_transaction_tests.cpp "tools;core;integration" 60)
     snowdesktop_add_native_tool_test(SnowDesktopBuildTelemetryTests build_telemetry
         build_tools/build_telemetry_tests.cpp "tools;integration" 180)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildNoopTests build_noop_outputs
+        build_tools/build_noop_tests.cpp "tools;integration" 240)
+    set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)
     target_sources(SnowDesktopBuildTelemetryTests PRIVATE
         tests/build_tools/build_configuration_tests.cpp
         tests/build_tools/build_compile_budget_tests.cpp

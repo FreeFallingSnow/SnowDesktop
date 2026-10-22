@@ -5,6 +5,7 @@ snowdesktop_check_shared_output()
 
 project(SnowDesktop LANGUAGES C CXX)
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ProductBuild.cmake")
 
 # Ship a deterministic WebP decoder, independent of installed WIC extensions.
 foreach(WEBP_TOOL ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO LIBWEBPMUX WEBPMUX EXTRAS)
@@ -1062,6 +1063,8 @@ target_compile_options(SnowDesktopDockMinimizeHook PRIVATE /W4 /permissive- /EHs
 target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32 dwmapi)
 set_property(TARGET SnowDesktopDockMinimizeHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 include(ExternalProject)
+snowdesktop_observed_build_command(SNOWDESKTOP_DOCK32_BUILD_COMMAND
+    "${CMAKE_BINARY_DIR}/dock_minimize32" "$<CONFIG>")
 ExternalProject_Add(SnowDesktopDockMinimize32
     SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/dock"
     BINARY_DIR "${CMAKE_BINARY_DIR}/dock_minimize32"
@@ -1069,10 +1072,15 @@ ExternalProject_Add(SnowDesktopDockMinimize32
     CMAKE_GENERATOR_PLATFORM Win32
     CMAKE_ARGS "-DSNOWDESKTOP_OUTPUT_DIR=${CMAKE_BINARY_DIR}/$<CONFIG>"
         "-DSNOWDESKTOP_BUILD_HOOK_FIXTURE=${BUILD_TESTING}"
-    BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG>
+    BUILD_COMMAND ${SNOWDESKTOP_DOCK32_BUILD_COMMAND}
     BUILD_ALWAYS TRUE
     INSTALL_COMMAND "")
 add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
+foreach(target SnowDesktopTaskbarHook SnowDesktopWallpaperHook SnowDesktopHookEntry SnowDesktopDockMinimizeHook)
+    if(TARGET ${target})
+        snowdesktop_private_runtime_target(${target} "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    endif()
+endforeach()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -1215,6 +1223,10 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopWorkshopManagerSupport)
 
 add_dependencies(SnowDesktop snowwidget SnowDesktopSteamBridge)
+snowdesktop_add_product_build(SnowDesktopReleaseBuild SnowDesktop SnowDesktopLauncher
+    SnowDesktopSteamBridge SnowDesktopWorkshopManager snowwidget)
+snowdesktop_add_product_build(SnowDesktopDebugBuild SnowDesktop
+    SnowDesktopSteamBridge SnowDesktopWorkshopManager)
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin"
@@ -1495,13 +1507,13 @@ if (BUILD_TESTING)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopDockMinimize32)
     add_test(NAME hook_stable_entry32 COMMAND SnowDesktopHookEntryTests --run32
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe"
-        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktop.Runtime/SnowDesktopHookEntry32.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll")
     set_tests_properties(hook_stable_entry32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
     add_test(NAME hook_stable_entry_cross32 COMMAND SnowDesktopHookEntryTests --cross32
-        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktop.Runtime/SnowDesktopHookEntry32.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe")

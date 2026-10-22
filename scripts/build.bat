@@ -110,7 +110,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building 32-bit Wallpaper Engine Hook and injector ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Directory .build\wallpaper_hook32 -Configuration Release -Targets SnowDesktopWallpaperHook32,SnowDesktopWallpaperInjector32
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Directory .build\wallpaper_hook32 -Configuration Release -Targets SnowDesktopWallpaperCapture32
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper build FAILED
     exit /b 1

@@ -108,6 +108,16 @@ scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPub
 对应使用 `-ReloadShell`；发布 TUI 检测到实际构建输出占用时会在执行前请求一次明确确认。
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
+Release/Debug 预设分别构建 `SnowDesktopReleaseBuild` / `SnowDesktopDebugBuild` 聚合目标，
+原有单个目标名仍可用于定向构建。32 位壁纸捕获项目使用 `SnowDesktopWallpaperCapture32`
+一次构建 Hook 和 injector；主项目的 32 位 Dock 子构建通过同一受保护入口记录编译遥测，
+独立诊断输出沿用普通 CMake 构建。聚合只合并图遍历，不跳过执行权检查或依赖。
+
+内部 Hook DLL、32 位 Dock host 和壁纸 injector 直接输出至 `SnowDesktop.Runtime`，
+PDB 与导入库留在 Release/Debug 根目录，增量链接状态留在原中间目录。整理脚本仍校验并
+重建私有运行时，但不会再移走链接器声明的输出。依赖整理前根目录 DLL 的外部工具应改用
+私有目录；发行目录与现有打包接口保持一致。首次采用新路径需重新链接，不能计作热构建样本。
+
 MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSVC 同时编译的源码数由
 `SNOWDESKTOP_COMPILE_JOBS` 控制。后者默认使用本机逻辑处理器数的一半，最少 1、最多 8，
 避免直接占满开发机。可按内存和其他任务负载，在实际使用的 `CMakePresets.json` preset 的

@@ -70,7 +70,10 @@ function Get-ConfiguredBuildContext([string]$Root,[string[]]$Arguments){
             $configurePreset=@($configuration.configurePresets|Where-Object name -eq $configurePreset.inherits)[0]
         }
         $output=$configurePreset.binaryDir.Replace('${sourceDir}',$Root)
-    }else{$output=[IO.Path]::GetFullPath((Join-Path $Root $Arguments[1]))}
+    }else{
+        $directory=[string]$Arguments[1]
+        $output=if([IO.Path]::IsPathRooted($directory)){[IO.Path]::GetFullPath($directory)}else{[IO.Path]::GetFullPath((Join-Path $Root $directory))}
+    }
     $cache=Join-Path $output 'CMakeCache.txt'
     if(-not [IO.File]::Exists($cache)){return $null}
     $generator='';$instance=''
