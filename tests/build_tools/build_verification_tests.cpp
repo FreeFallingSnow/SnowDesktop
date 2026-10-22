@@ -15,13 +15,15 @@ void await_execution(Coordinator& c,const std::string& id){
     const auto record=c.stateRoot/L"runs"/wide(id+".json");
     until([&]{return fs::exists(c.root/L".build/verification-started")||Json::parse(read(record)).at("completedUtc").kind!=Json::Kind::Null;},20);
     const auto coverage=c.stateRoot/L"runs"/wide(id+".verification.json");
-    require(fs::exists(c.root/L".build/verification-started"),"Verification was rejected before test execution: "+(fs::exists(coverage)?read(coverage):read(record)));
+    require(fs::exists(c.root/L".build/verification-started"),"Verification was rejected before test execution: "+Json::parse(read(fs::exists(coverage)?coverage:record)).at("error").str()+" [Run "+id+"]");
 }
 Json wait_run(Coordinator& c,const Env& env,const std::string& id,int code=0){return command(c,env,{"-Command","wait","-RunId",id,"-Seconds","30"},code);}
 void scenario(const fs::path& repo,const std::string& control){
     Coordinator c(repo,"verification"+control,true);
-    copy(repo,c.root,{"scripts/test_manager.ps1","scripts/test_output.ps1"});
-    write(c.scripts/L"build_batch_tests.ps1","param([string]$Batch)\n& (Join-Path $PSScriptRoot 'test_manager.ps1') -Mode plan -PlanBatch $Batch;exit $LASTEXITCODE\n",true);
+    copy(repo,c.root,{"scripts/test_manager.ps1","scripts/test_output.ps1","scripts/build_batch_tests.ps1"});
+    // Keep the real skipped/selected batch router. Only the external Python
+    // enhancement is unavailable; CMake/CTest remain the stand-in boundary.
+    write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+"\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Controlled fixture without Python enhancement'}}\n",true);
     if(control=="configure"){
         auto source=read(c.scripts/L"test_manager.ps1");replace(source,"Write-Host '=== Existing artifacts verified; configure, build and arrangement are omitted ==='","Invoke-Checked -FilePath 'cmake' -Arguments @('--preset','tests')");
         write(c.scripts/L"test_manager.ps1",source,true);
