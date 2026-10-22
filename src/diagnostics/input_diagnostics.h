@@ -8,7 +8,7 @@
 
 namespace snowdesktop
 {
-// Always-on, bounded diagnostics. The worker observes the UI without attaching
+// Opt-in, bounded diagnostics. The worker observes the UI without attaching
 // input queues or installing hooks. A late asynchronous probe is an observation,
 // not a hang verdict (modal loops and a busy system can also delay delivery).
 class InputDiagnostics final
@@ -32,7 +32,7 @@ public:
         stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!stop_)
         {
-            Log(L"InputDiagnostics unavailable: stop event creation failed");
+            WriteDiagnosticLogEntry(L"InputDiagnostics unavailable: stop event creation failed", DiagnosticLogLevel::Warning);
             return;
         }
         current_ = this;
@@ -43,7 +43,7 @@ public:
             current_ = nullptr;
             CloseHandle(stop_);
             stop_ = nullptr;
-            Log(L"InputDiagnostics unavailable: worker creation failed");
+            WriteDiagnosticLogEntry(L"InputDiagnostics unavailable: worker creation failed", DiagnosticLogLevel::Warning);
         }
     }
     ~InputDiagnostics()
@@ -75,7 +75,7 @@ public:
     static void ObserveDequeued(const MSG& message) noexcept
     {
         auto* self = current_;
-        if (!self) return;
+        if (!self || (self->sink_ == Log && !diagnostics::IsLogEnabled(DiagnosticLogModule::Input))) return;
         if (message.message < WM_MOUSEFIRST || message.message > WM_MOUSELAST) return;
         if (message.message == WM_MOUSEMOVE) ++self->moves_;
         else ++self->buttons_;
@@ -97,7 +97,7 @@ public:
 private:
     static constexpr WPARAM ProbeTag = 0x5344494e; // SDIN; WM_NULL has no payload contract.
     inline static thread_local InputDiagnostics* current_ = nullptr;
-    static void Log(const wchar_t* line) { WriteDiagnosticLogEntry(line); }
+    static void Log(const wchar_t* line) { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, line); }
     void Emit(const wchar_t* line) noexcept { try { sink_(line); } catch (...) {} }
     static ULONGLONG Age(ULONGLONG now, ULONGLONG tick) noexcept
     { return tick && now >= tick ? now - tick : 0; }
@@ -116,6 +116,15 @@ private:
         unsigned long long cursorChanges = 0;
         while (WaitForSingleObject(stop_, timing_.sampleMs) == WAIT_TIMEOUT)
         {
+            // Custom sinks are explicit diagnostic sessions (including tests).
+            // The normal worker sleeps without probing other threads when off.
+            if (sink_ == Log && !snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input))
+            {
+                pending_.store(false);
+                wasLate = wasStale = false;
+                lastReport = 0;
+                continue;
+            }
             const ULONGLONG now = GetTickCount64();
             GUITHREADINFO gui{sizeof(gui)};
             const BOOL guiOk = GetGUIThreadInfo(uiThread_, &gui);

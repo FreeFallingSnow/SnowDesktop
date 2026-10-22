@@ -10,6 +10,7 @@
 #include <windows.h>
 
 #include <string>
+#include "diagnostics/diagnostic_log_modules.h"
 #include "animation_settings.h"
 #include "ui/render/app_font.h"
 #include "ui/render/native_tooltip_preferences.h"
@@ -32,6 +33,7 @@ struct GeneralSettings
     bool forceRestartHotkeyEnabled = true;
     UINT forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
     UINT forceRestartHotkeyVirtualKey = 'S';
+    std::uint32_t diagnosticLogModules = 0;
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this

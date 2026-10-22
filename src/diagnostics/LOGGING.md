@@ -1,0 +1,15 @@
+# Runtime logging
+
+The Debug settings page offers 16 independent detailed-log switches. They default to off and are persisted as `diagnosticLogModules` in `SnowDesktop.general.json` in the active data profile. Stable bit positions are declared in `diagnostic_log_modules.h`; append new modules rather than reordering them.
+
+Changes use the existing settings controller and versioned private IPC. Logging-only commits update the mask without rebuilding desktop layout. Confirmed snapshots configure the settings process. Startup and helper entry points read the saved preferences before starting detailed probes. Enabling startup logs captures the next application start.
+
+Use `WriteModuleDiagnosticLogEntry(module, message, level)` for module records. Debug and Info require the module switch; Warning and Error always reach the rotating sink. `WriteDiagnosticLogEntry` is reserved for the minimal lifecycle/error baseline. The sink keeps the existing 1 MiB rotation and one previous log. Critical startup, graphics, Shell, Workshop, input observer and settings errors must not be marked Info.
+
+Expensive observers check `IsLogEnabled` before gathering state: nested startup scopes, desktop interaction snapshots, input watchdog probes, Dock activation snapshots, taskbar trace sessions and status-bar shortcut snapshots. Taskbar native trace buffers are still drained while disabled so stale records cannot accumulate. Workshop detail formatting exits early. Ordinary success records from icon loading, tray registration and periodic Workshop reconciliation are module-controlled.
+
+Crash logs and minidumps remain unconditional. Steam launcher logs report startup/recovery failures. Explicit performance captures, the environment-controlled Shell extension trace, CLI JSON/stdout protocol results, and the bounded Lua component authoring console retain their explicit activation/output contracts; they are not routine writes to `SnowDesktop.log`.
+
+The audit of the supplied logs found startup scope begin/end records accounted for 495 of 799 entries in one sample. Another sample used about one quarter of its bytes for two multiline taskbar snapshots, while unchanged Workshop polling contributed 330 of 800 records. These observations describe those samples, not a measured application performance regression. The current change reduces optional output and observation work; it does not claim to fix the receiver-disconnection input failure that also reproduced after SnowDesktop exited.
+
+Regression coverage includes the actual rotating file sink, per-module isolation, unconditional Warning/Error, runtime input-observer enable/disable, nested startup scope suppression, saved settings, and settings IPC. Actual WinUI keyboard, narrow-window and theme acceptance remain a separate runtime verification step.

@@ -234,7 +234,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         if (!host.backdrop.ApplyStagedFrame())
         {
             std::wstring message = L"Floating Dock backdrop candidate failed: " + host.backdrop.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
             host.backdropRecoveryPending = true;
             RecoverFloatingDockCompositionFailure(host, L"Backdrop candidate", E_FAIL, true);
             return false;

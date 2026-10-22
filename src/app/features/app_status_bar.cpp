@@ -20,7 +20,7 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
     const wchar_t* result = L"-", double callMilliseconds = 0,
     UINT requested = 0, UINT sent = 0, DWORD hostUiThread = 0) noexcept try
 {
-    if (started < 0) return;
+    if (started < 0 || !snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::System)) return;
     wchar_t inputState[448]{};
     if (wcscmp(phase, L"queued") == 0 || wcscmp(phase, L"send-input") == 0 ||
         wcscmp(phase, L"finished") == 0)
@@ -52,7 +52,7 @@ void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
         static_cast<unsigned>(action), static_cast<unsigned long long>(generation), phase,
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
         result, callMilliseconds, requested, sent, GetCurrentThreadId(), inputState);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
 }
 catch (...) { /* Diagnostics must not change activation or release behavior. */ }
 }
@@ -422,7 +422,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, original, std::move(callbacks));
                     if (!statusBarActivationToken_)
                     {
-                        WriteDiagnosticLogEntry(L"StatusBar input method stage=restore-scheduler-unavailable", DiagnosticLogLevel::Error);
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=restore-scheduler-unavailable", DiagnosticLogLevel::Error);
                         MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                     }
                 };
@@ -442,7 +442,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             const HRESULT selected = input::Select(ready, choice);
                             wchar_t message[128]{};
                             swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(selected));
-                            WriteDiagnosticLogEntry(message);
+                            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, selected != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                             if (selected != S_OK)
                                 MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                         });
@@ -457,7 +457,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             const HRESULT menuResult = statusBar_->ShowInputMethod(anchor, true);
                             wchar_t message[128]{};
                             swprintf_s(message, L"StatusBar input method panel menu hr=0x%08lX", static_cast<unsigned long>(menuResult));
-                            WriteDiagnosticLogEntry(message);
+                            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(menuResult) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                         });
                     }, selection.target.foreground);
                 };
@@ -478,7 +478,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, std::nullopt, std::move(capture));
         if (!statusBarActivationToken_)
         {
-            WriteDiagnosticLogEntry(L"StatusBar input method stage=capture-scheduler-unavailable", DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=capture-scheduler-unavailable", DiagnosticLogLevel::Error);
             MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
     }
@@ -490,7 +490,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         swprintf_s(message, L"StatusBar input method %ls hr=0x%08lX anchor=%ld,%ld,%ld,%ld",
             action == Action::SystemInputMethodPanel ? L"layout-panel" : action == Action::InputMethodMenu ? L"context" : L"toggle", static_cast<unsigned long>(result),
             anchor.left, anchor.top, anchor.right, anchor.bottom);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
         hold->shortcutFinished = true;
         TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
             SUCCEEDED(result) ? L"requested" : L"failed");
@@ -515,7 +515,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         {
             // A delay cannot protect against a click after injection. Refuse
             // this opening if its raw-input handoff cannot be established.
-            WriteDiagnosticLogEntry(L"StatusBar Task View input handoff unavailable; opening cancelled");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar Task View input handoff unavailable; opening cancelled", DiagnosticLogLevel::Warning);
             hold->shortcutFinished = true;
             MessageBeep(MB_ICONWARNING);
             return;
@@ -584,7 +584,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             request->relay ? request->relay->ThreadId() : 0ul,
                             diagnostic.activationAttempted ? 1u : 0u, diagnostic.activationReturned ? 1u : 0u,
                             diagnostic.focusChecked ? 1u : 0u, diagnostic.focused ? 1u : 0u, accepted);
-                        WriteDiagnosticLogEntry(message);
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, DiagnosticLogLevel::Warning);
                         MessageBeep(MB_ICONWARNING);
                     }
                 };
@@ -653,7 +653,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             statusBarActivationMonitor_ = nullptr;
             TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
                 L"scheduler-unavailable");
-            WriteDiagnosticLogEntry(L"StatusBar system shortcut relay scheduler unavailable", DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar system shortcut relay scheduler unavailable", DiagnosticLogLevel::Error);
             MessageBeep(MB_ICONWARNING);
         }
     }
@@ -1003,7 +1003,7 @@ void DesktopApp::SyncStatusBar()
             },
             [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },
             [this](const std::wstring& error) {
-                WriteDiagnosticLogEntry(error.c_str());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, error.c_str(), DiagnosticLogLevel::Error);
                 MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {

@@ -15,7 +15,7 @@ void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
     {
         RefreshSystemTaskbarAppearance(false);
         if (!BeginSystemTaskbarMinimizeProtection(window))
-            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
                 DiagnosticLogLevel::Warning);
     }
     snowdesktop::dock_taskbar_diagnostics::Record(L"minimize-taskbar-protection-submitted", window);
@@ -31,7 +31,7 @@ void DesktopApp::StartDockForegroundMonitor()
         if (dockShellHookMessage_ && target && RegisterShellHookWindow(target))
             dockShellHookWindow_ = target;
         else
-            WriteDiagnosticLogEntry(L"Dock attention Shell hook registration failed");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"Dock attention Shell hook registration failed", DiagnosticLogLevel::Warning);
     }
     dockForegroundNotificationWindow_.store(
         controlHwnd_ && IsWindow(controlHwnd_)
@@ -208,7 +208,7 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     snowdesktop::dock_taskbar_diagnostics::Record(
         guardTrace, foreground);
     ApplyFloatingDockLayerPolicy();
-    WriteDiagnosticLogEntry(guardTrace);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, guardTrace);
 }
 
 namespace

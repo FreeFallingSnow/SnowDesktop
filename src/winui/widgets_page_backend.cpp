@@ -1899,7 +1899,7 @@ struct WidgetsPageBackend::Impl final
             // This pending operation is executed only by the confirmed callback.
             install.allowUnlockedReview = true;
             const std::wstring diagnostic = L"Component install review lock unavailable: " + lockWarning;
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Warning);
         }
         const bool sourceChange = std::any_of(
             dialogRequest.reasons.begin(), dialogRequest.reasons.end(),
@@ -1990,7 +1990,7 @@ struct WidgetsPageBackend::Impl final
                                 return;
                             }
                             if (install.allowUnlockedReview)
-                                WriteDiagnosticLogEntry(L"Component install: user confirmed continuing without the review lock.",
+                                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, L"Component install: user confirmed continuing without the review lock.",
                                     DiagnosticLogLevel::Info);
                             owner->RunInstall(std::move(install));
                         });
@@ -2062,7 +2062,7 @@ struct WidgetsPageBackend::Impl final
             if (!snapshot.lockWarning.empty()) snapshot.lockWarning += L"\n\n";
             snapshot.lockWarning += packageLock.Details();
             const auto diagnostic = L"Component package review lock unavailable: " + packageLock.Details();
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Warning);
         }
         const auto hashBefore = snowdesktop::widget::detail::HashPackageFile(snapshot.path, true);
         if (hashBefore.empty())

@@ -26,6 +26,7 @@ bool IsDockConsentActivationProxy(HWND window)
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock)) return;
     DWORD process = 0, foregroundProcess = 0;
     const DWORD thread = GetWindowThreadProcessId(target, &process);
     const HWND foreground = GetForegroundWindow();
@@ -43,7 +44,7 @@ void LogDockWindowActivation(HWND target, const wchar_t* phase,
         foreground, foregroundProcess, foregroundThread,
         IsIconic(target), IsWindowVisible(target), IsHungAppWindow(target),
         placementKnown, placement.showCmd, placement.flags, showCommand, accepted, error);
-    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
 }
 
 HWND ResolveDockWindowActivationTarget(HWND target)
@@ -487,7 +488,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
         snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");
         RefreshSystemTaskbarAppearance(false);
         if (!BeginSystemTaskbarMinimizeProtection(window, true))
-            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
                 DiagnosticLogLevel::Warning);
         snowdesktop::dock_taskbar_diagnostics::Record(L"system-minimize-taskbar-protection-observed", window);
     }
@@ -951,7 +952,7 @@ void DesktopApp::RefreshDockRunningWindows(
                         if (!process || current != process) return nullptr;
                         return CreateDockWindowProvidedIconBitmap(window, result->size, requestSize);
                     });
-                WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
@@ -963,7 +964,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 if (current == process)
                     result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
                         result->size, requestSize);
-                WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;

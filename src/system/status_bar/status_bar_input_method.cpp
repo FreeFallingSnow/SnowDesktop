@@ -95,7 +95,7 @@ void TraceTarget(const wchar_t* stage, const Snapshot& target, const Snapshot& o
         static_cast<void*>(target.layout), static_cast<void*>(observed.foreground),
         static_cast<void*>(observed.focus), observed.thread, static_cast<void*>(observed.layout),
         static_cast<unsigned>(observed.menuActive));
-    WriteDiagnosticLogEntry(message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
 }
 std::optional<ProfileIcon> ReadProfileIcon(const TF_INPUTPROCESSORPROFILE& profile)
 {
@@ -313,7 +313,7 @@ Selection CaptureSelection(const Snapshot& target)
     swprintf_s(message, L"StatusBar input method stage=profiles-ready choices=%zu activeKnown=%u target=%p focus=%p thread=%lu",
         result.choices.size(), static_cast<unsigned>(known), static_cast<void*>(target.foreground),
         static_cast<void*>(target.focus), target.thread);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
     return result;
 }
 HRESULT Select(const Selection& selection, const Choice& choice)
@@ -328,7 +328,7 @@ HRESULT Select(const Selection& selection, const Choice& choice)
         swprintf_s(message, L"StatusBar input method profile stage=%ls hr=0x%08lX type=%lu lang=0x%04X clsid=%ls guid=%ls hkl=%p substitute=%p",
             stage, static_cast<unsigned long>(hr), profile.dwProfileType, static_cast<unsigned>(profile.langid),
             clsid, guid, static_cast<void*>(profile.hkl), static_cast<void*>(profile.hklSubstitute));
-        WriteDiagnosticLogEntry(message, hr != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, hr != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         return hr;
     };
     if (std::none_of(selection.choices.begin(), selection.choices.end(), [&](const auto& item) {
@@ -424,7 +424,7 @@ struct Service::Impl
                 wchar_t message[128]{};
                 swprintf_s(message, L"StatusBar input method native context provider hr=0x%08lX",
                     static_cast<unsigned long>(hr));
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(hr) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
             }
             Snapshot next;
             try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }

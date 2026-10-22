@@ -19,13 +19,13 @@ void DesktopApp::ShowFloatingDock(
 {
     if (desktopPassthroughActive_)
         return;
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
         source == DockRevealSource::Hotkey ? L"Floating Dock shortcut received" :
         source == DockRevealSource::Gesture ? L"Floating Dock edge gesture received" :
         L"Floating Dock associated surface reveal received");
     if (!generalSettings_.dockEnabled)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
             L"Floating Dock shortcut ignored: feature disabled");
         return;
     }
@@ -42,7 +42,7 @@ void DesktopApp::ShowFloatingDock(
     }
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
-        WriteDiagnosticLogEntry(L"Floating Dock reveal suppressed: foreground fullscreen");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: foreground fullscreen");
         return;
     }
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
@@ -52,8 +52,8 @@ void DesktopApp::ShowFloatingDock(
     HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock persistent host unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+            L"Floating Dock persistent host unavailable", DiagnosticLogLevel::Warning);
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -116,7 +116,7 @@ void DesktopApp::ShowFloatingDock(
                 SyncPersistentDockHost(
                     previouslySelectedMonitor);
             }
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
                 L"Floating Dock summon deferred: frame not ready");
             return;
         }
@@ -565,7 +565,7 @@ RecoverFloatingDockCompositionFailure(
         preserveExistingFrame
             ? L"retaining previous"
             : L"resetting");
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Warning);
     if (!preserveExistingFrame)
         ResetFloatingDockCompositionResources(host);
     if (!host.compositionRenderRecoveryPending &&

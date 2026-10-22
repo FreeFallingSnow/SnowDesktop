@@ -160,7 +160,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
             L"Native desktop CompositionBackdropBrush active, panels=";
         message += std::to_wstring(
             desktopBackdropCompositor_.PanelCount());
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message.c_str());
         nativeGlassPanelReadyLogged_ = true;
     }
 

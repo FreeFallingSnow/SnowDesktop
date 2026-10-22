@@ -228,7 +228,7 @@ static bool ReadDesktopSource(
                 {
                     const auto message = L"Shell desktop metadata slow: elapsed_ms=" +
                         std::to_wstring(elapsed) + L" path=" + parsingName;
-                    WriteDiagnosticLogEntry(message.c_str());
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str(), DiagnosticLogLevel::Warning);
                 }
                 return success;
             });
@@ -653,7 +653,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         DestroyWindow(previousWindow);
         if (!CreateDesktopOverlayWindow())
         {
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell,
                 L"Display topology overlay recreation failed",
                 DiagnosticLogLevel::Error);
             ScheduleDisplayTopologyRefresh();

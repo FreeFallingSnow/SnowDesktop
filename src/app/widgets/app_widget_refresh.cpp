@@ -102,7 +102,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     }
     if (!snapshot->complete)
     {
-        WriteDiagnosticLogEntry(L"Folder enumeration failed; retaining current entries");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, L"Folder enumeration failed; retaining current entries", DiagnosticLogLevel::Warning);
         return;
     }
     auto previous = std::exchange(widget.folderEntries, snapshot->entries);

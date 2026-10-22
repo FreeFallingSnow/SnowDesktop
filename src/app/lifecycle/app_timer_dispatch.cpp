@@ -101,7 +101,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                     {
                         const std::wstring message = Utf8ToWide(
                             "Steam Workshop subscription sync skipped: " + warnings);
-                        WriteDiagnosticLogEntry(message.c_str());
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message.c_str(), DiagnosticLogLevel::Warning);
                     }
                 }
                 synchronizationSucceeded = true;
@@ -121,7 +121,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                     steamWorkshopSubscriptionLastError_ = combined;
                     const std::wstring message = Utf8ToWide(
                         "Steam Workshop subscription sync: " + combined);
-                    WriteDiagnosticLogEntry(message.c_str());
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message.c_str(), DiagnosticLogLevel::Error);
                 }
                 synchronizationMessage = Utf8ToWide(combined);
             }
@@ -137,7 +137,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 const std::wstring message = Utf8ToWide(
                     "Steam Workshop subscription query: " +
                     ready->snapshot.error);
-                WriteDiagnosticLogEntry(message.c_str());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message.c_str(), DiagnosticLogLevel::Error);
             }
         }
         if (synchronizationMessage.empty())
@@ -399,7 +399,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     delay, nullptr))
             {
                 CancelDeferredLayoutSave();
-                WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, L"Scroll layout save timer unavailable; layout remains pending",
                     DiagnosticLogLevel::Warning);
             }
             return;
@@ -593,7 +593,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     swprintf_s(message,
                         L"UserObjectRecovery phase=%ls pid=%lu userObjects=%lu quota=%lu error=%ld",
                         phase, GetCurrentProcessId(), count, quota, error);
-                    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message, DiagnosticLogLevel::Warning);
                 }))
             return;
         PollInitialShellRead();

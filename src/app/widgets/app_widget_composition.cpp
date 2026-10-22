@@ -468,7 +468,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             failure.stage,
             static_cast<unsigned>(failure.hr),
             failure.retry ? L"recreating" : L"dropping");
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
 
         const auto position =
             desktopWidgetCompositionItems_.find(failure.widgetId);
@@ -615,7 +615,7 @@ void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
             monitorKnown ? monitor.szDevice : L"unknown",
             monitorKnown && (monitor.dwFlags & MONITORINFOF_PRIMARY) != 0,
             item.backdropBlurRadius);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
     }
     wchar_t summary[256]{};
     swprintf_s(summary,
@@ -623,7 +623,7 @@ void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
         L"available=%d requested=%zu registered=%zu panels=%zu",
         GetCurrentProcessId(), tick, phase, desktopBackdropCompositor_.IsAvailable(),
         requested, registered, desktopBackdropCompositor_.PanelCount());
-    WriteDiagnosticLogEntry(summary);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, summary);
 }
 
 std::uint64_t DesktopApp::GetDesktopWidgetSurfaceBytes(
@@ -723,7 +723,7 @@ void DesktopApp::TrimHiddenDesktopWidgetSurfaces()
             desktopWidgetCompositionFailurePending_ = true;
             const auto message = L"[WidgetComposition] Hidden surface detach failed: " +
                 id + L" hr=" + std::to_wstring(hr);
-            WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message.c_str(), DiagnosticLogLevel::Error);
             if (hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }

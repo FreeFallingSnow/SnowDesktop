@@ -417,7 +417,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
                 metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
                 finished - queuedAt, result->bitmap ? 1 : 0, trace.Id());
-            WriteDiagnosticLogEntry((std::wstring(timing) + std::wstring(representationName)).c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + std::wstring(representationName)).c_str(), DiagnosticLogLevel::Warning);
         }
         return result;
     };
@@ -435,7 +435,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 std::to_wstring(GetTickCount64() - beforeApply) + L" accepted=" +
                 std::to_wstring(accepted ? 1 : 0) + L" widget=" + result->widgetId +
                 L" path=" + result->folderPath;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, message.c_str());
         }
         return accepted;
     };
@@ -456,13 +456,14 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             else result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
             if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
-            // Record successes as well as misses during rollout so a startup
-            // log distinguishes local delivery from waiting for Shell fallback.
-            wchar_t timing[256]{};
-            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
-                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
-                cached ? 1 : 0, trace.Id());
-            WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+            if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Icons))
+            {
+                wchar_t timing[256]{};
+                swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
+                    started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
+                    cached ? 1 : 0, trace.Id());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str());
+            }
             return result;
         };
         auto classify = [input, makeResult] {
@@ -544,7 +545,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                            L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu "
                            L"totalMs=%llu trace=%llu path=",
                            loadMs, classifyMs, targetMs, elapsed, trace.Id());
-                WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str(), DiagnosticLogLevel::Warning);
             }
             return result;
         };
@@ -741,7 +742,7 @@ void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
         if (desktopBackdropCompositor_.Initialize(hwnd_))
         {
             nativeGlassPanelReadyLogged_ = false;
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons,
                 L"Native desktop CompositionBackdropBrush initialized");
         }
         else
@@ -749,7 +750,7 @@ void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
             std::wstring message =
                 L"Native desktop CompositionBackdropBrush unavailable: ";
             message += desktopBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
     desktopBackdropCompositor_.SetVisible(true);

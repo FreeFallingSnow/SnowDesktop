@@ -57,8 +57,8 @@ bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()
             instance_, &DesktopApp::FloatingDockEdgeSwipeMouseHookProc))
         return true;
 
-    WriteDiagnosticLogEntry(
-        L"Floating Dock edge-swipe mouse hook FAILED");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+        L"Floating Dock edge-swipe mouse hook FAILED", DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -167,14 +167,14 @@ void DesktopApp::ApplyFloatingDockHotkey()
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registered";
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str());
         }
         else
         {
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registration failed";
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
 
@@ -792,7 +792,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         (!targetHost ||
             !IsPersistentDockHostPromoted(*targetHost)))
     {
-        WriteDiagnosticLogEntry(L"Floating Dock edge gesture received");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock edge gesture received");
         if (dockSettings_.showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
         {
             targetHost->edgeHoverRequested = true;

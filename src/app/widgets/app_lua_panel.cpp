@@ -52,7 +52,7 @@ void DesktopApp::OpenLuaWidgetPanel(
             floatingPopupMouseHookGeneration_,
             GetOpenPopupWidget() ? 1 : 0,
             luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, message);
     }
     if (luaWidgetPanelFinalizing_)
     {
@@ -257,7 +257,7 @@ void DesktopApp::CloseLuaWidgetPanel(
             GetOpenPopupWidget() ? 1 : 0,
             GetCapture(),
             GetFocus());
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, message);
     }
     const bool panelPressActive =
         luaWidgetPanelMouseDown_ ||

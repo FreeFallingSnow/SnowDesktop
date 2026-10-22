@@ -310,7 +310,7 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex, bool* pendi
             wchar_t diagnostic[512]{};
             swprintf_s(diagnostic, L"Dock identity ready: item=%ls elapsed=%llu ms",
                 PathFindFileNameW(path.c_str()), GetTickCount64() - queuedAt);
-            WriteDiagnosticLogEntry(diagnostic, DiagnosticLogLevel::Debug);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, diagnostic, DiagnosticLogLevel::Debug);
             dockRunningWindowsRefreshTick_ = 0;
         }, hwnd_, kBackgroundShellReadyMessage);
     return cached.value.value_or(DockAppIdentity{});

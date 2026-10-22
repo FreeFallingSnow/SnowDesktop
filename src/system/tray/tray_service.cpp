@@ -207,7 +207,7 @@ struct Service::Impl
                 current->shared->owner, static_cast<LPARAM>(Read(current->shared->epoch)),
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 200, &armed) || !armed)
         {
-            WriteDiagnosticLogEntry(L"Tray re-registration skipped: collector handshake unavailable", DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, L"Tray re-registration skipped: collector handshake unavailable", DiagnosticLogLevel::Warning);
             return;
         }
         struct Recipients
@@ -219,7 +219,7 @@ struct Service::Impl
             RegisterWindowMessageW(L"TaskbarCreated")};
         if (!recipients.explorer || !recipients.message)
         {
-            WriteDiagnosticLogEntry(L"Tray re-registration skipped: recipient identity unavailable", DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, L"Tray re-registration skipped: recipient identity unavailable", DiagnosticLogLevel::Warning);
             return;
         }
         // Explorer also consumes shell lifecycle signals. An application icon
@@ -234,7 +234,7 @@ struct Service::Impl
         wchar_t message[192]{};
         swprintf_s(message, L"Tray re-registration applications posted=%u failed=%u excludedExplorer=%lu",
             recipients.posted, recipients.failed, recipients.explorer);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, recipients.failed ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
     }
     void Run(std::stop_token token)
     {
@@ -264,7 +264,7 @@ struct Service::Impl
                 swprintf_s(message, L"Tray connection stage=%s error=%lu pid=%lu registrations=%llu successful=%llu failed=%llu",
                     stage, error, GetCurrentProcessId(), registrationStatistics.attempts,
                     registrationStatistics.successes, registrationStatistics.failures);
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                 reportedError = error; reportedStage = stage;
             }
             {
@@ -290,7 +290,7 @@ struct Service::Impl
                             catch (...) { return taskbar_hook::AutoHideResolution{.error = ERROR_NOT_ENOUGH_MEMORY}; }
                         });
                     }
-                    catch (...) { WriteDiagnosticLogEntry(L"Tray modern bootstrap symbol worker unavailable", DiagnosticLogLevel::Warning); }
+                    catch (...) { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, L"Tray modern bootstrap symbol worker unavailable", DiagnosticLogLevel::Warning); }
                 }
             }
             Reregister(current);
@@ -312,7 +312,7 @@ struct Service::Impl
                     wchar_t message[192]{};
                     swprintf_s(message, L"Tray modern bootstrap symbols error=%lu resolverError=%lu",
                         resolved.modernTrayError, resolved.error);
-                    WriteDiagnosticLogEntry(message);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Warning);
                 }
                 const auto epoch = static_cast<std::uint64_t>(Read(state.epoch));
                 bool refreshTooltips = false;
@@ -337,13 +337,13 @@ struct Service::Impl
                             swprintf_s(registration, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu hidden=%u",
                                 event.identity.process, event.identity.id, reinterpret_cast<HWND>(event.identity.window),
                                 event.operation, event.version, event.callback, (event.state & NIS_HIDDEN) ? 1u : 0u);
-                            WriteDiagnosticLogEntry(registration, DiagnosticLogLevel::Debug);
+                            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, registration, DiagnosticLogLevel::Debug);
                         }
                         for (auto& icon : snapshot.icons) ResolveApplication(icon);
                         wchar_t message[192]{};
                         swprintf_s(message, L"Tray modern native read captured=%zu changed=%zu epoch=%llu",
                             supplemented.size(), added, static_cast<unsigned long long>(epoch));
-                        WriteDiagnosticLogEntry(message);
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message);
                         supplementedEpoch = epoch; supplementAttempts = 0;
                     }
                     else if (++supplementAttempts >= 3) { supplementedEpoch = epoch; supplementAttempts = 0; }
@@ -381,7 +381,7 @@ struct Service::Impl
                                         registered->identity.process, registered->identity.id,
                                         reinterpret_cast<HWND>(registered->identity.window), event.operation,
                                         registered->version, registered->callback);
-                                    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+                                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
                                 }
                             }
                             Changed();
@@ -404,7 +404,7 @@ struct Service::Impl
                         wchar_t message[192]{};
                         swprintf_s(message, L"Tray tooltip refresh captured=%zu changed=%zu epoch=%llu",
                             native.size(), changed, static_cast<unsigned long long>(epoch));
-                        WriteDiagnosticLogEntry(message);
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message);
                     }
                     drainEvents();
                 }
@@ -419,7 +419,7 @@ struct Service::Impl
                     swprintf_s(message, L"Tray collection icons=%zu hidden=%zu incomplete=%zu received=%ld decoded=%ld rejected=%ld lastSize=%ld resync=%ld",
                         snapshot.icons.size(), static_cast<std::size_t>(hidden), static_cast<std::size_t>(incomplete),
                         Read(state.received), Read(state.decoded), Read(state.rejected), Read(state.lastSize), Read(state.resync));
-                    WriteDiagnosticLogEntry(message); reportedCollection = true;
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message); reportedCollection = true;
                 }
                 if (Read(state.resync) != lost && GetTickCount64() - lastResync >= 3000)
                 {
@@ -517,7 +517,7 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
             wchar_t message[192]{};
             swprintf_s(message, L"Tray activation rejected pid=%lu actualPid=%lu id=%lu hwnd=%p callback=%lu action=%u",
                 icon.identity.process, pid, icon.identity.id, target, icon.callback, static_cast<unsigned>(action));
-            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Warning);
         }
         return false;
     }
@@ -576,7 +576,7 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
             static_cast<unsigned>(action), icon.version, IsRectEmpty(&geometry) ? 0u : 1u,
             geometry.left, geometry.top, geometry.right, geometry.bottom, anchor.x, anchor.y,
             foregroundGranted ? 1u : 0u, accepted ? 1u : 0u, error);
-        WriteDiagnosticLogEntry(message, accepted ? DiagnosticLogLevel::Debug : DiagnosticLogLevel::Warning);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, accepted ? DiagnosticLogLevel::Debug : DiagnosticLogLevel::Warning);
     }
     if (!accepted && serial)
     {

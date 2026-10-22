@@ -515,7 +515,7 @@ public:
         {
             const std::wstring diagnostic = L"[TaskbarAppearance] failed; explorerPid=" + std::to_wstring(explorerProcessId) +
                 L" stage=" + std::to_wstring(state_->diagnosticStage) + L" error=" + std::to_wstring(state_->lastError);
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic.c_str(), DiagnosticLogLevel::Error);
             appearanceFailureReported_ = true; reportedFailureExplorer_ = explorerProcessId;
             reportedFailureError_ = static_cast<DWORD>(state_->lastError);
             const snowdesktop::taskbar_hook::AppearanceFailureKey failure{
@@ -637,7 +637,7 @@ public:
             wchar_t diagnostic[160]{};
             swprintf_s(diagnostic, L"[TaskbarMinimizeInput] dedicated observer ready=%d error=%lu",
                 error == ERROR_SUCCESS, error);
-            WriteDiagnosticLogEntry(diagnostic, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
 
         const UINT applyMessage = RegisterWindowMessageW(
@@ -766,7 +766,7 @@ public:
                 exempt ? L"exempt" : L"protect", source, observed, minimizeInput_.Running(),
                 static_cast<DWORD>(input.kind), input.time, static_cast<DWORD>(now) - input.time, recipient,
                 input.point.x, input.point.y);
-            WriteDiagnosticLogEntry(diagnostic);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic);
             if (exempt)
             {
                 // Also release any earlier request: a missing Explorer input
@@ -862,7 +862,7 @@ private:
         {
             if (!residentRuntimeLogged_)
             {
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] compatible resident instance resumed without Hook registration; DLL updates take effect after Explorer exits naturally");
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarHookConnection] compatible resident instance resumed without Hook registration; DLL updates take effect after Explorer exits naturally");
                 residentRuntimeLogged_ = true;
             }
             std::lock_guard lock(mutex_);
@@ -895,7 +895,7 @@ private:
             injectionCancelEvent_, [this] {
                 if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath())
                 { SetLastError(ERROR_SUCCESS); return std::wstring{}; }
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] instance did not acknowledge; selecting another reusable slot");
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarHookConnection] instance did not acknowledge; selecting another reusable slot");
                 return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
             }, &stage);
         if (explorerProcess)
@@ -906,7 +906,7 @@ private:
                 std::to_wstring(expectedExplorerProcessId) + L" error=" + std::to_wstring(error) +
                 L" stage=" + snowdesktop::taskbar_hook::ConnectionStageName(stage) +
                 L" runtime=" + selectedHookPath_;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, message.c_str(), DiagnosticLogLevel::Warning);
         }
 
         if (error == ERROR_CANCELLED) return false;
@@ -915,7 +915,7 @@ private:
         {
             const std::wstring message = L"[TaskbarHookConnection] fresh native host acknowledgement; explorerPid=" +
                 std::to_wstring(expectedExplorerProcessId) + L" runtime=" + selectedHookPath_;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, message.c_str());
             residentRuntimeLogged_ = true;
         }
 

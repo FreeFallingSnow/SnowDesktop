@@ -158,7 +158,7 @@ void DesktopApp::RestoreExplorerIconsOnExit()
 {
     if (!explorerIconVisibility_.RestoreWhenReady(
             [] { return FindDesktopWindows().listView; }))
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
             L"Explorer icon restoration incomplete at exit: current desktop layer is not visible",
             DiagnosticLogLevel::Warning);
 }
@@ -370,7 +370,7 @@ bool DesktopApp::CreateDesktopInputWindow(HWND host)
             inputHwnd_, GetParent(inputHwnd_),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_STYLE)),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_EXSTYLE)));
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, buf);
     }
     return true;
 }
@@ -401,7 +401,7 @@ void DesktopApp::FocusDesktopInputWindow()
         : nullptr;
     if (!target)
     {
-        WriteDiagnosticLogEntry(L"Desktop input proxy unavailable; render child activation refused",
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Desktop input proxy unavailable; render child activation refused",
             DiagnosticLogLevel::Warning);
         return;
     }
@@ -490,7 +490,7 @@ bool DesktopApp::FocusKeyboardWindow(
     if (!requestFocus())
     {
         TraceDesktopInteraction(L"focus-suppressed-fullscreen", target);
-        WriteDiagnosticLogEntry(L"Keyboard focus request suppressed: foreground fullscreen");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Keyboard focus request suppressed: foreground fullscreen");
         return false;
     }
     observation = observeFocus();
@@ -514,7 +514,7 @@ bool DesktopApp::FocusKeyboardWindow(
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
         GetFocus());
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -585,8 +585,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 
     if (!EnsureFloatingDockInputWindow())
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock input proxy creation FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
+            L"Floating Dock input proxy creation FAILED", DiagnosticLogLevel::Warning);
         return;
     }
     floatingDockKeyboardSessionActive_ = true;
@@ -852,13 +852,13 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     if (desktopBackdropCompositor_.Initialize(hwnd_))
     {
         nativeGlassPanelReadyLogged_ = false;
-        WriteDiagnosticLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Native desktop CompositionBackdropBrush initialized");
     }
     else
     {
         std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
         message += desktopBackdropCompositor_.LastError();
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Warning);
     }
 
     if (HICON appIcon = LoadAppIcon())
@@ -1088,7 +1088,7 @@ void DesktopApp::CompleteExitRequest()
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.
     if (widgetEngine_) widgetEngine_->BeginTaskShutdown();
-    WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Application exit begin: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" restart=" +
         std::to_wstring(preparedRestart_ != nullptr)).c_str());
     shellLaunchWorker_.Stop();
@@ -1148,7 +1148,7 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    WriteDiagnosticLogEntry((L"Application restart prepared: pid=" +
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Application restart prepared: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" child=" +
         std::to_wstring(restart->ProcessId())).c_str());
     preparedRestart_ = std::move(restart);

@@ -234,7 +234,7 @@ void DesktopApp::OnNativeMouseMoveAt(
         swprintf_s(recovery, L"Pointer input recovered reason=button-free-return oldCapture=%p newCapture=%p messageButtons=0x%llX physicalButtons=0 queuedButtons=0",
             static_cast<void*>(captured), static_cast<void*>(GetCapture()),
             static_cast<unsigned long long>(wp & mouseButtons));
-        WriteDiagnosticLogEntry(recovery);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, recovery);
         return;
     }
     OnMouseMoveAt(wp, current, dragPreviewSynced);

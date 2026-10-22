@@ -391,8 +391,8 @@ bool DesktopApp::SyncPersistentDockHosts()
         if (!RenderFloatingDockCompositionFrame(host) ||
             !host.frameReady)
         {
-            WriteDiagnosticLogEntry(
-                L"Persistent DockHost initial frame unavailable; host disabled");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+                L"Persistent DockHost initial frame unavailable; host disabled", DiagnosticLogLevel::Warning);
             host.active = false;
             host.revealPending = false;
             host.backdrop.HidePopupWindowPair(host.hwnd);
@@ -1089,7 +1089,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 L"Floating Dock native backdrop unavailable: ";
             message += floatingDockBackdropCompositor_.
                 LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
     if (firstReveal)
@@ -1113,7 +1113,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             (GetWindowLongPtrW(
                 dockHostHwnd, GWL_EXSTYLE) &
                 WS_EX_TOPMOST) != 0);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
     }
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(

@@ -668,7 +668,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (dock && contextDockHost && contextDockHost->active &&
         !dockOwnsContextInput)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
             L"Floating Dock context summon ignored: right-button press did not begin on matching DockHost");
         // The release belongs to a press handled by another surface (most
         // commonly a menu that disappeared after button-down). Do not let it

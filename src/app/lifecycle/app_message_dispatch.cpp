@@ -30,11 +30,11 @@ bool DesktopApp::RequestWindowsShutdownDialog()
         wsprintfW(message,
             L"Desktop Alt+F4 shutdown dialog request failed hr=0x%08X",
             static_cast<unsigned>(result));
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
         return false;
     }
 
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
         L"Desktop Alt+F4 requested the Windows shutdown dialog");
     return true;
 }

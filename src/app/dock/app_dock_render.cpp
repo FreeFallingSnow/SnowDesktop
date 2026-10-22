@@ -383,7 +383,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     const auto started = GetTickCount64();
                     auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                     result->bitmap = GetLocalIconResourceBitmap(path, result->size, requestedSize);
-                    WriteDiagnosticLogEntry((L"Dock local folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock local folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
                         L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                         std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                     return result;
@@ -391,7 +391,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     const auto started = GetTickCount64();
                     auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                     result->bitmap = CreateDockShellIconBitmap(path, result->size, requestedSize);
-                    WriteDiagnosticLogEntry((L"Dock Shell folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock Shell folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
                         L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                         std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                     return result;

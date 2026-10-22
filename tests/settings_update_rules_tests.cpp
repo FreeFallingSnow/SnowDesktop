@@ -56,6 +56,21 @@ int main()
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
 
     GeneralSettings general;
+    auto logging = general;
+    logging.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Input);
+    using snowdesktop::settings_update_rules::IsGeneralLoggingOnlyCommit;
+    Check(IsGeneralLoggingOnlyCommit(general, logging),
+        "logging-only commits skip desktop layout and hotkey changes");
+    Check(!IsGeneralShortcutOnlyCommit(general, logging),
+        "logging changes cannot disappear into the shortcut fast path");
+    auto mixedLogging = logging;
+    mixedLogging.calendarDisplay.enabled = !general.calendarDisplay.enabled;
+    Check(!IsGeneralLoggingOnlyCommit(general, mixedLogging),
+        "a mixed calendar/logging change still applies the calendar");
+    mixedLogging = logging;
+    mixedLogging.forceRestartHotkeyEnabled = !general.forceRestartHotkeyEnabled;
+    Check(!IsGeneralLoggingOnlyCommit(general, mixedLogging),
+        "a mixed logging/hotkey change still updates hotkeys");
     auto restartShortcut = general;
     restartShortcut.forceRestartHotkeyEnabled = false;
     Check(IsGeneralShortcutOnlyCommit(general, restartShortcut),

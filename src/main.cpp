@@ -374,6 +374,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.
     snowdesktop::steam_runtime::startup::BeginDataAccess();
+    // Read once before startup probes and helper branches; the active profile's
+    // normal settings path also keeps portable/installed data isolated.
+    GeneralSettings diagnosticSettings;
+    if (LoadGeneralSettings(GetGeneralSettingsPath().c_str(), diagnosticSettings))
+        snowdesktop::diagnostics::SetLogModules(diagnosticSettings.diagnosticLogModules);
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (const auto result = snowdesktop::shell_extensions::TryRunHelper({}, {},
             [](snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {

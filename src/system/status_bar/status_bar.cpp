@@ -377,7 +377,7 @@ struct StatusBar::Impl
             {
                 wchar_t name[128]{}, message[256]{};if (source) GetClassNameW(source,name,static_cast<int>(std::size(name)));
                 swprintf_s(message,L"StatusBar fullscreen monitor=%p bar=%p hidden=%d source=%p class=%s",monitor,hwnd,fullscreen,source,name);
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
             }
             const bool shown = IsWindowVisible(hwnd) != FALSE;
             const bool topmost = (GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOPMOST) != 0;
@@ -531,7 +531,7 @@ struct StatusBar::Impl
                 wchar_t message[320]{};
                 swprintf_s(message,L"StatusBar placement monitor=%p bar=%p dpi=%u bounds=%ld,%ld,%ld,%ld positioned=%d error=%lu",monitor,hwnd,dpi,
                     rect.left,rect.top,rect.right,rect.bottom,placedWindow,placedWindow?0:GetLastError());
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, placedWindow ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
             }
             if ((moved || appearanceDirty) && appearance.glassEnabled && !HighContrast())
             {
@@ -739,7 +739,7 @@ struct StatusBar::Impl
             {
                 wchar_t message[160]{};
                 swprintf_s(message, L"StatusBar drawing failed hwnd=%p HRESULT=0x%08X", hwnd, static_cast<unsigned>(result));
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, DiagnosticLogLevel::Warning);
                 lastPaintError = result;
             }
             paintDirty = true;

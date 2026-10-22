@@ -83,7 +83,7 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout load rejected: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, message.c_str(), DiagnosticLogLevel::Error);
         snowdesktop::operation_feedback::Report({"app.operation.layoutLoadFailed", message});
         return;
     }
@@ -829,7 +829,7 @@ void DesktopApp::DeferScrollLayoutSave()
                 widgetAction_ != WidgetAction::None))
         {
             CancelDeferredLayoutSave();
-            WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"Scroll layout save timer unavailable; layout remains pending",
                 DiagnosticLogLevel::Warning);
         }
         else
@@ -874,7 +874,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
 
     layoutSavePending_ = true;
     const auto failed = [this, notifyFailure](const std::wstring& detail) {
-        WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, detail.c_str(), DiagnosticLogLevel::Error);
         if (notifyFailure && !layoutSaveFailureNotified_)
         {
             layoutSaveFailureNotified_ = true;
@@ -921,7 +921,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
                 if (choice == RecoveryChoice::Continue)
                 {
                     skippedBackups.insert(identity);
-                    WriteDiagnosticLogEntry(L"User chose to save without the additional layout upgrade backup",
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"User chose to save without the additional layout upgrade backup",
                         DiagnosticLogLevel::Warning);
                     return true;
                 }

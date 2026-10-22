@@ -6,6 +6,7 @@
 
 void DesktopApp::BeginDesktopInteractionTrace(const wchar_t* reason)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input)) return;
     const ULONGLONG now = GetTickCount64();
     // Each click/menu/layer checkpoint receives a fresh budget, including
     // repeated clicks less than two seconds apart. Nested lifecycle messages
@@ -30,6 +31,7 @@ void DesktopApp::BeginDesktopInteractionTrace(const wchar_t* reason)
 void DesktopApp::TraceDesktopInteraction(const wchar_t* event, HWND subject,
     UINT message, WPARAM wp, LPARAM lp, bool force)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input)) return;
     const ULONGLONG now = GetTickCount64();
     // Synchronous log I/O must not turn this diagnostic into a source of lag.
     // Each input/menu checkpoint gets at most 64 window/focus records in 2 s.
@@ -71,12 +73,13 @@ void DesktopApp::TraceDesktopInteraction(const wchar_t* event, HWND subject,
         line << L" insertAfter=" << pos.hwndInsertAfter << L" posFlags=0x" << std::hex << pos.flags
              << std::dec << L" xywh=" << pos.x << L"," << pos.y << L"," << pos.cx << L"," << pos.cy;
     }
-    WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
 void DesktopApp::TraceDesktopWindowMessage(HWND subject, UINT message,
     WPARAM wp, LPARAM lp, bool afterDispatch)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input)) return;
     const bool input = message == WM_MOUSEACTIVATE || message == WM_LBUTTONDOWN ||
         message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDOWN || message == WM_CONTEXTMENU;
     const bool lifecycle = message == WM_SHOWWINDOW || message == WM_SIZE ||
@@ -95,6 +98,7 @@ void DesktopApp::TraceDesktopWindowMessage(HWND subject, UINT message,
 void DesktopApp::TraceDesktopPresentation(const wchar_t* event, HRESULT result,
     const RECT* dirty)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input)) return;
     if (GetTickCount64() > desktopInteractionTraceUntil_ ||
         desktopInteractionTraceFrames_ >= 12)
         return;
@@ -109,7 +113,7 @@ void DesktopApp::TraceDesktopPresentation(const wchar_t* event, HRESULT result,
         dirty ? 1 : 0, rect.left, rect.top, rect.right, rect.bottom,
         dcompSurface_.Get(), compositionCommitPending_ ? 1 : 0,
         compositionPaintInProgress_ ? 1 : 0, graphicsDeviceRecovery_.Pending() ? 1 : 0);
-    WriteDiagnosticLogEntry(detail, DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, detail, DiagnosticLogLevel::Debug);
 }
 
 LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -130,7 +134,7 @@ LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, buf);
     }
 
     if (app)

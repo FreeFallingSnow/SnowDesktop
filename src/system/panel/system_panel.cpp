@@ -119,7 +119,7 @@ struct SystemPanel::Impl
         if(detail==lastBackdropError)return;
         lastBackdropError=detail;
         const auto message=L"Native system panel backdrop failed at "+detail;
-        WriteDiagnosticLogEntry(message.c_str(),DiagnosticLogLevel::Warning);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message.c_str(),DiagnosticLogLevel::Warning);
     }
     float SlideOffset()const
     {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress))*height:0;}
@@ -509,7 +509,7 @@ struct SystemPanel::Impl
                 (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1u:0u,
                 menuAboveBefore?1u:0u,menuAboveAfter?1u:0u,topmost?1u:0u,positioned?1u:0u,placement.preserveOrder?1u:0u,
                 static_cast<unsigned long long>(survey.overlap?GetWindowLongPtrW(survey.overlap,GWL_EXSTYLE):0));
-            WriteDiagnosticLogEntry(message,DiagnosticLogLevel::Info);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message,DiagnosticLogLevel::Info);
         }
     }
     bool RetainTrayMenu(HWND foreground)
@@ -518,13 +518,13 @@ struct SystemPanel::Impl
         const bool wasObserved=context.tracker.ObservedMenu(),wasArmed=context.process!=0;
         const bool retained=context.Active(foreground,current->tray->MenuPopups(context.target));
         if(retained)SyncTrayMenuLayer();
-        if(!wasObserved&&context.tracker.ObservedMenu())WriteDiagnosticLogEntry(L"Tray overflow retained for the gesture's observed menu",DiagnosticLogLevel::Debug);
+        if(!wasObserved&&context.tracker.ObservedMenu())WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"Tray overflow retained for the gesture's observed menu",DiagnosticLogLevel::Debug);
         if(wasArmed&&!retained)
         {
             wchar_t message[192]{};
             swprintf_s(message,L"[TrayMenuLayer] retention ended age=%lu observed=%u foreground=%p",
                 static_cast<DWORD>(GetTickCount()-trayLayerTraceStarted),wasObserved?1u:0u,foreground);
-            WriteDiagnosticLogEntry(message,DiagnosticLogLevel::Info);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message,DiagnosticLogLevel::Info);
         }
         if(!context.process||context.tracker.ObservedMenu())KillTimer(window,kTrayMenuTimer);
         return retained;
@@ -823,7 +823,7 @@ struct SystemPanel::Impl
                 self->Result(result,p,true);if(life->alive){if((wp==VK_TAB||previousFocus!=self->input.Focused())&&self->calendarInputs)self->calendarInputs->Focus(self->input.Focused(),true);self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}return 0;
             }
         }
-        catch(...){WriteDiagnosticLogEntry(L"Native system panel failed; dismissing its surface");if(life->alive){self->transition.Cancel();self->afterClose={};++self->closeGeneration;self->HideNow();}}
+        catch(...){WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"Native system panel failed; dismissing its surface", DiagnosticLogLevel::Warning);if(life->alive){self->transition.Cancel();self->afterClose={};++self->closeGeneration;self->HideNow();}}
         return DefWindowProcW(w,m,wp,lp);
     }
 };

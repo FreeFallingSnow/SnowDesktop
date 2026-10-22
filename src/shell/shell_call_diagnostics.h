@@ -92,7 +92,7 @@ private:
             // File names must not inject extra log records.
             for (auto& ch : message)
                 if (ch == L'\r' || ch == L'\n') ch = L' ';
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str(), DiagnosticLogLevel::Warning);
         }
         catch (...) {} // Preserve the provider's result/error even if logging fails.
         SetLastError(savedError);

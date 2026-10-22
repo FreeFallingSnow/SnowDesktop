@@ -197,7 +197,7 @@ struct NativeTooltip::Impl
         {
             wchar_t message[160]{};
             swprintf_s(message, L"NativeTooltip drawing failed HRESULT=0x%08X", static_cast<unsigned>(result));
-            WriteDiagnosticLogEntry(message); lastError = result;
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning); lastError = result;
         }
         Hide(); ReleaseGraphics();
     }

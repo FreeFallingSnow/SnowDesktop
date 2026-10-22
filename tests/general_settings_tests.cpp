@@ -1109,6 +1109,8 @@ int main(int argc, char** argv)
     saved.animationFrameLimit = 30;
     saved.animationEnergySaver = false;
     saved.animationOnBattery = true;
+    saved.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Input) |
+        snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Steam);
     saved.demoModeEnabled = true;
     saved.widgetDeveloperToolsEnabled = true;
     saved.quickNavTheme = kFourThemeAcrylicDark;
@@ -1131,6 +1133,8 @@ int main(int argc, char** argv)
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
+    Check(loaded.diagnosticLogModules == saved.diagnosticLogModules,
+        "independent log module choices survive save and restart");
     Check(loaded.contextMenuExpandQuickActions && loaded.contextMenuHidePageManagement &&
         loaded.contextMenuHideMoreManagement,
         "context-menu options survive restart");

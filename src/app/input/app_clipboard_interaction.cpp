@@ -337,12 +337,12 @@ bool DesktopApp::PasteClipboardToFolderPath(
     wchar_t pasteMessage[224]{};
     swprintf_s(pasteMessage, L"Clipboard paste begin: sequence=%lu source=%d async=%d action=%d",
         clipboardSequence, static_cast<int>(source), asynchronous, static_cast<int>(action));
-    WriteDiagnosticLogEntry(pasteMessage);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, pasteMessage);
     auto operationCompletion = [this, action, clipboardSequence, pasteStarted](bool succeeded) {
         wchar_t completionMessage[224]{};
         swprintf_s(completionMessage, L"Clipboard paste completed: sequence=%lu success=%d elapsed_ms=%llu",
             clipboardSequence, succeeded, GetTickCount64() - pasteStarted);
-        WriteDiagnosticLogEntry(completionMessage);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, completionMessage, succeeded ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
         if (!succeeded)
             return;
         if (action == DropAction::Move &&

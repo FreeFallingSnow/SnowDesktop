@@ -402,7 +402,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     };
     callbacks.completed = [](bool succeeded) {
         if (!succeeded)
-            WriteDiagnosticLogEntry(L"External file drop failed during content reading or destination commit");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"External file drop failed during content reading or destination commit", DiagnosticLogLevel::Warning);
     };
     const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
     return snowdesktop::external_slot_transfer::Transfer(dataObject, effect,

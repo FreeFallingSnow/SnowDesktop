@@ -35,6 +35,7 @@ inline void EmitSteamWorkshopDiagnostic(const SteamWorkshopDiagnosticSink& sink,
 inline void WriteSteamWorkshopDiagnostic(std::uint64_t queryId,
     std::string_view message) noexcept
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Steam)) return;
     try
     {
         std::string line = "[WorkshopSync] pid=" +
@@ -51,7 +52,7 @@ inline void WriteSteamWorkshopDiagnostic(std::uint64_t queryId,
         std::wstring wide(static_cast<std::size_t>(count), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, line.data(),
             static_cast<int>(line.size()), wide.data(), count);
-        WriteDiagnosticLogEntry(wide.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, wide.c_str());
     }
     catch (...) {}
 }

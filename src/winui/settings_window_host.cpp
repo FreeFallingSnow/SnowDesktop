@@ -469,7 +469,7 @@ struct SettingsWindowHost::Impl
                 if (placeholder != std::wstring::npos) detail.replace(placeholder, 3, Utf8ToWide(error));
                 result.message += L"\n" + detail;
             }
-            WriteDiagnosticLogEntry((L"SettingsUI theme operation=" +
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI theme operation=" +
                 std::to_wstring(static_cast<int>(task->request.command)) +
                 L" error=" + Utf8ToWide(error)).c_str(), DiagnosticLogLevel::Error);
         }
@@ -735,7 +735,7 @@ struct SettingsWindowHost::Impl
     void SetError(std::wstring message)
     {
         lastError = std::move(message);
-        WriteDiagnosticLogEntry((L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
             L" error: " + lastError).c_str(), DiagnosticLogLevel::Error);
     }
 
@@ -2866,7 +2866,7 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
-        WriteDiagnosticLogEntry((L"SettingsUI navigate pid=" +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI navigate pid=" +
             std::to_wstring(GetCurrentProcessId()) + L" page=" +
             std::to_wstring(static_cast<int>(route.page))).c_str());
         if ((route.page == SettingsPage::DeveloperTools &&
@@ -3683,7 +3683,7 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
-        WriteDiagnosticLogEntry((L"SettingsUI close begin pid=" +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI close begin pid=" +
             std::to_wstring(GetCurrentProcessId())).c_str());
         if (!FlushPendingChanges())
             return false;

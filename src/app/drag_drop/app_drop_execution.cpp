@@ -108,7 +108,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
             if (!reloaded.Succeeded() && reloaded.status != snowdesktop::SettingsActionStatus::Busy)
             {
                 const std::wstring message = L"Program collection setting saved, but settings reload failed: " + reloaded.message;
-                WriteDiagnosticLogEntry(message.c_str());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, message.c_str(), DiagnosticLogLevel::Warning);
             }
             if (!reloaded.Succeeded())
                 if (const auto snapshot = settingsController_->Snapshot(); snapshot && !snapshot->values.category.collectProgramsEnabled)

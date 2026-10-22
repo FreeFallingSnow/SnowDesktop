@@ -361,7 +361,7 @@ bool DesktopApp::WaitForCompositionPresentation(
         L"%s composition completion FAILED hr=0x%08X",
         diagnosticContext ? diagnosticContext : L"Dock handoff",
         static_cast<unsigned>(completionHr));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -760,7 +760,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     opening ? 1 : 0, duration,
                     snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
                     popupAnimationContentPending_ ? 1 : 0);
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
                 // A hidden collection popup is retired by its own finalizer.
                 // Do not hide the backdrop helper here first: the finalizer
                 // closes it together with the shared popup host when no other
@@ -799,7 +799,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     swprintf_s(message,
         L"Popup animation start: driver=compositor opening=%d durationMs=%u folder=%d",
         opening ? 1 : 0, duration, dockFolderPopupOpen_ ? 1 : 0);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
     return true;
 }
 

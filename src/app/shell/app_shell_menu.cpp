@@ -68,7 +68,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
             FlushPendingQuickNavigationCompositionCommit();
         });
     if (!pump.IsAvailable())
-        WriteDiagnosticLogEntry(L"Shell menu animation pump unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell menu animation pump unavailable", DiagnosticLogLevel::Warning);
 
     shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
@@ -102,7 +102,7 @@ BOOL DesktopApp::InvokeShellMenuCommand(
             FlushPendingQuickNavigationCompositionCommit();
         });
     if (!pump.IsAvailable())
-        WriteDiagnosticLogEntry(L"Shell invocation animation pump unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell invocation animation pump unavailable", DiagnosticLogLevel::Warning);
 
     const bool foregroundReady = FocusKeyboardWindow(
         owner, true, L"Shell command owner");
@@ -110,10 +110,10 @@ BOOL DesktopApp::InvokeShellMenuCommand(
     swprintf_s(message,
         L"Shell command begin owner=%p foregroundReady=%d animationPump=%d verb=%p",
         owner, foregroundReady, pump.IsAvailable(), invoke.lpVerb);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
     const BOOL result = SafeInvokeCommand(
         menu, reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-    WriteDiagnosticLogEntry(L"Shell command returned");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell command returned");
     return result;
 }
 
@@ -172,7 +172,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         const HRESULT hr = snowdesktop::AttachShellNewItemCapture(context, capture);
         if (FAILED(hr))
         {
-            WriteDiagnosticLogEntry(L"New-menu item ownership site unavailable");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"New-menu item ownership site unavailable", DiagnosticLogLevel::Warning);
             MessageBeep(MB_ICONWARNING);
             return hr;
         }
@@ -780,7 +780,7 @@ ShowShellItemContextMenuForPaths(
             wchar_t message[96]{};
             swprintf_s(message, L"Shell Start pin command result=0x%08lX",
                 static_cast<unsigned long>(*startPin));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message, FAILED(*startPin) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         else
             InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);

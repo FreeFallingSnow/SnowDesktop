@@ -455,6 +455,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/common/utils.cpp
+    src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp
     src/desktop/desktop_display_settings.h
     src/settings/settings_controller.cpp
@@ -1898,6 +1899,15 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract l10n)
+
+    snowdesktop_add_test(
+        SnowDesktopDiagnosticLogTests
+        diagnostic_log
+        SOURCES
+            tests/diagnostics/diagnostic_log_tests.cpp
+            src/diagnostics/diagnostic_log.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract diagnostics integration)
 
     snowdesktop_add_test(
         SnowDesktopGeneralSettingsTests

@@ -455,7 +455,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     bool orderChanged = false;
     for (const auto& [path, folder] : snapshot.folders)
         if (!folder.complete)
-            WriteDiagnosticLogEntry((L"Folder refresh failed; retaining current entries: " + path).c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, (L"Folder refresh failed; retaining current entries: " + path).c_str(), DiagnosticLogLevel::Warning);
     for (auto& widget : widgets_)
     {
         if (widget.type != DesktopWidgetType::FolderMapping) continue;
@@ -510,7 +510,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     wchar_t timing[192]{};
     swprintf_s(timing, L"Folder refresh async: folders=%zu readMs=%llu metadataHits=%zu metadataQueries=%zu",
         snapshot.folders.size(), snapshot.readMs, snapshot.metadata.hits, snapshot.metadata.queries);
-    WriteDiagnosticLogEntry(timing);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
 }
 
 void DesktopApp::RefreshShellItemsAsync()
@@ -536,7 +536,7 @@ void DesktopApp::RefreshShellItemsAsync()
         {
             shellReloadPending_ = false;
             shellDockFolderPopupRefreshPending_ = false;
-            WriteDiagnosticLogEntry(L"Shell refresh read failed; retaining current model");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell refresh read failed; retaining current model", DiagnosticLogLevel::Warning);
             CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
                 _LW("settings.backup.restoreLayout.commitFailed")));
             return; // Retry on a new event, not in an unbounded timer loop.
@@ -597,7 +597,7 @@ void DesktopApp::RefreshShellItemsAsync()
             snapshot->desktopReadMs, snapshot->folderReadMs,
             metadataHits, metadataQueries, snapshot->modelMs, snapshot->layoutMs,
             snapshot->saveMs, snapshot->rebuildMs, snapshot->notifyMs);
-        WriteDiagnosticLogEntry(timing);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
         return;
     }
 
@@ -683,7 +683,7 @@ void DesktopApp::StartInitialShellRead()
     if (!initialShellRead_.Start(std::move(request), completionWindow, kBackgroundShellReadyMessage))
     {
         shellRefreshRevision_.Finish(*revision);
-        WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed")));
     }
@@ -742,7 +742,7 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
             L"saveMs=%llu rebuildMs=%llu notifyMs=%llu", count,
             progress.modelMs, progress.layoutMs, progress.saveMs,
             progress.rebuildMs, progress.notifyMs);
-        WriteDiagnosticLogEntry(timing);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
     }
     if (!snapshot) return;
     if (!shellRefreshRevision_.Finish(initialShellReadRevision_))
@@ -751,14 +751,14 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
             std::to_wstring(initialShellReadRevision_) + L" currentRevision=" +
             std::to_wstring(shellRefreshRevision_.Current()) + L" items=" +
             std::to_wstring(snapshot->desktopItems.size());
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str());
         StartInitialShellRead();
         return;
     }
     if (!snapshot->desktopComplete)
     {
         shellReloadPending_ = false;
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell,
             L"Startup Shell read failed; saved layout retained, retry on next refresh",
             DiagnosticLogLevel::Warning);
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
@@ -778,6 +778,6 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
         snowdesktop::startup_diagnostics::Call(L"RefreshDockRunningWindows", [&] {
             RefreshDockRunningWindows(false);
         });
-        WriteDiagnosticLogEntry(L"Startup Shell snapshot applied");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Startup Shell snapshot applied");
     }
 }

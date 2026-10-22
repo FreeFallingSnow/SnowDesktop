@@ -80,6 +80,13 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     std::string text = ss.str();
     if (text.empty()) return false;
 
+    int logModules = 0;
+    if (ReadIntField(text, "diagnosticLogModules", logModules) && logModules >= 0)
+        settings.diagnosticLogModules = snowdesktop::diagnostics::NormalizeLogModules(
+            static_cast<std::uint32_t>(logModules));
+    else
+        settings.diagnosticLogModules = 0;
+
     bool val = false;
     if (ReadBoolField(text, "softwareDesktopEnabled", val))
         settings.softwareDesktopEnabled = val;
@@ -298,6 +305,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"widgetDeveloperToolsEnabled\": "
          << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
          << ",\n";
+    file << "  \"diagnosticLogModules\": "
+         << snowdesktop::diagnostics::NormalizeLogModules(settings.diagnosticLogModules) << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return snowdesktop::atomic_file::WriteAll(path, file.str());

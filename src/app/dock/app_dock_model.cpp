@@ -194,7 +194,7 @@ void DesktopApp::PruneDockShellMetadata()
             InvalidateDragStaticScene();
             InvalidateDockRects();
             const auto message = L"Removed confirmed missing local Dock pins: " + std::to_wstring(removed);
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str());
         }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
 }
 

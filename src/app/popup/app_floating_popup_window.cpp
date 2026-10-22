@@ -110,7 +110,7 @@ void TraceMenuHostZOrderTransition(
          << L" menuNext=" << current.menuNext
          << L" hostPrev=" << current.hostPrevious
          << L" hostNext=" << current.hostNext;
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
         line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
@@ -190,8 +190,8 @@ bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
 
     floatingPopupMouseHookNotificationWindow_.store(nullptr);
     floatingPopupMouseHookActiveGeneration_.store(0);
-    WriteDiagnosticLogEntry(
-        L"Floating popup outside-click hook FAILED");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
+        L"Floating popup outside-click hook FAILED", DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -319,7 +319,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
             IsLuaPanelHostedByFloatingWindow() ? 1 : 0,
             dismissCollection ? 1 : 0,
             dismissLuaPanel ? 1 : 0);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     if (dismissCollection)
     {
@@ -448,7 +448,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
                         L"hr=0x%08X after remove hr=0x%08X",
                         static_cast<unsigned>(restoreHr),
                         static_cast<unsigned>(hr));
-                    WriteDiagnosticLogEntry(message);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
                 }
                 return hr;
             }
@@ -514,7 +514,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
                 L"hr=0x%08X after add hr=0x%08X",
                 static_cast<unsigned>(restoreHr),
                 static_cast<unsigned>(addFailure));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
         }
         return addFailure;
     }
@@ -554,7 +554,7 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
         L"FloatingPopup %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render",
         static_cast<unsigned>(hr));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
     ResetFloatingPopupCompositionResources();
     if (!floatingPopupCompositionRenderRecoveryPending_ &&
         floatingPopupHwnd_ &&
@@ -924,10 +924,10 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
             std::wstring message =
                 L"Collection popup native backdrop unavailable: ";
             message += collectionPopupBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message.c_str(), DiagnosticLogLevel::Warning);
             return;
         }
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
             L"Collection popup native CompositionBackdropBrush initialized");
     }
     else
@@ -975,8 +975,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
     if (!CreateFloatingPopupWindow())
     {
-        WriteDiagnosticLogEntry(
-            L"Floating popup window creation FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
+            L"Floating popup window creation FAILED", DiagnosticLogLevel::Warning);
         return;
     }
     StartFloatingPopupOutsideClickMonitor();
@@ -1176,7 +1176,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             nextBounds.right + virtualLeft_,
             nextBounds.bottom + virtualTop_,
             topmost != false);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     else if (boundsChanged && !immediatePresent)
     {

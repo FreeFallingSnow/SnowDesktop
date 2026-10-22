@@ -543,7 +543,7 @@ void DesktopApp::FlushShellHoverTrace()
         report += line;
     }
     report += L"Shell hover trace end";
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
         report.c_str(),
         DiagnosticLogLevel::Debug);
 }

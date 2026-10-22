@@ -177,7 +177,7 @@ void DesktopApp::ApplyPendingRenames()
     swprintf_s(timing,
         L"Rename async complete: count=%zu workerMs=%llu applyMs=%llu fallbackReload=%d",
         pending.size(), shellMs, GetTickCount64() - started, shellReloadPending_ ? 1 : 0);
-    WriteDiagnosticLogEntry(timing);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, timing);
 }
 
 void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cancel)

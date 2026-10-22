@@ -43,13 +43,13 @@ std::wstring Describe(const Failure& failure)
 }
 }
 
-void Show(const Failure& failure)
+static void ShowImpl(const Failure& failure, bool log)
 {
     if (failure.error == ERROR_CANCELLED || failure.error == static_cast<DWORD>(E_ABORT) ||
         failure.error == static_cast<DWORD>(HRESULT_FROM_WIN32(ERROR_CANCELLED))) return;
     PresentIfCurrent(failure, [&] {
         const auto message = Describe(failure);
-        WriteDiagnosticLogEntry(message.c_str(), failure.warning
+        if (log) WriteDiagnosticLogEntry(message.c_str(), failure.warning
             ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
         if (failure.stillRelevant)
         {
@@ -72,6 +72,11 @@ void Show(const Failure& failure)
         MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
             (failure.warning ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
     });
+}
+
+void Show(const Failure& failure)
+{
+    ShowImpl(failure, true);
 }
 
 RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t* continueLabel)
@@ -151,7 +156,7 @@ struct Session::State
                 failure = std::move(pending.front());
                 pending.pop_front();
             }
-            Show(failure);
+            ShowImpl(failure, false);
         }
         presenting = false;
     }

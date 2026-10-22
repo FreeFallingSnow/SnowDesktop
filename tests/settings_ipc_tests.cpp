@@ -199,6 +199,12 @@ void TestCodec()
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
+    {
+        extensions.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(descriptor.module);
+        Check(Unpack<GeneralSettings>(Pack(extensions)).diagnosticLogModules == extensions.diagnosticLogModules,
+            "each independent logging switch crosses the settings-process IPC boundary");
+    }
     for (const bool enabled : {false, true})
     for (const UINT key : {UINT{'R'}, UINT{0}})
     {

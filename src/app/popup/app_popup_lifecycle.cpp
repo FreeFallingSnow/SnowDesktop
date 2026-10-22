@@ -480,7 +480,7 @@ void DesktopApp::StartCollectionPopupAnimation(
         cacheElapsed, dockFolderPopupOpen_ ? 1 : 0,
         widget && UsesCollectionPopupFan(*widget) ? 1 : 0,
         static_cast<unsigned long long>(widget ? GetPopupItemCount(*widget) : 0));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
 }
 
 

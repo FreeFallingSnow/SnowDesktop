@@ -1203,7 +1203,7 @@ void DesktopApp::RefreshCollectionPopupAnimationContent()
         L"Popup animation content: driver=compositor updated=%d elapsedMs=%.2f revision=%llu",
         updated ? 1 : 0, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
         static_cast<unsigned long long>(popupAnimationContentRevision_));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
 }
 
 void DesktopApp::InvalidateCollectionPopupContent()

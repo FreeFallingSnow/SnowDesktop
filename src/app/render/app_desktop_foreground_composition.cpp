@@ -68,7 +68,7 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                         L"hr=0x%08X after remove hr=0x%08X",
                         static_cast<unsigned>(restoreHr),
                         static_cast<unsigned>(hr));
-                    WriteDiagnosticLogEntry(message);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
                 }
                 return hr;
             }
@@ -136,7 +136,7 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                 L"hr=0x%08X after add hr=0x%08X",
                 static_cast<unsigned>(restoreHr),
                 static_cast<unsigned>(addFailure));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
         }
         return addFailure;
     }

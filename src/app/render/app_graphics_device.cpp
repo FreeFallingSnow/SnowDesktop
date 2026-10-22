@@ -31,7 +31,7 @@ HRESULT DesktopApp::InitGraphicsDevices()
         wsprintfW(buf, L"D3D11 driver=%s hr=0x%08X feature=0x%04X",
             usingWarp ? L"WARP" : L"HARDWARE",
             static_cast<unsigned>(hr), static_cast<unsigned>(fl));
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, FAILED(hr) ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
     }
     if (FAILED(hr)) return hr;
     d3dDevice->GetImmediateContext(&d3dImmediateContext);
@@ -60,7 +60,7 @@ HRESULT DesktopApp::InitGraphicsDevices()
             wchar_t buf[256];
             wsprintfW(buf, L"D3D adapter=%s vendor=0x%04X device=0x%04X",
                 desc.Description, desc.VendorId, desc.DeviceId);
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf);
         }
     }
     hr = d2dFactory->CreateDevice(dxgiDevice.Get(), &d2dDevice);
@@ -257,7 +257,7 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
     wchar_t buf[192];
     wsprintfW(buf, L"%s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
-    WriteDiagnosticLogEntry(buf);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
 
     ResetCompositionRenderCaches();
     dcompSurface_.Reset();
@@ -289,7 +289,7 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
         hr = dcompVisual_->SetContent(surface.Get());
@@ -297,7 +297,7 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
         hr = dcompDevice_->Commit();
@@ -306,7 +306,7 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
             wchar_t buf[128];
             wsprintfW(buf, L"CreateSurface Commit FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
 
@@ -452,7 +452,7 @@ void DesktopApp::InitializeDockWindowTransition()
                 dockWindowTransition_->GetPresentationWindow());
             if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
                 return; // Buffered until the bounded observation ends.
-            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
         });
     }
 
@@ -472,7 +472,7 @@ bool DesktopApp::RequestGraphicsDeviceRecovery(const wchar_t* stage, HRESULT hr)
             L"%s FAILED hr=0x%08X removedReason=0x%08X; queued graphics device recovery",
             stage ? stage : L"Graphics", static_cast<unsigned>(hr),
             static_cast<unsigned>(reason));
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
     }
     return true;
 }
@@ -580,7 +580,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
         wchar_t message[192]{};
         swprintf_s(message, L"Graphics device recovery FAILED hr=0x%08X; retry in 2000 ms",
             static_cast<unsigned>(hr));
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
         return;
     }
     if (widgetEngine_) widgetEngine_->ResetGraphicsResources(d2dContext_.Get());
@@ -592,7 +592,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
         // backdrop and Dock windows without restarting Lua or resetting data.
         // If Explorer is unavailable, the existing host watcher retries later.
         RecoverDesktopHostAfterExplorerRestart();
-        WriteDiagnosticLogEntry(hwnd_ && IsWindow(hwnd_)
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, hwnd_ && IsWindow(hwnd_)
             ? L"Graphics recovery desktop HWND recreated"
             : L"Graphics recovery waiting for desktop host recreation");
     }
@@ -609,5 +609,5 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     repaint(quickNavigationHwnd_);
     repaint(dragPreviewHwnd_);
     EnsureUiAnimationFrame();
-    WriteDiagnosticLogEntry(L"Graphics devices recreated; surface repaints requested");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, L"Graphics devices recreated; surface repaints requested");
 }

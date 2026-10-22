@@ -236,12 +236,13 @@ inline void Flush(State& state, const wchar_t* reason)
         }
     }
     state.active = false;
-    WriteDiagnosticLogEntry(out.str().c_str(), DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, out.str().c_str(), DiagnosticLogLevel::Debug);
 }
 } // namespace detail
 
 inline void Begin(HWND target, const wchar_t* origin)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar)) return;
     auto& state = detail::Storage();
     if (detail::Reentrant(state)) return;
     detail::Scope scope(state);
@@ -257,6 +258,7 @@ inline void Begin(HWND target, const wchar_t* origin)
 inline void Record(const wchar_t* phase, HWND subject = nullptr,
     DWORD event = 0, DWORD eventTime = 0)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar)) return;
     auto& state = detail::Storage();
     if (detail::Reentrant(state) || !state.active) return;
     detail::Scope scope(state);
@@ -266,6 +268,7 @@ inline void Record(const wchar_t* phase, HWND subject = nullptr,
 inline void ObserveWinEvent(DWORD event, HWND window, LONG objectId,
     LONG childId, DWORD eventTime)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar)) return;
     auto& state = detail::Storage();
     if (detail::Reentrant(state)) return;
     const ULONGLONG eventReceived = GetTickCount64();
@@ -297,6 +300,14 @@ inline void ObserveWinEvent(DWORD event, HWND window, LONG objectId,
 }
 inline void Poll()
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar))
+    {
+        // Retire an in-progress trace; re-enabling starts with a fresh budget.
+        auto& inactive = detail::Storage();
+        inactive.active = false;
+        inactive.count = 0;
+        return;
+    }
     auto& state = detail::Storage();
     if (detail::Reentrant(state) || !state.active) return;
     detail::Scope scope(state);
@@ -321,6 +332,7 @@ inline void PollNativeAutoHideTrace()
     std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> records;
     LONG dropped = 0;
     const LONG count = DrainSystemTaskbarAutoHideTrace(records, dropped);
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar)) return;
     if (!count && !dropped) return;
     constexpr const wchar_t* kinds[] = {
         L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide",
@@ -341,16 +353,17 @@ inline void PollNativeAutoHideTrace()
              << L" geometryValid=" << r.geometryValid
              << L" rect=" << r.rect.left << L"," << r.rect.top << L"," << r.rect.right << L"," << r.rect.bottom
              << L" cursor=" << r.cursor.x << L"," << r.cursor.y;
-        WriteDiagnosticLogEntry(line.str().c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, line.str().c_str());
     }
     if (dropped)
     {
         const std::wstring line = L"[TaskbarAutoHide] dropped=" + std::to_wstring(dropped);
-        WriteDiagnosticLogEntry(line.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, line.c_str());
     }
 }
 inline void Stop()
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Taskbar)) return;
     auto& state = detail::Storage();
     if (detail::Reentrant(state) || !state.active) return;
     detail::Scope scope(state);

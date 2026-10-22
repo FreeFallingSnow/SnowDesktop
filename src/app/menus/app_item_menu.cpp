@@ -1393,7 +1393,7 @@ void DesktopApp::ShowShellContextMenu(
             wchar_t message[96]{};
             swprintf_s(message, L"Shell Start pin command result=0x%08lX",
                 static_cast<unsigned long>(*startPin));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, FAILED(*startPin) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         else
             InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);

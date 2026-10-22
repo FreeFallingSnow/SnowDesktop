@@ -112,6 +112,7 @@ SettingsActionResult SettingsController::Initialize()
         return loadResult;
 
     values_ = std::move(loaded);
+    diagnostics::SetLogModules(values_.general.diagnosticLogModules);
     NormalizeDockSettings(values_.dock);
     dirtyDomains_ = SettingsDomain::None;
     pendingPreviewDomains_ = SettingsDomain::None;
@@ -148,6 +149,7 @@ SettingsActionResult SettingsController::Reload(SettingsReloadPolicy policy)
         return loadResult;
 
     values_ = std::move(loaded);
+    diagnostics::SetLogModules(values_.general.diagnosticLogModules);
     NormalizeDockSettings(values_.dock);
     dirtyDomains_ = SettingsDomain::None;
     pendingPreviewDomains_ = SettingsDomain::None;
@@ -309,6 +311,8 @@ void SettingsController::UpdateGeneral(
     NormalizeStatusBarSettings(settings.statusBar);
     calendar::Normalize(settings.calendarDisplay);
     shell_extensions::Normalize(settings.shellExtensions);
+    settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
+    diagnostics::SetLogModules(settings.diagnosticLogModules);
     values_.general = std::move(settings);
     MarkChanged(SettingsDomain::General, mode);
 }
@@ -644,6 +648,8 @@ bool SettingsController::SynchronizeGeneral(GeneralSettings settings)
     return SynchronizeDomain(
         SettingsDomain::General,
         [this, settings = std::move(settings)]() mutable {
+            settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
+            diagnostics::SetLogModules(settings.diagnosticLogModules);
             values_.general = std::move(settings);
         });
 }

@@ -71,7 +71,7 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         swprintf_s(message, L"[DockHookRegistration] nativeActiveCBT=%zu cloakActive=%zu attempts=%llu failures=%llu lastError=%lu cloakAttempts=%llu cloakFailures=%llu",
             active, activeCloak, registrations.attempts, registrations.failures, registrations.lastError,
             cloakRegistrations.attempts, cloakRegistrations.failures);
-        WriteDiagnosticLogEntry(message, registrations.lastError ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, registrations.lastError ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         reportedAttempts = registrations.attempts; reportedCloakAttempts = cloakRegistrations.attempts; reportedActive = active;
     }
 }

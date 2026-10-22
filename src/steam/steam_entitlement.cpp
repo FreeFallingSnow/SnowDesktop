@@ -74,7 +74,7 @@ void Trace(std::uint64_t id, std::wstring_view message, bool failed = false)
 {
     const std::wstring line = L"[SteamActivation] id=" + std::to_wstring(id) +
         L" " + std::wstring(message);
-    WriteDiagnosticLogEntry(line.c_str(), failed
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, line.c_str(), failed
         ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
 }
 

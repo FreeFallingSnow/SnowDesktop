@@ -81,7 +81,7 @@ struct SettingsWindow::Impl
         try { if (error) std::rethrow_exception(error); }
         catch (const std::exception& failure) { detail = Utf8ToWide(failure.what()); }
         catch (...) {}
-        if (!detail.empty()) WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        if (!detail.empty()) WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, detail.c_str(), DiagnosticLogLevel::Error);
         lastError = LocalizedError("settings.process.startFailed") + (detail.empty() ? L"" : L"\n" + detail);
         EndSession();
         CompleteOpen(false);
@@ -133,7 +133,7 @@ struct SettingsWindow::Impl
                     GetWindowThreadProcessId(candidate, &owner);
                     if (!initialized || !candidate || owner != process.ProcessId())
                     {
-                        if (!error.empty()) WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
+                        if (!error.empty()) WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, error.c_str(), DiagnosticLogLevel::Error);
                         lastError = LocalizedError("settings.process.startFailed") + (error.empty() ? L"" : L"\n" + error);
                         EndSession();
                         CompleteOpen(false);

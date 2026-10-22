@@ -162,10 +162,10 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         {
             std::wstring message = L"Quick navigation native backdrop unavailable: ";
             message += quickNavBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, message.c_str(), DiagnosticLogLevel::Warning);
             return;
         }
-        WriteDiagnosticLogEntry(L"Quick navigation native CompositionBackdropBrush initialized");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"Quick navigation native CompositionBackdropBrush initialized");
     }
     else
     {
@@ -1400,7 +1400,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         ConfigureQuickNavigationAnimation();
         visual = quickNavigationAnimation_.GetVisual();
         deformationFrame = false;
-        WriteDiagnosticLogEntry(L"QuickNav deformation unavailable; using scale for this session");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"QuickNav deformation unavailable; using scale for this session", DiagnosticLogLevel::Warning);
     }
     if (!deformationFrame)
     {
