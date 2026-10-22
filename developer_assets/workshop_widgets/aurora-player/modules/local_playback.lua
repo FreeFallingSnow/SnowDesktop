@@ -83,6 +83,10 @@ end
 local rates={0.25,0.5,0.75,1,1.25,1.5,2,3,4}
 function M.panel(_context,model)
     local p=model.player
+    if model.drag and not model.preview and widget.hasFeature("interaction.pointerActions") then
+        local track=p.tracks[model.drag.from]
+        if not track or not interaction.isPressed(track.key) then model.drag=nil end
+    end
     local row=ui.metrics().layoutRowHeight
     local primary,secondary,accent,surface=palette()
     local function label(key,value) return text(key,value,row*0.43,secondary) end

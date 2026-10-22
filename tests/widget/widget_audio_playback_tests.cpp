@@ -218,11 +218,20 @@ restored:restore(p.sources,p.tracks);assert(#restored.tracks==2 and restored.tra
 void EntryStorageTests(const std::filesystem::path& modulePath)
 {
     auto* state = luaL_newstate(); luaL_openlibs(state);
-    Check(luaL_dofile(state, modulePath.string().c_str()) == LUA_OK, "load playlist for entry integration");
-    lua_setglobal(state, "moduleUnderTest");
+    const auto packageRoot = modulePath.parent_path().parent_path().generic_u8string();
+    lua_pushlstring(state, reinterpret_cast<const char*>(packageRoot.data()), packageRoot.size());
+    lua_setglobal(state, "entryPackageRoot");
     const char* fixture = R"lua(
 local values, inTransaction, definition, taskId = {}, false, nil, 0
-module={require=function() return moduleUnderTest end}
+local loaded, capabilities, hovered = {}, {}, ''
+module={require=function(path)
+    assert(path:match('^modules/[%w_]+%.lua$'),'literal package module expected')
+    if not loaded[path] then
+        local chunk,err=loadfile(entryPackageRoot..'/'..path)
+        assert(chunk,err);loaded[path]=chunk()
+    end
+    return loaded[path]
+end}
 l10n={tr=function(key) return key end}
 storage={get=function(key) assert(not inTransaction,'global storage read inside transaction');return values[key] end}
 function storage.transaction(callback)
@@ -232,28 +241,54 @@ function storage.transaction(callback)
 end
 function storage.set(key,value) values[key]=value end
 task={start=function() taskId=taskId+1;return taskId end,cancel=function() end}
-widget={define=function(d) definition=d;return d end,invalidate=function() end,openPanel=function() end}
-ui={menu=function(items) return items end}
+widget={define=function(d) definition=d;return d end,invalidate=function() end,openPanel=function() end,
+    hasFeature=function(name) return capabilities[name]~=false end,hasPermission=function() return true end,
+    theme=function() return {contentTheme=0} end}
+data={subscribe=function() return {value=function() return {available=false} end,unsubscribe=function() end} end}
+slots={binding=function() return {item=function() return nil end} end}
+ui={menu=function(items) return items end,metrics=function() return {layoutRowHeight=28} end}
+time={now=function() return 1000 end}
+layout={width=function() return 392 end,height=function() return 240 end}
+animation={requestFrame=function() return true end,cancelFrame=function() end}
+schedule={every=function() return true end,cancel=function() end}
+interaction={isHovered=function(key) return hovered==key end,isPressed=function() return true end}
+view=setmetatable({virtualRange=function() return {offset=0} end},{__index=function(_,_) return function(spec) return spec end end})
+local function contains(node,key)
+    if node.key==key then return true end
+    for _,child in ipairs(node.children or {}) do if contains(child,key) then return true end end
+    return false
+end
 function checkEntry(d)
-    local model=d.setup({preview=false})
-    assert(model.player.volume==1 and model.player.playbackRate==1)
-    d.event({},model,{kind='action',id='import',action='fileDrop',items={
+    local context={preview=false,accessibility={reducedMotion=false,highContrast=false},theme={mode='dark'}}
+    local model=d.setup(context)
+    local localModel=model.localPlayback
+    assert(localModel.player.volume==1 and localModel.player.playbackRate==1)
+    d.event(context,model,{kind='action',id='local.import',action='fileDrop',items={
         {handle='a',kind='file',name='a.mp3'},{handle='b',kind='file',name='b.mp3'},{handle='c',kind='file',name='c.mp3'}}})
     assert(values.playlistCount==1 and #values.playlist1==3)
-    model.itemExtent=30;model.listOffset=0
-    local key=model.player.tracks[1].key
-    d.event({},model,{kind='action',id='drag.start',button=1,value=key,y=10})
-    d.event({},model,{kind='action',id='drag.move',y=70})
-    d.event({},model,{kind='action',id='drag.end',y=70})
-    assert(model.player.tracks[3].name=='a.mp3' and values.playlist1[3].name=='a.mp3')
-    d.event({},model,{kind='action',id='track.remove',value=key})
-    local restored=d.setup({preview=false})
-    assert(#restored.player.tracks==2 and restored.player.tracks[1].name=='b.mp3')
-    assert(not restored.player.playingTask and not restored.player.playbackId)
-    d.event({},restored,{kind='action',id='clear'})
+    assert(localModel.source=='local')
+    assert(not contains(d.view(context,model),'aurora.utilities'))
+    hovered='aurora.surface';assert(contains(d.view(context,model),'aurora.utilities'))
+    hovered='media.toggle';assert(contains(d.view(context,model),'aurora.utilities'))
+    hovered='';localModel.player.status='playing';assert(contains(d.view(context,model),'aurora.utilities'))
+    localModel.player.status='loading';assert(contains(d.view(context,model),'aurora.utilities'))
+    localModel.player.status='paused';assert(not contains(d.view(context,model),'aurora.utilities'))
+    localModel.itemExtent=30;localModel.listOffset=0;localModel.listTop=0;localModel.listViewport=120
+    local key=localModel.player.tracks[1].key
+    d.event(context,model,{kind='action',id='local.drag.start',button=1,value=key,y=10})
+    d.event(context,model,{kind='action',id='local.drag.move',y=80})
+    d.event(context,model,{kind='action',id='local.drag.end',y=80})
+    assert(localModel.player.tracks[3].name=='a.mp3' and values.playlist1[3].name=='a.mp3')
+    d.event(context,model,{kind='action',id='local.track.remove',value=key})
+    local restored=d.setup(context)
+    assert(#restored.localPlayback.player.tracks==2 and restored.localPlayback.player.tracks[1].name=='b.mp3')
+    assert(not restored.localPlayback.player.playingTask and not restored.localPlayback.player.playbackId)
+    d.event(context,restored,{kind='action',id='local.clear'})
     assert(values.playlistCount==0 and values.sourceCount==0 and values.playlist1==nil)
     values.volume=0.42
-    assert(d.setup({preview=false}).player.volume==0.42)
+    assert(d.setup(context).localPlayback.player.volume==0.42)
+    capabilities['audio.playback.rate']=false
+    assert(d.setup(context).localPlayback.source=='system')
 end
 )lua";
     Check(luaL_dostring(state, fixture) == LUA_OK, "entry storage fixture initializes");

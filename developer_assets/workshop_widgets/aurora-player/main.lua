@@ -402,6 +402,7 @@ local function controlButton(key, glyph, label, enabled, colors, primary,
         fontSize = size * (primary and 0.38 or 0.36),
         enabled = enabled,
         action = { id = key },
+        events = { pointerEnter={id="media.hover"}, pointerLeave={id="media.hover"} },
         accessibility = { role = "button", label = label },
         style = {
             background = primary and colors.button or colors.secondaryButton,
@@ -650,6 +651,8 @@ local function viewTree(context, model)
                 height = plan.sliderHeight,
                 enabled = seekEnabled,
                 events = {
+                    pointerEnter = { id = "media.hover" },
+                    pointerLeave = { id = "media.hover" },
                     change = { id = "media.seek.change" },
                     pointerUp = { id = "media.seek.commit" },
                 },
@@ -801,7 +804,15 @@ local function viewTree(context, model)
         {secondaryButton=utilitySize})}
     if localActive then table.insert(utilities,1,controlButton("local.playlist",glyphs.playlist,
         l10n.tr("music.playlist"),true,colors,false,{secondaryButton=utilitySize})) end
-    if localActive or not playing then
+    local showUtilities=localActive and
+        (playing or model.localPlayback.player.status=="loading")
+    if widget.hasFeature("interaction.pointerActions") then
+        for _,key in ipairs({"aurora.surface","media.previous","media.toggle","media.next",
+            "aurora.progress","local.options","local.playlist"}) do
+            if interaction.isHovered(key) then showUtilities=true;break end
+        end
+    end
+    if showUtilities then
         children[#children+1]=view.column({key="aurora.utilities",width="fill",height="fill",
             padding=plan.padding*0.45,justifyContent="start",alignItems="end",children={
                 view.row({key="aurora.utilities.row",width="auto",height=utilitySize,gap=utilitySize*0.25,children=utilities})}})
@@ -811,6 +822,8 @@ local function viewTree(context, model)
         width = "fill",
         height = "fill",
         events = {
+            pointerEnter = { id = "media.hover" },
+            pointerLeave = { id = "media.hover" },
             fileDrop = { id = "local.import" },
             doubleClick = { id = "launcher.open" },
             contextMenu = { id = "media.menu", scope = "component" },
@@ -951,6 +964,7 @@ local function event(context, model, value)
         return
     end
     if value.kind ~= "action" then return end
+    if value.id=="media.hover" then widget.invalidate();return end
 
     local session = currentSession(model)
     if value.id == "media.previous" then
