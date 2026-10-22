@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param([Alias('ReloadShell')][switch]$ExecuteReloadShell, [Alias('CloseApplication')][switch]$ExecuteCloseApplication,
     [ValidateSet('Release','Debug')][string]$Configuration='Release')
+if(-not (Get-Command Get-BuildOutputDirectories -ErrorAction SilentlyContinue)){. (Join-Path $PSScriptRoot 'build_entry.ps1')}
 function Get-ReadOnlyPreflight([string]$Root,[string]$Configuration='Release') {
-    $output=if($Configuration -eq 'Debug'){'.build_debug\Debug'}else{'.build\Release'}
-    $release=[IO.Path]::GetFullPath((Join-Path $Root $output))
+    $releases=@(Get-BuildOutputDirectories $Root $Configuration)
     $owners=@();$unknown=@()
     foreach($process in @(Get-Process -Name SnowDesktop,snowwidget,SnowDesktopWorkshopManager,SnowDesktopSteamBridge,SnowDesktopLauncher,SnowDesktopWallpaperInjector32 -ErrorAction SilentlyContinue)){
-        try { $path=$process.Path; if(-not $path){$unknown += $process.Id}elseif($path.StartsWith($release+'\',[StringComparison]::OrdinalIgnoreCase)){$owners += [pscustomobject]@{pid=$process.Id;name=$process.ProcessName;kind='application';startTicks=$process.StartTime.ToUniversalTime().Ticks.ToString()}} } catch{$unknown += $process.Id}
+        try { $path=$process.Path; if(-not $path){$unknown += $process.Id}elseif(@($releases|Where-Object {$path.StartsWith($_+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){$owners += [pscustomobject]@{pid=$process.Id;name=$process.ProcessName;kind='application';startTicks=$process.StartTime.ToUniversalTime().Ticks.ToString()}} } catch{$unknown += $process.Id}
     }
-    $hooks=@((Join-Path $release 'SnowDesktopTaskbarHook.dll'),(Join-Path $release 'SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'))
+    $hooks=@($releases|ForEach-Object {(Join-Path $_ 'SnowDesktopTaskbarHook.dll');(Join-Path $_ 'SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll')})
     if(@($hooks | Where-Object {[IO.File]::Exists($_)}).Count){
         foreach($shell in @(Get-Process -Name explorer -ErrorAction SilentlyContinue)){
             try {if(@($shell.Modules | Where-Object {$hooks -contains $_.FileName}).Count){$owners += [pscustomobject]@{pid=$shell.Id;name='explorer';kind='hook';startTicks=$shell.StartTime.ToUniversalTime().Ticks.ToString()}}}catch{$unknown += $shell.Id}

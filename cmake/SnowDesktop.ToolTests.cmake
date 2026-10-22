@@ -129,6 +129,10 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
+    add_test(NAME build_candidate_preflight COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --preflight)
+    set_tests_properties(build_candidate_preflight PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
     target_sources(SnowDesktopBuildTelemetryTests PRIVATE
         tests/build_tools/build_configuration_tests.cpp
         tests/build_tools/build_compile_budget_tests.cpp

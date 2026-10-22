@@ -89,6 +89,81 @@ if($gate -and [IO.File]::Exists($gate)){
     require(c.git({L"add",L"--all"}).code==0&&c.git({L"commit",L"-m",L"Candidate executor fixture baseline"}).code==0,"Cannot establish candidate executor baseline");
     c.call({"task-open","candidate","-TaskName","Candidate execution acceptance fixture"});
 }
+void private_preflight(const fs::path& repo,bool oldPath) {
+    const auto root=temporary("candidate-preflight",fixture_parent(repo));
+    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_preflight.ps1","scripts/test_manager.ps1"});
+    const auto source=root/L"source",output=root/L"output",neighbor=root/L"output-neighbor";
+    fs::create_directories(source);fs::create_directories(output/L"Release");fs::create_directories(output/L"Debug");fs::create_directories(neighbor/L"Release");
+    for(const auto& destination:{output/L"Release/SnowDesktop.exe",output/L"Debug/SnowDesktop.exe",neighbor/L"Release/SnowDesktop.exe"})
+        fs::copy_file(standin(),destination);
+    for(const auto& name:{L".build",L".build_debug"}){
+        const auto result=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("New-Item -ItemType Junction -Path "+ps_literal(source/name)+" -Target "+ps_literal(output)+" -ErrorAction Stop | Out-Null")},root);
+        require(result.code==0,"Cannot establish private output junction: "+result.out+result.err);
+    }
+    std::string query=R"PS(param([string]$ProbeRoot,[string]$ProbeConfiguration='Release')
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1')
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'scripts/test_manager.ps1'),[ref]$tokens,[ref]$errors)
+$definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-HostRuntimeLocks'},$false)
+. ([scriptblock]::Create($definition.Extent.Text))
+$repositoryRoot=$ProbeRoot
+)PS";
+    if(oldPath)query+=R"PS(function Get-BuildOutputDirectories([string]$Root,[string]$Configuration='Release'){
+ $build=if($Configuration -eq 'Debug'){'.build_debug'}else{'.build'}
+ @([IO.Path]::GetFullPath((Join-Path (Join-Path $Root $build) $Configuration)))
+}
+)PS";
+    query+="$observation=Get-ReadOnlyPreflight $ProbeRoot $ProbeConfiguration\n@{preflight=$observation;locks=@(Get-HostRuntimeLocks)}|ConvertTo-Json -Depth 8\n";
+    write(root/L"query.ps1",query,true);Bridge bridge(repo,root);
+    auto probe=[&](const std::string& configuration="Release"){
+        return bridge.call(root/L"query.ps1",{"-ProbeRoot",utf8(source.wstring()),"-ProbeConfiguration",configuration});
+    };
+    auto contains=[&](const Json& value,DWORD pid){
+        for(const auto& entry:value.at("preflight").at("owners").items)if(entry.at("pid").integer()==static_cast<int>(pid))return true;
+        return false;
+    };
+    auto locksContain=[](const Json& value,DWORD pid){
+        for(const auto& entry:value.at("locks").items)if(entry.str().find("PID "+std::to_string(pid))!=std::string::npos)return true;
+        return false;
+    };
+    const auto otherMarker=root/L"other-ready",releaseMarker=root/L"release-ready",debugMarker=root/L"debug-ready",aliasMarker=root/L"alias-ready";
+    Child other({(neighbor/L"Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",otherMarker.wstring()},root);
+    until([&]{return fs::exists(otherMarker);});require(!contains(probe(),other.pid()),"Private preflight included a neighboring output owner");
+    Child release({(output/L"Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",releaseMarker.wstring()},root);
+    until([&]{return fs::exists(releaseMarker);});const auto physical=probe();
+    require(contains(physical,release.pid())&&physical.at("preflight").at("status").str()!="clear",
+        "Private output preflight falsely reported the physical application as clear");
+    require(locksContain(physical,release.pid())&&!locksContain(physical,other.pid()),"Test runtime ownership missed the physical output or included its neighbor");
+    require(!contains(probe("Debug"),release.pid()),"Debug preflight included a Release application");
+    Child debug({(output/L"Debug/SnowDesktop.exe").wstring(),L"--wait",L"--marker",debugMarker.wstring()},root);
+    until([&]{return fs::exists(debugMarker);});require(contains(probe("Debug"),debug.pid())&&!contains(probe(),debug.pid()),"Private Debug/Release ownership crossed configurations");
+    Child alias({(source/L".build/Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",aliasMarker.wstring()},root);
+    until([&]{return fs::exists(aliasMarker);});require(contains(probe(),alias.pid()),"Private preflight missed an application launched through the logical alias");
+    const auto legacy=run({powershell(true).wstring(),L"-NoProfile",L"-File",(root/L"query.ps1").wstring(),L"-ProbeRoot",source.wstring()},root);
+    require(legacy.code==0&&contains(Json::parse(legacy.out),release.pid()),"Windows PowerShell physical output observation failed: "+legacy.out+legacy.err);
+    for(const auto& marker:{releaseMarker,debugMarker,aliasMarker})write(marker.wstring()+L".stop","stop only this fixture process");
+    require(release.wait().code==0&&debug.wait().code==0&&alias.wait().code==0&&other.running(),"Read-only preflight changed unrelated process lifetime");
+    require(!contains(probe(),release.pid())&&!contains(probe("Debug"),debug.pid()),"Exited private output remained occupied");
+    write(otherMarker.wstring()+L".stop","stop fixture neighbor");require(other.wait().code==0,"Fixture neighbor did not exit");
+    if(!oldPath){
+        Coordinator c(repo,"candidate-owner",true,fixture_parent(repo));prepare(c,repo,"");const auto snapshot=capture(c);
+        const auto slot=c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","materialize","-Task","candidate","-Snapshot",snapshot,"-Slot","warm"});
+        const auto privateOutput=fs::path(wide(slot.at("output").str()));fs::create_directories(privateOutput/L"Release");
+        fs::copy_file(standin(),privateOutput/L"Release/SnowDesktop.exe");const auto heldMarker=c.stateRoot/L"held-candidate";
+        Child held({(privateOutput/L"Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",heldMarker.wstring()},c.root);
+        until([&]{return fs::exists(heldMarker);});const auto blocked=wait(c,submit(c,execution(snapshot,"release")),3);
+        require(blocked.at("status").str()=="failed"&&held.running(),"Candidate Release preflight did not block before altering an occupied application");
+        for(const auto& event:blocked.at("stageEvents").items)
+            require(!event.has("name")||event.at("name").str()!="configure","Occupied candidate reached configuration before preflight");
+        write(heldMarker.wstring()+L".stop","stop fixture candidate");require(held.wait().code==0,"Held candidate fixture did not exit");
+    }
+    if(!oldPath){
+        const auto control=run({executable().wstring(),repo.wstring(),L"--preflight-old-path"},root,35);
+        require(control.code==1&&control.err.find("Private output preflight falsely reported")!=std::string::npos,"Old logical-only preflight did not reach the ownership assertion: "+control.out+control.err);
+    }
+    std::cout<<"PASS physical/logical candidate output owners, Release/Debug separation, neighbor exclusion, PowerShell7/5.1 and original-path negative control\n";
+}
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"x",true,fixture_parent(repo));prepare(c,repo,control);
     const auto snapshot=capture(c);const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
@@ -169,4 +244,8 @@ void scenario(const fs::path& repo,const std::string& control) {
     std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports, owner loss and both legacy controls\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    const auto mode=argc>2?std::string(argv[2]):"";
+    if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
+    else scenario(repo,mode.empty()?"":mode.substr(2));
+});}

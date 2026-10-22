@@ -252,24 +252,22 @@ function Get-TestRunOptions {
 }
 
 function Get-HostRuntimeLocks {
-    $releaseRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot ".build\Release"))
-    $runtimePrefix = (Join-Path $releaseRoot "SnowDesktop.Runtime") + [IO.Path]::DirectorySeparatorChar
+    $releaseRoots = @(Get-BuildOutputDirectories $repositoryRoot 'Release')
+    $runtimePrefixes = @($releaseRoots|ForEach-Object {(Join-Path $_ 'SnowDesktop.Runtime')+[IO.Path]::DirectorySeparatorChar})
+    $hooks = @($releaseRoots|ForEach-Object {Join-Path $_ 'SnowDesktopTaskbarHook.dll'})
     foreach ($process in @(Get-Process -Name SnowDesktop, snowwidget,
             SnowDesktopWorkshopManager, SnowDesktopSteamBridge, SnowDesktopLauncher,
             SnowDesktopWallpaperInjector32 -ErrorAction SilentlyContinue)) {
         $path = $process.Path
         if ([string]::IsNullOrEmpty($path) -or
-            $path.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar,
-                [StringComparison]::OrdinalIgnoreCase)) {
+            @($releaseRoots|Where-Object {$path.StartsWith($_+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)}).Count) {
             "$($process.ProcessName) (PID $($process.Id))"
         }
     }
     foreach ($process in @(Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
         try {
             foreach ($module in $process.Modules) {
-                if ($module.FileName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase) -or
-                    $module.FileName.Equals((Join-Path $releaseRoot "SnowDesktopTaskbarHook.dll"),
-                        [StringComparison]::OrdinalIgnoreCase)) {
+                if (@($runtimePrefixes|Where-Object {$module.FileName.StartsWith($_,[StringComparison]::OrdinalIgnoreCase)}).Count -or $hooks -contains $module.FileName) {
                     "Explorer (PID $($process.Id)): $($module.FileName)"
                 }
             }

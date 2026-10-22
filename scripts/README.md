@@ -158,6 +158,8 @@ scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
 `.build_debug` 只允许映射到该 Slot 的私有输出，标准脚本、预设和 CMake 凭据检查保持生效。原工作区只保存
 Run 请求、结果、事件及资源观测，候选执行不取得原工作区的输出租约，原工作区可通过正常 begin/claim 继续编辑。
 不能直接在候选源码登记任务或用过期凭据编译。
+占用预检同时识别逻辑输出路径和其链接指向的实际目录；Release/Debug 分别观察，邻近目录的应用不归入本次输出。
+只读检查不会关闭进程；显式处理占用仍须由持有执行许可的外层执行者完成。
 
 Run 的 `candidateExecution` 关联快照、清单摘要、槽位及实际源码/输出目录；输入身份来自清单和逐文件内容，
 不向上发现原工作区 Git。候选测试在 `<runId>.candidate-tests.json` 保留选择集合、定义、二进制、显式运行

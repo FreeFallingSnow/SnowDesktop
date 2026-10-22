@@ -234,6 +234,31 @@ function Test-EntryDelegation([string]$Root) {
     }
     return -not $state -or -not $state.current
 }
+function Get-BuildOutputDirectories([string]$Root,[ValidateSet('Release','Debug')][string]$Configuration='Release') {
+    $build=if($Configuration -eq 'Debug'){'.build_debug'}else{'.build'}
+    $cursor=[IO.Path]::GetFullPath((Join-Path $Root $build))
+    $directories=@($cursor)
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    [void]$seen.Add($cursor)
+    for($depth=0;$depth -lt 8;$depth++){
+        if(-not [IO.Directory]::Exists($cursor)){break}
+        $item=Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if(-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){break}
+        $targets=@($item.Target)
+        if($targets.Count -ne 1 -or -not [string]$targets[0]){throw 'Build output link has no single observable target.'}
+        $target=[string]$targets[0]
+        if($target.StartsWith('\\?\UNC\',[StringComparison]::OrdinalIgnoreCase)){$target='\\'+$target.Substring(8)}
+        elseif($target.StartsWith('\\?\') -or $target.StartsWith('\??\')){$target=$target.Substring(4)}
+        if(-not [IO.Path]::IsPathRooted($target)){$target=Join-Path ([IO.Path]::GetDirectoryName($cursor)) $target}
+        $cursor=[IO.Path]::GetFullPath($target)
+        if(-not $seen.Add($cursor)){throw 'Build output links contain a cycle.'}
+        $directories+=@($cursor)
+        if($depth -eq 7){throw 'Build output link depth exceeds the observation limit.'}
+    }
+    # Keep the logical spelling too: Windows process/module paths can retain
+    # the launch spelling or expose the junction's physical destination.
+    return @($directories|ForEach-Object {[IO.Path]::GetFullPath((Join-Path $_ $Configuration))}|Select-Object -Unique)
+}
 function Test-CandidateSourceRoot([string]$Root) {
     $state=Read-EntryJson (Join-Path ([IO.Path]::GetDirectoryName($Root)) 'materialization.json')
     return $state -and $state.source -eq $Root
