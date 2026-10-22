@@ -210,7 +210,15 @@ try {
             $current|Add-Member NoteProperty runId $id
         }
         # Identity is fresh. Request publication is create-only, never a mutable plan.
-        if(-not $joined){Write-NewRunRequest $request;Write-RunRecord $record}
+        if(-not $joined){
+            $heavy=-not ($request.action -eq 'tests' -and $request.mode -in 'list','plan')
+            if($request.action -eq 'batch'){
+                $frozenPlan=Read-EntryJson (Join-Path $root ('.build/collaboration/'+$request.batch+'.plan.json'))
+                $heavy=[bool]$frozenPlan.buildRequired -or $frozenPlan.mode -ne 'skipped'
+            }
+            $request|Add-Member NoteProperty projectResources (Get-ProjectResourceBinding $root $heavy)
+            Write-NewRunRequest $request;Write-RunRecord $record
+        }
         if($Action -eq 'batch' -or $Mode -eq 'verify'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
         } finally {if($batchTransaction){$batchTransaction.Dispose()}}
         $launched=$false
@@ -324,7 +332,7 @@ try {
     }
     # The process lifetime lease and immutable owner fence prevent duplicate workers
     # and make owner loss an explicit interrupted outcome rather than a takeover.
-    $ownerLease=$null;$entry=$null;$record=$null;$ownsRun=$false
+    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false
     try {
         $ownerLease=[IO.File]::Open((Run-Path $RunId '.owner.lock'),'OpenOrCreate','ReadWrite','None')
         $record=Read-RunJson (Run-Path $RunId '.json')
@@ -335,6 +343,14 @@ try {
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$null,'Process')
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$null,'Process')
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$null,'Process')
+        $binding=Get-Field $request 'projectResources'
+        if($binding -and $binding.required){
+            $actual=Get-ProjectResourceBinding $root $true
+            if($binding.policy -ne $actual.policy -or $binding.lockPath -ne $actual.lockPath -or $binding.commonGitDirectory -ne $actual.commonGitDirectory){throw 'Project resource binding changed before admission.'}
+        }
+        Set-Field $record 'resourceAdmission' ([pscustomobject]@{policy=$(if($binding){$binding.policy}else{'legacy-unbudgeted'});required=[bool]($binding -and $binding.required);
+            commonGitDirectory=$(if($binding){$binding.commonGitDirectory}else{$null});acquiredUtc=$null;releasedUtc=$null;
+            accounting='One participating heavy Run per Git common directory. This is admission, not a CPU or memory hard limit.'})
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
         $queueNotice=[Diagnostics.Stopwatch]::StartNew()
         $waitInterval=$null;$waitClock=$null;$queuedCancellation=$false
@@ -355,11 +371,32 @@ try {
                 Start-Sleep -Milliseconds 200
             }
         }
+        if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds;Write-RunRecord $record;$waitInterval=$null}
+        # Hold this checkout's output authority while queued for common capacity;
+        # do not preflight, configure, compile or launch a test before admission.
+        if($entry -and $binding -and $binding.required){
+            while(-not $resourceLease){
+                if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$queuedCancellation=$true;break}
+                try {$resourceLease=Enter-ProjectResources $binding;$record.resourceAdmission.acquiredUtc=[DateTime]::UtcNow.ToString('o')}
+                catch {
+                    if($_.Exception.Message -notmatch '^Shared project resources busy:'){throw}
+                    if($record.waitingFor -ne $_.Exception.Message){
+                        $record.waitingFor=$_.Exception.Message
+                        $waitInterval=[pscustomobject]@{resource='project-execution';reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed shared project contention until acquisition or cancellation, including retry/backoff.'}
+                        $waitClock=[Diagnostics.Stopwatch]::StartNew()
+                        if(@($record.waitIntervals).Count -lt 100){$record.waitIntervals=@($record.waitIntervals)+@($waitInterval)}else{$record.waitIntervalsTruncated=$true}
+                        Write-RunRecord $record
+                    }
+                    if($queueNotice.Elapsed.TotalSeconds -ge 30){[Console]::Error.WriteLine('Run '+$RunId+' is queued: '+$record.waitingFor);$queueNotice.Restart()}
+                    Start-Sleep -Milliseconds 200
+                }
+            }
+        }
         if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds;Write-RunRecord $record}
         # Persist completed queue timing while the executor is still active.
         # A terminal status is published only after batch retirement below.
         if($queuedCancellation){$record.status='cancelled';$record.waitingFor=''}
-        if($entry){
+        if($entry -and -not $queuedCancellation){
             $record.waitingFor=''
             Complete-RunStage $record $queue 0
             . (Join-Path $PSScriptRoot 'build_inputs.ps1')
@@ -392,6 +429,7 @@ try {
     } finally {
         # Terminal means that the leased output and automatic task transaction
         # have both finished. Observers may submit their next entry immediately.
+        if($resourceLease){$resourceLease.Dispose();$record.resourceAdmission.releasedUtc=[DateTime]::UtcNow.ToString('o')}
         Exit-BuildEntry $entry
         if($ownsRun -and $request.action -eq 'batch'){
             try {

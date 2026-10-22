@@ -290,6 +290,25 @@ function Enter-BuildEntry([string]$Root) {
 function Exit-BuildEntry($Entry) {
     if($Entry){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$Entry.oldToken,'Process');$Entry.lease.Dispose()}
 }
+function Get-ProjectResourceBinding([string]$Root,[bool]$Required) {
+    if(-not $Required){return [pscustomobject]@{policy='inspection-v1';required=$false;commonGitDirectory=$null;lockPath=$null}}
+    if(-not (Get-Command Invoke-InputGit -ErrorAction SilentlyContinue)){. (Join-Path $PSScriptRoot 'build_inputs.ps1')}
+    $git=Invoke-InputGit $Root 'rev-parse --path-format=absolute --git-common-dir'
+    if($git.code -ne 0 -or -not [IO.Path]::IsPathRooted($git.output.Trim())){throw 'Cannot resolve the shared Git resource scope; no heavy execution was admitted.'}
+    $common=[IO.Path]::GetFullPath($git.output.Trim())
+    if(-not [IO.Directory]::Exists($common)){throw 'Shared Git resource scope is unavailable; no heavy execution was admitted.'}
+    return [pscustomobject]@{policy='project-heavy-v1';required=$true;commonGitDirectory=$common;lockPath=(Join-Path $common 'snowdesktop-execution/heavy.lock')}
+}
+function Enter-ProjectResources($Binding) {
+    # The handle is the authority. No PID, heartbeat age, stale JSON or timeout
+    # releases somebody else's capacity. It is never inherited by a child.
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Binding.lockPath))
+    try {return [IO.File]::Open($Binding.lockPath,'OpenOrCreate','ReadWrite','None')}
+    catch {
+        if(Test-EntrySharingViolation $_.Exception){throw ('Shared project resources busy: heavy execution lane in '+$Binding.commonGitDirectory)}
+        throw
+    }
+}
 function Set-EntryRunControl([string]$Root) {
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return}
