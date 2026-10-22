@@ -281,7 +281,11 @@ Json Coordinator::begin(const std::string& task){
     if(!durableBatches_){
         // Seed a legacy registration as input, rather than changing production
         // routing. Its existing owner/crash tests must retain v2 semantics.
-        auto existing=state();existing["current"]["protocolVersion"]=2;atomic(stateRoot/L"state.json",existing.dump());
+        auto existing=state();
+        // A reopened v2 registration is already legacy. Replacing its state
+        // outside the coordinator transaction races its live waiter for no
+        // semantic change. Seed the retained protocol only on first conversion.
+        if(existing.at("current").at("protocolVersion").integer()!=2){existing["current"]["protocolVersion"]=2;atomic(stateRoot/L"state.json",existing.dump());}
     }
     // Lifecycle fixtures deliberately request complete synthetic coverage.
     // Production registrations have no default plan; missing-plan cases use call directly.

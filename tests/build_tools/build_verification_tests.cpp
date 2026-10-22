@@ -11,6 +11,12 @@ void track(Coordinator& c,const std::string& id){
     c.workers.push_back(Json::parse(read(c.stateRoot/L"runs"/wide(id+".launch.json"))));
 }
 std::string count(const fs::path& path){return fs::exists(path)?read(path):"";}
+void await_execution(Coordinator& c,const std::string& id){
+    const auto record=c.stateRoot/L"runs"/wide(id+".json");
+    until([&]{return fs::exists(c.root/L".build/verification-started")||Json::parse(read(record)).at("completedUtc").kind!=Json::Kind::Null;},20);
+    const auto coverage=c.stateRoot/L"runs"/wide(id+".verification.json");
+    require(fs::exists(c.root/L".build/verification-started"),"Verification was rejected before test execution: "+(fs::exists(coverage)?read(coverage):read(record)));
+}
 Json wait_run(Coordinator& c,const Env& env,const std::string& id,int code=0){return command(c,env,{"-Command","wait","-RunId",id,"-Seconds","30"},code);}
 void scenario(const fs::path& repo,const std::string& control){
     Coordinator c(repo,"verification"+control,true);
@@ -42,7 +48,7 @@ void scenario(const fs::path& repo,const std::string& control){
     };
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
     const auto first=start("owner",env);const auto id=first.at("id").str();
-    until([&]{return fs::exists(c.root/L".build/verification-started");},20);
+    await_execution(c,id);
     if(control=="configure"){
         c.gate(".build/hold-verification",false);wait_run(c,env,id);
         require(builds==count(c.root/L"build.count")&&configures==count(c.root/L".build/configure.count"),"Verification repeated configure/build instead of executing the existing candidate");return;
@@ -95,7 +101,7 @@ void scenario(const fs::path& repo,const std::string& control){
     require(invalid.at("status").str()=="invalidated"&&count(c.root/L".build/verification-exec.count")==executions+"execute\n","Queued source change ran tests or retained a passing result");
     write(c.root/L"src/a.txt","original\n");
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");const auto during=start("owner",env);const auto duringId=during.at("id").str();
-    until([&]{return fs::exists(c.root/L".build/verification-started");},20);write(binary,"changed during execution");c.gate(".build/hold-verification",false);
+    await_execution(c,duringId);write(binary,"changed during execution");c.gate(".build/hold-verification",false);
     require(wait_run(c,env,duringId,5).at("status").str()=="invalidated","Changed assertion binary retained a passing result");write(binary,bytes);
     for(const std::string mutation:{"configure","duplicate"}){
         const auto negative=run({executable().wstring(),repo.wstring(),wide("--verification-"+mutation)},c.root,65);

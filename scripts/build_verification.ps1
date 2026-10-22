@@ -24,6 +24,9 @@ function Get-VerificationEnvironment([string]$Root) {
     $environment['SNOWDESKTOP_ENTRY_POWERSHELL']=$runtime
     $environment['MSBUILDDISABLENODEREUSE']='1'
     $environment['PSEXECUTIONPOLICYPREFERENCE']='Bypass'
+    # cmd.exe, used by the leased pipeline, supplies this default only when the
+    # caller has no PROMPT. Bind its effective value; custom prompts still differ.
+    if(-not $environment.Contains('PROMPT')){$environment['PROMPT']='$P$G'}
     $canonical=[ordered]@{}
     foreach($name in @($environment.Keys|Sort-Object)){$canonical[$name]=$environment[$name]}
     $binding=[pscustomobject]@{files=$files;tools=$tools;environmentDigest=(Get-VerificationTextDigest ($canonical|ConvertTo-Json -Compress))}

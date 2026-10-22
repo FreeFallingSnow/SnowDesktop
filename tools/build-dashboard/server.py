@@ -412,7 +412,7 @@ class Store:
         if request.get("mode") == "verify":
             intent = request.get("verification") or {}
             binding = intent.get("binding") or {}
-            if not HEX.fullmatch(str(intent.get("key"))) or not HEX.fullmatch(str(request.get("planBatch"))):
+            if not re.fullmatch(r"[a-f0-9]{64}", str(intent.get("key"))) or not HEX.fullmatch(str(request.get("planBatch"))):
                 raise ValueError("Invalid standalone verification identity")
             state = read_json(self.root, "state.json") or {}
             entries = [x for x in (state.get("verificationLedger") or {}).get("entries", []) if x.get("runId") == run_id]
