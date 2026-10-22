@@ -301,7 +301,9 @@ try {
             if($view.terminal -or $Command -eq 'status' -or ($Command -ne 'invoke' -and $timer.Elapsed.TotalSeconds -ge $Seconds)){break}
             $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
             $observerTask=if($Task){$Task}else{$request.task}
-            $urgent=@($state.taskLedger.events | Where-Object {$_.importance -eq 'urgent' -and $_.recipients -contains $observerTask -and @($_.receipts | Where-Object {$_.task -eq $observerTask -and $_.level -eq 'agent'}).Count -eq 0})
+            # An unavailable/legacy task snapshot is not an execution failure or
+            # acknowledgement. Keep observing; a later read retains all events.
+            $urgent=@(Get-TaskEvents (Get-Field $state 'taskLedger') $observerTask -UrgentUnacknowledged)
             if($urgent.Count){[pscustomobject]@{id=$RunId;status=$view.status;events=$urgent;runPreserved=$true}|ConvertTo-Json -Depth 25;exit 6}
             Start-Sleep -Milliseconds 500
         } while($true)
