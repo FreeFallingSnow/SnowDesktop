@@ -1193,11 +1193,7 @@ void DesktopApp::ShowShellContextMenu(
     const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
     std::vector<std::wstring> invocationPaths;
-    std::wstring customIconIdentity;
-    bool ordinarySelection = true;
-    const auto collectPath = [&](const DesktopItem& item) {
-        if (invocationPaths.empty()) customIconIdentity = item.layoutKey;
-        ordinarySelection = ordinarySelection && !item.largeIcon;
+    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
         PWSTR path = nullptr;
         if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
                 SIGDN_FILESYSPATH, &path)) && path)
@@ -1252,7 +1248,6 @@ void DesktopApp::ShowShellContextMenu(
             }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
-    if (ordinarySelection && selectionSnapshot.size() == 1) AppendIconOverrideMenu(menu, customIconIdentity);
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
@@ -1275,8 +1270,6 @@ void DesktopApp::ShowShellContextMenu(
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 
-    if (ExecuteIconOverrideMenu(cmd, customIconIdentity))
-    { DestroyMenu(menu); ClearMenuIcons(); RestoreDesktopWindowLayer(); return; }
     if (cmd != 0)
     {
         UINT commandOffset = cmd - kFirstCmd;
