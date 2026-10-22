@@ -48,6 +48,10 @@ if(BUILD_TESTING AND WIN32)
     add_test(NAME build_wait_progress COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --wait-progress)
     set_tests_properties(build_wait_progress PROPERTIES TIMEOUT 90 LABELS "tools;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
+    add_test(NAME build_git_wait COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --git-wait)
+    set_tests_properties(build_git_wait PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildPlanExecutionTests build_plan_execution
         build_plan_execution_tests.cpp "tools;core" 120)
     target_sources(SnowDesktopBuildPlanExecutionTests PRIVATE tests/build_tools/build_records_tests.cpp tests/build_tools/build_verification_tests.cpp)

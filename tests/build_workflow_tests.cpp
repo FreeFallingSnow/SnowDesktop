@@ -5,6 +5,56 @@ using namespace build_test;
 namespace {
 Json foreground(Coordinator& c,const std::string& task,const std::string& batch,int revision=0,int code=0){auto args=c.bound("ready-and-wait",task,batch,revision);args.insert(args.end(),{"-WaitSeconds","30"});return c.call(args,code);}
 bool checked(Coordinator& c,size_t index,const std::string& status){auto state=c.state();auto& task=state.at("current").at("participants").items.at(index);return task.has("check")&&task.at("check").at("status").str()==status;}
+void git_wait_tests(const fs::path& repo){
+    Coordinator c(repo,"git-wait",true);
+    const auto grant=c.begin("waiter");const auto batch=grant.at("batchId").str();
+    c.plan("waiter",batch);
+    struct Lock {
+        HANDLE handle;
+        explicit Lock(const fs::path& path):handle(CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,0,nullptr)){
+            require(handle!=INVALID_HANDLE_VALUE,"Controlled Git transaction lease unavailable");
+        }
+        void release(){if(handle!=INVALID_HANDLE_VALUE){CloseHandle(handle);handle=INVALID_HANDLE_VALUE;}}
+        ~Lock(){release();}
+    } git(c.stateRoot/L"git.lock");
+    const auto before=read(c.stateRoot/L"state.json");
+    const auto start=[&]{
+        std::vector<std::wstring> command={powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_manager.ps1").wstring()};
+        auto args=c.bound("ready-and-wait","waiter",batch);args.insert(args.end(),{"-WaitSeconds","30"});
+        for(const auto& arg:args)command.push_back(wide(arg));
+        return std::make_unique<Child>(command,c.root,Env{},false,false,true);
+    };
+    auto first=start();
+    until([&]{return !first->running()||first->err().find("Git transaction")!=std::string::npos;},10);
+    require(first->running(),"Transient Git transaction ended the ready observer instead of retaining its process: "+first->err());
+    require(read(c.stateRoot/L"state.json")==before&&c.calls()==0,"Waiting for Git changed the registration or started execution");
+    // Posting requires the real state transaction. This would deadlock if the
+    // observer slept while holding it; no model or automatic acknowledgement participates.
+    const auto event=c.call({"event-post","waiter","-Target","waiter","-Importance","urgent","-EventKind","requirements","-EventKey","during-git","-Text","recheck before finishing"});
+    const auto attention=first->wait(10);
+    require(attention.code==6&&Json::parse(attention.out).at("registrationRetained").boolean,"Git wait failed to deliver urgent attention without abandoning registration");
+    require(c.calls()==0&&!fs::exists(c.stateRoot/wide(batch+".json")),"Urgent Git wait crossed the execution barrier");
+    c.call({"event-ack","waiter","-Sequence",std::to_string(event.at("sequence").integer()),"-AckLevel","agent"});
+    auto shortArgs=c.bound("ready-and-wait","waiter",batch);shortArgs.insert(shortArgs.end(),{"-WaitSeconds","1"});
+    const auto timeout=c.bridge->invoke(c.scripts/L"build_manager.ps1",shortArgs);
+    require(timeout.code==2&&timeout.err.find("Wait timed out")!=std::string::npos&&timeout.err.find("Git transaction")!=std::string::npos,"Git wait lost its bounded deadline or actual blocking reason");
+    require(c.state().at("current").at("participants").items[0].at("state").str()=="editing"&&c.calls()==0,"Timed-out Git wait mutated editing authority");
+    auto resumed=start();until([&]{return !resumed->running()||resumed->err().find("Git transaction")!=std::string::npos;},10);
+    require(resumed->running(),"Explicitly resumed observer did not retain the same edit revision");
+    git.release();
+    until([&]{
+        const auto state=c.state();
+        if(state.at("current").kind!=Json::Kind::Null&&state.at("current").has("runId")){
+            const auto path=c.stateRoot/L"runs"/wide(state.at("current").at("runId").str()+".json");
+            if(fs::exists(path)){const auto run=Json::parse(read(path));if(run.has("owner")&&run.at("owner").kind!=Json::Kind::Null)c.workers.push_back(run.at("owner"));}
+        }
+        return !resumed->running();
+    },35);
+    const auto completed=resumed->wait();const auto result=Json::parse(completed.out);
+    require(completed.code==0&&result.at("outcome").str()=="passed"&&result.has("runId"),"Git release did not complete the original durable batch: "+completed.err);
+    require(c.calls()==2&&c.state().at("current").kind==Json::Kind::Null,"Git contention duplicated execution or failed to retire the batch");
+    std::cout<<"PASS Git contention retains observer, releases state, delivers urgent messages, respects deadline and executes one durable batch\n";
+}
 void input_identity_tests(const fs::path& repo){
     // steam_bridge consumes SDK_ROOT. A different SDK location must invalidate
     // candidate identity even when repository bytes and the legacy PATH agree.
@@ -114,4 +164,4 @@ try{Resolve-PlanTests $p $inv|Out-Null}catch{$missing=$true}
     std::cout<<"PASS barriers, revisions, foreground recovery, ownership, repair, literal plans, legacy and input freshness\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:argc>2&&std::string(argv[2])=="--wait-progress"?wait_progress_tests:run_tests);}
+int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:argc>2&&std::string(argv[2])=="--wait-progress"?wait_progress_tests:argc>2&&std::string(argv[2])=="--git-wait"?git_wait_tests:run_tests);}
