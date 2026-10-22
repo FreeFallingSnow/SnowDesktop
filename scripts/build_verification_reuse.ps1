@@ -58,10 +58,14 @@ function Get-ReviewedVerificationContext([string]$Root,$Tests) {
 }
 function Get-CompletedVerificationProposal([string]$Root,$Verification) {
     $binding=Get-Field $Verification.binding 'candidate';$lease=$null
+    Set-Field $Verification 'referenceCheck' 'unreviewed-native-context'
     if(-not $binding -or -not (Get-Field $Verification.binding 'reviewedReuse')){return $null}
     try {
+        . (Join-Path $PSScriptRoot 'build_test_dependencies.ps1')
+        . (Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1')
         . (Join-Path $PSScriptRoot 'build_candidate.ps1')
         . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        Set-Field $Verification 'referenceCheck' 'checking-candidate-slot'
         $snapshot=Read-CandidateManifest $Root $binding.snapshot
         $prefix=$snapshot.manifest.context.digest.Substring(0,16)+'-'
         if(-not $binding.slot.StartsWith($prefix,[StringComparison]::Ordinal)){return $null}
@@ -70,6 +74,7 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
         # Keep it until the coordinator commits the reference, never the Run.
         $current=Get-VerificationSnapshot $Root $Verification.baseline ($Verification.binding.names -join ',') (Get-Field $Verification.binding 'resourceBudget')
         if($current.key -ne $Verification.key){return $null}
+        Set-Field $Verification 'referenceCheck' 'checking-completed-history'
         $state=Read-EntryJson (Join-Path $Root '.build/collaboration/state.json')
         $ledger=Get-Field $state 'verificationLedger'
         foreach($prior in @(Get-Field $ledger 'entries' @()|Where-Object key -eq $current.key)){
@@ -85,6 +90,7 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
                 $coverage=Read-EntryJson $coveragePath
                 if($coverage.runId -ne $entry.runId -or $coverage.status -ne 'passed' -or @($coverage.selected).Count -ne @($current.binding.names).Count -or @(Compare-Object @($coverage.selected|Sort-Object) @($current.binding.names)).Count){continue}
                 $files=Compare-TestRuntimeInputs $binding.source $current.tests $coverage.dependencyManifest
+                Set-Field $Verification 'referenceCheck' 'checking-file-and-report-evidence'
                 if(@($files.tests).Count -ne @($current.tests).Count -or @($files.tests|Where-Object status -ne 'stable').Count){continue}
                 $proofs=@();$valid=$true
                 foreach($test in $current.tests){
@@ -129,11 +135,12 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
                 }
                 if(-not $valid -or $proofs.Count -ne @($current.tests).Count){continue}
                 $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=[DateTime]::UtcNow.ToString('o');lease=$lease.lease}
+                Set-Field $Verification 'referenceCheck' 'completed-origin-validated'
                 $lease=$null;return $proposal
-            }catch{continue} # Corrupt/incomplete history never suppresses execution.
+            }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));continue} # Corrupt/incomplete history never suppresses execution.
         }
         return $null
-    }catch{return $null}finally{if($lease){$lease.lease.Dispose()}}
+    }catch{Set-Field $Verification 'referenceCheck' ('reference-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));return $null}finally{if($lease){$lease.lease.Dispose()}}
 }
 function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[string]$Baseline,$Proposal) {
     $references=@(Get-Field $Entry 'references' @())
