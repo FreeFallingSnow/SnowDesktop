@@ -97,7 +97,7 @@ void commit_lifecycle_tests(const fs::path& repo,const std::string& mode){
         require(revision("author")==taskRevision,"Rejected source closure consumed task revision");
         const auto audit=c.call({"task-list"}).at("sourceChanges").at("changes");
         require(audit.items.size()==3,"Source audit did not enumerate owned and unassigned new files");
-        int owned=0,unassigned=0;for(const auto& change:audit.items){if(change.at("task").str()=="author")++owned;else if(change.at("task").kind==Json::Kind::Null)++unassigned;}
+        int owned=0,unassigned=0;for(const auto& change:audit.items){if(change.at("task").kind==Json::Kind::Null)++unassigned;else if(change.at("task").str()=="author")++owned;}
         require(owned==2&&unassigned==1,"Source audit invented ownership for an unclaimed peer path");
         write(c.root/L"message.txt","fixture source checkpoint\n");
         auto commit=c.bound("commit","author",batch);commit.insert(commit.end(),{"-Files","src/new widget","-MessageFile",utf8((c.root/L"message.txt").wstring())});
