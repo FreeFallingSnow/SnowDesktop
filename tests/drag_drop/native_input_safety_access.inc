@@ -10,8 +10,14 @@
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
                 reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
         auto* context = reinterpret_cast<InputSafetyWindowContext*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (context && !context->popup && !context->dock && (message == WM_LBUTTONUP || message == WM_MBUTTONUP))
+        const bool pointerMessage = message == WM_MOUSEMOVE || message == WM_LBUTTONUP ||
+            message == WM_MBUTTONUP;
+        if (context && pointerMessage)
+        {
+            if (context->popup) return context->app->HandleFloatingPopupMessage(window, message, wp, lp);
+            if (context->dock) return context->app->HandleFloatingDockMessage(*context->dock, window, message, wp, lp);
             return context->app->HandleMessage(window, message, wp, lp);
+        }
         if (context && message == WM_NULL)
             return context->app->HandleControlMessage(window, message, wp, lp);
         if (context && (message == WM_CANCELMODE || message == WM_CAPTURECHANGED || message == WM_NCHITTEST ||
@@ -100,6 +106,97 @@
         std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
         inputSafetyLogs.emplace_back(line);
         inputSafetyLogChanged.notify_all();
+    }
+
+    static void RunQueuedDragReleaseSafety(const wchar_t* windowClass)
+    {
+        InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+        InputSafetyImport queuedButtons("GetQueueStatus", reinterpret_cast<ULONG_PTR>(&InputSafetyQueueStatus));
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto file = temporary.path / L"drag.txt";
+        { std::ofstream stream(file); stream << "release backlog fixture"; }
+        for (int surface = 0; surface < 3; ++surface)
+        for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON})
+        {
+            auto& app = Scene(false);
+            ConfigureModel(app, temporary.path / (std::to_wstring(surface) + L"-" + std::to_wstring(button)));
+            PopulateModel(app, {file}, 0);
+            InputSafetyWindowContext mainContext{&app}, popupContext{&app, nullptr, true};
+            auto host = std::make_unique<DesktopApp::PersistentDockHost>();
+            host->active = true;
+            InputSafetyWindowContext dockContext{&app, host.get()};
+            std::vector<HWND> windows;
+            const auto create = [&](InputSafetyWindowContext& context) {
+                HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, windowClass,
+                    L"Queued drag release fixture", WS_POPUP, 0, 0, 400, 300,
+                    nullptr, nullptr, GetModuleHandleW(nullptr), &context);
+                if (!window) throw std::runtime_error("create queued drag release window");
+                windows.push_back(window);
+                return window;
+            };
+            struct Cleanup
+            {
+                DesktopApp& app; std::vector<HWND>& windows;
+                ~Cleanup()
+                {
+                    app.EndDragSession();
+                    app.HideDragHintWindow();
+                    if (app.hintHwnd_) DestroyWindow(app.hintHwnd_);
+                    app.hintHwnd_ = nullptr;
+                    ReleaseCapture();
+                    for (auto it = windows.rbegin(); it != windows.rend(); ++it) DestroyWindow(*it);
+                    app.hwnd_ = app.floatingPopupHwnd_ = nullptr;
+                    for (const auto& dock : app.persistentDockHosts_) dock->hwnd = nullptr;
+                }
+            } cleanup{app, windows};
+            app.hwnd_ = create(mainContext);
+            host->hwnd = create(dockContext);
+            const HWND dockWindow = host->hwnd;
+            app.persistentDockHosts_.push_back(std::move(host));
+            app.floatingPopupHwnd_ = create(popupContext);
+            const HWND inputWindow = surface == 0 ? app.hwnd_ : surface == 1 ? dockWindow : app.floatingPopupHwnd_;
+            if (!app.SaveLayoutSlots(false)) throw std::runtime_error("save queued drag release layout");
+            Begin(app, false, 1);
+            app.mouseDown_ = true;
+            app.lastMousePoint_ = app.mouseDownPoint_ = {50, 50};
+            app.middleButtonWidgetMove_ = button == VK_MBUTTON;
+            app.rightButtonItemDrag_ = button == VK_RBUTTON;
+            SetCapture(inputWindow);
+            if (GetCapture() != inputWindow) throw std::runtime_error("capture queued drag release window");
+            inputSafetyPhysicalButton = 0;
+            inputSafetyQueuedButtons = MAKELONG(0, QS_MOUSEBUTTON);
+            const WPARAM held = button == VK_LBUTTON ? MK_LBUTTON : button == VK_RBUTTON ? MK_RBUTTON : MK_MBUTTON;
+            // Physical release has happened, but its real queued message is
+            // still behind historical moves. Exercise each production HWND
+            // route; neither pointer/model feedback nor presentation may replay.
+            for (int lap = 0; lap < 3; ++lap)
+            for (const POINT point : {POINT{250, 50}, POINT{250, 250}, POINT{50, 250}, POINT{50, 50}})
+                SendMessageW(inputWindow, WM_MOUSEMOVE, held, MAKELPARAM(point.x, point.y));
+            const POINT current = app.dragSession_.CurrentPoint();
+            if (current.x != 50 || current.y != 50 || app.lastMousePoint_.x != 50 || app.lastMousePoint_.y != 50 ||
+                app.presentedDragFeedbackRevision_ != 0 || !app.dragSession_.IsActive() || GetCapture() != inputWindow)
+                throw std::runtime_error("released drag replays queued movement/presentation or loses its pending real release");
+            inputSafetyQueuedButtons = 0;
+            if (button == VK_RBUTTON)
+            {
+                // Right-drag menu choice is covered separately. Keep this
+                // inactive-desktop test independent of interactive menu UI.
+                app.CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapture();
+            }
+            else
+            {
+                SendMessageW(inputWindow, button == VK_MBUTTON ? WM_MBUTTONUP : WM_LBUTTONUP,
+                    0, MAKELPARAM(150, 150));
+                if (app.dragSession_.IsActive() || app.mouseDown_ || GetCapture() ||
+                    app.items_.front().gridCell.column != 1 || app.items_.front().gridCell.row != 1)
+                    throw std::runtime_error("real release did not commit its own point exactly once after the stale move backlog");
+                app.LoadLayoutSlots();
+                const auto stored = app.layoutRecords_.find(ToUpperInvariant(file.wstring()));
+                if (stored == app.layoutRecords_.end() || stored->second.cell.column != 1 || stored->second.cell.row != 1)
+                    throw std::runtime_error("real release position did not survive layout persistence");
+            }
+        }
     }
 
     static void RunWidgetReleaseSafety(const wchar_t* windowClass)
@@ -333,6 +430,7 @@ end})
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        RunQueuedDragReleaseSafety(cls.lpszClassName);
         RunWidgetReleaseSafety(cls.lpszClassName);
         RunWidgetDockEdgeRevealSafety();
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
