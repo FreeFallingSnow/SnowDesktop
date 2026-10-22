@@ -192,6 +192,8 @@ const changed={...rich,id:'e'.repeat(32),test:'Changed input observation',identi
 const evidence={status:'recorded',totalCount:3,tests:[rich,legacy,changed]};run.evidence=evidence;
 const runEvidenceText=renderBudget(),evidenceModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),evidence}};
 const batchEvidenceText=renderBudget(evidenceModel),batchEvidenceZh=renderBudget(evidenceModel,'zh');
+run.verification={baseline:'f'.repeat(32),names:['Alpha'],referenceCount:2,references:[{id:'1'.repeat(32),task:'reference-observer',status:'recorded',sourceRunId:run.id,baseline:'f'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',tests:[{test:'Alpha'}],reviewPolicy:'reviewed-native-files-v1',sourceRunSha256:'2'.repeat(64),coverageSha256:'3'.repeat(64)},{id:'4'.repeat(32),task:'missing-receipt',status:'unavailable',reason:'Reference receipt is missing'}]};
+const referencesText=renderBudget(),referencesZh=renderBudget(undefined,'zh');
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -206,7 +208,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -221,6 +223,9 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     }
     const auto chinese=clientObserved.at("batchEvidenceZh").str();
     require(chinese.find("完整性未证明")!=std::string::npos&&chinese.find("编译器报告 3")!=std::string::npos&&chinese.find("加载图像 23 / 进程 2")!=std::string::npos&&chinese.find("尚未自动复用")!=std::string::npos,"Overlay Chinese evidence fields were missing or untranslated");
+    const auto referencesText=clientObserved.at("referencesText").str(),referencesZh=clientObserved.at("referencesZh").str();
+    require(referencesText.find("Existing result references")!=std::string::npos&&referencesText.find("no new test execution")!=std::string::npos&&referencesText.find("Reference receipt unavailable")!=std::string::npos&&referencesText.find("reference-observer")!=std::string::npos&&referencesText.find("Alpha")!=std::string::npos,"Overlay lost independent completed-reference provenance or treated missing receipts as recorded");
+    require(referencesZh.find("引用既有结果")!=std::string::npos&&referencesZh.find("未新增测试执行")!=std::string::npos&&referencesZh.find("引用凭据不可核对")!=std::string::npos,"Overlay completed-reference fields were untranslated");
     bool rootRemote=false,unavailableRemote=false;
     for(const auto& value:clientObserved.at("inject").items){rootRemote|=value.str()=="remote";unavailableRemote|=value.str()=="remote.snowCollaboration";}
     require(rootRemote&&!unavailableRemote&&clientObserved.at("events").items[0].str()=="mount"&&clientObserved.at("events").items[1].str()=="slot","Client waited on an unmounted namespace or registered its slot before mounting");

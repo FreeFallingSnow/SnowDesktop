@@ -320,6 +320,59 @@ def evidence_view(value):
                      "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "runnerExitCode", "seconds", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
     return {"status": value.get("status", "not-recorded"), "tests": rows, "totalCount": len(entries)}
 
+def verification_references(root, run_id, key, entries, record):
+    # Display historical receipts, never a current reuse authorization. The
+    # execution and its original Evidence remain separate from later callers.
+    values = entries.get("references") or []
+    if not isinstance(values, list):
+        raise ValueError("Invalid completed-reference list")
+    rows = []
+    origin = None
+    for item in values[:128]:
+        row = {"status": "unavailable", "reason": "Reference metadata is invalid"}
+        try:
+            if not isinstance(item, dict) or not HEX.fullmatch(str(item.get("id", ""))):
+                raise ValueError("Invalid reference identity")
+            row.update({k: item.get(k) for k in ("id", "sourceRunId", "baseline", "checkedUtc")})
+            row["task"] = redact(item.get("task", ""))
+            row["requirementsRevision"] = record_seconds(item.get("requirementsRevision"))
+            if (item.get("schemaVersion") != 1 or item.get("kind") != "completed-verification-reference"
+                    or item.get("sourceRunId") != run_id or item.get("key") != key
+                    or not HEX.fullmatch(str(item.get("baseline", "")))
+                    or item.get("execution") != "referenced" or item.get("newExecution") is not False
+                    or item.get("reuseAllowed") is not True or item.get("scope") != "exact-candidate-reviewed-binary"):
+                raise ValueError("Reference does not match its original execution")
+            tests = item.get("tests")
+            if (not isinstance(tests, list) or not 1 <= len(tests) <= 128
+                    or any(not isinstance(test, dict) or not HEX.fullmatch(str(test.get("evidenceId", ""))) for test in tests)):
+                raise ValueError("Reference test evidence is invalid")
+            if not isinstance(item.get("review"), dict) or item["review"].get("policy") != "reviewed-native-files-v1":
+                raise ValueError("Reference review policy is unavailable")
+            directory = safe_path(safe_path(root.parent, "verification"), "references")
+            if read_json(directory, item["id"] + ".json") != item:
+                raise ValueError("Reference receipt is missing or differs from the ledger")
+            if origin is None:
+                origin = []
+                for suffix in (".json", ".verification.json"):
+                    with shared_open(safe_path(safe_path(root, "runs"), run_id + suffix)) as stream:
+                        data = stream.read(MAX_METADATA_BYTES + 1)
+                    if len(data) > MAX_METADATA_BYTES:
+                        raise ValueError("Reference origin exceeds the metadata budget")
+                    origin.append(hashlib.sha256(data).hexdigest())
+            if (record.get("status") != "passed" or record.get("exitCode") != 0
+                    or origin != [item.get("sourceRunSha256"), item.get("coverageSha256")]):
+                raise ValueError("Original execution evidence is unavailable or has changed")
+            row.update({"status": "recorded", "reason": "", "newExecution": False,
+                        "tests": [{"test": redact(test.get("test", "")), "evidenceId": test["evidenceId"]} for test in tests],
+                        "scope": item["scope"], "sourceRunSha256": item["sourceRunSha256"],
+                        "coverageSha256": item["coverageSha256"],
+                        "reviewPolicy": redact((item.get("review") or {}).get("policy", ""))})
+        except (ValueError, OSError, TypeError) as error:
+            row["reason"] = redact(error)
+        rows.append(row)
+    return {"references": rows, "referenceCount": len(values), "referencesOmitted": max(0, len(values) - len(rows))}
+
+
 class Store:
     def __init__(self, root, fixture):
         self.root = root
@@ -478,6 +531,7 @@ class Store:
                 raise ValueError("Verification subscription identity mismatch")
             verification = {"baseline": request["planBatch"], "key": intent["key"], "names": [redact(x) for x in binding.get("names", [])[:128]],
                             "noBuild": True, "reuseAllowed": False,
+                            **verification_references(self.root, run_id, intent["key"], entries[0], record),
                             "subscriptions": [{**{k: x.get(k) for k in ("id", "task", "requirementsRevision", "baseline", "subscribedUtc", "withdrawnUtc")}, "reason": redact(x.get("reason", ""))} for x in entries[0].get("subscriptions", [])[:128]]}
         return {"id": run_id, "batchId": request.get("batch"), "task": redact(request.get("task", "")),
                 "artifact": ({key: record["artifact"].get(key) for key in

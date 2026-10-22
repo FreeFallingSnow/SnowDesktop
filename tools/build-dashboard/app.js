@@ -259,6 +259,24 @@ function renderRunRecords(snapshot,batch){
   if(run.verification){
    detail(box,"独立补验","仅执行既有产物");detail(box,"来源批次",run.verification.baseline);detail(box,"测试选择",(run.verification.names||[]).join(", "));
    for(const item of run.verification.subscriptions||[])detail(box,item.task+" / 需求 r"+item.requirementsRevision,item.withdrawnUtc?"已撤回等待":"订阅共同结果");
+   const references=run.verification.references||[];
+   if(run.verification.referenceCount){
+    const list=element("details");list.dataset.resultReferences=run.id;retainFold(list,JSON.stringify(["result-references",run.id]));
+    list.append(element("summary","引用既有结果 · "+run.verification.referenceCount));
+    detail(list,"执行计数","以下请求引用原执行，未新增测试执行");
+    for(const item of references){
+     const row=element("details");row.dataset.referenceId=item.id||"unavailable";retainFold(row,JSON.stringify(["result-reference",run.id,item.id]));
+     row.append(element("summary",(item.task||"未记录")+" · "+(item.status==="recorded"?"引用已记录":"引用凭据不可核对")));
+     detail(row,"核对时间",time(item.checkedUtc));detail(row,"原执行",item.sourceRunId);detail(row,"请求基线",item.baseline);
+     if(item.status==="recorded"){
+      detail(row,"测试",(item.tests||[]).map(test=>test.test).join(", "));detail(row,"核对范围","同一候选、已审阅二进制及输入 · "+item.reviewPolicy);
+      detail(row,"原执行 / 覆盖摘要",item.sourceRunSha256+" / "+item.coverageSha256);
+     }else detail(row,"原因",item.reason,"warn");
+     list.append(row);
+    }
+    if(run.verification.referencesOmitted)detail(list,"显示范围","另有 "+run.verification.referencesOmitted+" 条引用未展开");
+    box.append(list);
+   }
   }
   if(run.evidence?.tests?.length)appendTestEvidence(box,run.evidence,"run-"+run.id);
   for(const stage of run.stages||[])detail(box,label(stage.name),preciseTime(stage.elapsedSeconds)+(stage.completedUtc?"":" · "+(run.completedUtc?"未完成":"进行中")));
