@@ -159,6 +159,23 @@
         check(app.popupAnimation_.DurationMilliseconds(false) == 110.0 &&
             deadline + switchElapsed + 1.0 >= 110.0,
             "actual switching retains the normal 110ms close instead of accelerating the outgoing popup");
+        snowdesktop::popup_animation_rules::State normalClose;
+        normalClose.Configure(false, 1.0, true);
+        normalClose.ShowImmediately();
+        normalClose.Close(0);
+        const auto normalTimeline = normalClose.RemainingTimeline();
+        const auto switchTimeline = app.popupAnimation_.RemainingTimeline();
+        const double alreadyElapsed = normalTimeline.durationMilliseconds - switchTimeline.durationMilliseconds;
+        for (const double fraction : {0.0, .25, .5, .75, 1.0})
+        {
+            const double local = switchTimeline.durationMilliseconds * fraction / 1000.0;
+            const auto normal = snowdesktop::popup_motion_curve::Evaluate(normalTimeline,
+                alreadyElapsed / 1000.0 + local);
+            const auto switching = snowdesktop::popup_motion_curve::Evaluate(switchTimeline, local);
+            check(std::abs(normal.position - switching.position) < .00001 &&
+                std::abs(normal.velocity - switching.velocity) < .00001,
+                "the real switch route keeps the same visible position and velocity as ordinary closing");
+        }
         app.OpenCollectionPopupAt(2, target);
         check(app.popupWidgetIndex_ == 0 && app.pendingCollectionPopupOpen_ &&
             app.pendingCollectionPopupOpen_->widgetId == L"switch-folder" &&
@@ -267,6 +284,12 @@
         check(app.AnimateCompositionAnimationOverlay(overlay, 0, 1, POINT{40, 64}, 1, 1,
             static_cast<UINT>(trajectory.durationMilliseconds), 0, &trajectory) && app.FlushPendingCompositionCommit(),
             "DirectComposition accepts the production zero-to-one spring segments");
+        motion.ShowImmediately();
+        motion.Close(2000);
+        const auto closeTrajectory = motion.RemainingTimeline();
+        check(app.AnimateCompositionAnimationOverlay(overlay, 1, 0, POINT{40, 64}, 1, 1,
+            static_cast<UINT>(closeTrajectory.durationMilliseconds), 0, &closeTrajectory) && app.FlushPendingCompositionCommit(),
+            "DirectComposition accepts the slower visible close with its unchanged deadline");
         snowdesktop::quick_navigation_animation_rules::State quickMotion;
         quickMotion.Configure(snowdesktop::quick_navigation_animation_rules::Effect::Scale, 1.0, false, true);
         quickMotion.Open(1000);

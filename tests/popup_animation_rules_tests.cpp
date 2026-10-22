@@ -97,6 +97,20 @@ int main()
             "spring reaches an exact full-size endpoint and retires its tail");
         spring.Close(20000);
         const auto closing = spring.RemainingTimeline();
+        const auto midClose = snowdesktop::popup_motion_curve::Evaluate(closing,
+            closing.durationMilliseconds * .0005);
+        Check(midClose.position > .30 && midClose.position < .55,
+            "a settled popup retains a visible size halfway through closing instead of disappearing in the first frames");
+        double previousClose = 1.0;
+        for (unsigned frame = 0; frame <= 110; ++frame)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(closing,
+                closing.durationMilliseconds * frame / 110000.0);
+            Check(sample.position >= -0.00001 && sample.position <= previousClose + 0.00001 &&
+                sample.velocity <= 0.00001,
+                "normal close shrinks monotonically to zero across speed settings without a rebound");
+            previousClose = sample.position;
+        }
         spring.Advance(20000 + static_cast<std::uint64_t>(closing.durationMilliseconds));
         Check(spring.IsHidden() && spring.GetVisual().scale == 0.0f && !OccludesSurface(spring),
             "spring closes to exact zero and releases input occlusion");
@@ -114,6 +128,12 @@ int main()
             "opening actually completes within 160ms without an invisible settling tail");
         quick.ShowImmediately();
         quick.Close(2000);
+        quick.Advance(2032);
+        Check(quick.GetVisual().scale > .60f && quick.GetVisual().scale < .75f,
+            "normal close keeps most of the popup visible through its first two 60Hz frames");
+        quick.Advance(2080);
+        Check(quick.GetVisual().scale > .15f && quick.GetVisual().scale < .30f,
+            "normal close still has meaningful displacement after 80ms instead of an invisible tail");
         quick.Advance(2110);
         Check(quick.IsHidden() && !quick.IsAnimating() && quick.GetVisual().scale == 0.0f,
             "closing actually completes within 110ms and releases input");
@@ -144,6 +164,24 @@ int main()
         spring.Close(1500);
         spring.Advance(1500 + static_cast<std::uint64_t>(spring.RemainingTimeline().durationMilliseconds));
         Check(spring.IsHidden() && !spring.IsAnimating(), "repeated reversals cannot leave a zombie animation");
+        spring.ShowImmediately();
+        spring.Close(2000);
+        spring.Advance(2096);
+        const auto inward = spring.GetVisual();
+        const double inwardVelocity = spring.Velocity();
+        spring.Open(2096);
+        spring.Close(2096);
+        Check(spring.GetVisual().scale == inward.scale && spring.Velocity() == inwardVelocity,
+            "an immediate reopen-close preserves the incoming inward position and velocity");
+        const auto braking = spring.RemainingTimeline();
+        for (unsigned frame = 0; frame <= 110; ++frame)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(braking,
+                braking.durationMilliseconds * frame / 110000.0);
+            Check(sample.position >= -0.00001 && sample.position <= inward.scale + 0.00001 &&
+                sample.velocity <= 0.00001,
+                "closing with inherited inward momentum brakes without crossing zero or bouncing");
+        }
         State fadeCompatibility;
         fadeCompatibility.Configure(true, 1.0, true);
         Check(!fadeCompatibility.UsesSpring(), "fade selection retains its existing fixed-geometry timing");

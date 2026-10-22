@@ -4,6 +4,7 @@
 #include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
 #include "layout/popup_motion_curve.h"
+#include "layout/popup_animation_rules.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "icons/large_icon_shape_geometry.h"
@@ -820,15 +821,26 @@ int RunDesktopBackdropCompositorTests()
             check(warmupReuses.load() == 1,
                 "popup initialization consumes the actual background-created factory across target reset");
             springGlass.EndFrame(false);
-            const auto trajectory = snowdesktop::popup_motion_curve::Build({}, 1.0, 6.638352067994 / .120, 160.0);
+            snowdesktop::popup_animation_rules::State popup;
+            popup.Configure(false, 1.0, true);
+            popup.Open(1000);
+            const auto trajectory = popup.RemainingTimeline();
             check(springGlass.StartVisualTransformAnimation(0.0f, 1.0f, 1.0f, 1.0f,
                 160.0f, 240.0f, 160, 0.0f, &trajectory),
                 "Windows Composition accepts the shared zero-to-one spring keyframes");
-            const auto initial = snowdesktop::popup_motion_curve::Evaluate(trajectory, .06);
-            const auto reversed = snowdesktop::popup_motion_curve::Build(initial, 0.0, 6.638352067994 / .0825, 110.0);
-            check(springGlass.StartVisualTransformAnimation(static_cast<float>(initial.position), 0.0f,
+            popup.Advance(1060);
+            const auto initial = popup.GetVisual();
+            popup.Close(1060);
+            const auto reversed = popup.RemainingTimeline();
+            check(springGlass.StartVisualTransformAnimation(initial.scale, 0.0f,
                 1.0f, 1.0f, 160.0f, 240.0f, 110, 0.0f, &reversed),
                 "Windows Composition accepts a velocity-preserving reverse through its turning point");
+            popup.ShowImmediately();
+            popup.Close(2000);
+            const auto closeTrajectory = popup.RemainingTimeline();
+            check(springGlass.StartVisualTransformAnimation(1.0f, 0.0f, 1.0f, 1.0f,
+                160.0f, 240.0f, 110, 0.0f, &closeTrajectory),
+                "Windows Composition accepts the same visible 110ms close as the content and UI fallback");
             springGlass.SetVisualTransform(0.0f, 0.0f, 160.0f, 240.0f);
             for (const auto effect : {snowdesktop::quick_navigation_animation_rules::Effect::Scale,
                 snowdesktop::quick_navigation_animation_rules::Effect::Fade})
