@@ -720,7 +720,7 @@ void DesktopApp::ShowItemContextMenu(
             popupAnimation_.ShowImmediately();
             popupAnimation_.Configure(
                 snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0));
+                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0), !dockFolderEntry->fanPopup);
         }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;

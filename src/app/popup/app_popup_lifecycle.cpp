@@ -446,9 +446,13 @@ void DesktopApp::StartCollectionPopupAnimation(
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
         snowdesktop::animation::RuntimeDurationScale() *
-            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0));
+            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0),
+        !(widget && UsesCollectionPopupFan(*widget)));
     if (!reverseClosingAnimation)
+    {
         popupAnimation_.ResetHidden();
+        popupFanIconDrawings_.clear();
+    }
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         popupAnimation_.ShowImmediately();

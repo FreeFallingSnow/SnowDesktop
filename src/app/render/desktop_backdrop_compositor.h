@@ -15,6 +15,7 @@
 #include <string>
 
 struct ID2D1Device;
+namespace snowdesktop::popup_motion_curve { struct Timeline; }
 
 /**
  * @brief 独立桌面玻璃合成窗口。
@@ -76,13 +77,14 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
-    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度。 */
+    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度；弹窗可提供与内容层共用的弹簧轨迹。 */
     [[nodiscard]] bool StartVisualTransformAnimation(
         float fromScale, float toScale,
         float fromOpacity, float toOpacity,
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
-        float normalizedStartSlope = 0.0f);
+        float normalizedStartSlope = 0.0f,
+        const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。

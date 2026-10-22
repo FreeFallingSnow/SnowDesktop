@@ -10,6 +10,17 @@ void DragRenderCache::Reset()
     revision_ = 0;
     if (context_)
         context_->SetTarget(nullptr);
+    context_.Reset();
+    device_.Reset();
+    contentValid_ = false;
+}
+
+void DragRenderCache::Invalidate()
+{
+    contentValid_ = false;
+    // One retained allocation per cache; never retain an oversized desktop.
+    if (static_cast<std::uint64_t>(width_) * height_ * 4 > 16 * 1024 * 1024)
+        Reset();
 }
 
 bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
@@ -18,7 +29,8 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     if (!device || pixelSize.width == 0 || pixelSize.height == 0 || !drawStatic)
         return false;
 
-    if (bitmap_ && width_ == pixelSize.width && height_ == pixelSize.height &&
+    if (device_.Get() != device) Reset();
+    if (contentValid_ && bitmap_ && width_ == pixelSize.width && height_ == pixelSize.height &&
         revision_ == revision)
         return true;
 
@@ -27,15 +39,19 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
         HRESULT hr = device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context_);
         if (FAILED(hr) || !context_)
             return false;
+        device_ = device;
     }
 
-    bitmap_.Reset();
-    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_TARGET,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-    HRESULT hr = context_->CreateBitmap(pixelSize, nullptr, 0, &bp, &bitmap_);
-    if (FAILED(hr) || !bitmap_)
-        return false;
+    contentValid_ = false;
+    if (!bitmap_ || width_ != pixelSize.width || height_ != pixelSize.height)
+    {
+        bitmap_.Reset();
+        const auto bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        const HRESULT hr = context_->CreateBitmap(pixelSize, nullptr, 0, &bp, &bitmap_);
+        if (FAILED(hr) || !bitmap_) return false;
+        ++bitmapAllocationCount_;
+    }
 
     context_->SetTarget(bitmap_.Get());
     context_->SetDpi(96.0f, 96.0f);
@@ -43,7 +59,7 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     context_->BeginDraw();
     context_->Clear(D2D1::ColorF(0, 0, 0, 0));
     drawStatic(context_.Get());
-    hr = context_->EndDraw();
+    const HRESULT hr = context_->EndDraw();
     context_->SetTarget(nullptr);
     if (FAILED(hr))
     {
@@ -54,12 +70,13 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     width_ = pixelSize.width;
     height_ = pixelSize.height;
     revision_ = revision;
+    contentValid_ = true;
     return true;
 }
 
 void DragRenderCache::Draw(ID2D1DeviceContext* ctx) const
 {
-    if (!ctx || !bitmap_) return;
+    if (!ctx || !bitmap_ || !contentValid_) return;
     D2D1_SIZE_F sz = bitmap_->GetSize();
     ctx->DrawBitmap(bitmap_.Get(), D2D1::RectF(0, 0, sz.width, sz.height),
         1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
@@ -70,7 +87,7 @@ bool DragRenderCache::DrawAt(
     D2D1_POINT_2F destination,
     D2D1_INTERPOLATION_MODE interpolation) const
 {
-    if (!ctx || !bitmap_)
+    if (!ctx || !bitmap_ || !contentValid_)
         return false;
     const D2D1_SIZE_F size = bitmap_->GetSize();
     ctx->DrawBitmap(

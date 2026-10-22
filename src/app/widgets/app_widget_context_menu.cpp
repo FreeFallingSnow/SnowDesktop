@@ -1246,7 +1246,7 @@ void DesktopApp::ShowWidgetContextMenu(
                 popupAnimation_.Configure(
                     snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
                     snowdesktop::animation::RuntimeDurationScale() *
-                        (widgets_[widgetIndex].fanPopup ? 2.4 : 1.0));
+                        (widgets_[widgetIndex].fanPopup ? 2.4 : 1.0), !widgets_[widgetIndex].fanPopup);
             }
             SaveLayoutSlots();
             refreshOpenPopupDisplay();

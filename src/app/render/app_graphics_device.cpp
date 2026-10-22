@@ -223,7 +223,17 @@ void DesktopApp::ResetCompositionRenderCaches()
     ResetDragPreviewCompositionResources();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
+    popupAnimationRenderCache_.Reset();
+    popupAnimationOverlay_.surface.Reset();
+    popupAnimationOverlay_.surfaceWidth = popupAnimationOverlay_.surfaceHeight = 0;
     ResetLuaWidgetPanelAnimationCache();
+    luaWidgetPanelAnimationRenderCache_.Reset();
+    luaWidgetPanelAnimationOverlay_.surface.Reset();
+    luaWidgetPanelAnimationOverlay_.surfaceWidth = luaWidgetPanelAnimationOverlay_.surfaceHeight = 0;
+    popupFanIconDrawings_.clear();
+    popupFanIconRecorder_.Reset();
+    popupFanTextLayouts_.clear();
+    popupFanCachedTextFormat_.Reset();
     ResetPageNotifyAnimationCache();
     brushCache_.clear();
     brushCacheContext_ = nullptr;

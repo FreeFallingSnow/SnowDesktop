@@ -209,7 +209,7 @@ void DesktopApp::ResetLuaWidgetPanelAnimationCache()
     luaWidgetPanelAnimationCompositorDriven_ = false;
     ResetCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_);
-    luaWidgetPanelAnimationRenderCache_.Reset();
+    luaWidgetPanelAnimationRenderCache_.Invalidate();
     luaWidgetPanelAnimationCacheRect_ = {};
 }
 

@@ -2,6 +2,7 @@
 #include "app/dock/dock_folder_popup_read.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "categorized_popup_scope.h"
+#include "diagnostics/performance_trace.h"
 #include "widgets/single_cell_widget_rules.h"
 
 // Collection-popup model lookup, selection adapter, geometry and animation-cache preparation.
@@ -153,12 +154,18 @@ std::vector<Item*> DesktopApp::GetDockFolderPopupSelectedItems()
 
 std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
 {
+    return GetPopupItemKeysView(widget);
+}
+
+const std::vector<std::wstring>& DesktopApp::GetPopupItemKeysView(const DesktopWidget& widget) const
+{
     if (&widget == GetOpenPopupWidget())
         if (auto* categories = dynamic_cast<FileCategories*>(GetCategorizedPopupView()))
             return categories->GetSearchResultKeys();
     if (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories)
         return widget.itemKeys;
-    return {};
+    static const std::vector<std::wstring> empty;
+    return empty;
 }
 
 DesktopWidget* DesktopApp::GetOpenPopupWidget()
@@ -190,7 +197,7 @@ size_t DesktopApp::GetPopupItemCount(
         return widget.folderEntries.size();
     }
     if (widget.type == DesktopWidgetType::FileCategories)
-        return GetPopupItemKeys(widget).size();
+        return GetPopupItemKeysView(widget).size();
     return (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories) ? widget.itemKeys.size() : 0;
 }
 
@@ -273,7 +280,7 @@ std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
         return _LW("app.interact.popup_show_all");
     if (widget->type == DesktopWidgetType::FolderMapping)
         return widget->folderEntries[GetPopupFolderEntryIndex(*widget, index)].DisplayName();
-    const auto keys = GetPopupItemKeys(*widget);
+    const auto& keys = GetPopupItemKeysView(*widget);
     const auto itemIndex = FindItemIndexByKey(keys[index]);
     if (itemIndex >= items_.size()) return {};
     const auto& item = items_[itemIndex];
@@ -281,6 +288,33 @@ std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
         ? GetDemoCollectionIdentityTitle(*widget,
             item.layoutKey.empty() ? item.parsingName : item.layoutKey)
         : item.name;
+}
+
+IDWriteTextLayout* DesktopApp::GetCollectionPopupFanTextLayout(const std::wstring& text,
+    float width, float height, bool ellipsis) const
+{
+    if (!dwriteFactory_ || !fanTitleTextFormat_ || text.empty()) return nullptr;
+    if (popupFanCachedTextFormat_.Get() != fanTitleTextFormat_.Get())
+    {
+        popupFanTextLayouts_.clear();
+        popupFanCachedTextFormat_ = fanTitleTextFormat_;
+    }
+    const auto key = std::to_wstring(width) + L":" + std::to_wstring(height) +
+        (ellipsis ? L":e:" : L":m:") + text;
+    if (const auto found = popupFanTextLayouts_.find(key); found != popupFanTextLayouts_.end())
+        return found->second.Get();
+    if (popupFanTextLayouts_.size() >= 128) popupFanTextLayouts_.clear();
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+        fanTitleTextFormat_.Get(), width, height, &layout))) return nullptr;
+    if (ellipsis)
+    {
+        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        ComPtr<IDWriteInlineObject> sign;
+        if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(fanTitleTextFormat_.Get(), &sign)))
+            layout->SetTrimming(&trimming, sign.Get());
+    }
+    return popupFanTextLayouts_.emplace(key, std::move(layout)).first->second.Get();
 }
 
 snowdesktop::collection_popup_layout::FanItem
@@ -297,10 +331,7 @@ DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index) const
     auto result = layout::ResolveFanItem(metrics, popup, position,
         CollectionPopupFanRootAbove(), mirrored);
     const std::wstring text = GetCollectionPopupFanLabel(index);
-    ComPtr<IDWriteTextLayout> textLayout;
-    if (dwriteFactory_ && fanTitleTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            text.c_str(), static_cast<UINT32>(text.size()), fanTitleTextFormat_.Get(),
-            10000.0f, 1000.0f, &textLayout)))
+    if (auto* textLayout = GetCollectionPopupFanTextLayout(text, 10000.0f, 1000.0f, false))
     {
         textLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         DWRITE_TEXT_METRICS textMetrics{};
@@ -416,7 +447,7 @@ void DesktopApp::ShowAllCollectionPopupItems()
     popupScrollbarDragging_ = false;
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-        snowdesktop::animation::RuntimeDurationScale());
+        snowdesktop::animation::RuntimeDurationScale(), true);
     popupAnimation_.ShowImmediately();
     ClearPopupDragTarget();
     RefreshOpenCollectionPopupGeometry();
@@ -1126,7 +1157,7 @@ void DesktopApp::ResetCollectionPopupAnimationCache()
     popupAnimationContentRevision_ = 0;
     ResetCompositionAnimationOverlay(
         popupAnimationOverlay_);
-    popupAnimationRenderCache_.Reset();
+    popupAnimationRenderCache_.Invalidate();
     popupAnimationCacheRect_ = {};
 }
 
@@ -1179,6 +1210,8 @@ bool DesktopApp::DrawCollectionPopupAnimationCache()
                 DrawCollectionPopup(
                     cacheContext, false);
             });
+    snowdesktop::performance::Value("popup", "snapshot.bitmap_allocations", {},
+        static_cast<double>(popupAnimationRenderCache_.BitmapAllocationCount()));
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.
     brushCache_.clear();
@@ -1208,6 +1241,7 @@ void DesktopApp::RefreshCollectionPopupAnimationContent()
 
 void DesktopApp::InvalidateCollectionPopupContent()
 {
+    popupFanIconDrawings_.clear();
     if (!popupAnimationOverlay_.active && IsRectEmptyRect(popupAnimationCacheRect_))
         return;
     using namespace snowdesktop::popup_animation_rules;

@@ -431,6 +431,10 @@ public:
     /** @brief 重置缓存，释放所有 GPU 资源。在窗口尺寸变化或设备丢失时调用。 */
     void Reset();
 
+    /** @brief 丢弃旧内容，保留有界的同尺寸存储供下一次绘制复用。 */
+    void Invalidate();
+    [[nodiscard]] std::uint64_t BitmapAllocationCount() const { return bitmapAllocationCount_; }
+
     /**
      * @brief 确保缓存已创建且为最新版本。
      * @param device     D2D 设备对象
@@ -457,6 +461,9 @@ public:
 private:
     ComPtr<ID2D1Bitmap1> bitmap_;      /**< 缓存的静态场景位图 */
     ComPtr<ID2D1DeviceContext> context_; /**< 离屏渲染设备上下文 */
+    ComPtr<ID2D1Device> device_;
+    bool contentValid_ = false;
+    std::uint64_t bitmapAllocationCount_ = 0;
     UINT width_ = 0;                   /**< 缓存位图宽度 */
     UINT height_ = 0;                  /**< 缓存位图高度 */
     std::uint64_t revision_ = 0;       /**< 当前缓存的修订号，用于判断是否需要重绘 */
@@ -471,10 +478,19 @@ struct UiCompositionAnimationOverlay
     ComPtr<IDCompositionEffectGroup> effect;
     ComPtr<IDCompositionScaleTransform> scaleTransform;
     ComPtr<IDCompositionSurface> surface;
+    UINT surfaceWidth = 0, surfaceHeight = 0;
     RECT bounds{};
     UiCompositionAnimationHost host =
         UiCompositionAnimationHost::Desktop;
     bool active = false;
+};
+
+struct PopupFanIconDrawing
+{
+    ComPtr<ID2D1CommandList> commands;
+    ComPtr<ID2D1Effect> shadow;
+    ComPtr<ID2D1Image> shadowImage;
+    D2D1_RECT_F shadowBounds{};
 };
 
 struct WidgetMarqueeCompositionItem
@@ -2933,11 +2949,13 @@ private:
      * @param hAlign 水平对齐
      * @param vAlign 垂直对齐
      * @param ellipsis 是否启用末尾省略号
+     * @param cachedLayout 可选的已配置文字布局；其对齐与省略设置由调用方负责
      */
     void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
         DWRITE_TEXT_ALIGNMENT hAlign = DWRITE_TEXT_ALIGNMENT_LEADING,
-        DWRITE_PARAGRAPH_ALIGNMENT vAlign = DWRITE_PARAGRAPH_ALIGNMENT_CENTER, bool ellipsis = true);
+        DWRITE_PARAGRAPH_ALIGNMENT vAlign = DWRITE_PARAGRAPH_ALIGNMENT_CENTER, bool ellipsis = true,
+        IDWriteTextLayout* cachedLayout = nullptr);
     /**
      * @brief 绘制集合弹出面板内容。
      * @param ctx D2D 上下文
@@ -2967,7 +2985,7 @@ private:
     void PrepareCollectionPopupAnimationCache();
     bool DrawCollectionPopupAnimationCache();
     void RefreshCollectionPopupAnimationContent();
-    /** @brief 释放弹窗动画位图。 */
+    /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
     void InvalidateCollectionPopupContent();
     bool PrepareCompositionAnimationOverlay(
@@ -2988,7 +3006,8 @@ private:
         POINT anchor,
         float fromOpacity, float toOpacity,
         UINT durationMilliseconds,
-        float normalizedScaleStartSlope = 0.0f);
+        float normalizedScaleStartSlope = 0.0f,
+        const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr);
     bool QueueWidgetMarqueeComposition(
         const std::wstring& widgetId,
         const std::vector<LuaWidget::NativeMarqueeText>& marquees,
@@ -3345,6 +3364,8 @@ private:
     RECT GetCollectionPopupFanWorkArea(const DesktopWidget& widget) const;
     size_t GetCollectionPopupFanVisibleCount(const RECT& popup) const;
     std::wstring GetCollectionPopupFanLabel(size_t index) const;
+    IDWriteTextLayout* GetCollectionPopupFanTextLayout(const std::wstring& text,
+        float width, float height, bool ellipsis) const;
     snowdesktop::collection_popup_layout::FanItem GetCollectionPopupFanItem(
         const RECT& popup, size_t index) const;
     bool HitTestCollectionPopupItem(const RECT& popup, size_t index, POINT point) const;
@@ -3415,6 +3436,7 @@ private:
      * @return 项键值列表
      */
     std::vector<std::wstring> GetPopupItemKeys(const DesktopWidget& widget) const;
+    const std::vector<std::wstring>& GetPopupItemKeysView(const DesktopWidget& widget) const;
     /** @brief 获取快速导航面板中的集合部件索引列表。 @return 部件索引列表 */
     std::vector<size_t> GetQuickNavigationCollectionIndices() const;
     /** @brief 获取快速导航面板中的桌面项键值列表。 @return 项键值列表 */
@@ -3727,6 +3749,10 @@ private:
     std::uint64_t collectionPopupFontRevision_ = 0;
     ComPtr<IDWriteTextFormat> componentListTextFormat_;
     ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
+    mutable ComPtr<IDWriteTextFormat> popupFanCachedTextFormat_;
+    mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
+    ComPtr<ID2D1DeviceContext> popupFanIconRecorder_;
+    std::unordered_map<std::wstring, PopupFanIconDrawing> popupFanIconDrawings_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;

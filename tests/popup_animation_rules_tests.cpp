@@ -35,6 +35,83 @@ int main()
 {
     using namespace snowdesktop::popup_animation_rules;
 
+    // Exercise the exact trajectory consumed by both native compositors and
+    // the UI fallback. The legacy fade/fan cases below remain independent.
+    for (const double speed : {0.1, 0.7, 1.0, 2.0, 4.0, 10.0})
+    {
+        State spring;
+        spring.Configure(false, speed, true);
+        spring.Open(1000);
+        Check(spring.UsesSpring() && spring.GetVisual().scale == 0.0f && OccludesSurface(spring),
+            "a zero-sized opening spring still owns its popup input surface");
+        const auto timeline = spring.RemainingTimeline();
+        Check(!timeline.segments.empty() && timeline.segments.size() <= 64,
+            "spring creates a bounded native track instead of UI frame callbacks");
+        double previousPosition = 0.0;
+        for (const auto& segment : timeline.segments)
+        {
+            Check(std::isfinite(segment.StartControl()) && std::isfinite(segment.EndControl()),
+                "glass Bezier controls remain finite at every spring segment");
+            for (unsigned step = 0; step <= 32; ++step)
+            {
+                const double local = segment.durationSeconds * step / 32.0;
+                const double seconds = segment.startSeconds + local;
+                const auto exact = snowdesktop::popup_motion_curve::Evaluate({}, 1.0,
+                    6.638352067994 / (.260 * speed), seconds);
+                const auto native = segment.EvaluateLocal(local);
+                Check(std::abs(native.position - exact.position) < 0.0002,
+                    "native spring stays within a subpixel error at a 1000px span");
+                Check(native.position >= previousPosition - 0.00001 && native.position <= 1.00001,
+                    "a spring started at rest opens monotonically without overshoot");
+                previousPosition = native.position;
+                const double u = step / 32.0, remaining = 1.0 - u;
+                const double bezier = 3.0 * remaining * remaining * u * segment.StartControl() +
+                    3.0 * remaining * u * u * segment.EndControl() + u * u * u;
+                const double from = segment.constant, to = segment.EvaluateLocal(segment.durationSeconds).position;
+                Check(std::abs((from + (to - from) * bezier) - native.position) < 0.000001,
+                    "glass and content backends evaluate the same spring trajectory");
+            }
+        }
+        spring.Advance(1000 + static_cast<std::uint64_t>(timeline.durationMilliseconds));
+        Check(!spring.IsAnimating() && spring.GetVisual().scale == 1.0f && spring.Velocity() == 0.0,
+            "spring reaches an exact full-size endpoint and retires its tail");
+        spring.Close(20000);
+        const auto closing = spring.RemainingTimeline();
+        spring.Advance(20000 + static_cast<std::uint64_t>(closing.durationMilliseconds));
+        Check(spring.IsHidden() && spring.GetVisual().scale == 0.0f && !OccludesSurface(spring),
+            "spring closes to exact zero and releases input occlusion");
+    }
+    {
+        State spring;
+        spring.Configure(false, 1.0, true);
+        spring.Open(1000);
+        spring.Advance(1060);
+        const auto before = spring.GetVisual();
+        const double velocity = spring.Velocity();
+        spring.Close(1060);
+        Check(spring.IsClosing() && spring.GetVisual().scale == before.scale && spring.Velocity() == velocity,
+            "reversing a spring preserves both position and velocity");
+        const auto closing = spring.RemainingTimeline();
+        Check(closing.segments.front().linear == velocity,
+            "native reverse starts with the current outward velocity");
+        spring.Advance(1061);
+        Check(spring.GetVisual().scale > before.scale,
+            "retargeted spring decelerates before turning instead of flipping velocity");
+        for (std::uint64_t now = 1080; now < 1400; now += 20)
+        {
+            const auto current = spring.GetVisual();
+            if (spring.IsInteractive()) spring.Close(now); else spring.Open(now);
+            Check(std::isfinite(spring.Velocity()) && spring.GetVisual().visible == current.visible,
+                "repeated retargeting keeps a finite uninterrupted visible track");
+        }
+        spring.Close(1500);
+        spring.Advance(1500 + static_cast<std::uint64_t>(spring.RemainingTimeline().durationMilliseconds));
+        Check(spring.IsHidden() && !spring.IsAnimating(), "repeated reversals cannot leave a zombie animation");
+        State fadeCompatibility;
+        fadeCompatibility.Configure(true, 1.0, true);
+        Check(!fadeCompatibility.UsesSpring(), "fade selection retains its existing fixed-geometry timing");
+    }
+
     PopupMouseLeaveController mouseLeave;
     Check(!mouseLeave.Observe(1, false),
         "a newly opened popup stays reachable while the drag pointer is still on its opener");

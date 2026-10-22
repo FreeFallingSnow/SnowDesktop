@@ -588,7 +588,8 @@ void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
 
 void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
-    DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis)
+    DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis,
+    IDWriteTextLayout* cachedLayout)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect) || !dwriteFactory_) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -605,6 +606,13 @@ void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring&
         it = brushCache_.emplace(key, std::move(brush)).first;
     }
     if (it == brushCache_.end() || !it->second) return;
+
+    if (cachedLayout)
+    {
+        ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
+            cachedLayout, it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        return;
+    }
 
     const float w = static_cast<float>(std::max<LONG>(1, rect.right - rect.left));
     const float h = static_cast<float>(std::max<LONG>(1, rect.bottom - rect.top));

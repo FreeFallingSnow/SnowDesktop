@@ -116,6 +116,158 @@
         CheckLuaPopupScrollbar(app);
     }
 
+    static void CheckPopupRenderStorage(DesktopApp& app, ID2D1Device* device,
+        ID2D1DeviceContext* ctx, ID2D1Bitmap1* target, IDXGIDevice* dxgi)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        DragRenderCache cache;
+        unsigned draws = 0;
+        const auto draw = [&](ID2D1DeviceContext* output) {
+            ++draws;
+            output->Clear(D2D1::ColorF(draws == 1 ? D2D1::ColorF::Red : D2D1::ColorF::Blue));
+        };
+        check(cache.Ensure(device, D2D1::SizeU(64, 64), 1, draw), "create real popup snapshot");
+        check(cache.Ensure(device, D2D1::SizeU(64, 64), 1, draw) && draws == 1,
+            "an unchanged snapshot skips its drawing callback");
+        check(cache.Ensure(device, D2D1::SizeU(64, 64), 2, draw) && draws == 2 && cache.BitmapAllocationCount() == 1,
+            "a new content revision redraws in the same GPU bitmap allocation");
+        ctx->BeginDraw();
+        ctx->Clear(D2D1::ColorF(D2D1::ColorF::Black, 0));
+        check(cache.DrawAt(ctx, D2D1::Point2F(0, 0)), "updated snapshot draws on the actual target");
+        check(SUCCEEDED(ctx->EndDraw()), "finish snapshot pixel rendering");
+        ComPtr<ID2D1Bitmap1> readback;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        check(SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(64, 64), nullptr, 0, &properties, &readback)),
+            "create isolated snapshot readback");
+        const D2D1_RECT_U region{0, 0, 64, 64};
+        check(SUCCEEDED(readback->CopyFromBitmap(nullptr, target, &region)), "copy updated snapshot pixels");
+        D2D1_MAPPED_RECT mapped{};
+        check(SUCCEEDED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped)), "map updated snapshot pixels");
+        const bool blue = mapped.bits[0] == 255 && mapped.bits[1] == 0 && mapped.bits[2] == 0 && mapped.bits[3] == 255;
+        readback->Unmap();
+        check(blue, "same-allocation refresh publishes new blue pixels, not the old red snapshot");
+        cache.Invalidate();
+        check(!cache.DrawAt(ctx, D2D1::Point2F(0, 0)), "invalidating storage prevents stale snapshot draws");
+        check(cache.Ensure(device, D2D1::SizeU(64, 64), 1, draw) && draws == 3 && cache.BitmapAllocationCount() == 1,
+            "reopening reuses storage even when the content revision restarts");
+
+        const auto savedDevice = app.dcompDevice_;
+        const auto savedRoot = app.dcompVisual_;
+        check(SUCCEEDED(DCompositionCreateDevice2(device, __uuidof(IDCompositionDesktopDevice),
+            reinterpret_cast<void**>(app.dcompDevice_.ReleaseAndGetAddressOf()))), "create test-only native snapshot compositor");
+        check(SUCCEEDED(app.dcompDevice_->CreateVisual(app.dcompVisual_.ReleaseAndGetAddressOf())),
+            "create unattached test-only visual root");
+        UiCompositionAnimationOverlay overlay;
+        check(app.PrepareCompositionAnimationOverlay(overlay, cache, RECT{0, 0, 64, 64}, UiCompositionAnimationHost::Desktop),
+            "prepare production native snapshot surface");
+        const auto firstSurface = overlay.surface;
+        app.ResetCompositionAnimationOverlay(overlay);
+        check(app.PrepareCompositionAnimationOverlay(overlay, cache, RECT{20, 20, 84, 84}, UiCompositionAnimationHost::Desktop) &&
+            overlay.surface.Get() == firstSurface.Get(), "reopen at another anchor reuses the same native surface");
+        check(cache.Ensure(device, D2D1::SizeU(80, 64), 3, draw) && cache.BitmapAllocationCount() == 2,
+            "a changed size creates exactly one new bitmap");
+        check(app.PrepareCompositionAnimationOverlay(overlay, cache, RECT{0, 0, 80, 64}, UiCompositionAnimationHost::Desktop) &&
+            overlay.surface.Get() != firstSurface.Get(), "a changed size replaces the native surface");
+        snowdesktop::popup_animation_rules::State motion;
+        motion.Configure(false, 1.0, true);
+        motion.Open(1000);
+        const auto trajectory = motion.RemainingTimeline();
+        check(app.AnimateCompositionAnimationOverlay(overlay, 0, 1, POINT{40, 64}, 1, 1,
+            static_cast<UINT>(trajectory.durationMilliseconds), 0, &trajectory) && app.FlushPendingCompositionCommit(),
+            "DirectComposition accepts the production zero-to-one spring segments");
+        app.dcompVisual_->RemoveVisual(overlay.visual.Get());
+        app.dcompVisual_ = savedRoot;
+        app.dcompDevice_ = savedDevice;
+
+        ComPtr<ID2D1Device> otherDevice;
+        ComPtr<ID2D1Factory> baseFactory;
+        device->GetFactory(&baseFactory);
+        ComPtr<ID2D1Factory1> factory;
+        check(SUCCEEDED(baseFactory.As(&factory)) && SUCCEEDED(factory->CreateDevice(dxgi, &otherDevice)),
+            "create a replacement graphics resource domain");
+        check(cache.Ensure(otherDevice.Get(), D2D1::SizeU(80, 64), 3, draw) && cache.BitmapAllocationCount() == 3,
+            "a device switch cannot reuse an old snapshot or its context");
+    }
+
+    static void CheckFanRenderReuse(DesktopApp& app, ID2D1Device* device, ID2D1DeviceContext* ctx)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        auto savedWidget = std::move(app.dockFolderPopupWidget_);
+        const auto savedDevice = app.d2dDevice_;
+        const auto savedFormat = app.fanTitleTextFormat_;
+        const auto savedAnchor = app.popupAnchorPoint_;
+        const bool savedAnchored = app.popupAnchoredToDock_, savedOpen = app.dockFolderPopupOpen_;
+        const bool savedHasAnchor = app.popupHasAnchor_;
+        app.d2dDevice_ = device;
+        app.dockFolderPopupWidget_ = {};
+        auto& widget = app.dockFolderPopupWidget_;
+        widget.type = DesktopWidgetType::FolderMapping;
+        widget.fanPopup = true;
+        widget.folderEntries.emplace_back();
+        auto& entry = widget.folderEntries.back();
+        entry.name = L"Cached fan icon";
+        entry.fullPath = L"C:\\isolated-fan-fixture\\icon.png";
+        std::vector<std::uint32_t> pixels(32 * 32, 0xff3050d0);
+        entry.iconBitmap = CreateBitmap(32, 32, 1, 32, pixels.data());
+        check(entry.iconBitmap != nullptr, "create the isolated fan source icon");
+        app.dockFolderPopupOpen_ = app.popupAnchoredToDock_ = app.popupHasAnchor_ = true;
+        app.popupAnchorPoint_ = {800, 900};
+        app.popupAnimation_.ShowImmediately();
+        check(SUCCEEDED(app.dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16, L"en-US",
+            app.fanTitleTextFormat_.ReleaseAndGetAddressOf())), "create the fan fixture's actual text format");
+        app.fanTitleTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        app.fanTitleTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const auto render = [&] {
+            ctx->BeginDraw();
+            ctx->Clear(D2D1::ColorF(D2D1::ColorF::Black, 0));
+            app.DrawCollectionPopup(ctx, false);
+            check(SUCCEEDED(ctx->EndDraw()), "render the real fan icon, shadow, and labels offscreen");
+        };
+        render();
+        check(app.popupFanIconDrawings_.size() >= 2 && !app.popupFanTextLayouts_.empty(),
+            "fan rendering materializes cached icon/action drawings and real text layouts");
+        const auto recordings = app.popupFanIconDrawings_;
+        const auto recorder = app.popupFanIconRecorder_;
+        const auto layouts = app.popupFanTextLayouts_;
+        entry.selected = true;
+        render();
+        check(app.popupFanIconRecorder_.Get() == recorder.Get() && recordings.size() == app.popupFanIconDrawings_.size(),
+            "selection feedback reuses the recorder and static icon recordings");
+        for (const auto& [key, recording] : recordings)
+            check(app.popupFanIconDrawings_.at(key).commands.Get() == recording.commands.Get() &&
+                app.popupFanIconDrawings_.at(key).shadow.Get() == recording.shadow.Get(),
+                "stable fan frames reuse actual command-list and shadow-effect identities");
+        for (const auto& [key, layout] : layouts)
+            check(app.popupFanTextLayouts_.at(key).Get() == layout.Get(), "stable fan frames reuse actual DirectWrite layouts");
+        std::fill(pixels.begin(), pixels.end(), 0xff30d050);
+        const HBITMAP replacement = CreateBitmap(32, 32, 1, 32, pixels.data());
+        check(replacement != nullptr, "create a late arriving replacement icon");
+        DeleteObject(entry.iconBitmap);
+        entry.iconBitmap = replacement;
+        render();
+        check(app.popupFanIconDrawings_.size() > recordings.size(),
+            "a late icon replacement cannot keep a cached old icon or placeholder");
+        app.InvalidateCollectionPopupContent();
+        check(app.popupFanIconDrawings_.empty(), "source changes invalidate fan recordings without retaining stale pixels");
+        app.popupFanIconRecorder_.Reset();
+        app.popupFanTextLayouts_.clear();
+        app.popupFanCachedTextFormat_.Reset();
+        app.dockFolderPopupWidget_ = std::move(savedWidget);
+        app.d2dDevice_ = savedDevice;
+        app.fanTitleTextFormat_ = savedFormat;
+        app.dockFolderPopupOpen_ = savedOpen;
+        app.popupAnchoredToDock_ = savedAnchored;
+        app.popupHasAnchor_ = savedHasAnchor;
+        app.popupAnchorPoint_ = savedAnchor;
+        app.popupAnimation_.ResetHidden();
+    }
+
     static void CheckLuaPopupScrollbar(DesktopApp& app)
     {
         const auto check = [](bool ok, const char* message) {
@@ -145,6 +297,8 @@
         check(SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(1600, 1000), nullptr, 0,
             &props, &target)), "create scrollbar bitmap");
         ctx->SetTarget(target.Get());
+        CheckPopupRenderStorage(app, device.Get(), ctx.Get(), target.Get(), dxgi.Get());
+        CheckFanRenderReuse(app, device.Get(), ctx.Get());
         const auto package = std::filesystem::path(LayoutPath(app)).parent_path() / L"scrollbar-fixture";
         std::filesystem::create_directories(package);
         const auto write = [&](const wchar_t* file, const char* text) {

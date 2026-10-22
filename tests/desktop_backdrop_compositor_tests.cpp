@@ -3,6 +3,7 @@
 #include "app/render/widget_icon_backdrops.h"
 #include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
+#include "layout/popup_motion_curve.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
 #include "dock/floating_dock_rules.h"
@@ -751,6 +752,28 @@ int RunDesktopBackdropCompositorTests()
         return failures;
 
     failures += CheckPopupRoundedEdgeCoverage();
+    {
+        DesktopBackdropCompositor springGlass;
+        if (check(springGlass.InitializePopup(content.handle, false, false),
+                "spring glass initializes on a hidden test-owned window"))
+        {
+            springGlass.BeginFrame(true);
+            check(springGlass.AddPanel({10, 10, 300, 220}, 18, 24), "spring fixture creates its actual native glass panel");
+            springGlass.EndFrame(false);
+            const auto trajectory = snowdesktop::popup_motion_curve::Build({}, 1.0, 6.638352067994 / .260, 480.0);
+            check(springGlass.StartVisualTransformAnimation(0.0f, 1.0f, 1.0f, 1.0f,
+                160.0f, 240.0f, 480, 0.0f, &trajectory),
+                "Windows Composition accepts the shared zero-to-one spring keyframes");
+            const auto initial = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, 6.638352067994 / .260, .06);
+            const auto reversed = snowdesktop::popup_motion_curve::Build(initial, 0.0, 6.638352067994 / .170, 360.0);
+            check(springGlass.StartVisualTransformAnimation(static_cast<float>(initial.position), 0.0f,
+                1.0f, 1.0f, 160.0f, 240.0f, 360, 0.0f, &reversed),
+                "Windows Composition accepts a velocity-preserving reverse through its turning point");
+            springGlass.SetVisualTransform(0.0f, 0.0f, 160.0f, 240.0f);
+            springGlass.CommitVisualChanges();
+            check(springGlass.IsAvailable(), "zero-sized glass completion remains available for the next open");
+        }
+    }
     failures += snowdesktop::test::CheckQuickNavigationAttractionPixels();
     failures += CheckHiddenPopupKeyboardFocus();
 

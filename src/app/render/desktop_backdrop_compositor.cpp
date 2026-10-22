@@ -11,6 +11,7 @@
  * @brief Win32 DesktopWindowTarget + CompositionBackdropBrush 实现。
  */
 #include "desktop_backdrop_compositor.h"
+#include "layout/popup_motion_curve.h"
 
 #include "desktop_backdrop_update_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -1254,7 +1255,7 @@ void DesktopBackdropCompositor::SetVisualTransform(
     if (!impl_->available)
         return;
 
-    const float clampedScale = std::clamp(scale, 0.01f, 1.0f);
+    const float clampedScale = std::clamp(scale, 0.0f, 1.0f);
     const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
 
     try
@@ -1293,7 +1294,8 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     float fromOpacity, float toOpacity,
     float anchorX, float anchorY,
     std::uint32_t durationMilliseconds,
-    float normalizedStartSlope)
+    float normalizedStartSlope,
+    const snowdesktop::popup_motion_curve::Timeline* springTimeline)
 {
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
@@ -1305,9 +1307,9 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
         return false;
 
     const float clampedFrom =
-        std::clamp(fromScale, 0.01f, 1.0f);
+        std::clamp(fromScale, 0.0f, 1.0f);
     const float clampedTo =
-        std::clamp(toScale, 0.01f, 1.0f);
+        std::clamp(toScale, 0.0f, 1.0f);
     const float clampedFromOpacity =
         std::clamp(fromOpacity, 0.0f, 1.0f);
     const float clampedToOpacity =
@@ -1332,10 +1334,21 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
         animation.InsertKeyFrame(
             0.0f,
             wfn::float3{ clampedFrom, clampedFrom, 1.0f });
-        animation.InsertKeyFrame(
-            1.0f,
-            wfn::float3{ clampedTo, clampedTo, 1.0f },
-            easing);
+        if (springTimeline)
+        {
+            if (springTimeline->segments.empty()) return false;
+            for (const auto& segment : springTimeline->segments)
+            {
+                const auto segmentEasing = impl_->compositor.CreateCubicBezierEasingFunction(
+                    wfn::float2{1.0f / 3.0f, static_cast<float>(segment.StartControl())},
+                    wfn::float2{2.0f / 3.0f, static_cast<float>(segment.EndControl())});
+                const float time = std::clamp(static_cast<float>((segment.startSeconds + segment.durationSeconds) *
+                    1000.0 / springTimeline->durationMilliseconds), 0.0f, 1.0f);
+                const float value = static_cast<float>(segment.EvaluateLocal(segment.durationSeconds).position);
+                animation.InsertKeyFrame(time, wfn::float3{value, value, 1.0f}, segmentEasing);
+            }
+        }
+        else animation.InsertKeyFrame(1.0f, wfn::float3{clampedTo, clampedTo, 1.0f}, easing);
         auto opacityAnimation =
             impl_->compositor.CreateScalarKeyFrameAnimation();
         opacityAnimation.Duration(wf::TimeSpan{
