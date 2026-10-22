@@ -388,7 +388,7 @@ try {
     }
     if($Command -in 'task-list','event-read') {
         $state=Read-State;$ledger=Get-Field $state 'taskLedger'
-        if($Command -eq 'task-list') {[pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0)}|ConvertTo-Json -Depth 20}
+        if($Command -eq 'task-list') {[pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0);sourceChanges=(Get-SourceChangeAudit $state)}|ConvertTo-Json -Depth 20}
         else {
             if(-not $Participant){throw 'event-read requires a task ID.'}
             [pscustomobject]@{events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100);sequence=(Get-Field $ledger 'sequence' 0);delivery='Reading is not acknowledgement.'}|ConvertTo-Json -Depth 20
@@ -417,6 +417,15 @@ try {
                 if($Command -in 'task-stage','task-close') {
                     Assert-TaskRevision $task $TaskRevision
                     if($task.phase -in 'completed','cancelled'){throw 'Closed task cannot change phase.'}
+                    if($TaskPhase -in 'completed','awaiting_input','cancelled') {
+                        $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
+                        try {
+                            $audit=Get-SourceChangeAudit $state
+                            $pending=@($audit.changes|Where-Object task -eq $Participant)
+                            if($pending.Count -and $TaskPhase -ne 'cancelled'){throw ('Uncommitted task paths: '+(($pending|ForEach-Object path) -join ', ')+'. Commit or explicitly hand off these paths before awaiting input/completion.')}
+                            Set-Field $task 'sourceChanges' ([pscustomobject]@{checkedUtc=$audit.checkedUtc;pending=$pending})
+                        } finally {$sourceLease.Dispose()}
+                    }
                     if($Command -eq 'task-close') {
                         if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
                         if($state.current -and @($state.current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
@@ -649,21 +658,48 @@ try {
                     }
                 }
             }
-            elseif ($Command -in 'plan','ready','check','claim','commit') {
+            elseif ($Command -eq 'commit') {
+                $record=if($current -and $current.id -eq $Batch){$current}else{Read-Result $Batch}
+                $entries=@(Get-Field $record 'participants' @()|Where-Object id -eq $Participant)
+                if($entries.Count -ne 1 -or $entries[0].state -eq 'withdrawn'){throw 'No matching Git checkpoint registration.'}
+                $entry=$entries[0];Assert-EditRevision $entry $Revision
+                $frozen=-not ($state.current -and $state.current.id -eq $Batch -and $state.current.phase -eq 'editing' -and $entry.state -eq 'editing')
+                if($frozen){
+                    if($entry.state -ne 'finished'){throw 'Frozen checkpoint requires a finished edit registration.'}
+                    Assert-CommitIdentity $entry
+                    foreach($claim in @(Get-Field (Get-Field $state 'taskLedger') 'sourceOwnership' @()|Where-Object {$_.sequence -gt (Get-Field $entry 'ownershipSequence' 0)})){
+                        foreach($path in @(Get-Field $entry 'ownedFiles' @())){
+                            if($path -ieq $claim.path -or $path.StartsWith($claim.path+'/',[StringComparison]::OrdinalIgnoreCase) -or $claim.path.StartsWith($path+'/',[StringComparison]::OrdinalIgnoreCase)){throw 'Checkpoint scope was handed off after ready; commit through the current owner.'}
+                        }
+                    }
+                    foreach($other in @(Get-Field $state.current 'participants' @())){
+                        if($other.id -eq $Participant -and $state.current.id -eq $Batch){continue}
+                        if($other.state -eq 'withdrawn'){continue}
+                        foreach($mine in @(Get-Field $entry 'ownedFiles' @())){foreach($theirs in @(Get-Field $other 'ownedFiles' @())){
+                            if($mine -ieq $theirs -or $mine.StartsWith($theirs+'/',[StringComparison]::OrdinalIgnoreCase) -or $theirs.StartsWith($mine+'/',[StringComparison]::OrdinalIgnoreCase)){throw 'A current editor owns this checkpoint scope; use its reviewed handoff.'}
+                        }}
+                    }
+                }
+                $gitLease=Try-Lease 'git.lock';if(-not $gitLease){throw 'A cooperating Git transaction is running. Retry; shared index was not changed.'}
+                $commitSelected=[pscustomobject]@{batchId=$Batch;participant=$Participant;editRevision=$Revision;ownedFiles=@(Get-Field $entry 'ownedFiles' @());frozen=$frozen;commitIdentity=(Get-Field $entry 'commitIdentity')}
+            }
+            elseif ($Command -in 'plan','ready','check','claim') {
                 if (-not $current -or $current.id -ne $Batch -or $current.phase -ne 'editing') { throw 'Batch is frozen/retired. Use begin and wait for the next permitted editing window; no current input was changed.' }
                 $entries=@($current.participants | Where-Object id -eq $Participant)
                 if ($entries.Count -ne 1 -or $entries[0].state -eq 'withdrawn') { throw 'Participant is not active.' }
                 $entry=$entries[0]; Assert-EditRevision $entry $Revision
                 if ($Command -in 'ready','check','plan' -and (Get-Field $current 'protocolVersion' 1) -lt 2) { throw 'Legacy active batch: keep finish contract; advanced ready/plan/check begin with the next batch. No live migration.' }
-                if ($Command -in 'claim','commit') {
-                    if($entry.state -ne 'editing'){throw 'Claim/commit require begin/reopen before changing files or Git.'}
+                if ($Command -eq 'claim') {
+                    if($entry.state -ne 'editing'){throw 'Claim requires begin/reopen before changing files.'}
                     if($Command -eq 'claim'){
-                        Set-Ownership $current $entry $Files $AdoptExistingChanges
-                        Write-AtomicJson $state $statePath
+                        $claimLease=Try-Lease 'git.lock';if(-not $claimLease){throw 'Git checkpoint is active; retry claim. No ownership was changed.'}
+                        try {
+                            Set-Ownership $current $entry $Files $AdoptExistingChanges
+                            Register-SourceOwnership $state $entry $Batch
+                            Write-AtomicJson $state $statePath
+                        } finally {$claimLease.Dispose()}
                         $entry | ConvertTo-Json -Depth 10; exit 0
                     }
-                    $gitLease=Try-Lease 'git.lock'; if(-not $gitLease){throw 'A cooperating Git transaction is running. Retry; shared index was not changed.'}
-                    $commitSelected=[pscustomobject]@{batchId=$Batch;participant=$Participant;editRevision=$Revision;ownedFiles=@(Get-Field $entry 'ownedFiles' @())}
                 } else {
 
                 if ($Command -eq 'plan') {
@@ -690,6 +726,7 @@ try {
                         if ($plan.editRevision -ne $Revision) { throw 'Plan belongs to an older revision; update it before ready.' }
                         $plan.inputIdentity=Get-TaskIdentity $plan
                         Set-Field $entry 'testPlan' $plan
+                        if(@(Get-Field $entry 'ownedFiles' @()).Count){Set-Field $entry 'commitIdentity' (Get-TaskIdentity ([pscustomobject]@{inputs=$entry.ownedFiles}))}
                         $entry.state='finished'; $entry.finishedUtc=[DateTime]::UtcNow.ToString('o')
                         if((Get-Field $current 'protocolVersion' 1) -ge 4){Set-Field $current 'membershipSealed' $true}
                         Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$Revision;reason='Post-ready lightweight check is queued.'})
@@ -799,6 +836,7 @@ try {
                             $plan.inputIdentity=Get-TaskIdentity $plan;Set-Field $entries[0] 'testPlan' $plan
                             Set-Field $entries[0] 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$currentRevision;reason='Foreground lightweight check queued.'})
                         }
+                        if(@(Get-Field $entries[0] 'ownedFiles' @()).Count){Set-Field $entries[0] 'commitIdentity' (Get-TaskIdentity ([pscustomobject]@{inputs=$entries[0].ownedFiles}))}
                         $entries[0].state = 'finished'
                         if((Get-Field $current 'protocolVersion' 1) -ge 4){Set-Field $current 'membershipSealed' $true}
                         $entries[0].finishedUtc = [DateTime]::UtcNow.ToString('o')

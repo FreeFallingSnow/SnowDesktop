@@ -71,6 +71,68 @@ void input_identity_tests(const fs::path& repo){
     require(first.at("algorithm").str()=="sha256-repository-inputs-v3","Changed environment input policy retained its old identity version");
     std::cout<<"PASS actual Steamworks SDK_ROOT invalidation, stable context, absent root and retained legacy binding; external file closure is not claimed\n";
 }
+void commit_lifecycle_tests(const fs::path& repo,const std::string& mode){
+    for(const bool legacy:{false,true}){
+        Coordinator c(repo,legacy?"checkpoint-ps5":"checkpoint-ps7");
+        if(legacy)c.bridge=std::make_unique<Bridge>(repo,c.root,true);
+        if(mode=="--legacy-directory-control"){
+            auto script=read(c.scripts/L"build_ownership.ps1");
+            replace(script,"if(Test-Path -LiteralPath (Join-Path $repositoryRoot $path))","if([IO.File]::Exists((Join-Path $repositoryRoot $path)))");
+            write(c.scripts/L"build_ownership.ps1",script,true);
+        }
+        if(mode=="--legacy-close-control"){
+            auto script=read(c.scripts/L"build_manager.ps1");
+            replace(script,"if($TaskPhase -in 'completed','awaiting_input','cancelled')","if($false)");
+            write(c.scripts/L"build_manager.ps1",script,true);
+        }
+        const auto revision=[&](const std::string& id){const auto state=c.state();for(const auto& task:state.at("taskLedger").at("tasks").items)if(task.at("id").str()==id)return std::to_string(task.at("revision").integer());throw std::runtime_error("Missing visible task");};
+        const auto batch=c.begin("author").at("batchId").str();
+        auto claim=c.bound("claim","author",batch);claim.insert(claim.end(),{"-Files","src/new widget"});c.call(claim);
+        write(c.root/L"src/new widget/main.txt","first file\n");write(c.root/L"src/new widget/nested/second.txt","second file\n");
+        write(c.root/L"src/peer.txt","peer staged bytes\n");c.git({L"add",L"src/peer.txt"});
+        const auto peerIndex=c.git({L"ls-files",L"--stage",L"src/peer.txt"}).out;
+        const auto taskRevision=revision("author");
+        const auto denied=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"task-stage","author","-TaskRevision",taskRevision,"-TaskPhase","awaiting_input"});
+        require(denied.code==2&&denied.err.find("Uncommitted task paths")!=std::string::npos,"Owned untracked files silently left in awaiting_input: "+denied.err);
+        require(revision("author")==taskRevision,"Rejected source closure consumed task revision");
+        const auto audit=c.call({"task-list"}).at("sourceChanges").at("changes");
+        require(audit.items.size()==3,"Source audit did not enumerate owned and unassigned new files");
+        int owned=0,unassigned=0;for(const auto& change:audit.items){if(change.at("task").str()=="author")++owned;else if(change.at("task").kind==Json::Kind::Null)++unassigned;}
+        require(owned==2&&unassigned==1,"Source audit invented ownership for an unclaimed peer path");
+        write(c.root/L"message.txt","fixture source checkpoint\n");
+        auto commit=c.bound("commit","author",batch);commit.insert(commit.end(),{"-Files","src/new widget","-MessageFile",utf8((c.root/L"message.txt").wstring())});
+        auto saved=c.call(commit);
+        require(saved.at("otherIndexEntriesUnchanged").boolean&&peerIndex==c.git({L"ls-files",L"--stage",L"src/peer.txt"}).out,"Directory checkpoint changed peer staging");
+        require(c.git({L"diff-tree",L"--no-commit-id",L"--name-only",L"-r",L"HEAD"}).out=="src/new widget/main.txt\nsrc/new widget/nested/second.txt\n","New directory checkpoint omitted nested files or included peer bytes");
+        require(read(c.root/L"src/new widget/main.txt")=="first file\n","Checkpoint rewrote source bytes");
+        write(c.root/L"src/new widget/main.txt","validated next attempt\n");fs::remove(c.root/L"src/new widget/nested/second.txt");write(c.root/L"src/new widget/third.txt","third file\n");
+        c.plan("author",batch,0,"none","","tool","src/new widget");c.ready("author",batch);c.finish("author",batch);
+        require(c.state().at("current").kind==Json::Kind::Null,"Empty fixture plan failed to retire registration");
+        const auto resultBytes=read(c.stateRoot/wide(batch+".json"));const auto beforeCalls=c.calls();
+        c.call({"task-close","author","-TaskRevision",taskRevision,"-TaskPhase","completed"},2);
+        const auto head=c.git({L"rev-parse",L"HEAD"}).out;
+        write(c.root/L"src/new widget/main.txt","changed after ready\n");c.call(commit,2);
+        require(head==c.git({L"rev-parse",L"HEAD"}).out,"Changed frozen source was committed as validated input");
+        write(c.root/L"src/new widget/main.txt","validated next attempt\n");saved=c.call(commit);
+        require(saved.at("otherIndexEntriesUnchanged").boolean&&peerIndex==c.git({L"ls-files",L"--stage",L"src/peer.txt"}).out,"Retired checkpoint changed peer staging");
+        require(resultBytes==read(c.stateRoot/wide(batch+".json"))&&c.calls()==beforeCalls&&c.state().at("current").kind==Json::Kind::Null,"Git checkpoint rewrote immutable result, reopened edits or repeated execution");
+        require(c.git({L"ls-tree",L"-r",L"--name-only",L"HEAD",L"src/new widget"}).out=="src/new widget/main.txt\nsrc/new widget/third.txt\n","Retired checkpoint lost deletion/new-file changes");
+        // A reviewed successor owns new edits; the old task can close without
+        // taking credit for or committing that successor's work.
+        const auto next=c.begin("successor").at("batchId").str();
+        auto handoff=c.bound("claim","successor",next);handoff.insert(handoff.end(),{"-Files","src/new widget"});c.call(handoff);
+        write(c.root/L"src/new widget/main.txt","successor bytes\n");
+        c.call({"task-close","author","-TaskRevision",taskRevision,"-TaskPhase","completed"});
+        write(c.root/L"src/new widget/main.txt","validated next attempt\n");c.call(commit,2);
+        write(c.root/L"src/new widget/main.txt","successor bytes\n");
+        c.call({"recover","successor","-Batch",next,"-ConfirmStopped","-Reason","fixture editor stopped"});
+        const auto cancelled=c.call({"task-close","successor","-TaskRevision",revision("successor"),"-TaskPhase","cancelled"});
+        require(cancelled.at("task").at("sourceChanges").at("pending").items.size()==1,"Cancellation discarded outstanding source responsibility");
+        c.call({"task-open","reader"});c.call({"task-close","reader","-TaskRevision","0","-TaskPhase","completed"});
+        require(peerIndex==c.git({L"ls-files",L"--stage",L"src/peer.txt"}).out,"Lifecycle closure altered unrelated staging");
+        std::cout<<"PASS "<<(legacy?"PowerShell 5.1":"PowerShell 7")<<" new-directory checkpoint, dirty completion gate, retired Git-only save, immutable results, source freshness, handoff, cancellation and peer index preservation\n";
+    }
+}
 void wait_progress_tests(const fs::path& repo){
     // Preserve the durable Run and private Job; only the external build/test
     // boundary is gated. Observers must report that actual execution phase.
@@ -164,4 +226,8 @@ try{Resolve-PlanTests $p $inv|Out-Null}catch{$missing=$true}
     std::cout<<"PASS barriers, revisions, foreground recovery, ownership, repair, literal plans, legacy and input freshness\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:argc>2&&std::string(argv[2])=="--wait-progress"?wait_progress_tests:argc>2&&std::string(argv[2])=="--git-wait"?git_wait_tests:run_tests);}
+int main(int argc,char** argv){
+    const std::string mode=argc>2?argv[2]:"";
+    if(mode=="--commit-lifecycle"||mode=="--legacy-directory-control"||mode=="--legacy-close-control")return test_main(argc,argv,[&](const fs::path& repo){commit_lifecycle_tests(repo,mode);});
+    return test_main(argc,argv,mode=="--input-identity"?input_identity_tests:mode=="--wait-progress"?wait_progress_tests:mode=="--git-wait"?git_wait_tests:run_tests);
+}

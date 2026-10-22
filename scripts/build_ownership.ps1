@@ -57,10 +57,47 @@ function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt) {
     Set-Field $Entry 'ownershipUtc' ([DateTime]::UtcNow.ToString('o'))
     Set-Field $Entry 'unclaimedPeers' @($Current.participants | Where-Object {$_.id -ne $Entry.id -and $_.state -eq 'editing' -and @(Get-Field $_ 'ownedFiles' @()).Count -eq 0} | ForEach-Object {$_.id})
 }
+function Register-SourceOwnership($State,$Entry,[string]$BatchId) {
+    $ledger=Get-TaskLedger $State
+    $sequence=[long](Get-Field $ledger 'ownershipSequence' 0)+1
+    Set-Field $ledger 'ownershipSequence' $sequence
+    Set-Field $Entry 'ownershipSequence' $sequence
+    $records=@(Get-Field $ledger 'sourceOwnership' @())
+    foreach($path in @(Get-Field $Entry 'ownedFiles' @())) {
+        $records=@($records|Where-Object {$_.path -ine $path})+@([pscustomobject]@{
+            path=$path;task=$Entry.id;sequence=$sequence;batchId=$BatchId;editRevision=(Get-EditRevision $Entry)})
+    }
+    Set-Field $ledger 'sourceOwnership' $records
+}
+function Get-SourceChangeAudit($State) {
+    # NUL records retain spaces, Unicode and rename endpoints without relying
+    # on Git's quoted display names. This is observation, never staging.
+    $status=Invoke-InputGit $repositoryRoot 'status --porcelain=v1 -z --untracked-files=all'
+    if($status.code -ne 0){throw 'Cannot inspect outstanding source changes; no task was closed.'}
+    $ownership=@(Get-Field (Get-Field $State 'taskLedger') 'sourceOwnership' @())
+    $changes=@();$records=$status.output.Split([char]0)
+    for($i=0;$i -lt $records.Length;$i++) {
+        $record=$records[$i];if(-not $record){continue}
+        $kind=$record.Substring(0,2);$paths=@($record.Substring(3))
+        if($kind -match '[RC]'){$i++;$paths+= $records[$i]}
+        foreach($path in $paths) {
+            $owner=@($ownership|Where-Object {$path -ieq $_.path -or $path.StartsWith($_.path+'/',[StringComparison]::OrdinalIgnoreCase)}|Sort-Object sequence -Descending|Select-Object -First 1)
+            $changes+= [pscustomobject]@{path=$path;kind=$kind;task=$(if($owner.Count){$owner[0].task}else{$null})}
+        }
+    }
+    return [pscustomobject]@{checkedUtc=[DateTime]::UtcNow.ToString('o');changes=$changes;limitation='Ownership follows recorded claims; pre-upgrade and unregistered edits remain unassigned.'}
+}
+function Assert-CommitIdentity($Entry) {
+    $expected=Get-Field $Entry 'commitIdentity'
+    if(-not $expected){throw 'This frozen registration predates Git checkpoints; begin/claim reviewed changes in a new editing window.'}
+    $actual=Get-TaskIdentity ([pscustomobject]@{inputs=@(Get-Field $Entry 'ownedFiles' @())})
+    if($actual.digest -ne $expected.digest){throw 'Claimed source changed after ready; frozen Git checkpoint refused. Begin/claim the new revision.'}
+}
 function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $paths=@($PathText.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
     if($paths.Count -eq 0 -or -not [IO.File]::Exists($MessageFile)){throw 'Commit requires Paths and an existing UTF-8 MessageFile.'}
     foreach($path in $paths){if(@($Selection.ownedFiles | Where-Object {$path.Equals($_,[StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0){throw "Unclaimed commit path: $path"}}
+    if(Get-Field $Selection 'frozen' $false){Assert-CommitIdentity $Selection}
     $before=(& git.exe rev-parse HEAD) -join ''
     if($LASTEXITCODE -ne 0){throw 'Cannot determine commit parent.'}
     $indexBefore=@(& git.exe ls-files --stage)
@@ -68,10 +105,11 @@ function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     # --only commits these paths rather than the shared staged set. Existing
     # staged files belonging to other tasks remain in the index. The lease
     # covers the entire semantic transaction, including these inspections.
-    foreach($path in $paths){if([IO.File]::Exists((Join-Path $repositoryRoot $path))){ & git.exe add --intent-to-add -- $path | ForEach-Object {[Console]::Error.WriteLine($_)}; if($LASTEXITCODE -ne 0){throw "Cannot prepare claimed path: $path"} }}
+    foreach($path in $paths){if(Test-Path -LiteralPath (Join-Path $repositoryRoot $path)){ & git.exe --literal-pathspecs add --intent-to-add -- $path | ForEach-Object {[Console]::Error.WriteLine($_)}; if($LASTEXITCODE -ne 0){throw "Cannot prepare claimed path: $path"} }}
     & git.exe diff --check -- @paths
     if($LASTEXITCODE -ne 0){throw 'Claimed patch has whitespace errors.'}
-    & git.exe commit --only -F $MessageFile -- @paths | ForEach-Object {[Console]::Error.WriteLine($_)}
+    if(Get-Field $Selection 'frozen' $false){Assert-CommitIdentity $Selection}
+    & git.exe --literal-pathspecs commit --only -F $MessageFile -- @paths | ForEach-Object {[Console]::Error.WriteLine($_)}
     if($LASTEXITCODE -ne 0){throw 'Commit failed; no index reset or rollback was attempted.'}
     $after=(& git.exe rev-parse HEAD) -join ''
     $committed=@(& git.exe diff-tree --no-commit-id --name-only -r $after)

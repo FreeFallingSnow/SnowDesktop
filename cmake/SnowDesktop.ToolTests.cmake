@@ -45,6 +45,9 @@ if(BUILD_TESTING AND WIN32)
     add_test(NAME build_input_identity COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --input-identity)
     set_tests_properties(build_input_identity PROPERTIES TIMEOUT 45 LABELS "tools;core;contract"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
+    add_test(NAME build_commit_lifecycle COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --commit-lifecycle)
+    set_tests_properties(build_commit_lifecycle PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
     add_test(NAME build_wait_progress COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --wait-progress)
     set_tests_properties(build_wait_progress PROPERTIES TIMEOUT 90 LABELS "tools;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
