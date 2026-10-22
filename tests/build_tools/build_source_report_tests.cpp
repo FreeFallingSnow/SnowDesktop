@@ -28,7 +28,11 @@ Times outputs(const fs::path& root,const std::wstring& config){
 void source_report_tests(const fs::path& repo,bool disableReports){
     // FileTracker intentionally filters Temp/AppData. Keep the earlier Temp
     // reporting regression; use ordinary build output for incremental checks.
-    const auto root=temporary("standard source reports",executable().parent_path()/L"source-report-fixtures");
+    const auto git=run({L"git",L"rev-parse",L"--path-format=absolute",L"--git-common-dir"},repo);
+    auto commonText=git.out;while(!commonText.empty()&&(commonText.back()=='\r'||commonText.back()=='\n'))commonText.pop_back();
+    const auto common=fs::path(wide(commonText));
+    require(git.code==0&&common.filename()==L".git","Cannot bind the repository's short isolated test output root");
+    const auto root=temporary("sr",common.parent_path()/L".build/Release/tests/sr");
     copy(repo,root,{"cmake/SnowDesktop.DependencyEvidence.cmake","scripts/build_test_dependencies.ps1"});
     write(root/L"CMakeLists.txt",R"CM(cmake_minimum_required(VERSION 3.24)
 project(StandardSourceReports LANGUAGES C CXX)
