@@ -199,11 +199,13 @@
         };
         auto savedWidget = std::move(app.dockFolderPopupWidget_);
         const auto savedDevice = app.d2dDevice_;
+        const auto savedContext = app.d2dContext_;
         const auto savedFormat = app.fanTitleTextFormat_;
         const auto savedAnchor = app.popupAnchorPoint_;
         const bool savedAnchored = app.popupAnchoredToDock_, savedOpen = app.dockFolderPopupOpen_;
         const bool savedHasAnchor = app.popupHasAnchor_;
         app.d2dDevice_ = device;
+        app.d2dContext_ = ctx;
         app.dockFolderPopupWidget_ = {};
         auto& widget = app.dockFolderPopupWidget_;
         widget.type = DesktopWidgetType::FolderMapping;
@@ -223,6 +225,8 @@
             app.fanTitleTextFormat_.ReleaseAndGetAddressOf())), "create the fan fixture's actual text format");
         app.fanTitleTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         app.fanTitleTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        auto* initialIcon = app.GetTargetIconBitmap(ctx, entry.iconBitmap, entry.fullPath, false);
+        check(initialIcon != nullptr, "upload the actual source icon through the production graphics context");
         const auto render = [&] {
             ctx->BeginDraw();
             ctx->Clear(D2D1::ColorF(D2D1::ColorF::Black, 0));
@@ -250,6 +254,9 @@
         check(replacement != nullptr, "create a late arriving replacement icon");
         DeleteObject(entry.iconBitmap);
         entry.iconBitmap = replacement;
+        auto* replacementIcon = app.GetTargetIconBitmap(ctx, entry.iconBitmap, entry.fullPath, false);
+        check(replacementIcon != nullptr && replacementIcon != initialIcon,
+            "a late icon reaches a distinct real uploaded bitmap");
         render();
         check(app.popupFanIconDrawings_.size() > recordings.size(),
             "a late icon replacement cannot keep a cached old icon or placeholder");
@@ -258,8 +265,10 @@
         app.popupFanIconRecorder_.Reset();
         app.popupFanTextLayouts_.clear();
         app.popupFanCachedTextFormat_.Reset();
+        app.ClearStyledIconCache();
         app.dockFolderPopupWidget_ = std::move(savedWidget);
         app.d2dDevice_ = savedDevice;
+        app.d2dContext_ = savedContext;
         app.fanTitleTextFormat_ = savedFormat;
         app.dockFolderPopupOpen_ = savedOpen;
         app.popupAnchoredToDock_ = savedAnchored;
