@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <vector>
 #include "theme/edge_light_settings.h"
@@ -117,6 +118,28 @@ struct EdgeColor
     int b = 0;
 };
 
+// RGB remains useful for color pickers; automatic compositing also needs the
+// spatial model. Derivation keeps existing explicit solid-color calls valid.
+struct PlateFill : EdgeColor
+{
+    PlateFill() = default;
+    PlateFill(EdgeColor color) : EdgeColor(color) {}
+    bool gradient = false;
+    // Change across one source canvas, measured from its center.
+    std::array<float, 3> dx{}, dy{};
+};
+
+enum class BackplateKind { Foreground, Solid, Gradient, Artwork, Framed, Contour };
+struct BackplateAnalysis
+{
+    BackplateKind kind = BackplateKind::Foreground;
+    std::optional<PlateFill> fill;
+};
+
+// A complete silhouette alone does not authorize inventing background pixels.
+BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels,
+    int width, int height);
+
 struct ShapePoint
 {
     float x = 0.0f;
@@ -154,7 +177,7 @@ std::vector<std::uint32_t> Render(
     int width,
     int height,
     const IconBeautifySettings& settings,
-    std::optional<EdgeColor> detectedEdgeFill = std::nullopt,
+    std::optional<PlateFill> detectedEdgeFill = std::nullopt,
     SourceKind sourceKind = SourceKind::Image);
 
 /** Directional reflection without a fill or glyph, for vector control plates. */
@@ -162,11 +185,11 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     const IconBeautifySettings& settings);
 
 /** Shared host plate detector: follows visible contours through transparent margins. */
-std::optional<EdgeColor> DetectPlateFill(
+std::optional<PlateFill> DetectPlateFill(
     const std::vector<std::uint32_t>& pixels, int width, int height);
 
 /** Detect a solid application-icon plate that smart beautification should clip. */
-std::optional<EdgeColor> DetectEdgeFill(
+std::optional<PlateFill> DetectEdgeFill(
     const std::vector<std::uint32_t>& pixels, int width, int height);
 }
 }

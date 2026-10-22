@@ -225,6 +225,16 @@ int RunIconAppearanceTests()
                 icon_beautify::SourceKind::NativeControl);
             check(extent(rendered, edge) <= original + 1,
                 "themed default Start/Search never expand to ordinary application-icon bounds");
+            if (mode == 1)
+            {
+                auto fillOnly = requested; fillOnly.mode = 2;
+                check(rendered == icon_beautify::Render(source.pixels, edge, edge, fillOnly, {},
+                        icon_beautify::SourceKind::NativeControl) && extent(rendered, edge) == original,
+                    "shrink-all exempts native Start/Search while retaining their selected plate and original glyph size");
+                const auto image = icon_beautify::Render(source.pixels, edge, edge, requested);
+                check(extent(image, edge) < original,
+                    "ordinary image sources still shrink under the same global processing preference");
+            }
             check(requested.mode == mode, "native rendering leaves the saved processing preference unchanged");
         }
         auto ordinary = noUpscale; ordinary.mode = 0;

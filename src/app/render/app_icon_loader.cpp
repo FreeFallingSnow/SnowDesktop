@@ -125,7 +125,7 @@ void DesktopApp::StartDemoIconLoader()
                 if (!snowdesktop::icon_beautify::PrepareCanvas(result->pixels, result->width, result->height, true))
                     result->pixels.clear();
                 const auto edge = task.beautify.mode == 0
-                    ? snowdesktop::icon_beautify::DetectEdgeFill(
+                    ? snowdesktop::icon_beautify::DetectPlateFill(
                         result->pixels, result->width, result->height)
                     : std::nullopt;
                 result->needsGlassBackdrop = task.beautify.enabled && task.beautify.glassEnabled && !edge;

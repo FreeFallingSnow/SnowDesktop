@@ -7,6 +7,6 @@ namespace snowdesktop::icon_beautify
 // effects. Source dimensions include the scale; desktop Render stays at 1x.
 std::vector<std::uint32_t> RenderPreview(
     const std::vector<std::uint32_t>& source, int width, int height,
-    const IconBeautifySettings& settings, std::optional<EdgeColor> detectedEdgeFill,
+    const IconBeautifySettings& settings, std::optional<PlateFill> detectedEdgeFill,
     int rasterScale, SourceKind sourceKind = SourceKind::Image);
 }

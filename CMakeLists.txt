@@ -189,6 +189,7 @@ set(SNOWDESKTOP_SOURCES
     src/desktop/desktop_namespace_registry.cpp
     src/desktop/desktop_namespace_registry.h
     src/icons/icon_beautify.cpp
+    src/icons/icon_backplate_analysis.inc
     src/icons/icon_beautify_preview.h
     src/icons/icon_appearance.h
     src/icons/icon_appearance_codec.h
@@ -2962,6 +2963,7 @@ if (BUILD_TESTING)
         icon_beautify
         SOURCES
             tests/icon_beautify_tests.cpp
+            tests/icons/icon_backplate_tests.h
             tests/icons/icon_appearance_tests.cpp
             src/icons/icon_beautify.cpp
         INCLUDE_DIRECTORIES src

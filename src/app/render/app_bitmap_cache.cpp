@@ -506,17 +506,9 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
     if (style.enabled)
     {
         if (!snowdesktop::icon_beautify::PrepareCanvas(buffer.pixels, buffer.width, buffer.height, true)) return nullptr;
-        std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
-        if (style.mode == 0)
-        {
-            IconBackgroundColor detected{};
-            if (DetectSolidEdgeBackground(
-                    buffer.pixels, buffer.width, buffer.height, detected))
-            {
-                edgeFill = snowdesktop::icon_beautify::EdgeColor{
-                    detected.r, detected.g, detected.b };
-            }
-        }
+        const auto edgeFill = style.mode == 0
+            ? snowdesktop::icon_beautify::DetectPlateFill(buffer.pixels, buffer.width, buffer.height)
+            : std::nullopt;
         needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,

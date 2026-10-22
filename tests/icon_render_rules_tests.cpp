@@ -558,8 +558,8 @@ int main(int argc, char** argv)
         rimmed[128 * 256 + 3] = rimmed[128 * 256 + 252] = 0xff20c870;
         const auto saved = rimmed;
         const auto plate = snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256);
-        Check(plate && plate->g == 200 && rimmed == saved,
-            "thin detached outline and alpha seams still identify the inner plate without mutating original pixels");
+        Check(!plate && rimmed == saved,
+            "detached decorative outlines are preserved as foreground without mutating original pixels");
         for (int y = 80; y < 176; ++y) for (int x = 80; x < 176; ++x) rimmed[y * 256 + x] = 0;
         Check(!snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256),
             "seam tolerance never reclassifies a hollow symbol as an opaque icon plate");
