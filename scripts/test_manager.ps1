@@ -198,6 +198,11 @@ function Invoke-FilteredTests {
         Set-Field $coverage 'testDefinitionsBeforeRun' $definitions
         Set-Field $coverage 'testRuntimeFilesBeforeRun' @(Get-VerificationRuntimeFiles $repositoryRoot $selection.Tests)
         Set-Field $coverage 'executionContext' (Get-TestExecutionContext)
+        $dependencyScript=Join-Path $PSScriptRoot 'build_test_dependencies.ps1'
+        if([IO.File]::Exists($dependencyScript)){
+            . $dependencyScript
+            Set-Field $coverage 'dependencyManifest' (Save-TestDependencyManifest $repositoryRoot $selection.Tests)
+        }else{Set-Field $coverage 'dependencyManifest' ([pscustomobject]@{status='unavailable';reason='Dependency observer is absent; result reuse remains disabled.'})}
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="

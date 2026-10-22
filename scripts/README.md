@@ -1,5 +1,7 @@
 # 项目脚本
 
+逐测试依赖观察保存在 coverage 的 `dependencyManifest`：共享文件身份只保存一份，逐条证据引用清单路径、SHA256 和测试摘要。`build_test_dependencies.ps1` 读取真实生成的 MSBuild 项目引用、编译/链接读取日志及 CTest 显式运行文件，记录具体缺口和采集时间。`Get-TestDependencyAdvice` 可按变化路径给出目标/用例建议；未映射变化或读取记录不完整时保留运行建议，不删除显式计划。当前运行时动态加载、外部状态与语义依赖仍未闭合，`reuseAllowed=false`，不据此跳过构建或测试。`test_dependencies` 用真实 CMake/MSBuild 静态库和间接头文件验证这些边界。
+
 工具回归按可独立补验的场景登记。`build_dashboard` 覆盖 HTTP/状态投影，`build_dashboard_startup` 覆盖启动、调用者退出及旧行为对照；`build_wait_retry` 覆盖重试策略，`build_retry_ctest_selection` 和 `build_retry_repairs` 分别覆盖真实 CTest 选择和失败续修；`build_run` 覆盖共同批次持久执行，`build_run_plans`、`build_run_batch_lifetime`、`build_run_default_entry`、`build_run_process_lifetime` 分别覆盖工具计划、批次进程归属、普通入口和独立 Run 生命周期。相关驱动保留 `--all` 供明确要求逐项串行诊断时使用。原有断言和负向对照保留在对应场景，CTest 按资源预算调度；同一驱动的多个条目仍只构建一次。显式定向选择时，应选齐修改影响的场景，不再把其中一项通过写成整组通过。
 
 本目录统一保存开发、测试和发布入口及其实现：
