@@ -44,7 +44,10 @@ if(BUILD_TESTING AND WIN32)
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
     snowdesktop_add_native_tool_test(SnowDesktopTestDependencyTests test_dependencies
         build_tools/build_test_dependency_tests.cpp "tools;core;integration" 120)
-    target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp)
+    target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp tests/build_tools/build_test_runtime_inputs_tests.cpp)
+    add_test(NAME test_runtime_inputs COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --runtime-inputs)
+    set_tests_properties(test_runtime_inputs PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopTestDependencyTests>")
     add_test(NAME test_dependency_reports COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --source-reports)
     set_tests_properties(test_dependency_reports PROPERTIES TIMEOUT 180 LABELS "tools;core;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopTestDependencyTests>")

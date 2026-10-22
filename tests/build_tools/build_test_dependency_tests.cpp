@@ -3,6 +3,8 @@
 #include <iostream>
 using namespace build_test;
 void source_report_tests(const fs::path& repo,bool disableReports,bool serializedReports=false);
+void runtime_input_tests(const fs::path& repo,bool omitDirectories);
+void runtime_input_fixture(const fs::path& root);
 namespace {
 const Json& named(const Json& rows,const std::string& name){
     for(const auto& row:rows.items)if(row.at("test").str()==name)return row;
@@ -88,6 +90,8 @@ uniqueFiles=$manifest.files.Count;pathCount=@($manifest.files.id|Sort-Object -Un
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const std::string mode=argc>2?argv[2]:"";
-    if(mode=="--source-reports"||mode=="--without-standard-reports"||mode=="--serialized-source-reports")source_report_tests(repo,mode=="--without-standard-reports",mode=="--serialized-source-reports");
+    if(mode=="--runtime-inputs"||mode=="--without-runtime-directories")runtime_input_tests(repo,mode=="--without-runtime-directories");
+    else if(mode=="--runtime-fixture")runtime_input_fixture(repo);
+    else if(mode=="--source-reports"||mode=="--without-standard-reports"||mode=="--serialized-source-reports")source_report_tests(repo,mode=="--without-standard-reports",mode=="--serialized-source-reports");
     else tests(repo,mode=="--without-compiler-reads");
 });}

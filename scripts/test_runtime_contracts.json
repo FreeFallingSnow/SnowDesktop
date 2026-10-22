@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "test": "demo_mode_rules",
+      "kind": "reviewed-file-inputs-v1",
+      "reviewedSources": [
+        {
+          "path": "tests/demo_mode_rules_tests.cpp",
+          "sha256": "f24713a8a3ede3f0dc5df68b2bcf0a7f285e56738bcc4b38fc795097ee55dec8"
+        },
+        {
+          "path": "src/platform/demo_asset_paths.h",
+          "sha256": "30f802e433cb9ca46bed1d4df3e9fa796db2523d08bc1c1102da0ee9ff3e1f11"
+        }
+      ],
+      "inputs": [
+        {
+          "kind": "directory-entries",
+          "path": "developer_assets/demo_icons",
+          "required": true
+        },
+        {
+          "kind": "directory-presence",
+          "path": ".build/Release/developer_assets/demo_icons",
+          "required": false
+        },
+        {
+          "kind": "directory-presence",
+          "path": ".build/developer_assets/demo_icons",
+          "required": false
+        }
+      ]
+    },
+    {
+      "test": "widget_composition_layer_rules",
+      "kind": "reviewed-file-inputs-v1",
+      "reviewedSources": [
+        {
+          "path": "tests/widget_composition_layer_rules_tests.cpp",
+          "sha256": "3a316e1b5ae825f249620ed9ae6df56bd63bfc35f8e72b831b0400b5e595f225"
+        },
+        {
+          "path": "tests/test_source_boundary.h",
+          "sha256": "43362ec6672308803d90328c0c819109c1fb79c2650fc422c58fbe096d677f50"
+        }
+      ],
+      "inputs": [
+        {
+          "kind": "file",
+          "path": "src/app/widgets/app_widget_composition.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/render/app_scene_render.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/lifecycle/app_run.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/widgets/app_widget_marquee_composition.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/widget/runtime/widget_engine.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/widgets/lua_script.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/input/app_pointer_move.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/input/app_scroll_interaction.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/render/app_desktop_foreground_composition.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/render/app_composition_animation_overlay.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/dock/app_floating_dock_window.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/popup/app_floating_popup_window.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/lifecycle/app_message_dispatch.cpp",
+          "required": true
+        },
+        {
+          "kind": "file",
+          "path": "src/app/dock/app_floating_dock_render.cpp",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

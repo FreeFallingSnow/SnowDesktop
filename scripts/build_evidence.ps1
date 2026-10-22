@@ -8,12 +8,14 @@ function New-BatchTestEvidence([string]$Root,$Result) {
     $definitions=@(Get-Field $coverage 'testDefinitionsBeforeRun' @())
     $artifacts=@(Get-Field $coverage 'testExecutablesBeforeRun' @())
     $dependencies=Get-Field $coverage 'dependencyManifest'
+    $runtimeInputCheck=Get-Field $coverage 'runtimeInputCheck'
     $items=@();$reports=@{}
     foreach($name in @(Get-Field $coverage 'selected' @()|Sort-Object -Unique)) {
         $observed=@(Get-Field $coverage 'completed' @()|Where-Object name -eq $name)
         $binary=@($artifacts|Where-Object test -eq $name)
         $definition=@($definitions|Where-Object name -eq $name)
         $dependency=@(Get-Field $dependencies 'tests' @()|Where-Object test -eq $name)
+        $runtimeInputs=@(Get-Field $runtimeInputCheck 'tests' @()|Where-Object test -eq $name)
         $status=if($observed.Count -eq 1){[string]$observed[0].status}else{'not-run'}
         $attempts=@()
         $retryTests=Get-Field $retry 'tests'
@@ -62,6 +64,7 @@ function New-BatchTestEvidence([string]$Root,$Result) {
             inputCheck=(Get-Field $Result 'inputCheck');inputEndDigest=(Get-Field (Get-Field $Result 'inputEnd') 'digest');attempts=$attempts;
             identityStatus=$(if(-not $stable){'invalidated'}elseif($complete){'recorded'}else{'incomplete'});
             dependencies=$(if($dependency.Count -eq 1){[pscustomobject]@{manifest=(Get-Field $dependencies 'path');manifestSha256=(Get-Field $dependencies 'sha256');observation=$dependency[0]}}else{[pscustomobject]@{status='not-recorded';reuseAllowed=$false}});
+            runtimeInputs=$(if($runtimeInputs.Count -eq 1){$runtimeInputs[0]}else{[pscustomobject]@{status='not-recorded';runtimeClosure='unclosed';reuseAllowed=$false}});
             reuseAllowed=$false;dependencyCoverage='Repository inputs, invocation and binary are bound; external and semantic dependencies are not yet closed.'})
     }
     return [pscustomobject]@{schemaVersion=1;status='recorded';tests=$items;reason='Observations remain attached to their original immutable attempt; no automatic cross-candidate reuse.'}

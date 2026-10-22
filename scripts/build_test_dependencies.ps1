@@ -1,4 +1,6 @@
 # Observations only: no configure/build, test selection or result reuse.
+$runtimeInputModule=Join-Path $PSScriptRoot 'build_test_runtime_inputs.ps1'
+if([IO.File]::Exists($runtimeInputModule)){. $runtimeInputModule}
 function Get-TestDependencyField($Object,[string]$Name,$Default=$null) {
     if($null -ne $Object -and $Object.PSObject.Properties[$Name]){return $Object.$Name};return $Default
 }
@@ -136,11 +138,14 @@ function Get-TestDependencyManifest {
         foreach($path in @($command)+$required){if([IO.Path]::IsPathRooted([string]$path)){
             if([IO.File]::Exists([string]$path)){$keys+=Add-TestDependencyFile $context ([string]$path)}elseif($required -contains $path){$issues+=($(if([IO.Directory]::Exists([string]$path)){'unclosed-runtime-directory:'}else{'missing-explicit-runtime:'})+$path)}
         }}
+        $runtimeInputs=if([IO.File]::Exists($runtimeInputModule) -and (Get-Command Get-TestRuntimeInputs -ErrorAction SilentlyContinue)){Get-TestRuntimeInputs $context $test.name}else{[pscustomobject]@{status='unavailable';fileIds=@();bindings=@();digest=$null;issues=@('runtime-input-observer-unavailable');runtimeClosure='unclosed';reuseAllowed=$false}}
         $keys=@(Get-TestDependencyOrdered $keys);foreach($key in $keys){if($context.files[$key].status -ne 'observed'){$issues+=('missing-observed-input:'+ $context.files[$key].path)}}
+        $keys=@(Get-TestDependencyOrdered (@($keys)+@($runtimeInputs.fileIds)))
         $canonical=($keys|ForEach-Object {$key=$_;$file=$context.files[$key];$key+[char]0+$file.status+[char]0+$file.sha256}) -join "`n"
+        $canonical+="`nRuntime file inputs:"+$runtimeInputs.status+':'+$runtimeInputs.digest
         $rows+=[pscustomobject]@{test=$test.name;target=$(if($project){[IO.Path]::GetFileNameWithoutExtension($project)}else{$null});status=$(if($issues.Count){'incomplete'}else{'observed'});
             fileIds=$keys;projects=@($projectNames|Sort-Object -Unique);compilerReadLogs=$compilerLogs;linkerReadLogs=$linkerLogs;sourceReports=$sourceReports;sourceClosure='unproven';digest=(Get-TestDependencyDigest $canonical);issues=@($issues|Sort-Object -Unique);
-            runtimeClosure='unclosed';reuseAllowed=$false;reason='Generated projects and compiler/linker reads are observed; runtime loads, external state and semantic dependencies require a reviewed closure contract.'}
+            runtimeInputs=$runtimeInputs;runtimeClosure='unclosed';reuseAllowed=$false;reason='Generated projects, compiler/linker reads and reviewed runtime file inputs are observations; DLL loads and external state remain unclosed.'}
     }
     $files=@((Get-TestDependencyOrdered @($context.files.Keys))|ForEach-Object {$key=$_;[pscustomobject]@{id=$key;path=$context.files[$key].path;status=$context.files[$key].status;sha256=$context.files[$key].sha256;bytes=$context.files[$key].bytes}})
     $excluded=@([IO.Path]::GetTempPath(),[Environment]::GetFolderPath('ApplicationData'),[Environment]::GetFolderPath('LocalApplicationData'),[Environment]::GetFolderPath('CommonApplicationData'),(Join-Path ([Environment]::GetFolderPath('UserProfile')) 'AppData/LocalLow'))
@@ -150,8 +155,9 @@ function Get-TestDependencyManifest {
 }
 function Get-TestDependencyAdvice($Manifest,[string[]]$ChangedPaths) {
     $changes=@($ChangedPaths|ForEach-Object {if([IO.Path]::IsPathRooted($_)){[IO.Path]::GetFullPath($_).ToLowerInvariant()}else{[IO.Path]::GetFullPath((Join-Path $Manifest.root $_)).ToLowerInvariant()}}|Sort-Object -Unique)
-    $known=@{};foreach($file in $Manifest.files){$known[$file.id]=$true};$unmapped=@($changes|Where-Object {-not $known.ContainsKey($_)})
-    $rows=@($Manifest.tests|ForEach-Object {$test=$_;$matched=@($changes|Where-Object {$test.fileIds -contains $_});[pscustomobject]@{
+    $directories=@($Manifest.tests|ForEach-Object {Get-TestDependencyField (Get-TestDependencyField $_ 'runtimeInputs') 'bindings' @()}|Where-Object kind -ne 'file'|ForEach-Object {$_.path.ToLowerInvariant().TrimEnd('\','/')})
+    $known=@{};foreach($file in $Manifest.files){$known[$file.id]=$true};$unmapped=@($changes|Where-Object {$change=$_;-not $known.ContainsKey($change) -and -not @($directories|Where-Object {$change -eq $_ -or $change.StartsWith($_+'\',[StringComparison]::OrdinalIgnoreCase)}).Count})
+    $rows=@($Manifest.tests|ForEach-Object {$test=$_;$runtime=Get-TestDependencyField $test 'runtimeInputs';$bindings=@(Get-TestDependencyField $runtime 'bindings' @());$matched=@($changes|Where-Object {$change=$_;$test.fileIds -contains $change -or @($bindings|Where-Object {$change -eq $_.path.ToLowerInvariant() -or ($_.kind -ne 'file' -and $change.StartsWith($_.path.TrimEnd('\','/')+'\',[StringComparison]::OrdinalIgnoreCase))}).Count});[pscustomobject]@{
         test=$test.test;target=$test.target;recommendRun=($matched.Count -gt 0 -or $unmapped.Count -gt 0 -or $test.status -ne 'observed');matchingPaths=$matched;
         reason=$(if($unmapped.Count){'unmapped-change'}elseif($test.status -ne 'observed'){'incomplete-build-dependencies'}elseif($matched.Count){'observed-dependency-changed'}else{'no-observed-source-impact'});reuseAllowed=$false}})
     return [pscustomobject]@{schemaVersion=1;tests=$rows;unmappedPaths=$unmapped;advisoryOnly=$true;selectionChanged=$false;reason='Advice never removes explicitly requested tests; unclosed runtime dependencies cannot authorize reuse.'}
@@ -164,5 +170,6 @@ function Save-TestDependencyManifest([string]$Root,$Tests) {
     [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($false)));$sha=[Security.Cryptography.SHA256]::Create()
     try{$digest=[BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
     return [pscustomobject]@{schemaVersion=1;path=$path;sha256=$digest;elapsedSeconds=$timer.Elapsed.TotalSeconds;uniqueFiles=$manifest.files.Count;
-        tests=@($manifest.tests|Select-Object test,target,status,digest,compilerReadLogs,linkerReadLogs,sourceReports,sourceClosure,issues,runtimeClosure,reuseAllowed)}
+        tests=@($manifest.tests|Select-Object test,target,status,digest,compilerReadLogs,linkerReadLogs,sourceReports,sourceClosure,issues,runtimeClosure,reuseAllowed,
+            @{n='runtimeInputStatus';e={$_.runtimeInputs.status}},@{n='runtimeInputDigest';e={$_.runtimeInputs.digest}},@{n='runtimeInputIssues';e={$_.runtimeInputs.issues}})}
 }

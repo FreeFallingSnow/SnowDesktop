@@ -232,6 +232,11 @@ function Invoke-FilteredTests {
         Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
         $testCode=0
     }finally{
+        if($Mode -eq 'plan'){
+            $runtimeCheck=if(Get-Command Compare-TestRuntimeInputs -ErrorAction SilentlyContinue){Compare-TestRuntimeInputs $repositoryRoot $selection.Tests (Get-Field $coverage 'dependencyManifest')}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime input observer is unavailable.';reuseAllowed=$false}}
+            Set-Field $coverage 'runtimeInputCheck' $runtimeCheck
+            $coverage|ConvertTo-Json -Depth 15|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        }
         if($candidate){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}
     }
 }
