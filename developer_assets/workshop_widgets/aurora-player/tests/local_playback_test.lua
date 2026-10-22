@@ -19,6 +19,17 @@ local function fixture()
 end
 
 return {
+    ["switching to local attempts system pause before playback and does not block on failure"]=function()
+        local p,calls=fixture()
+        local attempted=0
+        local model={player=p,source="system",beforeLocal=function()
+            assert(#calls==0);attempted=attempted+1;error("pause rejected")
+        end}
+        local host={available=function() return true end,persist=function() end}
+        assert(localPlayback.playTrack(model,p.tracks[1].key,host))
+        assert(model.source=="local" and attempted==1 and #calls==1)
+        assert(localPlayback.select(model,"local",host) and attempted==1)
+    end,
     ["playing a library item selects local ownership before starting audio"] = function()
         local p,calls=fixture()
         local model={player=p,source="system"}

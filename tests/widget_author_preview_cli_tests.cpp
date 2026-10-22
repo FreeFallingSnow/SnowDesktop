@@ -724,6 +724,37 @@ void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
         catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
     };
     const auto noFiles = [](const std::filesystem::path&) {};
+    preview("media-playback-modes", R"lua(
+local current,sessions,timeline
+return widget.define({
+    setup=function()
+        current=data.subscribe("media.current")
+        sessions=data.subscribe("media.sessions")
+        timeline=data.subscribe("media.timeline")
+    end,
+    render=function()
+        local item=current:value().value.session
+        local list=sessions:value().value.sessions
+        local clock=timeline:value().value.timeline
+        assert(item.shuffle==false,"reported shuffle false must survive Lua serialization")
+        assert(item.repeatMode=="list" and item.playbackRate==1.25,"SMTC modes are serialized")
+        assert(list[1].id==item.id and list[1].shuffle==false and list[1].repeatMode=="list")
+        assert(item.timeline.playbackRate==1.25 and clock.playbackRate==1.25 and clock.sessionId==item.id,
+            "session and timeline share the same rate")
+        draw.text(8,8,"media state",14,0xFFFFFF)
+    end,
+})
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"widget.json", R"json({
+            "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"fb85c0d5-1e03-4ae2-8f15-05a80052447b","slug":"media-playback-modes",
+            "version":"1.0.0","entry":"main.lua","minHostVersion":"1.0.12.0",
+            "name":"Media playback states","author":"SnowDesktop","license":"MIT",
+            "defaultSize":{"columns":2,"rows":1},"permissions":["media.read"],
+            "requiredFeatures":["draw.immediate","lifecycle.model","data.subscribe","data.media.current",
+                "data.media.sessions","data.media.timeline"]
+        })json");
+    });
     preview("translation-linear-substitution", R"lua(
 assert(l10n.tr("{0}/{1}", "{1}", "done") == "{1}/done",
     "inserted values must not be interpreted as another template")

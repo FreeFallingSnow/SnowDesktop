@@ -4627,7 +4627,7 @@ static void PushDisplayDataValue(lua_State* state,
 static void PushMediaTimelineDataValue(lua_State* state,
     const snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot& value)
 {
-    lua_createtable(state, 0, 6);
+    lua_createtable(state, 0, 7);
     lua_pushlstring(state, value.sessionId.data(), value.sessionId.size());
     lua_setfield(state, -2, "sessionId");
     lua_pushinteger(state, static_cast<lua_Integer>(value.positionMs));
@@ -4640,6 +4640,11 @@ static void PushMediaTimelineDataValue(lua_State* state,
     lua_setfield(state, -2, "maximumSeekMs");
     lua_pushinteger(state, static_cast<lua_Integer>(value.updatedAtMs));
     lua_setfield(state, -2, "updatedAtMs");
+    if (value.playbackRate)
+    {
+        lua_pushnumber(state, *value.playbackRate);
+        lua_setfield(state, -2, "playbackRate");
+    }
 }
 
 static void PushMediaControlsDataValue(lua_State* state,
@@ -4671,7 +4676,7 @@ static void PushMediaControlsDataValue(lua_State* state,
 static void PushMediaSessionDataValue(lua_State* state,
     const snowdesktop::widget_runtime::WidgetMediaSessionDataSnapshot& value)
 {
-    lua_createtable(state, 0, 10);
+    lua_createtable(state, 0, 12);
     lua_pushlstring(state, value.id.data(), value.id.size());
     lua_setfield(state, -2, "id");
     lua_pushlstring(state, value.sourceName.data(), value.sourceName.size());
@@ -4687,6 +4692,21 @@ static void PushMediaSessionDataValue(lua_State* state,
     lua_setfield(state, -2, "playbackStatus");
     lua_pushboolean(state, value.current);
     lua_setfield(state, -2, "current");
+    if (value.shuffle)
+    {
+        lua_pushboolean(state, *value.shuffle);
+        lua_setfield(state, -2, "shuffle");
+    }
+    if (value.repeatMode)
+    {
+        lua_pushlstring(state, value.repeatMode->data(), value.repeatMode->size());
+        lua_setfield(state, -2, "repeatMode");
+    }
+    if (value.playbackRate)
+    {
+        lua_pushnumber(state, *value.playbackRate);
+        lua_setfield(state, -2, "playbackRate");
+    }
     PushMediaControlsDataValue(state, value.controls);
     lua_setfield(state, -2, "controls");
     PushMediaTimelineDataValue(state, value.timeline);
@@ -23731,6 +23751,9 @@ WidgetEngine::RuntimeGetDataSnapshot(
             session.album = _L("app.widget_preview.api.media_album");
             session.playbackStatus = "playing";
             session.current = true;
+            session.shuffle = false;
+            session.repeatMode = "list";
+            session.playbackRate = 1.25;
             session.controls = { true, true, true, true, true, true,
                 true, true, true, true };
             session.timeline.available = true;
@@ -23741,6 +23764,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             session.timeline.maximumSeekMs = 215000;
             session.timeline.updatedAtMs = timestampNow;
             session.timeline.timestampMs = timestampNow;
+            session.timeline.playbackRate = session.playbackRate;
             if (result.topic == "media.sessions")
             {
                 result.mediaSessions.available = true;

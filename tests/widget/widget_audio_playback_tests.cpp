@@ -224,6 +224,7 @@ void EntryStorageTests(const std::filesystem::path& modulePath)
     const char* fixture = R"lua(
 local values, inTransaction, definition, taskId = {}, false, nil, 0
 local loaded, capabilities, hovered = {}, {}, ''
+local calls, mediaSession, denied, rejectPause = {}, nil, false, false
 module={require=function(path)
     assert(path:match('^modules/[%w_]+%.lua$'),'literal package module expected')
     if not loaded[path] then
@@ -240,11 +241,19 @@ function storage.transaction(callback)
     inTransaction=false;return true
 end
 function storage.set(key,value) values[key]=value end
-task={start=function() taskId=taskId+1;return taskId end,cancel=function() end}
+task={start=function(name,args)
+    calls[#calls+1]={name=name,args=args}
+    if rejectPause and name=='media.pause' then return nil,'source refused pause' end
+    taskId=taskId+1;return taskId
+end,cancel=function() end}
 widget={define=function(d) definition=d;return d end,invalidate=function() end,openPanel=function() end,
-    hasFeature=function(name) return capabilities[name]~=false end,hasPermission=function() return true end,
+    hasFeature=function(name) return capabilities[name]~=false end,
+    hasPermission=function(name) return not (denied and name=='media.action') end,log=function() end,
     theme=function() return {contentTheme=0} end}
-data={subscribe=function() return {value=function() return {available=false} end,unsubscribe=function() end} end}
+data={subscribe=function(topic) return {value=function()
+    if topic=='media.current' and mediaSession then return {available=true,value={session=mediaSession}} end
+    return {available=false}
+end,unsubscribe=function() end} end}
 slots={binding=function() return {item=function() return nil end} end}
 ui={menu=function(items) return items end,metrics=function() return {layoutRowHeight=28} end}
 time={now=function() return 1000 end}
@@ -262,11 +271,64 @@ function checkEntry(d)
     local context={preview=false,accessibility={reducedMotion=false,highContrast=false},theme={mode='dark'}}
     local model=d.setup(context)
     local localModel=model.localPlayback
+    mediaSession={id='external-1',playbackStatus='playing',controls={canPause=true}}
+    localModel.panelKind='options'
+    local systemPanel=d.panel(context,model)
+    assert(not contains(systemPanel,'local.preferences.card') and not contains(systemPanel,'music.playlist'))
+    assert(not contains(systemPanel,'system.shuffle.card') and not contains(systemPanel,'system.rate.card'))
+    local function findMenu(items,id)
+        for _,item in ipairs(items) do
+            if item.id==id then return item end
+            local child=item.children and findMenu(item.children,id)
+            if child then return child end
+        end
+    end
+    local menu=d.menu(context,model,{id='media.menu'})
+    assert(not findMenu(menu,'media.shuffle.on') and not findMenu(menu,'media.rate.1'))
+    mediaSession.controls.canToggleShuffle=true
+    mediaSession.shuffle=false
+    systemPanel=d.panel(context,model)
+    assert(contains(systemPanel,'system.shuffle.card') and not contains(systemPanel,'system.repeat.card'))
+    menu=d.menu(context,model,{id='media.menu'})
+    assert(findMenu(menu,'media.shuffle.off').checked and not findMenu(menu,'media.shuffle.on').checked)
+    local before=#calls
+    d.event(context,model,{kind='action',id='system.shuffle.on',value='external-1'})
+    assert(#calls==before+1 and calls[#calls].name=='media.setShuffle' and calls[#calls].args.shuffle)
+    mediaSession.id='replacement'
+    d.event(context,model,{kind='action',id='system.shuffle.off',value='external-1'})
+    assert(#calls==before+1)
+    mediaSession.controls.canToggleShuffle=false
+    d.event(context,model,{kind='action',id='system.shuffle.on',value='replacement'})
+    assert(#calls==before+1)
+    mediaSession.controls.canChangePlaybackRate=true;mediaSession.controls.canChangeRepeatMode=true
+    mediaSession.playbackRate=1.5;mediaSession.repeatMode='track'
+    systemPanel=d.panel(context,model)
+    assert(contains(systemPanel,'system.rate.card') and contains(systemPanel,'system.repeat.card'))
+    menu=d.menu(context,model,{id='media.menu'})
+    assert(findMenu(menu,'media.rate.1_5').checked and findMenu(menu,'media.repeat.track').checked)
+    denied=true
+    assert(not contains(d.panel(context,model),'system.rate.card'))
+    denied=false
+    rejectPause=true
+    before=#calls
     assert(localModel.player.volume==1 and localModel.player.playbackRate==1)
     d.event(context,model,{kind='action',id='local.import',action='fileDrop',items={
         {handle='a',kind='file',name='a.mp3'},{handle='b',kind='file',name='b.mp3'},{handle='c',kind='file',name='c.mp3'}}})
     assert(values.playlistCount==1 and #values.playlist1==3)
     assert(localModel.source=='local')
+    assert(calls[before+1].name=='media.pause' and calls[before+1].args.sessionId=='replacement')
+    assert(contains(d.panel(context,model),'local.preferences.card') and contains(d.panel(context,model),'music.playlist'))
+    before=#calls
+    d.event(context,model,{kind='action',id='system.rate.1_5',value='replacement'})
+    d.event(context,model,{kind='action',id='media.rate.1_5'})
+    assert(localModel.player.playbackRate==1,'stale system menu must not change local preferences')
+    d.event(context,model,{kind='action',id='local.source.local'})
+    assert(#calls==before,'stale system actions and repeated local selection do not send tasks')
+    d.event(context,model,{kind='action',id='local.source.system'})
+    before=#calls
+    mediaSession.playbackStatus='paused'
+    d.event(context,model,{kind='action',id='local.track',value=localModel.player.tracks[1].key})
+    assert(localModel.source=='local' and calls[before+1].name=='audio.play')
     assert(not contains(d.view(context,model),'aurora.utilities'))
     hovered='aurora.surface';assert(contains(d.view(context,model),'aurora.utilities'))
     hovered='media.toggle';assert(contains(d.view(context,model),'aurora.utilities'))

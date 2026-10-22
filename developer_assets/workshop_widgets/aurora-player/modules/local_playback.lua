@@ -1,5 +1,6 @@
 local player = module.require("modules/local_queue.lua")
 local panel=module.require("modules/panel_ui.lua")
+local playbackOptions=module.require("modules/playback_options.lua")
 local M = {}
 local function readChunks(prefix)
     local count = tonumber(storage.get(prefix.."Count"))
@@ -69,7 +70,7 @@ local function modeKey(p)
     return p.shuffle and "shuffle" or p.repeatMode=="track" and "loop" or p.repeatMode=="list" and "repeat" or "sequential"
 end
 local rates={0.25,0.5,0.75,1,1.25,1.5,2,3,4}
-function M.panel(_context,model)
+function M.panel(_context,model,systemSession,systemPermission)
     local p=model.player
     if model.drag and not model.preview and widget.hasFeature("interaction.pointerActions") then
         local track=p.tracks[model.drag.from]
@@ -87,6 +88,7 @@ function M.panel(_context,model)
             panel.choice("source.system",l10n.tr("workshop.aurora_player.source_system"),row,"local.source.system",model.source=="system"),
             panel.choice("source.local",l10n.tr("workshop.aurora_player.source_local"),row,"local.source.local",model.source=="local",M.available()),
         }})
+        if model.source=="local" then
         local modes={}
         local labels={sequential="music.sequential",["repeat"]="music.repeat",loop="music.loop",shuffle="music.shuffle"}
         for _, keys in ipairs({{"sequential","repeat"},{"loop","shuffle"}}) do
@@ -106,6 +108,11 @@ function M.panel(_context,model)
             }})}
         children[#children+1]=panel.well("local.preferences.card",row,localSettings)
         children[#children+1]=command("playlist","music.playlist",M.available())
+        else
+            for _,child in ipairs(playbackOptions.view(systemSession,systemPermission,row)) do
+                children[#children+1]=child
+            end
+        end
     else
         children[#children+1]=view.row({key="playlist.toolbar",width="fill",height=row*1.12,padding={horizontal=row*0.3},gap=row*0.2,alignItems="center",children={
             panel.text("playlist.subtitle",tostring(#p.tracks).."  "..l10n.tr("music.tracks"),row,{style={foreground=c.secondary}}),
@@ -200,6 +207,7 @@ function M.event(_context,model,e)
             return true
         end
         if not M.available() then return true end
+        if model.source~="local" and (id:sub(1,5)=="mode." or id:sub(1,5)=="rate.") then return true end
         if id=="files" or id=="folder" or id=="import" then
             if not M.allowed() then widget.openSettings();return true end
             M.select(model,"local")
@@ -288,6 +296,7 @@ function M.select(model, source, host)
     local available=host and host.available or M.available
     if source=="local" and not available() then return false end
     if model.source==source then return true end
+    if source=="local" and model.beforeLocal then pcall(model.beforeLocal) end
     -- Remove our SMTC session before returning to system media control.
     if source=="system" then model.player:stop() end
     model.drag=nil
@@ -308,7 +317,7 @@ function M.session(model)
             canToggleShuffle=true,canChangeRepeatMode=true},
         timeline={positionMs=p.position,durationMs=p.duration,minimumSeekMs=0,
             maximumSeekMs=p.duration,updatedAtMs=model.updatedAtMs or 0,
-            playbackRate=p.playbackRate}, playbackRate=p.playbackRate}
+            playbackRate=p.playbackRate}, playbackRate=p.playbackRate,shuffle=p.shuffle,repeatMode=p.repeatMode}
 end
 
 function M.notice(model)

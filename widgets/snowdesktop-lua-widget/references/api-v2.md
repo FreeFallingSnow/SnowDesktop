@@ -1958,6 +1958,13 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
 逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
+会话可选字段 `shuffle`、`repeatMode`（`none/track/list`）和 `playbackRate` 返回
+SMTC 实际报告的状态；时间线也携带同一样本的 `playbackRate`。Windows 未报告时字段为
+`nil`，不能把它解释为关闭随机、无循环或 1 倍速。倍速只返回有限正数。状态和控制能力
+相互独立：显示可操作控件前检查对应 `canToggleShuffle/canChangeRepeatMode/
+canChangePlaybackRate`，执行时再次检查会话 ID、权限与能力；设置成功后仍以订阅回读
+为准。此为 API v2 的可选增量，不提高 `apiVersion`；旧宿主和同版本早期构建可能不含
+这些字段，调用方必须按字段类型降级，不依赖 `minHostVersion` 推断字段存在。
 会话 ID 绑定宿主当前识别的原生会话，不由应用名称或列表位置推导。列表重排保持现存
 会话的 ID；已退休会话的 ID 不会指向后来出现的会话，也不能跨宿主重启复用。
 `media.artwork` 只返回当前会话的 `sessionId`、临时 `image` resource handle 和不超过

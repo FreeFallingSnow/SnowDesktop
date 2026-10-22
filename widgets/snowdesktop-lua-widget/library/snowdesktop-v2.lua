@@ -1609,6 +1609,7 @@ function animation.cancelFrame(id) end
 ---@field minimumSeekMs integer
 ---@field maximumSeekMs integer
 ---@field updatedAtMs integer Epoch milliseconds reported by Windows.
+---@field playbackRate? number Positive finite SMTC playback rate; absent when unreported or on older hosts.
 
 ---@class SnowMediaSessionValue
 ---@field id string Opaque media session identifier.
@@ -1618,6 +1619,9 @@ function animation.cancelFrame(id) end
 ---@field album string
 ---@field playbackStatus 'closed'|'open'|'changing'|'stopped'|'playing'|'paused'
 ---@field current boolean
+---@field shuffle? boolean Actual SMTC shuffle state; nil means unreported, not false.
+---@field repeatMode? 'none'|'track'|'list' Actual SMTC repeat mode; absent when unreported.
+---@field playbackRate? number Positive finite SMTC playback rate; absent when unreported.
 ---@field controls SnowMediaControlsDataValue
 ---@field timeline SnowMediaTimelineValue
 

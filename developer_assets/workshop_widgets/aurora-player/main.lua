@@ -79,6 +79,9 @@ local function previewSession()
         artist = "Mira Vale",
         album = "Glass Horizons",
         playbackStatus = "playing",
+        shuffle = false,
+        repeatMode = "list",
+        playbackRate = 1.25,
         controls = {
             canPlay = true,
             canPause = true,
@@ -98,6 +101,7 @@ local function previewSession()
             minimumSeekMs = 0,
             maximumSeekMs = 238000,
             updatedAtMs = 0,
+            playbackRate = 1.25,
         },
     }
 end
@@ -186,6 +190,7 @@ local function syncAudioAnalysis(context, model)
     model.visualizer = analyze or model.preview
 end
 
+local playbackOptions=module.require("modules/playback_options.lua")
 local function setup(context)
     syncBackgroundBlur()
     launcherBinding = slots.binding("idlePlayer")
@@ -220,6 +225,15 @@ local function setup(context)
         recordFramePending = false,
         progressTicking = false,
     }
+    model.localPlayback.beforeLocal=function()
+        if model.preview then return end
+        local session=player.session(mediaCurrent and mediaCurrent:value())
+        local name,args=playbackOptions.pauseRequest(session,widget.hasPermission("media.action"))
+        if not name then return end
+        local id,err=task.start(name,args)
+        if id then model.tasks[tostring(id)]=name
+        else widget.log("warn",name.." rejected: "..tostring(err)) end
+    end
     syncAudioAnalysis(context, model)
     return model
 end
@@ -972,7 +986,15 @@ local function event(context, model, value)
     if value.id=="media.hover" then widget.invalidate();return end
 
     local session = currentSession(model)
-    if value.id == "media.previous" then
+    local modeAction=value.id:match("^media%.rate%.") or value.id:match("^media%.shuffle%.") or
+        value.id:match("^media%.repeat%.")
+    if modeAction and (model.menuSessionId~=(session and session.id) or
+        model.menuSource~=model.localPlayback.source) then return end
+    if value.id:sub(1,7)=="system." then
+        if localPlayback.isLocal(model.localPlayback) then return end
+        local name,args=playbackOptions.command(session,controlAllowed(model),value)
+        if name then startTask(model,name,args) end
+    elseif value.id == "media.previous" then
         startSessionTask(model, "media.previous", "canPrevious")
     elseif value.id == "media.next" then
         startSessionTask(model, "media.next", "canNext")
@@ -1053,6 +1075,9 @@ local function menu(_context, model, request)
     local session = currentSession(model)
     local timeline = currentTimeline(model, session)
     local permission = controlAllowed(model)
+    local modes=playbackOptions.state(session,permission)
+    model.menuSessionId=session and session.id
+    model.menuSource=model.localPlayback.source
     local function allowed(capability)
         if capability == "canSeek" and
             not player.hasTimeline(timeline) then return false end
@@ -1065,6 +1090,7 @@ local function menu(_context, model, request)
             id = "media.rate." .. rate,
             label = rate:gsub("_", ".") .. "×",
             enabled = allowed("canChangePlaybackRate"),
+            checked = modes.rateValue==tonumber((rate:gsub("_", "."))),
         }
     end
     local items = {
@@ -1156,7 +1182,22 @@ local function menu(_context, model, request)
             },
         },
     }
-    for _, item in ipairs(mediaItems) do items[#items + 1] = item end
+    for _, item in ipairs(mediaItems) do
+        local first=item.children and item.children[1] and item.children[1].id or ""
+        local supported=true
+        if first:sub(1,11)=="media.rate." then supported=modes.rate
+        elseif first:sub(1,14)=="media.shuffle." then
+            supported=modes.shuffle
+            for _,choice in ipairs(item.children) do
+                choice.checked=modes.shuffleValue~=nil and
+                    modes.shuffleValue==(choice.id=="media.shuffle.on")
+            end
+        elseif first:sub(1,13)=="media.repeat." then
+            supported=modes.repeatMode
+            for _,choice in ipairs(item.children) do choice.checked=modes.repeatValue==choice.id:sub(14) end
+        end
+        if supported then items[#items+1]=item end
+    end
     return ui.menu(items)
 end
 
@@ -1195,7 +1236,7 @@ descriptor = {
     view = viewTree,
     panel = function(context,model)
         if model.systemAudio.surface=="panel" then return systemAudio.view(model.systemAudio,model.localPlayback) end
-        return localPlayback.panel(context,model.localPlayback)
+        return localPlayback.panel(context,model.localPlayback,currentSession(model),controlAllowed(model))
     end,
     popover = function(_context,model) return systemAudio.view(model.systemAudio,model.localPlayback) end,
     event = event,
