@@ -476,7 +476,9 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
         const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});const auto id=opened.at("batchId").str();
         c.plan("candidate",id,0,"selected","candidate_rule","tool","src/main.cpp,src/value.h");
         const auto finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
-        require(finished.code==0,"Real native baseline failed: "+finished.out+finished.err);return c.result(id);
+        const auto result=c.result(id);
+        if(finished.code!=0){const auto log=read(fs::path(wide(result.at("logPath").str())));throw std::runtime_error("Real native baseline failed; batch "+id+": "+log.substr(log.size()>4000?log.size()-4000:0));}
+        return result;
     };
     const auto original=baseline();
     const auto loggerRoot=c.stateRoot/L"instrumentation";
@@ -504,6 +506,13 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
     require(references.at("reused").boolean&&references.at("id").str()==id&&references.at("status").str()=="referenced"&&
         !references.at("reference").at("newExecution").boolean,"Completed native verification executed again instead of referencing its original Run: "+references.dump());
     require(verify().at("reference").at("id").str()==references.at("reference").at("id").str(),"Repeated completed citation was not idempotent");
+    const std::vector<std::wstring> concurrentArgs={powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"start",L"-Task",L"candidate",L"-Action",L"tests",L"-Mode",L"verify",L"-PlanBatch",wide(batch),L"-Filter",L"candidate_rule",L"-Reason",L"Concurrent completed reference"};
+    Child concurrentA(concurrentArgs,c.root),concurrentB(concurrentArgs,c.root);
+    const auto responseA=concurrentA.wait(45),responseB=concurrentB.wait(45);
+    require(responseA.code==0&&responseB.code==0,"Concurrent citation callers failed: "+responseA.out+responseA.err+responseB.out+responseB.err);
+    const auto citationA=Json::parse(responseA.out),citationB=Json::parse(responseB.out);
+    require(citationA.at("reused").boolean&&citationB.at("reused").boolean&&citationA.at("id").str()==id&&citationB.at("id").str()==id,
+        "Concurrent read-only reference checks launched duplicate executions");
     require(static_cast<std::size_t>(std::distance(fs::directory_iterator(c.stateRoot/L"runs"),fs::directory_iterator{}))==requestsBefore,
         "Completed reference created a new execution file");
     require(read(resultPath)==resultBytes&&read(requestPath)==requestBytes&&read(coveragePath)==coverageBytes&&read(report)==reportBytes,

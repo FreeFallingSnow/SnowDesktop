@@ -81,7 +81,16 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
         $snapshot=Read-CandidateManifest $Root $binding.snapshot
         $prefix=$snapshot.manifest.context.digest.Substring(0,16)+'-'
         if(-not $binding.slot.StartsWith($prefix,[StringComparison]::Ordinal)){return $null}
-        $lease=Enter-CandidateSlot $snapshot $binding.slot.Substring($prefix.Length)
+        $slotWait=[Diagnostics.Stopwatch]::StartNew()
+        while(-not $lease){
+            try{$lease=Enter-CandidateSlot $snapshot $binding.slot.Substring($prefix.Length)}
+            catch{
+                if($_.Exception.Message -notlike 'Candidate slot is busy;*' -or $slotWait.Elapsed.TotalSeconds -ge 30){throw}
+                # Another read check can own this handle without any active
+                # Run to join. Wait for that check instead of launching work.
+                Start-Sleep -Milliseconds 75
+            }
+        }
         # The materializer and executors use this same exclusive slot handle.
         # Keep it until the coordinator commits the reference, never the Run.
         $current=Get-VerificationSnapshot $Root $Verification.baseline ($Verification.binding.names -join ',') (Get-Field $Verification.binding 'resourceBudget')

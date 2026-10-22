@@ -17,6 +17,13 @@ std::wstring normalized(std::wstring path){
     if(path.starts_with(L"\\\\?\\"))return path.substr(4);
     return path;
 }
+std::wstring win32_path(const fs::path& path){
+    auto absolute=fs::absolute(path).lexically_normal();absolute.make_preferred();
+    const auto value=absolute.wstring();
+    if(value.starts_with(L"\\\\?\\"))return value;
+    if(value.starts_with(L"\\\\"))return L"\\\\?\\UNC\\"+value.substr(2);
+    return L"\\\\?\\"+value;
+}
 std::wstring image_path(HANDLE file,HANDLE process,void* base){
     std::wstring path(32768,L'\0');
     DWORD count=file?GetFinalPathNameByHandleW(file,path.data(),static_cast<DWORD>(path.size()),FILE_NAME_NORMALIZED):0;
@@ -61,14 +68,15 @@ std::vector<wchar_t> child_environment(){
     FreeEnvironmentStringsW(block);result.push_back(L'\0');return result;
 }
 void save_report(const fs::path& path,const Json& report){
-    fs::create_directories(path.parent_path());const auto pending=fs::path(path.wstring()+L"."+std::to_wstring(GetCurrentProcessId())+L".pending");
+    fs::create_directories(fs::path(win32_path(path.parent_path())));const auto pending=fs::path(path.wstring()+L"."+std::to_wstring(GetCurrentProcessId())+L".pending");
+    const auto staging=win32_path(pending),destination=win32_path(path);
     const auto bytes=report.dump();
     {
-        Handle output(CreateFileW(pending.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));
+        Handle output(CreateFileW(staging.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));
         require(output.value!=INVALID_HANDLE_VALUE,"Cannot create unique module report staging file");DWORD count=0;
         require(bytes.size()<=8*1024*1024&&WriteFile(output.value,bytes.data(),static_cast<DWORD>(bytes.size()),&count,nullptr)&&count==bytes.size()&&FlushFileBuffers(output.value),"Cannot write module report");
     }
-    if(!MoveFileExW(pending.c_str(),path.c_str(),MOVEFILE_WRITE_THROUGH)){DeleteFileW(pending.c_str());throw std::runtime_error("Cannot publish module report without replacing existing data");}
+    if(!MoveFileExW(staging.c_str(),destination.c_str(),MOVEFILE_WRITE_THROUGH)){DeleteFileW(staging.c_str());throw std::runtime_error("Cannot publish module report without replacing existing data");}
 }
 struct Process {HANDLE handle=nullptr;bool initialBreakpoint=false;std::map<void*,size_t> bases;};
 struct EntryBreakpoint {
@@ -134,7 +142,7 @@ int observe(int argc,wchar_t** argv){
         if(images.items.size()>=4096){issues.items.emplace_back("module-event-budget-exceeded");return;}
         try {
             const auto path=image_path(file,process.handle,base);require(!path.empty(),"Loaded image path is unavailable");
-            Handle fallback(file?nullptr:CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr));
+            Handle fallback(file?nullptr:CreateFileW(win32_path(path).c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr));
             require(file||fallback.value!=INVALID_HANDLE_VALUE,"Loaded image file is unavailable");
             auto row=Json::object({{"path",utf8(path)},{"sha256",hash_file(file?file:fallback.value)},{"kind",kind},{"pid",static_cast<double>(event.dwProcessId)},
                 {"startup",!process.initialBreakpoint},{"identitySource",file?"load-event-handle":"mapped-path"},{"unloaded",false}});
