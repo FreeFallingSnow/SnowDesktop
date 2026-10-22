@@ -153,7 +153,8 @@ function Get-TestBuildRoots([string]$Root,[string[]]$Targets) {
                 $conditional=$false;$parent=$reference
                 while($parent -is [Xml.XmlElement]){if($parent.HasAttribute('Condition')){$conditional=$true;break};$parent=$parent.ParentNode}
                 if($conditional -or @($reference.SelectNodes('*[local-name()="BuildReference"]')|Where-Object InnerText -ne 'true').Count){continue}
-                $child=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($path)) $reference.GetAttribute('Include')))
+                $include=$reference.GetAttribute('Include')
+                $child=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($include)){$include}else{Join-Path ([IO.Path]::GetDirectoryName($path)) $include}))
                 $edges+=@($child);$pending.Enqueue($child)
             }
             $graph[$path]=$edges
@@ -172,7 +173,7 @@ function Get-TestBuildRoots([string]$Root,[string[]]$Targets) {
         }
         if(-not $roots.Count){return $fallback}
         return [pscustomobject]@{targets=$roots;omitted=$omitted;reason='generated-project-reference-roots'}
-    }catch{return $fallback}
+    }catch{$fallback.reason='project-reference-graph-unavailable';return $fallback}
 }
 function Get-TestConfirmedBuildTargets([string]$Root,[string[]]$Targets) {
     # A declared edge is only a scheduling hint. Confirm actual successful
@@ -240,8 +241,11 @@ function Invoke-FilteredTests {
             $confirmed=@(Get-TestConfirmedBuildTargets $repositoryRoot $buildRoots.omitted)
             $remaining=@($buildRoots.omitted|Where-Object {$_ -notin $confirmed})
             if($remaining.Count){
-                Write-Host "=== Building $($remaining.Count) dependency target(s) without confirmed Build completion ==="
-                Invoke-Checked -FilePath 'cmake' -Arguments (@('--build','--preset','tests','--target')+$remaining)
+                # A project can disable reference builds. After explicit
+                # dependency calls, its already-built parent may need relinking.
+                # Restore the entire original order instead of only children.
+                Write-Host "=== Restoring $($selection.Targets.Count) original target calls: $($remaining.Count) dependencies lack confirmed Build completion ==="
+                Invoke-Checked -FilePath 'cmake' -Arguments (@('--build','--preset','tests','--target')+$selection.Targets)
             }
         }
     }
