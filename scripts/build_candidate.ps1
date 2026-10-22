@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
     [Alias('Verb')][ValidateSet('candidate')][string]$CandidateVerb='candidate',
-    [Alias('Command')][ValidateSet('inspect','materialize')][string]$CandidateCommand='inspect',
+    [Alias('Command')][ValidateSet('inspect','materialize','artifact')][string]$CandidateCommand='inspect',
     [Alias('Snapshot')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateSnapshot,
     [Alias('Task')][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$CandidateTask,
+    [Alias('Artifact')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateArtifact,
     [Alias('Slot')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,31}$')][string]$CandidateSlotName='default'
 )
 
@@ -277,6 +278,11 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 try {
+    if($CandidateCommand -eq 'artifact'){
+        . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
+        $artifact=Read-CandidateArtifact $root $CandidateArtifact -VerifyFiles
+        $artifact.manifest|ConvertTo-Json -Depth 16;exit 0
+    }
     $snapshotRecord=Read-CandidateManifest $root $CandidateSnapshot -VerifyObjects
     if($CandidateCommand -eq 'inspect'){$snapshotRecord.manifest|ConvertTo-Json -Depth 16;exit 0}
     $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')

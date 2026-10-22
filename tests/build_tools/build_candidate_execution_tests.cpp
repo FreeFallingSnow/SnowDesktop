@@ -56,6 +56,13 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
         auto script=read(c.scripts/L"build_candidate_execution.ps1");
         replace(script,"if($file.state -eq 'present'){$inputLocks+=@([IO.File]::Open($path,'Open','Read',[IO.FileShare]::Read))}","# Controlled former executor holds no source handles.");
         write(c.scripts/L"build_candidate_execution.ps1",script,true);
+    }else if(control=="artifacts-slot-reference"){
+        auto script=read(c.scripts/L"build_candidate_artifacts.ps1");
+        // Preserve the actual copy and manifest. Only reproduce returning the
+        // mutable compiler slot to the caller as its acceptance program.
+        replace(script,"runtime=$payload;profile=$selection.profile;files=$records.Count",
+            "runtime=$selection.root;profile=$selection.profile;files=$records.Count");
+        write(c.scripts/L"build_candidate_artifacts.ps1",script,true);
     }else{require(control.empty(),"Unknown executor negative control");}
     write(c.root/L".gitignore",read(c.root/L".gitignore")+"!/CMakeLists.txt\n!/cmake/\n");
     write(c.root/L"CMakeLists.txt",R"CMAKE(cmake_minimum_required(VERSION 3.24)
@@ -164,6 +171,62 @@ $repositoryRoot=$ProbeRoot
     }
     std::cout<<"PASS physical/logical candidate output owners, Release/Debug separation, neighbor exclusion, PowerShell7/5.1 and original-path negative control\n";
 }
+void artifacts(const fs::path& repo,bool slotReference) {
+    Coordinator c(repo,"candidate-artifacts",true,fixture_parent(repo));
+    prepare(c,repo,slotReference?"artifacts-slot-reference":"");
+    const auto snapshot=capture(c),id=submit(c,execution(snapshot,"tests"));
+    const auto first=wait(c,id),record=first.at("record");
+    const auto& saved=record.at("artifact");
+    const auto runtime=fs::path(wide(saved.at("runtime").str()));
+    const auto executableFile=runtime/L"tests/SnowDesktopCandidateFixtureTests.exe";
+    require(saved.at("profile").str()=="test-files"&&saved.at("publicationComplete").boolean&&
+        !saved.at("reuseAllowed").boolean&&!saved.at("productRuntime").boolean,
+        "Selected test files claimed a complete product or reusable test result");
+    require(run({executableFile.wstring()},c.root).code==7,"Saved candidate program did not retain its initial inputs");
+    const auto editing=c.begin("editor");const auto batch=editing.at("batchId").str();
+    c.call({"claim","editor","-Batch",batch,"-Revision","0","-Files","src/value.h"});
+    write(c.root/L"src/value.h","#pragma once\ninline constexpr int value=11;\n");
+    c.plan("editor",batch,0,"none","","tool","src/value.h");
+    c.call({"ready-and-wait","editor","-Batch",batch,"-Revision","0","-WaitSeconds","30"});
+    const auto second=wait(c,submit(c,execution(capture(c))));
+    const auto output=fs::path(wide(second.at("record").at("candidateExecution").at("output").str()));
+    program(output,11);
+    require(run({executableFile.wstring()},c.root).code==7,
+        "Saved candidate program changed with reused compiler slot");
+    if(slotReference)return;
+    const auto inspected=c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","artifact","-Artifact",id});
+    require(inspected.at("candidate").str()==snapshot&&inspected.at("runtime").str()==saved.at("runtime").str()&&
+        inspected.at("sourceDigest").str()==record.at("inputEnd").at("digest").str(),"Artifact inspector lost the producing source/program identity");
+    auto taskRevision=[&](){
+        const auto tasks=c.call({"task-list"});
+        for(const auto& task:tasks.at("tasks").items)if(task.at("id").str()=="candidate")return std::to_string(task.at("revision").integer());
+        throw std::runtime_error("Missing candidate task");
+    };
+    auto start=[&](int code=0){return c.call({"acceptance-start","candidate","-CandidateRun",id,"-TaskRevision",taskRevision(),
+        "-AcceptanceCriterion","Saved executable still returns its captured value7 after the slot builds value11",
+        "-Files","tests/SnowDesktopCandidateFixtureTests.exe"},code);};
+    auto complete=[&](const std::string& acceptance,const std::string& outcome,int code=0){
+        return c.call({"acceptance-complete","candidate","-TaskRevision",taskRevision(),"-AcceptanceId",acceptance,
+            "-AcceptanceOutcome",outcome,"-Reporter","agent","-Reference","native-fixture:saved-executable-exit-code",
+            "-Notes","Executed saved program and observed7 while the reused compiler output returned11; fixture evidence only"},code);
+    };
+    const auto started=start().at("acceptance");
+    require(started.at("editRevision").kind==Json::Kind::Null&&started.at("batchId").kind==Json::Kind::Null&&
+        started.at("candidate").str()==snapshot&&started.at("runId").str()==id,"Standalone acceptance invented an editing grant or lost the candidate");
+    require(complete(started.at("id").str(),"passed").at("acceptance").at("status").str()=="passed",
+        "Unrelated live checkout edits invalidated saved-program acceptance");
+    complete(started.at("id").str(),"passed",2);
+    const auto tampered=start().at("acceptance").at("id").str();
+    write(executableFile,read(executableFile)+"changed");
+    c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","artifact","-Artifact",id},2);
+    complete(tampered,"passed",2);complete(tampered,"cancelled");program(output,11);
+    c.call({"task-stage","candidate","-TaskRevision",taskRevision(),"-RequirementsRevision","1","-Progress","Fixture requirement changed"});
+    start(2);
+    const auto control=run({executable().wstring(),repo.wstring(),L"--artifacts-slot-reference"},c.root,100,{},true);
+    require(control.code==1&&control.err.find("Saved candidate program changed with reused compiler slot")!=std::string::npos,
+        "Mutable output negative control did not reach the observed program failure: "+control.out+control.err);
+    std::cout<<"PASS saved runtime survives slot reuse, Run acceptance survives source edits, stale requirements and corruption reject, mutable-output control fails\n";
+}
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"x",true,fixture_parent(repo));prepare(c,repo,control);
     const auto snapshot=capture(c);const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
@@ -246,6 +309,7 @@ void scenario(const fs::path& repo,const std::string& control) {
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
-    if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
+    if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
+    else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
     else scenario(repo,mode.empty()?"":mode.substr(2));
 });}

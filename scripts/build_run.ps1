@@ -194,7 +194,8 @@ try {
         $tasks=@($state.taskLedger.tasks | Where-Object {$_.id -eq $Task -and -not $_.closedUtc})
         if($tasks.Count -ne 1){throw 'run start requires one active investigation task in this checkout.'}
         $id=[Guid]::NewGuid().ToString('N');$now=[DateTime]::UtcNow.ToString('o')
-        $request=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;task=$Task;taskRevision=$tasks[0].revision;nonce=[Guid]::NewGuid().ToString('N');
+        $request=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;task=$Task;taskRevision=$tasks[0].revision;
+            requirementsRevision=(Get-Field $tasks[0] 'requirementsRevision' 0);nonce=[Guid]::NewGuid().ToString('N');
             launcher=[pscustomobject]@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()};
             action=$Action;mode=$Mode;filter=$Filter;configuration=$Configuration;targets=@($Targets);planBatch=$PlanBatch;automaticTask=$automaticTask;
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
@@ -539,6 +540,18 @@ try {
             Complete-RunStage $record $stage $record.exitCode
             $record.inputEnd=Get-BuildInputIdentity $executionRoot
             $cancelled=('SnowDesktop.Build.Job' -as [type]) -and [SnowDesktop.Build.Job]::RunWasCancelled
+            if($candidateExecution -and $request.candidateAction -in 'release','debug','tests' -and
+                -not $cancelled -and $record.exitCode -eq 0 -and $record.inputStart.digest -eq $record.inputEnd.digest){
+                . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
+                $artifactStage=Start-RunStage $record 'artifact-publish';$artifactCode=2
+                try{
+                    $published=Publish-CandidateRuntime $candidateExecution.context $request.candidateAction {
+                        if(Run-CancellationRequested $request){throw [OperationCanceledException]::new('Candidate artifact publication cancelled.')}
+                    }
+                    if($published){Set-Field $record 'artifact' $published}
+                    $artifactCode=0
+                }finally{Complete-RunStage $record $artifactStage $artifactCode}
+            }
             $record.status=if($cancelled){'cancelled'}elseif($request.mode -eq 'verify' -and $record.exitCode -eq 5){'invalidated'}elseif($record.exitCode -eq 0){'passed'}else{'failed'}
             if($record.status -eq 'cancelled'){$record.exitCode=4}
             elseif($record.inputStart.digest -ne $record.inputEnd.digest){$record.status='invalidated';$record.exitCode=5;$record.error='Build inputs changed while this Run was executing.'}
@@ -546,7 +559,7 @@ try {
     } catch {
         if(-not $ownsRun){throw}
         $invalidated=$record.PSObject.Properties['resourceAdmission'] -and $record.resourceAdmission.bindingValid -eq $false
-        $captureCancelled=$request.action -eq 'snapshot' -and (Run-CancellationRequested $request)
+        $captureCancelled=$request.action -in 'snapshot','candidate' -and (Run-CancellationRequested $request)
         $record.exitCode=if($captureCancelled){4}elseif($invalidated){5}else{2};$record.error=$_.Exception.ToString()
         if($queue -and -not $queue.completedUtc){Complete-RunStage $record $queue $record.exitCode}
         if($stage -and -not $stage.completedUtc){Complete-RunStage $record $stage $record.exitCode}

@@ -164,6 +164,10 @@ Run 请求、结果、事件及资源观测，候选执行不取得原工作区�
 Run 的 `candidateExecution` 关联快照、清单摘要、槽位及实际源码/输出目录；输入身份来自清单和逐文件内容，
 不向上发现原工作区 Git。候选测试在 `<runId>.candidate-tests.json` 保留选择集合、定义、二进制、显式运行
 文件及 JUnit 报告身份，包括测试失败。显式取消和执行者退出仅清理本次私有 Job，观察者退出不取消执行。
+通过的 Release/Debug 候选另存独立运行文件，后续候选复用编译槽位不会覆盖这份副本。
+`candidate artifact -Artifact <runId>` 只读核对清单、源码关联与逐文件哈希。Run 的可选 `artifact`
+记录保存生产者和清单摘要；未发布完整清单的半成品不可用。产品包排除用户数据，测试仅保存明确的输出
+文件子集，`test-files` 不表示完整产品运行包。此处不启用发布或结束结果自动复用。
 SDK/包的传递文件依赖尚未闭合，仍为 `externalDependenciesClosed=false` 和 `reuseAllowed=false`。
 没有启用已完成结果自动缓存、依赖驱动筛选或现有批次自动迁移；本接口是后续调度的执行基础。
 
@@ -324,6 +328,7 @@ CTest 命令/属性摘要和执行环境摘要。采集在目标生成后、测�
 
 ```bat
 scripts\build.bat acceptance-start ID -Batch B -Revision R -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files .build/Release/SnowDesktop.exe
+scripts\build.bat acceptance-start ID -CandidateRun RUN -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files SnowDesktop.exe
 scripts\build.bat acceptance-list ID -Batch B
 scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -AcceptanceOutcome passed -Reporter user -Reference "实际反馈或证据位置" -Notes "原始样本、观察步骤和结果"
 ```
@@ -331,7 +336,11 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 开始时要求候选已通过且输入稳定、任务需求修订一致，运行文件须属于该候选的输入、已记录构建输出或测试输出。
 旧格式缺少需求关联、未验证的现有输出以及路径链接均不推断为可验收候选。文件关联表示可核对的文件身份，
 实际进程加载与可见行为仍由观察和引用证明，不能仅凭文件哈希宣称实机通过。
-完成时重新核对输入、产物与需求修订；变化后不能登记 pass，可如实记录 failed/cancelled，再准备新候选。
+独立候选 Run 使用 `-CandidateRun`，不填写批次或编辑修订，`-Files` 相对于该 Run 保存的 runtime 目录。
+它要求提交时保存的需求修订及通过且输入稳定的运行记录，核对 Run、快照、清单和逐文件哈希；
+旧 Run 缺少关联时明确拒绝。`test-files` 只表示所选测试输出，不表示完整产品或运行依赖已经闭合。
+完成时重新核对产物与需求修订；批次验收另核对原工作区输入，Run 验收核对保存的快照和程序，
+允许原工作区继续开发。产物或需求变化后不能登记 pass，可如实记录 failed/cancelled，再准备新候选。
 反馈来源为 user 或 agent，须记录真实观察；已完成记录不可改写，结果不改动原构建/测试结论，也不表示发布。
 区间使用同一系统启动周期内的 QPC 单调计数；UTC 只用于显示，跨重启或无法取得时钟身份时明确未记录耗时。
 参见 [Windows 高精度计时说明](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)。

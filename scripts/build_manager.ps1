@@ -29,6 +29,7 @@ param(
     [long]$AfterSequence=0, [long]$Sequence=0,
     [ValidateSet('adapter','agent')][string]$AckLevel='adapter',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$AcceptanceId,
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateRun,
     [ValidateLength(0,1000)][string]$AcceptanceCriterion='',
     [ValidateSet('passed','failed','cancelled')][string]$AcceptanceOutcome='passed',
     [ValidateSet('user','agent')][string]$Reporter='agent',
@@ -342,9 +343,16 @@ try {
             $state=Read-State;$task=Find-VisibleTask (Get-TaskLedger $state) $Participant;Assert-TaskRevision $task $TaskRevision
             if($task.phase -in 'completed','cancelled'){throw 'A closed task cannot open or complete acceptance.'}
             if($Command -eq 'acceptance-start'){
-                if(-not $Batch -or $Revision -lt 0){throw 'Acceptance start requires the candidate batch and edit revision.'}
-                $saved=Read-Result $Batch;if(-not $saved){throw 'Candidate result is not available.'}
-                $record=Start-TaskAcceptance $repositoryRoot $state $task $saved $Revision $AcceptanceCriterion $Files
+                if($CandidateRun){
+                    if($Batch -or $Revision -ge 0){throw 'CandidateRun acceptance cannot also name a batch/edit revision.'}
+                    $request=Read-EntryJson (Join-Path $stateRoot ('runs/'+$CandidateRun+'.request.json'))
+                    $saved=Read-EntryJson (Join-Path $stateRoot ('runs/'+$CandidateRun+'.json'))
+                    $record=Start-RunAcceptance $repositoryRoot $state $task $CandidateRun $request $saved $AcceptanceCriterion $Files
+                }else{
+                    if(-not $Batch -or $Revision -lt 0){throw 'Acceptance start requires CandidateRun or the candidate batch and edit revision.'}
+                    $saved=Read-Result $Batch;if(-not $saved){throw 'Candidate result is not available.'}
+                    $record=Start-TaskAcceptance $repositoryRoot $state $task $saved $Revision $AcceptanceCriterion $Files
+                }
             }else{
                 if(-not $AcceptanceId){throw 'Acceptance completion requires -AcceptanceId.'}
                 $record=Complete-TaskAcceptance $repositoryRoot $state $task $AcceptanceId $AcceptanceOutcome $Reporter $Reference $Notes
