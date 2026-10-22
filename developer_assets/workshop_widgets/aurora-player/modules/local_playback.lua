@@ -107,7 +107,7 @@ function M.panel(_context,model)
         children[#children+1]=panel.well("local.preferences.card",row,localSettings)
         children[#children+1]=command("playlist","music.playlist",M.available())
     else
-        children[#children+1]=view.row({key="playlist.toolbar",width="fill",height=row*1.12,gap=row*0.2,alignItems="center",children={
+        children[#children+1]=view.row({key="playlist.toolbar",width="fill",height=row*1.12,padding={horizontal=row*0.3},gap=row*0.2,alignItems="center",children={
             panel.text("playlist.subtitle",tostring(#p.tracks).."  "..l10n.tr("music.tracks"),row,{style={foreground=c.secondary}}),
             panel.iconButton("playlist.add.files",0xF067,l10n.tr("music.files"),row*1.1,"local.files",M.available()),
             panel.iconButton("playlist.add.folder",0xF07B,l10n.tr("music.folder"),row*1.1,"local.folder",M.available()),
@@ -124,7 +124,7 @@ function M.panel(_context,model)
             local drag=model.drag
             local dragging=drag and drag.moved and drag.from==i
             local boundary=drag and drag.moved and drag.boundary
-            local layers={view.column({key=track.key..".padding",width="fill",height="fill",padding={vertical=row*0.07},children={
+            local layers={view.column({key=track.key..".padding",width="fill",height="fill",padding={vertical=row*0.07,horizontal=row*0.3},children={
                 view.row({key=track.key..".row",width="fill",height="fill",padding={horizontal=row*0.45},gap=row*0.25,
                     alignItems="center",style={background=i==p.index and c.selected or c.surface,cornerRadius=row*0.3,borderWidth=0,opacity=dragging and 0.45 or 1},children={
                         text(track.key..".index",tostring(i),row*0.4,color,{width=row*1.5,textAlign="end"}),
@@ -135,7 +135,7 @@ function M.panel(_context,model)
             }
             if boundary==i or (boundary==0 and i==1) then
                 layers[#layers+1]=view.column({key=track.key..".drop",width="fill",height="fill",
-                    justifyContent=boundary==0 and "start" or "end",children={
+                    padding={horizontal=row*0.3},justifyContent=boundary==0 and "start" or "end",children={
                         view.row({key=track.key..".drop.line",width="fill",height=row*0.12,alignItems="center",children={
                             view.shape({key=track.key..".drop.head",shape="circle",width=row*0.12,height=row*0.12,style={background=accent}}),
                             view.box({key=track.key..".drop.rule",width="fill",height=row*0.075,style={background=accent,cornerRadius=row*0.04}}),
@@ -148,8 +148,9 @@ function M.panel(_context,model)
                     view.stack({key=track.key..".layers",width="fill",height="fill",children=layers})}})
         end
         children[#children+1]=view.virtualList({key="playlist.list",width="fill",height=viewport,itemCount=#p.tracks,itemExtent=extent,
-            firstIndex=range.firstIndex,children=items,emptyContent=label("playlist.empty",l10n.tr("music.empty"))})
-        children[#children+1]=view.row({key="playlist.footer",width="fill",height=row,gap=row*0.2,alignItems="center",children={
+            firstIndex=range.firstIndex,children=items,emptyContent=view.column({key="playlist.empty.inset",width="fill",height="fill",
+                padding={horizontal=row*0.3},children={label("playlist.empty",l10n.tr("music.empty"))}})})
+        children[#children+1]=view.row({key="playlist.footer",width="fill",height=row,padding={horizontal=row*0.3},gap=row*0.2,alignItems="center",children={
             view.spacer({key="playlist.footer.space",width="fill",height=row}),
             view.button({key="music.clear",label=l10n.tr("music.clear"),width="auto",height=row,
                 fontSize=row*0.41,padding={horizontal=row*0.4},enabled=#p.sources>0,
@@ -157,7 +158,7 @@ function M.panel(_context,model)
                 events={click={id="local.clear"}}})}})
     end
     local content=view.column({key="playlist.surface",width="fill",height=model.panelKind=="options" and "auto" or "fill",
-        padding=row*0.3,gap=row*0.28,children=children})
+        padding=model.panelKind=="options" and row*0.3 or {vertical=row*0.3},gap=row*0.28,children=children})
     if model.panelKind=="options" then
         return view.scroll({key="options.scroll",width="fill",height="fill",children={content}})
     end
