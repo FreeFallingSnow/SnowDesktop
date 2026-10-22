@@ -47,6 +47,24 @@ void scenario(const fs::path& repo,const std::string& control){
     write(c.root/L".build/learned-cost","changed scheduling history is not a changed assertion");
     require(c.result(batch).at("inputCheck").str()=="stable","Baseline did not bind stable inputs");
     c.call({"task-open","subscriber","-TaskName","A second requester"});
+    if(control.empty()){
+        const auto proposed=command(c,env,{"-Command","budget"}).at("policy");
+        require(proposed.at("memoryCapacityMiB").integer()>=2048,"Weighted verification fixture needs at least2GiB of policy capacity");
+        command(c,env,{"-Command","budget","-Task","owner","-CpuCapacity",std::to_string(std::min(2,proposed.at("cpuCapacity").integer())),"-MemoryCapacityMiB","2048","-Reason","controlled verification budget identities"});
+        auto weighted=[&](const std::string& task,const std::string& memory){
+            auto result=command(c,env,{"-Command","start","-Action","tests","-Mode","verify","-Task",task,"-PlanBatch",batch,"-Filter","Beta,Alpha","-Reason","weighted existing candidate","-CpuSlots","1","-MemoryMiB",memory});
+            track(c,result.at("id").str());return result;
+        };
+        fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
+        const auto firstBudget=weighted("owner","1024");const auto budgetId=firstBudget.at("id").str();await_execution(c,budgetId);
+        require(weighted("subscriber","1024").at("id").str()==budgetId,"Identical resource budgets failed active verification deduplication");
+        const auto differentBudget=weighted("subscriber","1536");const auto differentId=differentBudget.at("id").str();
+        require(differentId!=budgetId&&!differentBudget.at("joined").boolean,"Different memory ceilings incorrectly shared one verification Run");
+        command(c,env,{"-Command","cancel","-Task","subscriber","-RunId",differentId});wait_run(c,env,differentId,4);
+        c.gate(".build/hold-verification",false);wait_run(c,env,budgetId);
+        const auto metrics=Json::parse(read(c.stateRoot/L"runs"/wide(budgetId+".resources.json")));
+        require(metrics.at("requestedCpuSlots").integer()==1&&metrics.at("committedMemoryLimitBytes").number==1073741824.0&&metrics.at("cpuLimitBasisPoints").number>0,"Weighted verification did not apply real private Job limits");
+    }
     const auto builds=count(c.root/L"build.count"),configures=count(c.root/L".build/configure.count"),executions=count(c.root/L".build/verification-exec.count");
     auto start=[&](const std::string& task,const Env& context){
         auto value=command(c,context,{"-Command","start","-Action","tests","-Mode","verify","-Task",task,"-PlanBatch",batch,"-Filter","Beta,Alpha","-Reason","Supplement existing candidate without a build"});

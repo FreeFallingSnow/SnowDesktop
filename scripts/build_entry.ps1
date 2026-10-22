@@ -290,26 +290,170 @@ function Enter-BuildEntry([string]$Root) {
 function Exit-BuildEntry($Entry) {
     if($Entry){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$Entry.oldToken,'Process');$Entry.lease.Dispose()}
 }
-function Get-ProjectResourceBinding([string]$Root,[bool]$Required) {
+function Get-ProjectResourceBinding([string]$Root,[bool]$Required,[int]$CpuSlots=0,[int]$MemoryMiB=0,[bool]$Exclusive=$false) {
+    if(($CpuSlots -eq 0) -ne ($MemoryMiB -eq 0) -or $CpuSlots -lt 0 -or $MemoryMiB -lt 0){throw 'CPU slots and memory MiB must be supplied together.'}
+    if(-not $Required -and $CpuSlots){throw 'Inspection and empty plans do not accept a weighted execution budget.'}
     if(-not $Required){return [pscustomobject]@{policy='inspection-v1';required=$false;commonGitDirectory=$null;lockPath=$null}}
     if(-not (Get-Command Invoke-InputGit -ErrorAction SilentlyContinue)){. (Join-Path $PSScriptRoot 'build_inputs.ps1')}
     $git=Invoke-InputGit $Root 'rev-parse --path-format=absolute --git-common-dir'
     if($git.code -ne 0 -or -not [IO.Path]::IsPathRooted($git.output.Trim())){throw 'Cannot resolve the shared Git resource scope; no heavy execution was admitted.'}
     $common=[IO.Path]::GetFullPath($git.output.Trim())
     if(-not [IO.Directory]::Exists($common)){throw 'Shared Git resource scope is unavailable; no heavy execution was admitted.'}
-    return [pscustomobject]@{policy='project-heavy-v1';required=$true;commonGitDirectory=$common;lockPath=(Join-Path $common 'snowdesktop-execution/heavy.lock')}
+    $binding=[pscustomobject]@{policy='project-heavy-v1';required=$true;commonGitDirectory=$common;lockPath=(Join-Path $common 'snowdesktop-execution/heavy.lock')}
+    if(-not $CpuSlots){return $binding}
+    $state=Get-WeightedResourcePolicy $Root -Persist
+    $policy=$state.policy
+    $reserved=[int]([Math]::Ceiling($MemoryMiB/256.0)*256)
+    if($CpuSlots -gt $policy.cpuCapacity -or $MemoryMiB -lt 256 -or $reserved -gt $policy.memoryCapacityMiB){throw 'Requested CPU or committed-memory budget exceeds project policy capacity.'}
+    $binding.policy='project-weighted-v1'
+    foreach($pair in ([ordered]@{compatibilityMode=$(if($Exclusive){'exclusive'}else{'shared'});policyHash=$state.hash;policyPath=$state.path;cpuSlots=$CpuSlots;memoryMiB=$MemoryMiB;reservedMemoryMiB=$reserved;
+        logicalProcessors=$policy.logicalProcessors;cpuCapacity=$policy.cpuCapacity;memoryCapacityMiB=$policy.memoryCapacityMiB;headroomMiB=$policy.headroomMiB}).GetEnumerator()){$binding|Add-Member NoteProperty $pair.Key $pair.Value}
+    return $binding
+}
+function Initialize-ResourceRuntime {
+    if(-not ('SnowDesktop.Build.Job' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')}
+    if(-not ('SnowDesktop.Build.ResourceBroker' -as [type])){throw 'This PowerShell process loaded an older resource runtime; start a new process before requesting weighted execution.'}
+}
+function New-WeightedResourcePolicy {
+    Initialize-ResourceRuntime
+    $logical=[int][SnowDesktop.Build.Job]::LogicalProcessors()
+    $physical=[long][Math]::Floor([SnowDesktop.Build.Job]::PhysicalMemoryBytes()/1048576.0)
+    $memory=[int]([Math]::Floor($physical*0.70/256.0)*256)
+    if($logical -gt 4096 -or $memory -lt 256 -or $memory -gt 1048576){throw 'Machine resource capacity is outside the supported policy range.'}
+    return [pscustomobject]@{schemaVersion=1;policy='project-weighted-v1';generation=[Guid]::NewGuid().ToString('N');logicalProcessors=$logical;physicalMemoryMiB=$physical;
+        cpuCapacity=[Math]::Max(1,$logical-2);memoryCapacityMiB=$memory;memorySlotMiB=256;headroomMiB=[int][Math]::Max(1024,[Math]::Floor($physical/8.0));
+        configuredUtc=[DateTime]::UtcNow.ToString('o');configuredBy='automatic-default';reason='Reserve two logical CPUs when available and physical-memory headroom; opt-in weighted requests only.'}
+}
+function Assert-WeightedResourcePolicy($Policy,[switch]$Historical) {
+    foreach($name in @('schemaVersion','policy','generation','logicalProcessors','physicalMemoryMiB','cpuCapacity','memoryCapacityMiB','memorySlotMiB','headroomMiB')){
+        if(-not $Policy -or -not $Policy.PSObject.Properties[$name]){throw 'Resource policy is incomplete; preserve it for diagnosis.'}
+    }
+    foreach($name in @('schemaVersion','logicalProcessors','physicalMemoryMiB','cpuCapacity','memoryCapacityMiB','memorySlotMiB','headroomMiB')){
+        $value=$Policy.$name
+        if($value -isnot [ValueType] -or $value -is [bool] -or [double]$value -ne [Math]::Truncate([double]$value)){throw 'Resource policy numeric fields must be integers.'}
+    }
+    if($Policy.schemaVersion -ne 1 -or $Policy.policy -ne 'project-weighted-v1' -or $Policy.generation -notmatch '^[a-f0-9]{32}$' -or
+        $Policy.logicalProcessors -lt 1 -or $Policy.logicalProcessors -gt 4096 -or $Policy.cpuCapacity -lt 1 -or $Policy.cpuCapacity -gt [Math]::Max(1,$Policy.logicalProcessors-2) -or
+        $Policy.memorySlotMiB -ne 256 -or $Policy.memoryCapacityMiB -lt 256 -or $Policy.memoryCapacityMiB -gt 1048576 -or $Policy.memoryCapacityMiB%256 -ne 0 -or
+        $Policy.memoryCapacityMiB -gt [Math]::Floor($Policy.physicalMemoryMiB*0.70/256)*256 -or $Policy.headroomMiB -lt [Math]::Max(1024,[Math]::Floor($Policy.physicalMemoryMiB/8)) -or
+        $Policy.headroomMiB -gt $Policy.physicalMemoryMiB-256){throw 'Resource policy has unsupported or unsafe capacity values.'}
+    if(-not $Historical){
+        Initialize-ResourceRuntime
+        if($Policy.logicalProcessors -ne [SnowDesktop.Build.Job]::LogicalProcessors() -or
+            $Policy.physicalMemoryMiB -ne [long][Math]::Floor([SnowDesktop.Build.Job]::PhysicalMemoryBytes()/1048576.0)){throw 'Resource policy hardware changed; reconfigure only in a quiescent execution window.'}
+    }
+}
+function Read-ResourcePolicySnapshot([string]$Path) {
+    if(-not [IO.File]::Exists($Path)){return $null}
+    $stream=[IO.File]::Open($Path,'Open','Read',([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader=New-Object IO.StreamReader($stream,[Text.Encoding]::UTF8)
+    try {if($stream.Length -gt 64KB){throw 'Resource policy exceeds 64 KiB; preserve it.'};$raw=$reader.ReadToEnd()}finally{$reader.Dispose()}
+    return [pscustomobject]@{policy=($raw|ConvertFrom-Json);hash=(Get-EntryHash $raw);path=$Path;persisted=$true}
+}
+function Open-ResourceTransaction([string]$Directory,[int]$Milliseconds=1000) {
+    $timer=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        try {return [IO.File]::Open((Join-Path $Directory 'budget.lock'),'OpenOrCreate','ReadWrite','None')}
+        catch {if(-not (Test-EntrySharingViolation $_.Exception) -or $timer.ElapsedMilliseconds -ge $Milliseconds){throw};Start-Sleep -Milliseconds 20}
+    }
+}
+function Write-ResourcePolicy($Policy,[string]$Path) {
+    $temporary=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
+    try {
+        if([IO.File]::Exists($Path)){
+            $history=Join-Path ([IO.Path]::GetDirectoryName($Path)) 'policies';[void][IO.Directory]::CreateDirectory($history)
+            [IO.File]::Copy($Path,(Join-Path $history ([Guid]::NewGuid().ToString('N')+'.json')),$false)
+        }
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($Policy|ConvertTo-Json -Depth 8))
+        $stream=[IO.File]::Open($temporary,'CreateNew','Write','None')
+        try {$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,$temporary+'.bak')}else{[IO.File]::Move($temporary,$Path)}
+    }finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
+}
+function Get-WeightedResourcePolicy([string]$Root,[switch]$Persist) {
+    Initialize-ResourceRuntime
+    $scope=Get-ProjectResourceBinding $Root $true
+    $directory=[IO.Path]::GetDirectoryName($scope.lockPath);$path=Join-Path $directory 'budget.json'
+    if(-not $Persist){
+        $snapshot=Read-ResourcePolicySnapshot $path
+        if($snapshot){Assert-WeightedResourcePolicy $snapshot.policy;return $snapshot}
+        if([IO.File]::Exists((Join-Path $directory 'budget.lock'))){throw 'Resource policy is missing after initialization; preserve tokens and configure only while quiescent.'}
+        return [pscustomobject]@{policy=(New-WeightedResourcePolicy);hash=$null;path=$path;persisted=$false}
+    }
+    [void][IO.Directory]::CreateDirectory($directory)
+    $initialized=[IO.File]::Exists((Join-Path $directory 'budget.lock'))
+    $transaction=Open-ResourceTransaction $directory
+    try {
+        $snapshot=Read-ResourcePolicySnapshot $path
+        if(-not $snapshot){
+            if($initialized){throw 'Resource policy is missing after initialization; preserve tokens and configure only while quiescent.'}
+            Write-ResourcePolicy (New-WeightedResourcePolicy) $path;$snapshot=Read-ResourcePolicySnapshot $path
+        }
+        Assert-WeightedResourcePolicy $snapshot.policy;return $snapshot
+    }finally{$transaction.Dispose()}
+}
+function Set-WeightedResourcePolicy([string]$Root,[int]$CpuCapacity,[int]$MemoryCapacityMiB,[string]$Task,[string]$Reason) {
+    $policy=New-WeightedResourcePolicy
+    if($CpuCapacity -lt 1 -or $CpuCapacity -gt $policy.cpuCapacity -or $MemoryCapacityMiB -lt 256 -or $MemoryCapacityMiB -gt $policy.memoryCapacityMiB -or $MemoryCapacityMiB%256){throw 'Configured capacity must fit hardware reserves; memory capacity uses multiples of 256 MiB.'}
+    $scope=Get-ProjectResourceBinding $Root $true;$directory=[IO.Path]::GetDirectoryName($scope.lockPath)
+    [void][IO.Directory]::CreateDirectory($directory)
+    $compatibility=$null;$transaction=$null
+    try {
+        $compatibility=[IO.File]::Open($scope.lockPath,'OpenOrCreate','ReadWrite','None')
+        $transaction=Open-ResourceTransaction $directory
+        $path=Join-Path $directory 'budget.json';$previous=Read-ResourcePolicySnapshot $path
+        if($previous){Assert-WeightedResourcePolicy $previous.policy -Historical}
+        $policy.cpuCapacity=$CpuCapacity;$policy.memoryCapacityMiB=$MemoryCapacityMiB;$policy.configuredBy=$Task;$policy.reason=$Reason
+        Write-ResourcePolicy $policy $path;return (Read-ResourcePolicySnapshot $path)
+    }catch{if(Test-EntrySharingViolation $_.Exception){throw 'Resource policy is busy; no capacity change was applied while a lease or transaction is active.'};throw}
+    finally{if($transaction){$transaction.Dispose()};if($compatibility){$compatibility.Dispose()}}
 }
 function Enter-ProjectResources($Binding) {
     # The handle is the authority. No PID, heartbeat age, stale JSON or timeout
     # releases somebody else's capacity. It is never inherited by a child.
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Binding.lockPath))
-    try {return [IO.File]::Open($Binding.lockPath,'OpenOrCreate','ReadWrite','None')}
+    $compatibility=$null;$transaction=$null
+    try {
+        if($Binding.policy -ne 'project-weighted-v1'){return [IO.File]::Open($Binding.lockPath,'OpenOrCreate','ReadWrite','None')}
+        Initialize-ResourceRuntime
+        # Shared readers exclude the original v1 exclusive writer. Keep that
+        # reader until all weighted tokens are released, including on crash.
+        if($Binding.compatibilityMode -eq 'exclusive'){$compatibility=[IO.File]::Open($Binding.lockPath,'OpenOrCreate','ReadWrite','None')}
+        else{$compatibility=[IO.File]::Open($Binding.lockPath,'OpenOrCreate','Read','Read')}
+        $transaction=Open-ResourceTransaction ([IO.Path]::GetDirectoryName($Binding.lockPath)) 0
+        $snapshot=Read-ResourcePolicySnapshot $Binding.policyPath
+        if(-not $snapshot -or $snapshot.hash -ne $Binding.policyHash){throw 'Resource policy changed before admission.'}
+        Assert-WeightedResourcePolicy $snapshot.policy
+        $attempt=[SnowDesktop.Build.ResourceBroker]::TryReserve([IO.Path]::GetDirectoryName($Binding.lockPath),$Binding.cpuCapacity,[int]($Binding.memoryCapacityMiB/256),
+            $Binding.cpuSlots,[int]($Binding.reservedMemoryMiB/256),[SnowDesktop.Build.Job]::AvailableMemoryBytes(),([ulong]$Binding.headroomMiB*1048576))
+        if(-not $attempt.Lease){
+            $busyError=New-Object InvalidOperationException ('Shared project resources busy: '+$attempt.BusyKind+'; requested '+$Binding.cpuSlots+' CPU slots / '+$Binding.memoryMiB+' MiB')
+            $busyError.Data['resourceObservation']=$attempt;throw $busyError
+        }
+        $attempt.Lease.AttachCompatibility($compatibility);$compatibility=$null
+        return $attempt.Lease
+    }
     catch {
         if(Test-EntrySharingViolation $_.Exception){throw ('Shared project resources busy: heavy execution lane in '+$Binding.commonGitDirectory)}
         throw
     }
+    finally{if($transaction){$transaction.Dispose()};if($compatibility){$compatibility.Dispose()}}
+}
+function Get-EntryResourceBudget([string]$Root) {
+    $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if(-not $id){return $null}
+    if($id -notmatch '^[a-f0-9]{32}$'){throw 'Invalid budget Run identity.'}
+    $directory=Join-Path $Root '.build/collaboration/runs'
+    $request=Read-EntryJson (Join-Path $directory ($id+'.request.json'))
+    if(-not $request -or -not $request.PSObject.Properties['projectResources'] -or $request.projectResources.policy -ne 'project-weighted-v1'){return $null}
+    $record=Read-EntryJson (Join-Path $directory ($id+'.json'))
+    if(-not $record -or $request.repositoryRoot -ne $Root -or $record.repositoryRoot -ne $Root -or $record.id -ne $id -or $record.nonce -ne $request.nonce -or
+        $record.status -ne 'running' -or -not (Test-EntryDelegation $Root) -or -not (Test-EntryAncestor $record.owner) -or
+        -not $record.resourceAdmission.acquiredUtc -or -not $record.resourceAdmission.bindingValid){throw 'Weighted commands require their live admitted Run and output authority.'}
+    return $request.projectResources
 }
 function Set-EntryRunControl([string]$Root) {
+    [SnowDesktop.Build.Job]::ConfigureResourceBudget(0,0,0)
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return}
     if($id -notmatch '^[a-f0-9]{32}$'){throw 'Invalid Run identity.'}
@@ -325,6 +469,8 @@ function Set-EntryRunControl([string]$Root) {
         throw 'Run executor process identity changed.'
     }
     Assert-EntryExecutionOwner $Root
+    $budget=Get-EntryResourceBudget $Root
+    if($budget){[SnowDesktop.Build.Job]::ConfigureResourceBudget($budget.cpuSlots,$budget.logicalProcessors,$budget.memoryMiB)}
     [SnowDesktop.Build.Job]::ConfigureRunControl((Join-Path $directory ($id+'.cancel')),$request.nonce,(Join-Path $directory ($id+'.resources.json')))
 }
 function Assert-EntryExecutionOwner([string]$Root) {

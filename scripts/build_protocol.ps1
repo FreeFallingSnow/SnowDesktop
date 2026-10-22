@@ -169,7 +169,7 @@ function Checks-BlockFreeze($Current) {
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
-    $tasks=@(); $full=$false; $build=$false; $testing=$false
+    $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
         $plan=Get-Field $entry 'testPlan'
@@ -184,6 +184,8 @@ function New-FrozenPlan($Current) {
         if ($plan.requiredFull) { $full=$true }
         if ($plan.suites -notcontains 'none') {
             $testing=$true
+            $request=Get-Field $plan 'projectResources'
+            if($request){$resources+=@($request)}else{$exclusive=$true}
             # Test selection and a complete host build are distinct needs.
             # Targeted test builds still use the inventory's real dependencies.
             if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}
@@ -192,8 +194,20 @@ function New-FrozenPlan($Current) {
     }
     $names=@($tasks | ForEach-Object { $_.requirement.tests } | Sort-Object -Unique)
     $suites=@($tasks | ForEach-Object { $_.requirement.suites } | Where-Object { $_ -ne 'none' } | Sort-Object -Unique)
-    return [pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
+    $result=[pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
         mode=$(if($full){'full'}elseif($testing){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
+    if($resources.Count -and -not $exclusive){
+        $first=$resources[0]
+        if(@($resources|Where-Object {$_.policy -ne 'project-weighted-v1' -or $_.policyHash -ne $first.policyHash -or $_.commonGitDirectory -ne $first.commonGitDirectory}).Count){throw 'Participant resource policies differ; reopen and update the affected plans.'}
+        # The aggregate pipeline has one CPU ceiling and one committed-memory
+        # ceiling. Use the largest member need, not additive nested budgets.
+        $binding=($first|ConvertTo-Json -Depth 8)|ConvertFrom-Json
+        $binding.cpuSlots=[int](($resources|Measure-Object cpuSlots -Maximum).Maximum)
+        $binding.memoryMiB=[int](($resources|Measure-Object memoryMiB -Maximum).Maximum)
+        $binding.reservedMemoryMiB=[int]([Math]::Ceiling($binding.memoryMiB/256.0)*256)
+        Set-Field $result 'projectResources' $binding
+    }
+    return $result
 }
 function Resolve-PlanTests($Plan, $Inventory) {
     $selected=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)

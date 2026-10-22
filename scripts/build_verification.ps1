@@ -69,7 +69,7 @@ function Get-VerificationNames([string]$Filter) {
     if($names.Count -lt 1 -or $names.Count -gt 128 -or @($names|Where-Object {$_ -notmatch '^[A-Za-z0-9_-]{1,160}$'}).Count -or @($names|Sort-Object -Unique).Count -ne $names.Count){throw 'Verification requires 1..128 unique, literal comma-separated CTest names.'}
     return @($names|Sort-Object)
 }
-function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filter) {
+function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filter,$ResourceBudget=$null) {
     if($Baseline -notmatch '^[a-f0-9]{32}$'){throw 'Verification requires -PlanBatch with an immutable baseline batch ID.'}
     $result=Read-EntryJson (Join-Path $Root ('.build/collaboration/'+$Baseline+'.json'))
     if(-not $result -or $result.repositoryRoot -ne $Root -or $result.batchId -ne $Baseline -or $result.inputCheck -ne 'stable' -or $result.outcome -notin 'passed','failed'){throw 'Verification baseline is not a stable, completed candidate.'}
@@ -99,6 +99,7 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     $oldRuntime=@(Get-Field $result.coverage 'testRuntimeFilesBeforeRun' @()|Where-Object {$names -contains $_.test})
     if(($runtimeFiles|ConvertTo-Json -Depth 8 -Compress) -ne ($oldRuntime|ConvertTo-Json -Depth 8 -Compress)){throw 'Explicit verification runtime files changed or their baseline identity is unavailable.'}
     $binding=[pscustomobject]@{sourceDigest=$source.digest;configuration='Release';names=$names;definitions=$definitions;artifacts=$artifacts;runtimeFiles=$runtimeFiles;environmentDigest=$context.digest}
+    if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}
     return [pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
 }
 function Get-VerificationLedger($State) {

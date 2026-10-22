@@ -125,7 +125,7 @@ function Invoke-FilteredTests {
         [string[]]$CTestFilterArguments,
         [string]$BuildPreset = "",
         [string]$TestPreset = "tests",
-        [switch]$ExecutionOnly, $ExistingSelection=$null
+        [switch]$ExecutionOnly, $ExistingSelection=$null, $ResourceBudget=$null
     )
 
     $selection = if($ExecutionOnly){$ExistingSelection}else{Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset}
@@ -200,6 +200,17 @@ function Invoke-FilteredTests {
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     $testArguments=if($ExecutionOnly){@('--preset','all-tests','--test-dir',(Join-Path $repositoryRoot '.build'),'-C','Release','--no-tests=error','--output-on-failure')}else{@('--preset',$TestPreset)}
+    $budget=$ResourceBudget
+    if($budget){
+        foreach($test in $selection.Tests){
+            $declared=@($test.properties|Where-Object name -eq 'PROCESSORS')
+            $slots=if($declared.Count){[int]$declared[0].value}else{1}
+            if($slots -lt 1 -or $slots -gt $budget.cpuSlots){throw ('Weighted CPU budget is below or incompatible with the declared CTest PROCESSORS for '+$test.name+'; no test execution started.')}
+            $shared=@($test.properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value})
+            if($shared.Count -and $budget.compatibilityMode -ne 'exclusive'){throw 'Shared test resources require exclusive project admission; no test execution started.'}
+        }
+        $testArguments+=@('--parallel',[string]$budget.cpuSlots)
+    }
     Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
 }
 
@@ -279,7 +290,8 @@ if($Mode -eq 'verify'){
     $code=5;$admitted=$false
     try {
         if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $repositoryRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
-        $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter
+        $verificationBudget=Get-EntryResourceBudget $repositoryRoot
+        $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget
         Set-Field $coverage 'observedExecutionContext' $snapshot.executionContext
         if($snapshot.key -ne $request.verification.key){
             $before=Get-Field $request.verification.executionContext 'environmentFields'
@@ -297,7 +309,7 @@ if($Mode -eq 'verify'){
         Set-Field $coverage 'executionContext' $snapshot.executionContext
         $coverage.status='running'
         $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
-        Invoke-FilteredTests -CTestFilterArguments @('-R',$snapshot.pattern) -ExecutionOnly -ExistingSelection ([pscustomobject]@{Tests=$snapshot.tests;Targets=@()})
+        Invoke-FilteredTests -CTestFilterArguments @('-R',$snapshot.pattern) -ExecutionOnly -ExistingSelection ([pscustomobject]@{Tests=$snapshot.tests;Targets=@()}) -ResourceBudget $verificationBudget
         $coverage.status='passed';$code=0
     } catch {$coverage.status=if($admitted){'failed'}else{'invalidated'};$coverage.error=$_.Exception.Message}
     finally {
@@ -309,7 +321,7 @@ if($Mode -eq 'verify'){
             })
         }
         if($admitted){
-            try {$after=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter;if($after.key -ne $snapshot.key){throw 'Verification context changed during execution.'}}
+            try {$after=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget;if($after.key -ne $snapshot.key){throw 'Verification context changed during execution.'}}
             catch {$coverage.status='invalidated';$coverage.error=$_.Exception.Message;$code=5}
         }
         $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
@@ -362,10 +374,10 @@ if ($Mode -eq "plan") {
         if ($plan.mode -eq 'full') {
             $includesTools=@($inventory.Tests | Where-Object {$names -contains $_.name -and @($_.properties | Where-Object name -eq 'LABELS' | ForEach-Object {$_.value}) -contains 'tools'}).Count -gt 0
             $fullBuildPreset=if($includesTools){'all-tests'}else{'tests'}
-            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests'
+            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests' -ResourceBudget (Get-EntryResourceBudget $repositoryRoot)
             Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation
         }
-        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
+        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' -ResourceBudget (Get-EntryResourceBudget $repositoryRoot) }
         $coverage.status='passed'
     } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
     finally {
@@ -418,7 +430,7 @@ else {
     if ($Mode -in "full", "core", "fast") {
         Write-Host "Build tool regressions and manual diagnostics are excluded; select tools, name or label explicitly."
     }
-    Invoke-FilteredTests @options
+    Invoke-FilteredTests @options -ResourceBudget (Get-EntryResourceBudget $repositoryRoot)
     if ($Mode -eq "full") {
         Write-Host ""
         Write-Host "=== Verifying isolated test output ==="

@@ -54,10 +54,7 @@ function Read-BuildStageEvents([string]$Root,[string]$Id) {
     return @($events|Sort-Object utc,id,kind)
 }
 
-function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
-    $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
-    if(-not $id -or $Arguments -notcontains '--build'){return $null}
-    if(-not (Test-EntryDelegation $Root)){throw 'Build observations require a live output credential.'}
+function Get-ConfiguredBuildContext([string]$Root,[string[]]$Arguments){
     $presetIndex=[Array]::IndexOf($Arguments,'--preset')
     if($presetIndex -ge 0){
         $presetFile=Join-Path $Root 'CMakePresets.json'
@@ -81,7 +78,15 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
         if($line -match '^CMAKE_GENERATOR:INTERNAL=(.*)$'){$generator=$Matches[1]}
         if($line -match '^CMAKE_GENERATOR_INSTANCE:[^=]+=(.*)$'){$instance=$Matches[1]}
     }
-    if($generator -notlike 'Visual Studio *'){return $null}
+    return [pscustomobject]@{directory=$output;generator=$generator;instance=$instance}
+}
+function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
+    $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if(-not $id -or $Arguments -notcontains '--build'){return $null}
+    if(-not (Test-EntryDelegation $Root)){throw 'Build observations require a live output credential.'}
+    $context=Get-ConfiguredBuildContext $Root $Arguments
+    if(-not $context -or $context.generator -notlike 'Visual Studio *'){return $null}
+    $instance=$context.instance
     # CMake accepts location,version=... as an instance specification. Only the
     # location is a filesystem directory; preserve commas within that location.
     $instance=$instance -replace ',version=[^,]+$',''
@@ -112,6 +117,25 @@ function Invoke-BuildStageCommand([string]$Root,[string]$Name,[string]$File,[str
     try{
         if($stage){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$stage.id,'Process')}
         if($File -eq 'cmake' -and $Arguments -contains '--build'){
+            if(Get-Command Get-EntryResourceBudget -ErrorAction SilentlyContinue){
+                $budget=Get-EntryResourceBudget $Root
+                if($budget){
+                    $context=Get-ConfiguredBuildContext $Root $Arguments
+                    if(-not $context){throw 'Configured generator is unavailable; weighted build scheduling was not applied.'}
+                    $separator=[Array]::IndexOf($Arguments,'--')
+                    $native=@()
+                    if($separator -ge 0){$native=@($Arguments|Select-Object -Skip ($separator+1));$Arguments=@($Arguments|Select-Object -First $separator)}
+                    if($context.generator -like 'Visual Studio *'){
+                        # Bound one MSBuild project graph and its file scheduler;
+                        # command-line globals override cached project defaults.
+                        # The Run Job bounds CPU for XAML, linker and all children.
+                        $Arguments+=@('--parallel','1','--')+$native+@('/p:UseMultiToolTask=true','/p:EnforceProcessCountAcrossBuilds=false',('/p:MultiProcMaxCount='+$budget.cpuSlots))
+                    }else{
+                        $Arguments+=@('--parallel',[string]$budget.cpuSlots)
+                        if($native.Count){$Arguments+=@('--')+$native}
+                    }
+                }
+            }
             $logger=Get-BuildLoggerArgument $Root $Arguments
             if($logger){if($Arguments -notcontains '--'){$Arguments+=@('--')};$Arguments+=@($logger)}
         }

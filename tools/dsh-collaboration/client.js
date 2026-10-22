@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.5';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.6';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -12,6 +12,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  Object.assign(words,{resourceStatus:['资源统计','Resource accounting'],resource_sampling:['采集中','Sampling'],resource_complete:['完整','Complete'],resource_incomplete:['不完整（仅有过程采样）','Incomplete (intermediate sample only)'],resource_unrecorded:['未采集','Not recorded'],resource_unavailable:['统计不可用','Accounting unavailable'],resource_unknown:['状态未记录','State not recorded'],lastSample:['最后采样','Last sample']});
  Object.assign(words,{standaloneVerification:['独立补验 · 仅执行既有产物','Standalone verification · existing artifacts only'],baselineCandidate:['来源批次','Baseline candidate'],subscriptionActive:['订阅共同结果','Subscribed to shared result'],subscriptionWithdrawn:['已撤回等待','Subscription withdrawn']});
  Object.assign(words,{testEvidence:['逐条测试证据','Per-test evidence'],manualAcceptance:['人工验收','Manual acceptance'],acceptanceInterval:['验收区间','Acceptance interval'],resultSource:['结果来源','Observation source'],userFeedback:['用户反馈','User feedback'],agentObservation:['智能体观察','Agent observation'],criterion:['验收条件','Acceptance criterion'],reference:['证据引用','Evidence reference'],testDefinition:['测试定义','Test definition'],testBinary:['测试二进制','Test binary'],executionEnvironment:['执行环境','Execution environment'],reuseScope:['依赖范围待确认，尚未自动复用','Dependency closure pending; no automatic reuse'],unavailableInterval:['未记录（跨重启或时钟不可用）','Not recorded (different boot or unavailable clock)']});
+ Object.assign(words,{projectAdmission:['项目准入','Project admission'],sharedBudget:['共享额度','Shared budget'],exclusiveExecution:['独占执行','Exclusive execution'],cpuReservation:['CPU 预留 / 总额度','CPU reservation / capacity'],memoryReservation:['内存上限 / 预留 / 总额度','Memory limit / reservation / capacity'],jobLimits:['Job CPU 硬上限 / 提交内存上限','Job CPU hard cap / committed memory limit'],queueObservation:['排队时的额度观测','Budget observation while queued'],cpuSlots:['核心额度','CPU slots'],reserved:['已预留','Reserved'],'cpu-capacity':['CPU 额度不足','Insufficient CPU capacity'],'memory-capacity':['内存额度不足','Insufficient memory capacity'],'memory-headroom':['可用物理内存不足','Insufficient available physical memory']});
  const dictionaries=Object.fromEntries(['zh','en'].map((lang,index)=>[lang,Object.fromEntries(Object.entries(words).map(([key,value])=>[key,value[index]]))]));
  const tabs=['overview','tasks','validation','logs','messages','history'],storageKey='snow-collaboration-view.v1';
  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v)),tone=value=>['passed','verified','eligible','passed-after-retry'].includes(value)?'good':['failed','attention','interrupted','invalidated','start-failed','exhausted-failed','environment-blocked','retirement-interrupted'].includes(value)?'bad':['editing','waiting','pending','awaiting_input','blocked','retrying','checking'].includes(value)?'wait':'info';
@@ -106,6 +107,17 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     older.length?fold(t('older')+' · '+older.length,h(React.Fragment,null,h('p',{className:'sc-muted'},t('olderHint')),...older.map(task=>taskRow(task)))):null,!filtered.length?empty(t('noMatches')):null);
   };
   const precise=value=>typeof value==='number'&&value<1?Math.round(value*1000)+' '+t('milliseconds'):duration(value);
+  const known=value=>typeof value==='number'?String(value):t('unrecorded');
+  const budgetDetails=run=>{
+   const admission=run.admission,resource=run.resources||{},observation=admission?.lastObservation;
+   if(admission?.policy==='project-heavy-v1')return [detail(t('projectAdmission'),t('exclusiveExecution'))];
+   if(admission?.policy!=='project-weighted-v1')return [];
+   return [detail(t('projectAdmission'),t(admission.compatibilityMode==='shared'?'sharedBudget':admission.compatibilityMode==='exclusive'?'exclusiveExecution':'unrecorded')),
+    detail(t('cpuReservation'),known(admission.cpuSlots)+' / '+known(admission.cpuCapacity)+' '+t('cpuSlots')),
+    detail(t('memoryReservation'),known(admission.memoryMiB)+' / '+known(admission.reservedMemoryMiB)+' / '+known(admission.memoryCapacityMiB)+' MiB'),
+    detail(t('jobLimits'),(typeof resource.cpuLimitBasisPoints==='number'?(resource.cpuLimitBasisPoints/100).toFixed(2)+'%':t('unrecorded'))+' / '+(typeof resource.committedMemoryLimitBytes==='number'?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+' MiB':t('unrecorded'))),
+    observation?detail(t('queueObservation'),known(observation.occupiedCpuSlots)+' '+t('cpuSlots')+' / '+known(observation.occupiedMemoryMiB)+' MiB '+t('reserved')+' · '+(words[observation.reason]?t(observation.reason):observation.reason)+(observation.observedUtc?' · '+date(observation.observedUtc):'')):null];
+  };
   const runRecords=batch?.historical?(batch.run?[batch.run]:[]):batch?.run?[batch.run,...(snapshot?.runs||[]).filter(item=>item.id!==batch.run.id)]:(snapshot?.runs||[]),displayedRun=batch?.run||snapshot?.runs?.[0],currentLog=batch?.log||displayedRun?.log;
   const runsView=()=>h(React.Fragment,null,heading('executionRun',runRecords.length),...runRecords.map(run=>fold((run.task||run.id.slice(0,8))+' · '+label(run.status),h(React.Fragment,null,
    h('p',{className:'sc-muted'},run.id+(run.batchId?' · '+run.batchId.slice(0,8):'')),run.error?h('p',{className:'sc-callout bad'},run.error):null,run.waitingFor?h('p',{className:'sc-callout'},run.waitingFor):null,
@@ -114,6 +126,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    ...(run.stages||[]).map(item=>detail(label(item.name),precise(item.elapsedSeconds)+(item.completedUtc?'':' · '+label(run.completedUtc?'incomplete':'running')))),
    detail(t('resourceStatus'),t('resource_'+(run.resources?.status||'unknown'))+(run.resources?.sampledUtc?' · '+date(run.resources.sampledUtc):'')),
    detail(t('cpuMemory')+(run.resources?.status==='incomplete'?' · '+t('lastSample'):''),precise(run.resources?.cpuSeconds)+' / '+(typeof run.resources?.peakJobMemoryBytes==='number'?(run.resources.peakJobMemoryBytes/1048576).toFixed(1)+' MiB':t('unrecorded'))),
+   ...budgetDetails(run),
    detail(t('compileUnits'),run.compiler?.attemptedUnits==null?t('unrecorded'):run.compiler.attemptedUnits+' · '+t(run.compiler.complete?'completeObservation':'partialObservation')+(run.compiler.unknownTasks?' · '+t('unknownTasks')+' '+run.compiler.unknownTasks:'')),
    ...(run.phaseSummary||[]).map(item=>detail(label(item.name)+' · '+item.completed+'/'+item.tasks,precise(item.taskSeconds)+(item.incomplete?' · '+t('incomplete')+' '+item.incomplete:''))),h('small',{className:'sc-muted'},t('runSource')),
    ...(run.waitIntervals||[]).map((item,index)=>h('div',{className:'sc-row',key:index},detail(t('queue'),precise(item.elapsedSeconds)),h('p',null,item.reason))),

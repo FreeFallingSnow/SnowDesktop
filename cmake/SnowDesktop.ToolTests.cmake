@@ -94,6 +94,14 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
         build_tools/build_run_tests.cpp "tools;core;integration" 180)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildResourceBudgetTests build_resource_budget
+        build_tools/build_resource_budget_tests.cpp "tools;integration" 240)
+    set_tests_properties(build_resource_budget PROPERTIES PROCESSORS 6)
+    add_test(NAME build_resource_budget_compile COMMAND SnowDesktopBuildResourceBudgetTests "${CMAKE_CURRENT_SOURCE_DIR}" --compile)
+    set_tests_properties(build_resource_budget_compile PROPERTIES TIMEOUT 240 PROCESSORS 9 LABELS "manual;tools;integration"
+        RESOURCE_LOCK snowdesktop_compiler_budget
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildResourceBudgetTests>")
     add_test(NAME build_project_resources COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --project-resources)
     set_tests_properties(build_project_resources PROPERTIES TIMEOUT 90 LABELS "tools;integration"
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"

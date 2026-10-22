@@ -383,6 +383,7 @@ class Store:
         resources = read_json(directory, run_id + ".resources.json") or {}
         accounting = resources.get("accountingAvailable")
         resource_view = {**{k: number(resources.get(k)) if accounting is not False else None for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")},
+                         **{k: number(resources.get(k)) for k in ("requestedCpuSlots", "requestedMemoryMiB", "cpuLimitBasisPoints", "committedMemoryLimitBytes")},
                          "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True,
                          "accountingAvailable": accounting if isinstance(accounting, bool) else None}
         if not resources:
@@ -398,6 +399,17 @@ class Store:
         else:
             resource_view["status"] = "incomplete" if terminal or status == "interrupted" else "sampling"
         waits = record.get("waitIntervals") or []
+        admission = record.get("resourceAdmission")
+        admission_view = None
+        if isinstance(admission, dict):
+            observation = admission.get("lastObservation")
+            admission_view = {"policy": redact(admission.get("policy", "")),
+                              "compatibilityMode": admission.get("compatibilityMode") if admission.get("compatibilityMode") in ("shared", "exclusive") else None,
+                              "bindingValid": admission.get("bindingValid") if isinstance(admission.get("bindingValid"), bool) else None,
+                              **{k: admission.get(k) for k in ("acquiredUtc", "releasedUtc")},
+                              **{k: number(admission.get(k)) for k in ("cpuSlots", "memoryMiB", "reservedMemoryMiB", "logicalProcessors", "cpuCapacity", "memoryCapacityMiB", "headroomMiB")},
+                              "lastObservation": {"observedUtc": observation.get("observedUtc"), "reason": redact(observation.get("reason", "")),
+                                                  **{k: number(observation.get(k)) for k in ("occupiedCpuSlots", "occupiedMemoryMiB", "availablePhysicalBytes")}} if isinstance(observation, dict) else None}
         log_key = run_id + ".stdout.log"
         log_root = directory
         if pipeline_logs:
@@ -430,7 +442,7 @@ class Store:
                 "stages": [{**{k: stage.get(k) for k in ("id", "name", "startedUtc", "completedUtc", "exitCode")}, "elapsedSeconds": number(stage.get("elapsedSeconds"))} for stage in (record.get("stages") or [])[:40]],
                 "waitIntervals": [{**{k: interval.get(k) for k in ("resource", "startedUtc", "completedUtc")}, "reason": redact(interval.get("reason", "")), "elapsedSeconds": number(interval.get("elapsedSeconds"))} for interval in waits[:100]],
                 "waitIntervalsTruncated": record.get("waitIntervalsTruncated") is True,
-                "resources": resource_view,
+                "resources": resource_view, "admission": admission_view,
                 "phaseSummary": list(summaries.values()), "segments": segments[-80:], "segmentCount": len(segments), "segmentsOmitted": max(0, len(segments)-80),
                 "compiler": {"collectorCount": collectors, "attemptedUnits": units if collectors else None, "unknownTasks": unknown_units,
                              "complete": bool(terminal and collectors and finished_collectors == collectors and not unknown_units and not unfinished and not limited and not pending_line)},

@@ -2,7 +2,7 @@
 param(
     # The batch router forwards its literal leading verb without rebuilding argv.
     [ValidateSet('run')][string]$Verb='run',
-    [ValidateSet('start','invoke','status','wait','cancel','unsubscribe','worker')][string]$Command='status',
+    [ValidateSet('start','invoke','status','wait','cancel','unsubscribe','worker','budget')][string]$Command='status',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Task,
     [ValidateSet('release','debug','tests','ide','batch')][string]$Action='tests',
@@ -15,7 +15,9 @@ param(
     [long]$EditRevision=-1,
     [ValidateRange(0,60)][int]$Seconds=30,
     [switch]$ReloadShell,[switch]$CloseApplication,
-    [string]$Reason='', [switch]$ConfirmSharedCancellation
+    [string]$Reason='', [switch]$ConfirmSharedCancellation,
+    [ValidateRange(0,4096)][int]$CpuSlots=0,[ValidateRange(0,1048576)][int]$MemoryMiB=0,
+    [ValidateRange(0,4096)][int]$CpuCapacity=0,[ValidateRange(0,1048576)][int]$MemoryCapacityMiB=0
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -138,6 +140,21 @@ function Enter-BatchRun($Request){
 }
 
 try {
+    if($Command -eq 'budget'){
+        if($CpuSlots -or $MemoryMiB){throw 'Use capacity fields for budget configuration and slots/MiB for run start.'}
+        if($CpuCapacity -or $MemoryCapacityMiB){
+            if(-not $CpuCapacity -or -not $MemoryCapacityMiB -or -not $Task -or [string]::IsNullOrWhiteSpace($Reason) -or $Reason.Length -gt 2048){throw 'Budget configuration needs both capacities, an active Task and a nonempty Reason up to2048 characters.'}
+            Initialize-ResourceRuntime
+            $transaction=Open-EntryStateTransaction $root
+            try {
+                $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
+                if(-not $state -or $state.repositoryRoot -ne $root -or @($state.taskLedger.tasks|Where-Object {$_.id -eq $Task -and -not $_.closedUtc}).Count -ne 1){throw 'Budget configuration requires an active Task in this checkout.'}
+                Set-WeightedResourcePolicy $root $CpuCapacity $MemoryCapacityMiB $Task $Reason|ConvertTo-Json -Depth 8
+            }finally{$transaction.Dispose()}
+        }else{Get-WeightedResourcePolicy $root|ConvertTo-Json -Depth 8}
+        exit 0
+    }
+    if($CpuCapacity -or $MemoryCapacityMiB){throw 'Capacity changes require run budget; no execution was submitted.'}
     if($Command -in 'start','invoke'){
         $automaticTask=$false
         if($Mode -eq 'verify' -and ($Action -ne 'tests' -or -not $Task -or -not $PlanBatch -or [string]::IsNullOrWhiteSpace($Reason) -or $Reason.Length -gt 2048 -or $Configuration -ne 'Release')){throw 'Verification requires tests, an explicit active Task, Release, -PlanBatch and a nonempty -Reason (up to 2048 characters).'}
@@ -163,9 +180,29 @@ try {
             reloadShell=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;createdUtc=$now}
         $record=[pscustomobject]@{schemaVersion=1;id=$id;repositoryRoot=$root;nonce=$request.nonce;status='starting';owner=$null;createdUtc=$now;updatedUtc=$now;
             completedUtc=$null;exitCode=$null;error='';waitingFor='';waitIntervals=@();waitIntervalsTruncated=$false;stages=@();inputStart=$null;inputEnd=$null;logPath=(Run-Path $id '.stdout.log')}
+        $heavy=-not ($request.action -eq 'tests' -and $request.mode -in 'list','plan')
+        $frozenResources=$null
+        if($request.action -eq 'batch'){
+            if($CpuSlots -or $MemoryMiB){throw 'A batch uses only its frozen aggregate resource plan.'}
+            $frozenPlan=Read-EntryJson (Join-Path $root ('.build/collaboration/'+$Batch+'.plan.json'))
+            if(-not $frozenPlan -or $frozenPlan.batchId -ne $Batch){throw 'Frozen resource plan is unavailable.'}
+            $heavy=[bool]$frozenPlan.buildRequired -or $frozenPlan.mode -ne 'skipped'
+            $frozenResources=Get-Field $frozenPlan 'projectResources'
+        }
+        # Configured test execution has unknown cross-process resources until
+        # selection. Keep it exclusive; only verified definitions may opt into
+        # sharing. Preflight process actions and arbitrary IDE targets also do.
+        $exclusive=$request.action -notin 'release','debug' -or $request.reloadShell -or $request.closeApplication
+        if($Mode -eq 'verify'){$exclusive=$false}
+        $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
         $batchTransaction=$null;$joined=$false;$verification=$null
         if($Mode -eq 'verify'){
-            $verification=Get-VerificationSnapshot $root $PlanBatch $Filter
+            $verification=Get-VerificationSnapshot $root $PlanBatch $Filter $(if($request.projectResources.policy -eq 'project-weighted-v1'){$request.projectResources}else{$null})
+            if($request.projectResources.policy -eq 'project-weighted-v1'){
+                $shared=@($verification.tests|ForEach-Object properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value})
+                if($shared.Count){$request.projectResources.compatibilityMode='exclusive'}
+                $verification.key=Get-VerificationTextDigest ($verification.binding|ConvertTo-Json -Depth 20 -Compress)
+            }
             # Inventory is re-read and validated by the worker; retain hashes,
             # not duplicate raw CTest environment/command contents in requests.
             $verification.PSObject.Properties.Remove('tests')
@@ -210,15 +247,7 @@ try {
             $current|Add-Member NoteProperty runId $id
         }
         # Identity is fresh. Request publication is create-only, never a mutable plan.
-        if(-not $joined){
-            $heavy=-not ($request.action -eq 'tests' -and $request.mode -in 'list','plan')
-            if($request.action -eq 'batch'){
-                $frozenPlan=Read-EntryJson (Join-Path $root ('.build/collaboration/'+$request.batch+'.plan.json'))
-                $heavy=[bool]$frozenPlan.buildRequired -or $frozenPlan.mode -ne 'skipped'
-            }
-            $request|Add-Member NoteProperty projectResources (Get-ProjectResourceBinding $root $heavy)
-            Write-NewRunRequest $request;Write-RunRecord $record
-        }
+        if(-not $joined){Write-NewRunRequest $request;Write-RunRecord $record}
         if($Action -eq 'batch' -or $Mode -eq 'verify'){Write-RunJson $state (Join-Path $root '.build/collaboration/state.json')}
         } finally {if($batchTransaction){$batchTransaction.Dispose()}}
         $launched=$false
@@ -332,7 +361,7 @@ try {
     }
     # The process lifetime lease and immutable owner fence prevent duplicate workers
     # and make owner loss an explicit interrupted outcome rather than a takeover.
-    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false
+    $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null
     try {
         $ownerLease=[IO.File]::Open((Run-Path $RunId '.owner.lock'),'OpenOrCreate','ReadWrite','None')
         $record=Read-RunJson (Run-Path $RunId '.json')
@@ -343,15 +372,27 @@ try {
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$null,'Process')
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_RUN_ID',$null,'Process')
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$null,'Process')
-        $binding=Get-Field $request 'projectResources'
-        if($binding -and $binding.required){
-            $actual=Get-ProjectResourceBinding $root $true
-            if($binding.policy -ne $actual.policy -or $binding.lockPath -ne $actual.lockPath -or $binding.commonGitDirectory -ne $actual.commonGitDirectory){throw 'Project resource binding changed before admission.'}
-        }
-        Set-Field $record 'resourceAdmission' ([pscustomobject]@{policy=$(if($binding){$binding.policy}else{'legacy-unbudgeted'});required=[bool]($binding -and $binding.required);
-            commonGitDirectory=$(if($binding){$binding.commonGitDirectory}else{$null});acquiredUtc=$null;releasedUtc=$null;
-            accounting='One participating heavy Run per Git common directory. This is admission, not a CPU or memory hard limit.'})
+        # Publish the owner before any fallible resource validation. Even a
+        # pre-execution invalidation must retain a verifiable batch publisher.
         $record.status='queued';Write-RunRecord $record;$queue=Start-RunStage $record 'queue'
+        $binding=Get-Field $request 'projectResources'
+        Set-Field $record 'resourceAdmission' ([pscustomobject]@{policy=$(if($binding){$binding.policy}else{'legacy-unbudgeted'});required=[bool]($binding -and $binding.required);
+            commonGitDirectory=$(if($binding){$binding.commonGitDirectory}else{$null});acquiredUtc=$null;releasedUtc=$null;bindingValid=$null;
+            accounting='A v1 exclusive lease or v2 weighted reservations. CPU/committed-memory limits are read from the private Job, separately.'})
+        if($binding -and $binding.required){
+            if($binding.policy -eq 'project-weighted-v1'){
+                foreach($name in @('compatibilityMode','cpuSlots','memoryMiB','reservedMemoryMiB','logicalProcessors','cpuCapacity','memoryCapacityMiB','headroomMiB','policyHash')){Set-Field $record.resourceAdmission $name $binding.$name}
+                $currentPolicy=Get-WeightedResourcePolicy $root -Persist
+                if($currentPolicy.hash -ne $binding.policyHash){$record.resourceAdmission.bindingValid=$false;throw 'Resource policy changed before admission.'}
+                $mustBeExclusive=($request.action -notin 'release','debug' -and $request.mode -ne 'verify') -or $request.reloadShell -or $request.closeApplication
+                if($binding.compatibilityMode -notin 'shared','exclusive' -or ($mustBeExclusive -and $binding.compatibilityMode -ne 'exclusive')){$record.resourceAdmission.bindingValid=$false;throw 'Resource policy changed before admission.'}
+                $actual=Get-ProjectResourceBinding $root $true $binding.cpuSlots $binding.memoryMiB ($binding.compatibilityMode -eq 'exclusive')
+            }else{$actual=Get-ProjectResourceBinding $root $true}
+            if(($binding|ConvertTo-Json -Depth 8 -Compress) -ne ($actual|ConvertTo-Json -Depth 8 -Compress)){
+                $record.resourceAdmission.bindingValid=$false;throw 'Resource policy changed before admission.'
+            }
+        }
+        $record.resourceAdmission.bindingValid=$true;Write-RunRecord $record
         $queueNotice=[Diagnostics.Stopwatch]::StartNew()
         $waitInterval=$null;$waitClock=$null;$queuedCancellation=$false
         while(-not $entry){
@@ -375,18 +416,29 @@ try {
         # Hold this checkout's output authority while queued for common capacity;
         # do not preflight, configure, compile or launch a test before admission.
         if($entry -and $binding -and $binding.required){
+            $observationClock=[Diagnostics.Stopwatch]::StartNew()
             while(-not $resourceLease){
                 if(Run-CancellationRequested $request){$record.exitCode=4;Complete-RunStage $record $queue 4;$queuedCancellation=$true;break}
                 try {$resourceLease=Enter-ProjectResources $binding;$record.resourceAdmission.acquiredUtc=[DateTime]::UtcNow.ToString('o')}
                 catch {
+                    if($_.Exception.Message -eq 'Resource policy changed before admission.'){$record.resourceAdmission.bindingValid=$false;throw}
                     if($_.Exception.Message -notmatch '^Shared project resources busy:'){throw}
+                    $resourceError=$_.Exception
+                    while($resourceError -and -not $resourceError.Data.Contains('resourceObservation')){$resourceError=$resourceError.InnerException}
+                    if($resourceError){
+                        $observation=$resourceError.Data['resourceObservation']
+                        Set-Field $record.resourceAdmission 'lastObservation' ([pscustomobject]@{observedUtc=[DateTime]::UtcNow.ToString('o');occupiedCpuSlots=$observation.OccupiedCpuSlots;
+                            occupiedMemoryMiB=($observation.OccupiedMemorySlots*256);availablePhysicalBytes=$observation.AvailablePhysicalBytes;reason=$observation.BusyKind})
+                    }
                     if($record.waitingFor -ne $_.Exception.Message){
+                        if($waitInterval){$waitInterval.completedUtc=[DateTime]::UtcNow.ToString('o');$waitInterval.elapsedSeconds=$waitClock.Elapsed.TotalSeconds}
                         $record.waitingFor=$_.Exception.Message
-                        $waitInterval=[pscustomobject]@{resource='project-execution';reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed shared project contention until acquisition or cancellation, including retry/backoff.'}
+                        $waitInterval=[pscustomobject]@{resource=$(if($binding.policy -eq 'project-weighted-v1'){'project-cpu-memory'}else{'project-execution'});reason=$record.waitingFor;startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;elapsedSeconds=$null;measurement='First observed shared project contention until acquisition, reason change or cancellation, including retry/backoff.'}
                         $waitClock=[Diagnostics.Stopwatch]::StartNew()
                         if(@($record.waitIntervals).Count -lt 100){$record.waitIntervals=@($record.waitIntervals)+@($waitInterval)}else{$record.waitIntervalsTruncated=$true}
                         Write-RunRecord $record
                     }
+                    elseif($observationClock.Elapsed.TotalSeconds -ge 1){Write-RunRecord $record;$observationClock.Restart()}
                     if($queueNotice.Elapsed.TotalSeconds -ge 30){[Console]::Error.WriteLine('Run '+$RunId+' is queued: '+$record.waitingFor);$queueNotice.Restart()}
                     Start-Sleep -Milliseconds 200
                 }
@@ -425,7 +477,10 @@ try {
         }
     } catch {
         if(-not $ownsRun){throw}
-        $record.status='failed';$record.exitCode=2;$record.error=$_.Exception.ToString()
+        $invalidated=$record.PSObject.Properties['resourceAdmission'] -and $record.resourceAdmission.bindingValid -eq $false
+        $record.exitCode=if($invalidated){5}else{2};$record.error=$_.Exception.ToString()
+        if($queue -and -not $queue.completedUtc){Complete-RunStage $record $queue $record.exitCode}
+        $record.status=if($invalidated){'invalidated'}else{'failed'}
     } finally {
         # Terminal means that the leased output and automatic task transaction
         # have both finished. Observers may submit their next entry immediately.

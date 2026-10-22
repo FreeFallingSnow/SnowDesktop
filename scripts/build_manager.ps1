@@ -15,6 +15,7 @@ param(
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
     [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
+    [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
     [switch]$AutoCheck,
     [ValidateLength(0,160)][string]$TaskName='',
     [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
@@ -58,6 +59,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')
 . (Join-Path $PSScriptRoot 'build_preflight.ps1')
+if($Command -eq 'plan' -and ($ResourceCpuSlots -or $ResourceMemoryMiB)){Initialize-ResourceRuntime}
 if($Command -notin 'status','task-list','event-read','event-wait','event-ack','edit-verify','evidence-list','acceptance-list' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
     . (Join-Path $PSScriptRoot 'build_runtime.ps1')
     Ensure-BuildDashboard
@@ -596,7 +598,8 @@ try {
                             $cancelPath=Join-Path $stateRoot ('runs/'+$ExecutionRun+'.cancel')
                             $request=Read-EntryJson (Join-Path $stateRoot ('runs/'+$ExecutionRun+'.request.json'))
                             $cancelled=$runRecord.exitCode -eq 4 -and [IO.File]::Exists($cancelPath) -and [IO.File]::ReadAllText($cancelPath).Trim() -ceq $request.nonce
-                            $result=New-Result $current $(if($cancelled){'cancelled'}else{'failed'}) $(if($cancelled){4}else{2}) $Reason
+                            $resourceInvalidated=$runRecord.exitCode -eq 5 -and (Get-Field (Get-Field $runRecord 'resourceAdmission') 'bindingValid') -eq $false
+                            $result=New-Result $current $(if($cancelled){'cancelled'}elseif($resourceInvalidated){'invalidated'}else{'failed'}) $(if($cancelled){4}elseif($resourceInvalidated){5}else{2}) $Reason
                         }
                         Set-Field $result 'publishedUtc' ([DateTime]::UtcNow.ToString('o'))
                         Publish-Result $state $result
@@ -624,6 +627,10 @@ try {
                 if ($Command -eq 'plan') {
                     if ($entry.state -ne 'editing') { throw 'Plan changes require atomic begin/reopen before editing.' }
                     Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason)
+                    if($ResourceCpuSlots -or $ResourceMemoryMiB){
+                        if($entry.testPlan.suites -contains 'none'){throw 'An empty plan cannot reserve weighted resources.'}
+                        Set-Field $entry.testPlan 'projectResources' (Get-ProjectResourceBinding $repositoryRoot $true $ResourceCpuSlots $ResourceMemoryMiB $true)
+                    }
                     $visible=Find-VisibleTask (Get-TaskLedger $state) $Participant
                     Set-Field $entry.testPlan 'requirementsRevision' $visible.requirementsRevision
                     Write-AtomicJson $state $statePath

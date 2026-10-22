@@ -231,6 +231,15 @@ function renderRunRecords(snapshot,batch){
   const resource=run.resources||{},resourceState={sampling:"采集中",complete:"完整",incomplete:"不完整（仅有过程采样）",unrecorded:"未采集",unavailable:"统计不可用",unknown:"状态未记录"}[resource.status]||"状态未记录";
   detail(box,"资源统计",resourceState+(resource.sampledUtc?" · "+time(resource.sampledUtc):""),["incomplete","unavailable"].includes(resource.status)?"warn":"");
   detail(box,"Job CPU / 峰值内存"+(resource.status==="incomplete"?"（最后采样）":""),preciseTime(resource.cpuSeconds)+" / "+(typeof resource.peakJobMemoryBytes==="number"?(resource.peakJobMemoryBytes/1048576).toFixed(1)+" MiB":"未记录"));
+  const admission=run.admission,known=value=>typeof value==="number"?String(value):"未记录";
+  if(admission?.policy==="project-weighted-v1"){
+   detail(box,"项目准入",admission.compatibilityMode==="shared"?"共享额度":admission.compatibilityMode==="exclusive"?"独占执行":"未记录");
+   detail(box,"CPU 预留 / 总额度",known(admission.cpuSlots)+" / "+known(admission.cpuCapacity)+" 核心额度");
+   detail(box,"内存上限 / 预留 / 总额度",known(admission.memoryMiB)+" / "+known(admission.reservedMemoryMiB)+" / "+known(admission.memoryCapacityMiB)+" MiB");
+   detail(box,"Job CPU 硬上限 / 提交内存上限",(typeof resource.cpuLimitBasisPoints==="number"?(resource.cpuLimitBasisPoints/100).toFixed(2)+"%":"未记录")+" / "+(typeof resource.committedMemoryLimitBytes==="number"?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+" MiB":"未记录"));
+   const observation=admission.lastObservation;
+   if(observation)detail(box,"排队时的额度观测",known(observation.occupiedCpuSlots)+" 核心额度 / "+known(observation.occupiedMemoryMiB)+" MiB 已预留 · "+({"cpu-capacity":"CPU 额度不足","memory-capacity":"内存额度不足","memory-headroom":"可用物理内存不足"}[observation.reason]||observation.reason)+(observation.observedUtc?" · "+time(observation.observedUtc):""));
+  }else if(admission?.policy==="project-heavy-v1")detail(box,"项目准入","同项目独占执行");
   detail(box,"编译发起单元",run.compiler?.attemptedUnits==null?"未采集":run.compiler.attemptedUnits+" · "+(run.compiler.complete?"采集完成":"部分观测")+(run.compiler.unknownTasks?" · "+run.compiler.unknownTasks+" 项任务未确认":""));
   if(run.phaseSummary?.length){
    const table=element("table",null,"result-table"),head=element("tr"),body=element("tbody");for(const title of ["阶段","任务","累计任务时间"])head.append(element("th",title));const thead=element("thead");thead.append(head);table.append(thead,body);

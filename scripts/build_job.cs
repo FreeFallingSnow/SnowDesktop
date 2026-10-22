@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics;
 using System.Globalization;
+using System.Collections.Generic;
 
 namespace SnowDesktop.Build
 {
@@ -47,6 +48,37 @@ namespace SnowDesktop.Build
             public uint pageFaults, totalProcesses, activeProcesses, terminatedProcesses;
             public IoCounters io;
         }
+        [StructLayout(LayoutKind.Sequential)]
+        struct CpuLimits { public uint flags, rate; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct MemoryStatus
+        {
+            public uint size, load;
+            public ulong physical, availablePhysical, pageFile, availablePageFile, virtualBytes, availableVirtual, extendedVirtual;
+        }
+        static uint resourceCpuSlots, resourceLogicalProcessors;
+        static ulong resourceMemoryMiB;
+        public static uint LogicalProcessors()
+        {
+            uint value = GetActiveProcessorCount(0xffff);
+            Check(value > 0); return value;
+        }
+        static MemoryStatus ReadMemory()
+        {
+            MemoryStatus value = new MemoryStatus(); value.size = (uint)Marshal.SizeOf(typeof(MemoryStatus));
+            Check(GlobalMemoryStatusEx(ref value)); return value;
+        }
+        public static ulong PhysicalMemoryBytes() { return ReadMemory().physical; }
+        public static ulong AvailableMemoryBytes() { return ReadMemory().availablePhysical; }
+        public static void ConfigureResourceBudget(uint cpuSlots, uint logicalProcessors, ulong memoryMiB)
+        {
+            if (cpuSlots == 0 && logicalProcessors == 0 && memoryMiB == 0)
+            { resourceCpuSlots = 0; resourceLogicalProcessors = 0; resourceMemoryMiB = 0; return; }
+            if (logicalProcessors != LogicalProcessors() || cpuSlots < 1 || cpuSlots > logicalProcessors ||
+                memoryMiB < 256 || memoryMiB > PhysicalMemoryBytes() / 1048576UL)
+                throw new ArgumentException("A resource budget needs valid CPU slots and committed-memory MiB on this machine");
+            resourceCpuSlots = cpuSlots; resourceLogicalProcessors = logicalProcessors; resourceMemoryMiB = memoryMiB;
+        }
         static string cancelPath, cancelNonce, metricsPath;
         public static bool RunWasCancelled { get; private set; }
         public static void ConfigureRunControl(string cancellationPath, string nonce, string resourcePath)
@@ -58,6 +90,10 @@ namespace SnowDesktop.Build
         }
         [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateJobObject(IntPtr security, string name);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref Limits limits, int size);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref CpuLimits limits, int size);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, ref CpuLimits limits, int size, IntPtr returned);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool GlobalMemoryStatusEx(ref MemoryStatus status);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern uint GetActiveProcessorCount(ushort group);
         [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
@@ -117,6 +153,8 @@ namespace SnowDesktop.Build
             bool available = QueryInformationJobObject(job, 8, ref accounting, Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero);
             int accountingError = available ? 0 : Marshal.GetLastWin32Error();
             bool memoryAvailable = QueryInformationJobObject(job, 9, ref limits, Marshal.SizeOf(typeof(Limits)), IntPtr.Zero);
+            CpuLimits cpu = new CpuLimits();
+            bool cpuAvailable = QueryInformationJobObject(job, 15, ref cpu, Marshal.SizeOf(typeof(CpuLimits)), IntPtr.Zero);
             string json = "{\"schemaVersion\":1,\"sampledUtc\":\"" + DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) +
                 "\",\"pid\":" + pid + ",\"elapsedSeconds\":" + elapsed.Elapsed.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture) +
                 ",\"finished\":" + (finished ? "true" : "false") + ",\"cancelled\":" + (cancelled ? "true" : "false") +
@@ -126,7 +164,11 @@ namespace SnowDesktop.Build
                 ",\"totalProcesses\":" + (available ? accounting.totalProcesses.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"ioReadBytes\":" + (available ? accounting.io.readBytes.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"ioWriteBytes\":" + (available ? accounting.io.writeBytes.ToString(CultureInfo.InvariantCulture) : "null") +
-                ",\"peakJobMemoryBytes\":" + (memoryAvailable ? limits.peakJobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") + "}";
+                ",\"peakJobMemoryBytes\":" + (memoryAvailable ? limits.peakJobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"requestedCpuSlots\":" + (resourceCpuSlots > 0 ? resourceCpuSlots.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"requestedMemoryMiB\":" + (resourceMemoryMiB > 0 ? resourceMemoryMiB.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"cpuLimitBasisPoints\":" + (cpuAvailable && (cpu.flags & 5) == 5 ? cpu.rate.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"committedMemoryLimitBytes\":" + (memoryAvailable && (limits.basic.flags & 0x200) != 0 ? limits.jobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") + "}";
             string temporary = metricsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
@@ -191,7 +233,20 @@ namespace SnowDesktop.Build
                 Check(job != IntPtr.Zero);
                 Limits limits = new Limits();
                 limits.basic.flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                if (resourceMemoryMiB > 0)
+                {
+                    limits.basic.flags |= 0x200; // JOB_OBJECT_LIMIT_JOB_MEMORY: committed memory, not working set.
+                    limits.jobMemory = new UIntPtr(checked(resourceMemoryMiB * 1048576UL));
+                }
                 Check(SetInformationJobObject(job, 9, ref limits, Marshal.SizeOf(typeof(Limits))));
+                if (resourceCpuSlots > 0)
+                {
+                    // Microsoft documents CPU_RATE_ENABLE|HARD_CAP and rate/10000.
+                    // A stricter ancestor Job can further reduce this ceiling.
+                    CpuLimits cpu = new CpuLimits { flags = 5,
+                        rate = (uint)Math.Max(1UL, 10000UL * resourceCpuSlots / resourceLogicalProcessors) };
+                    Check(SetInformationJobObject(job, 15, ref cpu, Marshal.SizeOf(typeof(CpuLimits))));
+                }
                 Security security = new Security { size = Marshal.SizeOf(typeof(Security)), inherit = 1 };
                 output = CreateFile(logPath, 0x40000000, 3, ref security, 2, 0x80, IntPtr.Zero);
                 Check(output != new IntPtr(-1));
@@ -273,6 +328,84 @@ namespace SnowDesktop.Build
                 if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
                 if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
                 if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+            }
+        }
+    }
+
+    public sealed class ResourceReservation : IDisposable
+    {
+        List<FileStream> handles;
+        internal ResourceReservation(List<FileStream> held) { handles = held; }
+        public void AttachCompatibility(FileStream lease)
+        {
+            if (handles == null || lease == null) throw new InvalidOperationException("Reservation has no live compatibility lease");
+            handles.Add(lease); // Release CPU/memory tokens before the v1 compatibility reader.
+        }
+        public void Dispose()
+        {
+            List<FileStream> held = handles; handles = null;
+            if (held != null) foreach (FileStream value in held) value.Dispose();
+        }
+    }
+    public sealed class ResourceAttempt
+    {
+        public ResourceReservation Lease;
+        public string BusyKind;
+        public int OccupiedCpuSlots, OccupiedMemorySlots;
+        public ulong AvailablePhysicalBytes;
+    }
+    public static class ResourceBroker
+    {
+        static List<FileStream> Scan(string directory, string kind, int capacity, int requested, out int occupied)
+        {
+            List<FileStream> held = new List<FileStream>(); occupied = 0;
+            try
+            {
+                for (int i = 0; i < capacity; i++)
+                {
+                    FileStream stream;
+                    try { stream = new FileStream(Path.Combine(directory, kind + "-" + i.ToString("D4", CultureInfo.InvariantCulture) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+                    catch (IOException error)
+                    { if ((error.HResult & 0xffff) != 32 && (error.HResult & 0xffff) != 33) throw; occupied++; continue; }
+                    if (held.Count < requested) held.Add(stream); else stream.Dispose();
+                }
+                return held;
+            }
+            catch { foreach (FileStream stream in held) stream.Dispose(); throw; }
+        }
+        // The caller holds budget.lock and a shared v1 compatibility handle.
+        // Locks are the authority; no owner heartbeat or stale JSON reclaims them.
+        public static ResourceAttempt TryReserve(string directory, int cpuCapacity, int memoryCapacitySlots,
+            int cpuSlots, int memorySlots, ulong availablePhysicalBytes, ulong headroomBytes)
+        {
+            if (cpuCapacity < 1 || cpuCapacity > 4096 || memoryCapacitySlots < 1 || memoryCapacitySlots > 4096 ||
+                cpuSlots < 1 || cpuSlots > cpuCapacity || memorySlots < 1 || memorySlots > memoryCapacitySlots)
+                throw new ArgumentException("Resource reservation exceeds validated policy capacity");
+            List<FileStream> cpu = null, memory = null;
+            try
+            {
+                int busyCpu, busyMemory;
+                cpu = Scan(directory, "cpu", cpuCapacity, cpuSlots, out busyCpu);
+                memory = Scan(directory, "memory", memoryCapacitySlots, memorySlots, out busyMemory);
+                ResourceAttempt result = new ResourceAttempt { OccupiedCpuSlots = busyCpu,
+                    OccupiedMemorySlots = busyMemory, AvailablePhysicalBytes = availablePhysicalBytes };
+                if (cpu.Count < cpuSlots) result.BusyKind = "cpu-capacity";
+                else if (memory.Count < memorySlots) result.BusyKind = "memory-capacity";
+                // Count all other reservations again, conservatively, even when
+                // their actual allocations already reduce available memory.
+                else if (availablePhysicalBytes < checked(headroomBytes + (ulong)(busyMemory + memorySlots) * 268435456UL))
+                    result.BusyKind = "memory-headroom";
+                else
+                {
+                    cpu.AddRange(memory); memory = null;
+                    result.Lease = new ResourceReservation(cpu); cpu = null;
+                }
+                return result;
+            }
+            finally
+            {
+                if (cpu != null) foreach (FileStream stream in cpu) stream.Dispose();
+                if (memory != null) foreach (FileStream stream in memory) stream.Dispose();
             }
         }
     }
