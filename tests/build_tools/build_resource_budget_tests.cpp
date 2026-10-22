@@ -161,8 +161,23 @@ void limits(const fs::path& repo,const std::string& control={}){
 }
 std::string generic(const fs::path& path){return utf8(path.generic_wstring());}
 std::string xml(std::string value){for(const auto& item:std::vector<std::pair<std::string,std::string>>{{"&","&amp;"},{"\"","&quot;"},{"<","&lt;"},{">","&gt;"}}){size_t at=0;while((at=value.find(item.first,at))!=std::string::npos){value.replace(at,item.first.size(),item.second);at+=item.second.size();}}return value;}
+fs::path compiler_fixture_parent(const fs::path& repo){
+    auto parent=repo/L".codex-probes/wrb";
+    const auto query=run({L"git",L"-C",repo.wstring(),L"rev-parse",L"--path-format=absolute",L"--git-common-dir"},repo);
+    require(query.code==0,"Cannot resolve a repository-owned compiler fixture directory");
+    auto text=query.out;while(!text.empty()&&(text.back()=='\r'||text.back()=='\n'))text.pop_back();
+    const auto common=fs::path(wide(text));
+    // FileTracker still reaches legacy path limits during CMake's compiler
+    // check. Prefer the primary checkout's shorter ignored probe directory;
+    // AppData is unsuitable because MSBuild excludes its tracked dependencies.
+    if(common.filename()==L".git"){
+        const auto candidate=common.parent_path()/L".codex-probes/wrb";
+        if(candidate.native().size()<parent.native().size())parent=candidate;
+    }
+    return parent;
+}
 void compilation(const fs::path& repo,bool control=false){
-    Coordinator c(repo,"weighted-compiler",false,repo/L".codex-probes/weighted-resource-fixtures");
+    Coordinator c(repo,"wb",false,compiler_fixture_parent(repo));
     write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+"\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='weighted compiler fixture'}}\n",true);
     copy(repo,c.root,{"cmake/SnowDesktop.CompileParallelism.cmake"});
     if(control){auto source=read(c.scripts/L"build_telemetry.ps1");replace(source,"$budget=Get-EntryResourceBudget $Root","$budget=$null");write(c.scripts/L"build_telemetry.ps1",source,true);}
