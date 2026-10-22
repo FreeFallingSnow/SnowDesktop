@@ -209,6 +209,28 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    if (dragPreviewSynced)
+        *dragPreviewSynced = false;
+    constexpr WPARAM mouseButtons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+        MK_XBUTTON1 | MK_XBUTTON2;
+    const HWND captured = GetCapture();
+    if (!(wp & mouseButtons) && IsOwnedPointerCaptureWindow(captured) &&
+        CanCancelPointerPressAfterCaptureLoss() &&
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON) | GetAsyncKeyState(VK_XBUTTON1) |
+            GetAsyncKeyState(VK_XBUTTON2)) & 0x8000) == 0)
+    {
+        // Device/connection changes can lose the matching button-up. Require
+        // both a button-free pointer message and no physically held button:
+        // a queued move alone must not cancel a live drag (including swapped
+        // buttons/chords). Native OLE and retained commits are excluded above.
+        CancelPointerPressWithoutCaptureRelease();
+        if (GetCapture() == captured)
+            ReleaseCapturePreservingPointerState();
+        WriteDiagnosticLogEntry(
+            L"Pointer input recovered: button-free move retired stale owned capture");
+        return;
+    }
     // Lua hover invalidations and native chrome can request the same child
     // several times in one move. Merge their final state and subsequent
     // passive samples within a bounded presentation interval.
@@ -241,8 +263,6 @@ void DesktopApp::OnMouseMoveAt(
     widgetPointerBatch.passive = passivePointerMove;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
-    if (dragPreviewSynced)
-        *dragPreviewSynced = false;
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
     if (auto* view = GetCategorizedPopupView(); view &&

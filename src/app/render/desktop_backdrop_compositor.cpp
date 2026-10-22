@@ -1159,15 +1159,23 @@ void DesktopBackdropCompositor::ShowPopupWindowPair(
 void DesktopBackdropCompositor::HidePopupWindowPair(
     HWND contentWindow)
 {
-    // Hiding through SWP_NOACTIVATE can retain keyboard focus in this window
-    // or one of its EDIT children. Release only that hidden window's focus;
-    // never activate a replacement window or disturb another focus owner.
-    const auto releaseHiddenFocus = [contentWindow] {
+    // Hiding a window does not release capture or keyboard focus. Retire only
+    // input owned by this hidden popup/its children; another host may already
+    // own the next gesture. Capture/focus callbacks may reset the compositor.
+    const auto releaseHiddenInput = [contentWindow] {
         if (!contentWindow || !IsWindow(contentWindow) ||
             IsWindowVisible(contentWindow))
             return;
         const HWND focus = GetFocus();
-        if (focus && (focus == contentWindow || IsChild(contentWindow, focus)))
+        const bool ownedFocus = focus &&
+            (focus == contentWindow || IsChild(contentWindow, focus));
+        const HWND capture = GetCapture();
+        if (capture && (capture == contentWindow || IsChild(contentWindow, capture)))
+            ReleaseCapture();
+        // A capture-loss handler can show another surface or transfer focus.
+        // Do not clear the replacement, even when it belongs to this thread.
+        if (ownedFocus && GetFocus() == focus && IsWindow(contentWindow) &&
+            !IsWindowVisible(contentWindow))
             SetFocus(nullptr);
     };
     const bool contentValid =
@@ -1176,7 +1184,7 @@ void DesktopBackdropCompositor::HidePopupWindowPair(
     {
         if (contentValid)
             ShowWindow(contentWindow, SW_HIDE);
-        releaseHiddenFocus();
+        releaseHiddenInput();
         return;
     }
 
@@ -1229,9 +1237,9 @@ void DesktopBackdropCompositor::HidePopupWindowPair(
         // region cannot expose an intermediate glass frame.
         impl_->SetAnimationPathRegionExpanded(false);
     }
-    // WM_KILLFOCUS is synchronous and may close/reset the owner. Keep this as
-    // the final operation: no access to this/impl_ after releasing owned focus.
-    releaseHiddenFocus();
+    // Input-loss callbacks are synchronous and may close/reset the owner.
+    // Keep this last: no access to this/impl_ after retiring owned input.
+    releaseHiddenInput();
 }
 
 void DesktopBackdropCompositor::SetVisualTransform(

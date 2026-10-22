@@ -553,6 +553,64 @@ int CheckHiddenPopupKeyboardFocus()
                     "repeating pair hide must not restore hidden keyboard focus");
             }
         }
+        // A hidden native window can retain capture even after all its pixels
+        // and its backdrop are removed. Exercise the actual pair-hiding API.
+        for (const bool initialized : {false, true})
+        {
+            DesktopBackdropCompositor noBackdrop;
+            auto& presentation = initialized ? glass : noBackdrop;
+            Window edit{CreateWindowExW(0, L"EDIT", L"capture-child", WS_CHILD | WS_VISIBLE,
+                8, 8, 80, 24, content.handle, nullptr, GetModuleHandleW(nullptr), nullptr)};
+            if (!check(edit.handle != nullptr, "create a private captured child")) return;
+            for (const HWND captured : {content.handle, edit.handle})
+            {
+                presentation.ShowPopupWindowPair(content.handle);
+                SetCapture(captured);
+                if (!check(GetCapture() == captured, "capture fixture must own the real native capture")) return;
+                presentation.HidePopupWindowPair(content.handle);
+                check(GetCapture() == nullptr, initialized ?
+                    "real popup pair hide must release content/child capture" :
+                    "fallback popup hide must release content/child capture");
+                check(!IsWindowVisible(content.handle), "capture cleanup keeps the popup hidden");
+                ReleaseCapture();
+            }
+            // Idempotent hiding also cleans up capture obtained while hidden,
+            // and cannot release an unrelated window's current capture.
+            SetCapture(content.handle);
+            presentation.HidePopupWindowPair(content.handle);
+            check(GetCapture() == nullptr, "repeated popup hide retires hidden capture");
+            ReleaseCapture();
+            SetCapture(outside.handle);
+            presentation.HidePopupWindowPair(content.handle);
+            check(GetCapture() == outside.handle, "popup hide preserves capture held by another window");
+            ReleaseCapture();
+        }
+        struct CaptureTransfer { HWND replacement; unsigned notifications = 0; } transfer{outside.handle};
+        const auto transferInput = [](HWND window, UINT message, WPARAM wp, LPARAM lp,
+            UINT_PTR, DWORD_PTR data) -> LRESULT {
+            auto& state = *reinterpret_cast<CaptureTransfer*>(data);
+            if (message == WM_CAPTURECHANGED && !lp)
+            {
+                ++state.notifications;
+                SetCapture(state.replacement);
+                SetActiveWindow(state.replacement);
+                SetFocus(state.replacement);
+            }
+            return DefSubclassProc(window, message, wp, lp);
+        };
+        if (!check(SetWindowSubclass(content.handle, transferInput, 2,
+                reinterpret_cast<DWORD_PTR>(&transfer)) != FALSE,
+                "attach test-owned capture transfer callback")) return;
+        glass.ShowPopupWindowPair(content.handle);
+        SetActiveWindow(content.handle);
+        SetFocus(content.handle);
+        SetCapture(content.handle);
+        glass.HidePopupWindowPair(content.handle);
+        check(transfer.notifications == 1 && GetCapture() == outside.handle &&
+                GetFocus() == outside.handle && GetActiveWindow() == outside.handle,
+            "capture-loss callback can transfer capture/focus without pair hide clearing the replacement");
+        RemoveWindowSubclass(content.handle, transferInput, 2);
+        ReleaseCapture();
         failures += CheckNativeTooltipLifecycle();
     }).join();
     // The thread and its WinComp context have ended before releasing desktop.

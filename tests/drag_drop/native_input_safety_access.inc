@@ -82,6 +82,9 @@
     { info->hwndActive = info->hwndFocus = inputSafetyForeground; return TRUE; }
     static BOOL WINAPI InputSafetyDenyRegion(HWND, HRGN, BOOL)
     { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return FALSE; }
+    static inline int inputSafetyPhysicalButton = 0;
+    static SHORT WINAPI InputSafetyAsyncKeyState(int key)
+    { return key == inputSafetyPhysicalButton ? static_cast<SHORT>(0x8000) : 0; }
 
     static void RunInputSafety()
     {
@@ -147,6 +150,53 @@
             check(GetCapture() == control && !app->mouseDown_, "capture loss must preserve the external owner and cancel the old press");
             ReleaseCapture();
         }
+        {
+            InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            for (const HWND window : {app->hwnd_, dockWindow, popupWindow})
+            {
+                app->mouseDown_ = true;
+                capture(window);
+                // No button-up was delivered. A queued pressed move still
+                // belongs to the gesture and must not be treated as loss.
+                inputSafetyPhysicalButton = 0;
+                app->OnMouseMoveAt(MK_LBUTTON, {0, 0});
+                check(GetCapture() == window && app->mouseDown_,
+                    "a queued button-down move preserves the current press");
+                // Conversely, an old button-free message can precede a newer
+                // physical press. Protect all buttons, including swapped and
+                // side-button/chord input, without synthesizing system input.
+                for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
+                {
+                    inputSafetyPhysicalButton = button;
+                    app->OnMouseMoveAt(0, {0, 0});
+                    check(GetCapture() == window && app->mouseDown_,
+                        "a physically held button protects a live gesture from stale movement");
+                }
+                inputSafetyPhysicalButton = 0;
+                app->OnMouseMoveAt(0, {0, 0});
+                check(GetCapture() == nullptr && !app->mouseDown_,
+                    "button-free pointer return cancels a press whose release was lost");
+                check(!app->rightButtonItemDrag_ && !app->middleButtonWidgetMove_,
+                    "lost-release cleanup retires gesture button state");
+            }
+            for (const bool middle : {false, true})
+            {
+                app->mouseDown_ = true;
+                app->rightButtonItemDrag_ = !middle;
+                app->middleButtonWidgetMove_ = middle;
+                capture(dockWindow);
+                app->OnMouseMoveAt(0, {0, 0});
+                check(!GetCapture() && !app->mouseDown_ &&
+                    !app->rightButtonItemDrag_ && !app->middleButtonWidgetMove_,
+                    "lost right/middle release is cancelled without committing a drop or click");
+            }
+            app->mouseDown_ = true;
+            capture(control);
+            app->OnMouseMoveAt(0, {0, 0});
+            check(GetCapture() == control, "button-free recovery preserves capture owned by another window");
+            ReleaseCapture();
+            app->mouseDown_ = false;
+        }
         app->luaWidgetPanelRequest_.widgetId = L"input-safety-dialog";
         app->luaWidgetPanelRequest_.surface = "dialog";
         app->luaWidgetPanelRequest_.modal = true;
@@ -168,16 +218,24 @@
         app->floatingPopupCompositionPaintInProgress_ = false;
         {
             InputSafetyImport region("SetWindowRgn", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyRegion));
+            app->mouseDown_ = true;
+            capture(popupWindow);
             app->floatingPopupWindowBounds_ = {};
             app->UpdateFloatingPopupWindowBounds(true);
             check(!IsWindowVisible(popupWindow) && IsRectEmpty(&app->floatingPopupWindowBounds_),
                 "native clipping failure must hide input and invalidate its successful-geometry cache");
+            check(!GetCapture() && !app->mouseDown_,
+                "presentation failure releases hidden popup capture and cancels its production pointer state");
         }
         SendMessageW(popupWindow, WM_TIMER, 2, 0);
         check(IsWindowVisible(popupWindow) && !IsRectEmpty(&app->floatingPopupWindowBounds_),
             "identical geometry must retry clipping and recover through the production timer route");
+        app->mouseDown_ = true;
+        capture(popupWindow);
         app->ResetFloatingPopupCompositionResources();
         check(!IsWindowVisible(popupWindow), "discarding the last surface must immediately retire native popup input");
+        check(!GetCapture() && !app->mouseDown_,
+            "discarding the last popup surface also retires its capture and pointer state");
         app->StopFloatingPopupOutsideClickMonitor();
         app->luaWidgetPanelRequest_ = {};
 
