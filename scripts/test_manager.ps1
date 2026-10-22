@@ -392,12 +392,17 @@ function Assert-HostRuntimeAvailable {
 
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 $entryLease=$null
+$observerIdentity=[ordered]@{}
 try {
     try {$entryLease=Enter-BuildEntry $repositoryRoot}
     catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 . (Join-Path $PSScriptRoot 'build_verification.ps1')
+foreach($name in @(Get-VerificationObserverVariables)){
+    $observerIdentity[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+    [Environment]::SetEnvironmentVariable($name,$null,'Process')
+}
 $script:lastReportPath=$null
 if($Mode -eq 'verify'){
     $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
@@ -567,4 +572,7 @@ else {
 Write-Host ""
 Write-Host "=== Tests complete ($Mode) ==="
 
-} finally {Exit-BuildEntry $entryLease}
+} finally {
+    try{Exit-BuildEntry $entryLease}
+    finally{foreach($name in $observerIdentity.Keys){[Environment]::SetEnvironmentVariable($name,$observerIdentity[$name],'Process')}}
+}

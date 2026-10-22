@@ -21,6 +21,12 @@ Json wait_run(Coordinator& c,const Env& env,const std::string& id,int code=0){re
 void scenario(const fs::path& repo,const std::string& control){
     Coordinator c(repo,"verification"+control,true);
     copy(repo,c.root,{"scripts/test_manager.ps1","scripts/test_output.ps1","scripts/build_batch_tests.ps1"});
+    // This fixture verifies intent identities and actual Job ceilings using
+    // tiny stand-ins. Host memory pressure is an external input, exercised
+    // separately by the resource-budget fixture's admission probes.
+    auto entry=read(c.scripts/L"build_entry.ps1");
+    replace(entry,"[SnowDesktop.Build.Job]::AvailableMemoryBytes()","([ulong]68719476736)");
+    write(c.scripts/L"build_entry.ps1",entry,true);
     // Keep the real skipped/selected batch router. Only the external Python
     // enhancement is unavailable; CMake/CTest remain the stand-in boundary.
     write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+"\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Controlled fixture without Python enhancement'}}\n",true);
@@ -85,13 +91,15 @@ void scenario(const fs::path& repo,const std::string& control){
         track(c,value.at("id").str());return value;
     };
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");
-    const auto first=start("owner",env);const auto id=first.at("id").str();
+    auto firstObserver=env;firstObserver[L"CODEX_TOOL_CALL_ID"]=L"first-tool";firstObserver[L"CODEX_THREAD_ID"]=L"first-thread";firstObserver[L"CODEX_SESSION_ID"]=L"first-session";
+    const auto first=start("owner",firstObserver);const auto id=first.at("id").str();
     await_execution(c,id);
     if(control=="configure"){
         c.gate(".build/hold-verification",false);wait_run(c,env,id);
         require(builds==count(c.root/L"build.count")&&configures==count(c.root/L".build/configure.count"),"Verification repeated configure/build instead of executing the existing candidate");return;
     }
-    const auto second=start("subscriber",env);
+    auto otherObserver=env;otherObserver[L"CODEX_TOOL_CALL_ID"]=L"second-tool";otherObserver[L"CODEX_THREAD_ID"]=L"second-thread";otherObserver[L"CODEX_SESSION_ID"]=L"second-session";
+    const auto second=start("subscriber",otherObserver);
     require(second.at("id").str()==id&&second.at("joined").boolean,"Equivalent verification requests launched duplicate Runs");
     require(start("subscriber",env).at("id").str()==id,"Repeated subscription was not idempotent");
     auto view=command(c,env,{"-Command","status","-RunId",id});

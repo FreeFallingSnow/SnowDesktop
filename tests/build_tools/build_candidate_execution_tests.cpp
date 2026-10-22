@@ -467,6 +467,19 @@ void completed_verification(const fs::path& repo,bool noReference=false) {
     cmake+="\nconfigure_file(\""+utf8(observer.generic_wstring())+"\" \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe\" COPYONLY)\n"
         "set_target_properties(SnowDesktopCandidateFixtureTests PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreaded TEST_LAUNCHER \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe;--test;candidate_rule;--\")\n";
     write(c.root/L"CMakeLists.txt",cmake);
+    write(c.root/L"src/main.cpp",R"CPP(#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include "value.h"
+bool absent(const wchar_t* name){
+    SetLastError(ERROR_SUCCESS);
+    const auto size=GetEnvironmentVariableW(name,nullptr,0);
+    return size==0&&GetLastError()==ERROR_ENVVAR_NOT_FOUND;
+}
+int main(int argc,char**){
+    if(!absent(L"CODEX_TOOL_CALL_ID")||!absent(L"CODEX_THREAD_ID")||!absent(L"CODEX_SESSION_ID"))return 61;
+    return argc>1?(value==7?0:1):value;
+}
+)CPP");
     write(c.scripts/L"check-native-token.ps1",R"PS(
 if(-not ('SnowDesktop.Verification.NativeToken' -as [type])){Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build_verification_token.cs')))}
 $encoding=[Console]::OutputEncoding
@@ -505,11 +518,12 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
     c.bridge->call(c.scripts/L"review-cache.ps1",{"-Binary",utf8(binary.wstring())});
     const auto reviewed=baseline();const auto batch=reviewed.at("batchId").str();
     for(const auto& [path,bytes]:cachedLoggers)require(read(path)==bytes,"Repeated candidate build overwrote an identity-bound logger cache entry");
-    auto verify=[&](bool fresh=false){
+    auto verify=[&](bool fresh=false,const std::string& correlation="repeated"){
         std::vector<std::string> args={"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Review identical native execution evidence"};
-        if(fresh)args.push_back("-Fresh");return c.bridge->call(c.scripts/L"build_run.ps1",args);
+        if(fresh)args.push_back("-Fresh");
+        return c.bridge->call(c.scripts/L"build_run.ps1",args,0,{{L"CODEX_TOOL_CALL_ID",wide(correlation)},{L"CODEX_THREAD_ID",wide("thread-"+correlation)},{L"CODEX_SESSION_ID",wide("session-"+correlation)}});
     };
-    const auto first=verify();require(!first.at("reused").boolean,"First verification invented completed evidence");
+    const auto first=verify(false,"first");require(!first.at("reused").boolean,"First verification invented completed evidence");
     const auto id=first.at("id").str();const auto done=wait(c,id);
     require(done.at("record").at("evidence").at("tests").items.front().at("runtimeModules").at("status").str()=="observed",
         "Real native verification lost its actual runtime report");
@@ -518,12 +532,12 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
     const auto resultBytes=read(resultPath),requestBytes=read(requestPath),coverageBytes=read(coveragePath);
     const auto report=fs::path(wide(Json::parse(coverageBytes).at("report").str()));const auto reportBytes=read(report);
     const auto requestsBefore=static_cast<std::size_t>(std::distance(fs::directory_iterator(c.stateRoot/L"runs"),fs::directory_iterator{}));
-    const auto references=verify();
+    const auto references=verify(false,"second");
     require(references.at("reused").boolean&&references.at("id").str()==id&&references.at("status").str()=="referenced"&&
         !references.at("reference").at("newExecution").boolean,"Completed native verification executed again instead of referencing its original Run: "+references.dump());
     require(verify().at("reference").at("id").str()==references.at("reference").at("id").str(),"Repeated completed citation was not idempotent");
     const std::vector<std::wstring> concurrentArgs={powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"start",L"-Task",L"candidate",L"-Action",L"tests",L"-Mode",L"verify",L"-PlanBatch",wide(batch),L"-Filter",L"candidate_rule",L"-Reason",L"Concurrent completed reference"};
-    Child concurrentA(concurrentArgs,c.root),concurrentB(concurrentArgs,c.root);
+    Child concurrentA(concurrentArgs,c.root,{{L"CODEX_TOOL_CALL_ID",L"concurrent-a"},{L"CODEX_THREAD_ID",L"thread-a"},{L"CODEX_SESSION_ID",L"session-a"}}),concurrentB(concurrentArgs,c.root,{{L"CODEX_TOOL_CALL_ID",L"concurrent-b"},{L"CODEX_THREAD_ID",L"thread-b"},{L"CODEX_SESSION_ID",L"session-b"}});
     const auto responseA=concurrentA.wait(45),responseB=concurrentB.wait(45);
     require(responseA.code==0&&responseB.code==0,"Concurrent citation callers failed: "+responseA.out+responseA.err+responseB.out+responseB.err);
     const auto citationA=Json::parse(responseA.out),citationB=Json::parse(responseB.out);

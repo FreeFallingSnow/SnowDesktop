@@ -47,6 +47,8 @@ scripts\build.bat run unsubscribe -Task my-task -RunId <runId>
 
 独立补验与批次测试都为本次执行保存依赖清单、已审阅文件输入的前后摘要和实际模块报告，并投影到原 Run 的逐条证据；不借用基线的观察，也不覆盖基线。补验期间已审阅文件输入发生端点变化时，结果为 `invalidated`，即使 CTest 返回通过也不能保留通过结论。未审阅或未插桩分别保留 `unclosed`、`not-instrumented`，不等于依赖闭合或获准跳过测试。
 
+测试入口在本进程中移除 `CODEX_TOOL_CALL_ID`、`CODEX_THREAD_ID`、`CODEX_SESSION_ID`，结束后恢复调用进程原值。它们只用于智能体追踪，不参与输入身份，不传给配置、构建或测试子进程；其他环境输入继续逐字段绑定。测试若有意通过 CTest 的 `ENVIRONMENT` 声明显式设置这些名字，该声明仍参与调用身份。不能用变化的聊天/调用 ID 使同项补验重复执行。
+
 相同活动意图在协调器事务内合并订阅，同 Task/需求修订/基线重复提交幂等。传递依赖未知的测试仍实际执行，原观察记录保持 `reuseAllowed=false`。撤回订阅与关闭等待者均保留执行；原所属 Task 取消有其他有效订阅的 Run 时需显式加 `-ConfirmSharedCancellation`，其他订阅者不能取消共享执行。等待时检查调用者 Task 的紧急消息。独立结果投影到 `.build/verification/<runId>.json`（schema 2），原始请求、覆盖、逐条证据和结果权威仍是 `.build/collaboration/runs/`；不会覆盖基线。第1～3版基线仍取得共享输出租约；第4版基线只租用仍匹配的私有槽，允许原工作区继续编辑，槽变化后拒绝补验。
 
 已结束补验可通过单独审阅的 `resultReuse.kind=reviewed-native-files-v1` 契约引用。契约绑定具体原生二进制 SHA256、读取者/规则源码和已声明的全部文件输入；审阅范围仅含固定参数的纯规则及文件内容断言，没有网络、真实时钟、外部进程状态或桌面效果断言。当前生产契约为组件层规则测试的已审阅二进制；重新编译后哈希不同便恢复实际执行，不自动续签审阅。
