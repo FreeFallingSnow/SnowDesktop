@@ -131,6 +131,7 @@ struct PlateFill : EdgeColor
     // flat edge color. A verified thin rim may be cropped from that tile.
     bool cover = false;
     float inset = 0.0f;
+    bool normalizeContour = false;
 };
 
 enum class BackplateKind { Foreground, Solid, Gradient, Artwork, Framed, Contour };

@@ -41,7 +41,7 @@ EdgeColor DominantPlateColor(const std::vector<PlateSample>& samples, int band =
 }
 
 std::vector<PlateSample> SamplePlateContour(const std::vector<std::uint32_t>& pixels, int width, int height,
-    int left, int top, int right, int bottom)
+    int left, int top, int right, int bottom, bool interior = false)
 {
     constexpr int directions = 128, bands = 4;
     const int span = std::max(right - left + 1, bottom - top + 1);
@@ -50,7 +50,8 @@ std::vector<PlateSample> SamplePlateContour(const std::vector<std::uint32_t>& pi
     const double cx = (left + right) * .5, cy = (top + bottom) * .5;
     std::vector<PlateSample> samples;
     samples.reserve(directions * bands);
-    constexpr std::array<double, bands> depths{0, .012, .03, .06};
+    const std::array<double, bands> depths = interior ? std::array<double, bands>{.03, .04, .05, .06}
+        : std::array<double, bands>{0, .012, .03, .06};
     for (int angle = 0; angle < directions; ++angle)
     {
         const double dx = std::cos(angle * 2 * pi / directions), dy = std::sin(angle * 2 * pi / directions);
@@ -181,10 +182,13 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     }
 
     constexpr int directions = 128, bands = 4, sectors = 16;
-    const auto samples = SamplePlateContour(pixels, width, height, left, top, right, bottom);
+    const auto samples = SamplePlateContour(pixels, width, height, left, top, right, bottom, circle);
     if (samples.size() < directions * bands * .95) return result;
     const auto base = DominantPlateColor(samples);
     if (result.fill) static_cast<EdgeColor&>(*result.fill) = base;
+    // A complete tile with small transparent details must keep them over the
+    // theme. Uniform edge colors do not authorize filling its interior holes.
+    if (result.fill && !opaqueCore) return result;
     std::array<EdgeColor, bands> bandColors{};
     std::array<int, bands> bandCount{}, bandMatches{};
     for (int band = 0; band < bands; ++band) bandColors[band] = DominantPlateColor(samples, band);
@@ -261,15 +265,38 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     for (int c = 0; c < 3; ++c)
         slope += coefficients[1][c] * coefficients[1][c] + coefficients[2][c] * coefficients[2][c];
     const bool gradient = continuous && slope > 8 * 8 && gradientError < solidError * .45;
+    const bool solid = solidMatches >= samples.size() * .90 && solidSectors >= 14 && bandDelta <= 35 * 35;
+    if (circle && (gradient || solid))
+    {
+        const auto rim = SamplePlateContour(pixels, width, height, left, top, right, bottom);
+        int tested = 0, matching = 0;
+        for (const auto& s : rim)
+        {
+            if (s.band != 0) continue;
+            ++tested;
+            double error = 0;
+            const double color[]{double(s.color.r), double(s.color.g), double(s.color.b)};
+            const double flat[]{double(base.r), double(base.g), double(base.b)};
+            for (int c = 0; c < 3; ++c)
+            {
+                const double prediction = gradient ? coefficients[0][c] + coefficients[1][c] * s.x + coefficients[2][c] * s.y : flat[c];
+                const double delta = color[c] - prediction;
+                error += delta * delta;
+            }
+            matching += error <= 40 * 40;
+        }
+        if (tested == 0 || matching < tested * .8) return result;
+    }
     if (gradient)
     {
         PlateFill fill(EdgeColor{static_cast<int>(std::lround(coefficients[0][0])),
             static_cast<int>(std::lround(coefficients[0][1])), static_cast<int>(std::lround(coefficients[0][2]))});
         fill.gradient = true;
+        fill.normalizeContour = circle;
         for (int c = 0; c < 3; ++c) { fill.dx[c] = static_cast<float>(coefficients[1][c]); fill.dy[c] = static_cast<float>(coefficients[2][c]); }
         result.kind = BackplateKind::Gradient; result.fill = fill;
     }
-    else if (solidMatches >= samples.size() * .90 && solidSectors >= 14 && bandDelta <= 35 * 35)
+    else if (solid)
     {
         result.kind = BackplateKind::Solid; result.fill = PlateFill(base);
     }

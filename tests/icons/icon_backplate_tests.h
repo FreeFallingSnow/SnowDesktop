@@ -76,7 +76,7 @@ inline int RunIconBackplateTests()
         auto discColor = discFill;
         if (!discColor) discColor = beauty::DetectEdgeFill(disc, size, size);
         check(discColor.has_value(),
-            "a protected disc can still supply the large-icon color picker without authorizing smart clipping");
+            "a spatially shaded disc still supplies the large-icon color picker");
 
         for (const auto color : {rgb(252, 30, 30), rgb(28, 144, 237), rgb(248, 248, 248)})
         {
@@ -88,6 +88,16 @@ inline int RunIconBackplateTests()
                 [static_cast<size_t>(size / 2) * size + margin / 2] == color,
                 "continuous red blue and neutral circular plates are eligible rather than categorically rejected");
         }
+        auto outlinedDisc = disc;
+        for (int cy = 0; cy < size; ++cy) for (int cx = 0; cx < size; ++cx)
+        {
+            const double dx = cx + .5 - size * .5, dy = cy + .5 - size * .5;
+            if (outlinedDisc[static_cast<size_t>(cy) * size + cx] &&
+                dx * dx + dy * dy > size * size * .42 * .42)
+                outlinedDisc[static_cast<size_t>(cy) * size + cx] = rgb(30, 30, 30);
+        }
+        check(!beauty::DetectPlateFill(outlinedDisc, size, size),
+            "a genuinely contrasting circular outline remains protected while plain circular plates are allowed");
 
         auto photograph = solid;
         for (int cy = margin; cy < size - margin; ++cy)

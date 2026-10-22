@@ -1147,6 +1147,28 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                     channel(fill.g, 1), channel(fill.b, 2), 255), settings);
             }
             std::uint32_t sampled = source[i];
+            if (detectedEdgeFill && detectedEdgeFill->normalizeContour && PixelA(sampled) > 0)
+            {
+                const float rx = (static_cast<float>(i % width) - (bounds.left + bounds.right) * .5f) /
+                    std::max(1, bounds.right - bounds.left + 1);
+                const float ry = (static_cast<float>(i / width) - (bounds.top + bounds.bottom) * .5f) /
+                    std::max(1, bounds.bottom - bounds.top + 1);
+                if (rx * rx + ry * ry >= .42f * .42f)
+                {
+                    // Normalize only background-colored pixels in the outer
+                    // band. Marks keep their pixels; the original disc's
+                    // antialiasing and small rim highlights cannot form a seam.
+                    int error = 0;
+                    const auto filtered = ApplyFilter(sampled, settings);
+                    for (const int shift : {0, 8, 16})
+                    {
+                        const int value = static_cast<int>((filtered >> shift) & 255) * 255 / PixelA(filtered);
+                        const int delta = value - static_cast<int>((background >> shift) & 255);
+                        error += delta * delta;
+                    }
+                    if (error <= 40 * 40) sampled = 0;
+                }
+            }
             if (detectedEdgeFill && detectedEdgeFill->cover)
             {
                 const float sx = tileBounds.left + (tileInset + (static_cast<float>(i % width) + .5f) / width * (1 - 2 * tileInset)) *
