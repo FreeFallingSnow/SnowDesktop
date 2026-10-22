@@ -1284,7 +1284,7 @@ if (BUILD_TESTING)
             COMMAND_ARGUMENTS
             LABELS)
         cmake_parse_arguments(
-            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY" "" "${multiValueArgs}" ${ARGN})
+            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY;OBSERVE_RUNTIME_MODULES" "" "${multiValueArgs}" ${ARGN})
 
         if (NOT SNOW_TEST_SOURCES)
             message(FATAL_ERROR
@@ -1339,6 +1339,20 @@ if (BUILD_TESTING)
                 -Wall -Wextra -pedantic)
         endif()
 
+        if(SNOW_TEST_OBSERVE_RUNTIME_MODULES)
+            if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
+                get_target_property(existing_launcher ${TEST_TARGET} TEST_LAUNCHER)
+                if(existing_launcher)
+                    message(STATUS "Runtime module observation unavailable with an existing test launcher; evidence remains unclosed")
+                else()
+                    set_property(TARGET ${TEST_TARGET} PROPERTY TEST_LAUNCHER
+                        "$<TARGET_FILE:SnowDesktopTestRuntimeObserver>;--test;${TEST_NAME};--")
+                    add_dependencies(${TEST_TARGET} SnowDesktopTestRuntimeObserver)
+                endif()
+            else()
+                message(STATUS "Runtime module observation unavailable before CMake 3.29; evidence remains unclosed")
+            endif()
+        endif()
         add_test(
             NAME ${TEST_NAME}
             COMMAND ${TEST_TARGET}
@@ -1809,6 +1823,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopWidgetCompositionLayerRulesTests
         widget_composition_layer_rules
+        OBSERVE_RUNTIME_MODULES
         SOURCES
             tests/widget_composition_layer_rules_tests.cpp
         INCLUDE_DIRECTORIES src
@@ -1949,6 +1964,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests
         demo_mode_rules
+        OBSERVE_RUNTIME_MODULES
         SOURCES tests/demo_mode_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract settings render)

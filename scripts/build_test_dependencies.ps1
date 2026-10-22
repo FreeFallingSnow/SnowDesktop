@@ -119,6 +119,9 @@ function Get-TestDependencyManifest {
         $issues=@();$project=$null;$keys=@();$visited=@{};$projectNames=@();$compilerLogs=0;$linkerLogs=0;$sourceReports=0
         $command=@(Get-TestDependencyField $test 'command' @());$required=@($test.properties|Where-Object name -eq 'REQUIRED_FILES'|ForEach-Object value)
         $executables=@(@($command|Select-Object -First 1)+$required|Where-Object {[IO.Path]::IsPathRooted([string]$_) -and [IO.Path]::GetExtension([string]$_) -eq '.exe'}|Sort-Object -Unique)
+        if($command.Count -ge 5 -and [IO.Path]::GetFileName([string]$command[0]) -eq 'SnowDesktopTestRuntimeObserver.exe' -and $command[1] -eq '--test' -and $command[2] -ceq $test.name -and $command[3] -eq '--'){
+            $executables=@($executables|Where-Object {$_ -ne $command[0]})
+        }
         if($executables.Count -eq 1){
             $target=[IO.Path]::GetFileNameWithoutExtension([string]$executables[0]);$direct=Join-Path $build ($target+'.vcxproj')
             if([IO.File]::Exists($direct)){$project=$direct}else{

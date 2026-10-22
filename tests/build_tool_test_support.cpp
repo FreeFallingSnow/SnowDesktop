@@ -132,7 +132,7 @@ void write(const fs::path& path,const std::string& text,bool bom) {fs::create_di
 void atomic(const fs::path& path,const std::string& text) {static std::atomic<unsigned> sequence=0;auto temporary=path.wstring()+L"."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(sequence++)+L".pending";write(temporary,text);const bool moved=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;require(moved,"Fixture atomic replacement failed: "+std::to_string(GetLastError()));}
 void copy(const fs::path& repo,const fs::path& root,const std::vector<std::string>& files) {for(const auto& file:files){fs::create_directories((root/file).parent_path());fs::copy_file(repo/file,root/file,fs::copy_options::overwrite_existing);}}
 void copy_persistent_entry(const fs::path& repo,const fs::path& root) {
-    copy(repo,root,{"scripts/build_test_dependencies.ps1","scripts/build_test_runtime_inputs.ps1","scripts/test_runtime_contracts.json"});
+    copy(repo,root,{"scripts/build_test_dependencies.ps1","scripts/build_test_runtime_inputs.ps1","scripts/build_test_runtime_modules.ps1","scripts/test_runtime_contracts.json"});
     copy(repo,root,{"scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_command.ps1","scripts/build_msbuild_logger.cs","scripts/build_manager.ps1","scripts/build_evidence.ps1","scripts/build_verification.ps1","scripts/build_acceptance.ps1","scripts/build_inputs.ps1","scripts/build_protocol.ps1","scripts/build_ownership.ps1"});
     if(!fs::exists(root/L"scripts/build_preflight.ps1"))copy(repo,root,{"scripts/build_preflight.ps1"});
 }
@@ -253,7 +253,7 @@ int test_main(int argc,char**,const std::function<void(const fs::path&)>& test) 
     }catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}
 }
 Coordinator::Coordinator(const fs::path& repo,const std::string& label,bool durableBatches,const fs::path& fixtureParent):root(temporary(label,fixtureParent)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration"),durableBatches_(durableBatches) {
-    copy(repo,root,{"scripts/build_test_dependencies.ps1","scripts/build_test_runtime_inputs.ps1","scripts/test_runtime_contracts.json"});
+    copy(repo,root,{"scripts/build_test_dependencies.ps1","scripts/build_test_runtime_inputs.ps1","scripts/build_test_runtime_modules.ps1","scripts/test_runtime_contracts.json"});
     copy(repo,root,{"scripts/build_entry.ps1","scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_command.ps1","scripts/build_msbuild_logger.cs","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_evidence.ps1","scripts/build_verification.ps1","scripts/build_acceptance.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
     write(scripts/L"build_preflight.ps1",R"PS(param([Alias('ReloadShell')][switch]$ExecuteReloadShell,[Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {

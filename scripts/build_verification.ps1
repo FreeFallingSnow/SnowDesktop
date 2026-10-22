@@ -17,7 +17,7 @@ function Get-VerificationEnvironment([string]$Root) {
     $environment=[ordered]@{}
     foreach($name in @($values.Keys|Sort-Object)){
         # These exact values identify execution/telemetry, not test behavior.
-        if($name -in 'SNOWDESKTOP_EXECUTION_TOKEN','SNOWDESKTOP_RUN_ID','SNOWDESKTOP_STAGE_PARENT','SNOWDESKTOP_RETRY_SIGNAL_DIR','SNOWDESKTOP_RETRY_RUN_TOKEN'){continue}
+        if($name -in 'SNOWDESKTOP_EXECUTION_TOKEN','SNOWDESKTOP_RUN_ID','SNOWDESKTOP_STAGE_PARENT','SNOWDESKTOP_RETRY_SIGNAL_DIR','SNOWDESKTOP_RETRY_RUN_TOKEN','SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT'){continue}
         $environment[([string]$name).ToUpperInvariant()]=[string]$values[$name]
     }
     # The standard entry always sets these before executing a test process.

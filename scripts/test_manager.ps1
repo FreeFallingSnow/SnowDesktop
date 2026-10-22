@@ -107,6 +107,11 @@ function Get-TestSelection {
             }
             $executable = [IO.Path]::GetFileName([string]$requiredExecutables[0])
         }
+        if($executable -eq 'SnowDesktopTestRuntimeObserver.exe'){
+            $observedExecutables=@($test.properties|Where-Object name -eq 'REQUIRED_FILES'|ForEach-Object value|Where-Object {[IO.Path]::GetFileName([string]$_) -match '^SnowDesktop.+Tests\.exe$'})
+            if($observedExecutables.Count -ne 1){throw "Cannot resolve observed native test target: $($test.name)"}
+            $executable=[IO.Path]::GetFileName([string]$observedExecutables[0])
+        }
         if ($executable -match "^SnowDesktop.+Tests\.exe$") {
             [IO.Path]::GetFileNameWithoutExtension($executable)
         }
@@ -227,14 +232,22 @@ function Invoke-FilteredTests {
         if($executed.Tests.Count -ne $selection.Tests.Count -or @(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
         $selection=$executed
     }
+    $moduleDirectory=Join-Path $repositoryRoot ('.build/Testing/runtime-modules-'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($moduleDirectory)
+    $previousModuleRoot=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT','Process')
+    [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$moduleDirectory,'Process')
     $script:lastReportPath='';$script:lastCommandExit=2;$testCode=2
     try {
         Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
         $testCode=0
     }finally{
+        [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$previousModuleRoot,'Process')
         if($Mode -eq 'plan'){
             $runtimeCheck=if(Get-Command Compare-TestRuntimeInputs -ErrorAction SilentlyContinue){Compare-TestRuntimeInputs $repositoryRoot $selection.Tests (Get-Field $coverage 'dependencyManifest')}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime input observer is unavailable.';reuseAllowed=$false}}
             Set-Field $coverage 'runtimeInputCheck' $runtimeCheck
+            $moduleScript=Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1'
+            $moduleCheck=if([IO.File]::Exists($moduleScript)){. $moduleScript;Get-TestRuntimeModuleObservations $repositoryRoot $selection.Tests $moduleDirectory}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime module observer is unavailable.'}}
+            Set-Field $coverage 'runtimeModules' $moduleCheck
             $coverage|ConvertTo-Json -Depth 15|Set-Content -LiteralPath $coveragePath -Encoding UTF8
         }
         if($candidate){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}

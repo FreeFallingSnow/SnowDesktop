@@ -6,6 +6,29 @@ if(BUILD_TESTING AND WIN32)
     target_include_directories(SnowDesktopBuildToolTestSupport PUBLIC tests src)
     target_compile_features(SnowDesktopBuildToolTestSupport PUBLIC cxx_std_20)
     target_link_libraries(SnowDesktopBuildToolTestSupport PUBLIC shell32)
+    add_executable(SnowDesktopTestRuntimeObserver tests/build_tools/test_runtime_observer.cpp)
+    target_link_libraries(SnowDesktopTestRuntimeObserver PRIVATE SnowDesktopBuildToolTestSupport bcrypt psapi winhttp ws2_32)
+    target_compile_features(SnowDesktopTestRuntimeObserver PRIVATE cxx_std_20)
+    set_target_properties(SnowDesktopTestRuntimeObserver PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    if(MSVC)
+        set_property(TARGET SnowDesktopTestRuntimeObserver PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopTestRuntimeObserver PRIVATE /W4 /permissive- /EHsc /utf-8)
+    endif()
+    foreach(variant A B)
+        add_library(SnowDesktopRuntimeObserverFixture${variant} SHARED tests/build_tools/runtime_observer_fixture.cpp)
+        target_compile_definitions(SnowDesktopRuntimeObserverFixture${variant} PRIVATE SNOWDESKTOP_RUNTIME_FIXTURE_VALUE=$<IF:$<STREQUAL:${variant},A>,7,9>)
+        set_target_properties(SnowDesktopRuntimeObserverFixture${variant} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+        if(MSVC)
+            set_property(TARGET SnowDesktopRuntimeObserverFixture${variant} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+            target_compile_options(SnowDesktopRuntimeObserverFixture${variant} PRIVATE /W4 /permissive- /EHsc /utf-8)
+        endif()
+    endforeach()
     target_compile_definitions(SnowDesktopBuildToolTestSupport PUBLIC _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(SnowDesktopBuildToolTestSupport PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
@@ -45,6 +68,9 @@ if(BUILD_TESTING AND WIN32)
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
     snowdesktop_add_native_tool_test(SnowDesktopTestDependencyTests test_dependencies
         build_tools/build_test_dependency_tests.cpp "tools;core;integration" 120)
+    snowdesktop_add_native_tool_test(SnowDesktopRuntimeObserverTests test_runtime_modules
+        build_tools/build_runtime_observer_tests.cpp "tools;core;integration" 120)
+    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB)
     target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp tests/build_tools/build_test_runtime_inputs_tests.cpp)
     add_test(NAME test_runtime_inputs COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --runtime-inputs)
     set_tests_properties(test_runtime_inputs PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"

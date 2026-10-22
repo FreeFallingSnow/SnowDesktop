@@ -9,6 +9,7 @@ function New-BatchTestEvidence([string]$Root,$Result) {
     $artifacts=@(Get-Field $coverage 'testExecutablesBeforeRun' @())
     $dependencies=Get-Field $coverage 'dependencyManifest'
     $runtimeInputCheck=Get-Field $coverage 'runtimeInputCheck'
+    $runtimeModules=Get-Field $coverage 'runtimeModules'
     $items=@();$reports=@{}
     foreach($name in @(Get-Field $coverage 'selected' @()|Sort-Object -Unique)) {
         $observed=@(Get-Field $coverage 'completed' @()|Where-Object name -eq $name)
@@ -16,6 +17,7 @@ function New-BatchTestEvidence([string]$Root,$Result) {
         $definition=@($definitions|Where-Object name -eq $name)
         $dependency=@(Get-Field $dependencies 'tests' @()|Where-Object test -eq $name)
         $runtimeInputs=@(Get-Field $runtimeInputCheck 'tests' @()|Where-Object test -eq $name)
+        $modules=@(Get-Field $runtimeModules 'tests' @()|Where-Object test -eq $name)
         $status=if($observed.Count -eq 1){[string]$observed[0].status}else{'not-run'}
         $attempts=@()
         $retryTests=Get-Field $retry 'tests'
@@ -65,6 +67,7 @@ function New-BatchTestEvidence([string]$Root,$Result) {
             identityStatus=$(if(-not $stable){'invalidated'}elseif($complete){'recorded'}else{'incomplete'});
             dependencies=$(if($dependency.Count -eq 1){[pscustomobject]@{manifest=(Get-Field $dependencies 'path');manifestSha256=(Get-Field $dependencies 'sha256');observation=$dependency[0]}}else{[pscustomobject]@{status='not-recorded';reuseAllowed=$false}});
             runtimeInputs=$(if($runtimeInputs.Count -eq 1){$runtimeInputs[0]}else{[pscustomobject]@{status='not-recorded';runtimeClosure='unclosed';reuseAllowed=$false}});
+            runtimeModules=$(if($modules.Count -eq 1){$modules[0]}else{[pscustomobject]@{status='not-recorded';runtimeClosure='unclosed';reuseAllowed=$false}});
             reuseAllowed=$false;dependencyCoverage='Repository inputs, invocation and binary are bound; external and semantic dependencies are not yet closed.'})
     }
     return [pscustomobject]@{schemaVersion=1;status='recorded';tests=$items;reason='Observations remain attached to their original immutable attempt; no automatic cross-candidate reuse.'}
