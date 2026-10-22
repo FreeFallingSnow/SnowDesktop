@@ -226,8 +226,9 @@ target_compile_options(BudgetProgram PRIVATE /W4 /WX /MP${SNOWDESKTOP_COMPILE_JO
         const auto view=Json::parse(waited.out);require(waited.code==0&&view.at("status").str()=="passed","Weighted actual build failed: "+view.dump()+waited.err);
         int units=0;bool mtt=false;
         for(const auto& event:view.at("stageEvents").items){
-            if(event.at("name").str()=="compile"&&event.has("task")&&event.at("task").str()=="MultiToolTask")mtt=true;
-            if(event.at("name").str()=="compile"&&event.at("kind").str()=="end"){require(event.at("unitCountKnown").boolean,"Actual compiler observation unavailable");units+=event.at("attemptedUnits").integer();}
+            const auto name=event.has("name")?event.at("name").str():"";
+            if(name=="compile"&&event.has("task")&&event.at("task").str()=="MultiToolTask")mtt=true;
+            if(name=="compile"&&event.at("kind").str()=="end"){require(event.at("unitCountKnown").boolean,"Actual compiler observation unavailable");units+=event.at("attemptedUnits").integer();}
             if(event.has("logPath")&&!event.at("logPath").str().empty()&&fs::exists(fs::path(wide(event.at("logPath").str())))){
                 const auto log=read(fs::path(wide(event.at("logPath").str())));
                 require(log.find("warning C")==std::string::npos&&log.find("warning D")==std::string::npos&&log.find("warning LNK")==std::string::npos,"Compiler/linker warning in actual weighted workload: "+log);
