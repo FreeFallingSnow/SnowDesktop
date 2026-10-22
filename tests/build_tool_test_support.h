@@ -49,7 +49,7 @@ std::string ps_literal(const fs::path& value);
 std::string ps_literal(const std::string& value);
 std::string base64(const std::string& value);
 std::string unbase64(const std::string& value);
-fs::path temporary(const std::string& label);
+fs::path temporary(const std::string& label, const fs::path& parent = {});
 fs::path executable();
 fs::path powershell(bool legacy = false);
 fs::path production_python();
@@ -104,7 +104,7 @@ public:
     std::vector<Json> workers;
     // Existing fixtures exercise retained v2 semantics. New lifecycle tests
     // explicitly keep production's default durable protocol.
-    Coordinator(const fs::path& repo, const std::string& label, bool durableBatches = false);
+    Coordinator(const fs::path& repo, const std::string& label, bool durableBatches = false, const fs::path& fixtureParent = {});
     ~Coordinator();
     Json call(std::vector<std::string> args, int code = 0);
     std::unique_ptr<Child> start(std::vector<std::string> args);

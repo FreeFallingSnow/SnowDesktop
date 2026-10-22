@@ -105,6 +105,12 @@ MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSV
 Debug 构建使用 debug preset 和 `scripts\build_debug.bat`。项目数与项目内编译数可能相乘，
 因此不要同时大幅提高两者；比较构建耗时时应固定源码输入并记录实际配置。
 
+`SNOWDESKTOP_BUILD_TOOL_JOBS` 是跨 MSBuild 构建的 MultiToolTask 进程预算候选，默认 `0` 保持原模式。
+Visual Studio/MSVC 下可在本地配置预设的 `cacheVariables` 中指定正整数（最多 65536），由生产 CMake
+为全部目标统一设置 `UseMultiToolTask`、`EnforceProcessCountAcrossBuilds` 和 `MultiProcMaxCount`。
+与已声明的 `CMAKE_VS_GLOBALS` 冲突时配置失败，不静默覆盖。它约束支持 MultiToolTask 的构建工具，
+不能替代 CTest 或整个 Run 的 CPU/内存准入预算。默认采用仍须经过固定宿主候选的墙钟、内存与失败对比。
+
 测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
 `core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；显式 `full` 运行完整自动测试集合。
 无参数只显示用法，不配置、构建或执行测试；直接调用 PowerShell 测试入口而未指定模式时只列清单。

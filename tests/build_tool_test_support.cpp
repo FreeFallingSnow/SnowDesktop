@@ -142,10 +142,12 @@ std::string ps_literal(const std::string& value) {std::string out="'";for(char c
 std::string ps_literal(const fs::path& value) {return ps_literal(utf8(value.wstring()));}
 std::string base64(const std::string& value) {static const char* alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";std::string out;unsigned accumulator=0;int bits=0;for(unsigned char c:value){accumulator=(accumulator<<8)|c;bits+=8;while(bits>=6){bits-=6;out+=alphabet[(accumulator>>bits)&63];}}if(bits)out+=alphabet[(accumulator<<(6-bits))&63];while(out.size()%4)out+='=';return out;}
 std::string unbase64(const std::string& value) {std::string out;unsigned accumulator=0;int bits=0;for(char c:value){if(c=='=')break;const std::string alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";auto index=alphabet.find(c);require(index!=std::string::npos,"Invalid base64 response");accumulator=(accumulator<<6)|static_cast<unsigned>(index);bits+=6;if(bits>=8){bits-=8;out+=static_cast<char>((accumulator>>bits)&255);}}return out;}
-fs::path temporary(const std::string& label) {
+fs::path temporary(const std::string& label,const fs::path& parent) {
     static std::atomic<unsigned> sequence=0;fs::path root;
+    const auto base=parent.empty()?fs::temp_directory_path():parent;
+    if(!parent.empty())fs::create_directories(base);
     for(int attempt=0;attempt<64;++attempt){
-        const auto candidate=fs::temp_directory_path()/wide("SnowDesktop-native-"+label+"-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));
+        const auto candidate=base/wide("SnowDesktop-native-"+label+"-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));
         std::error_code error;const bool created=fs::create_directory(candidate,error);
         require(!error||error==std::errc::file_exists,"Cannot create fixture directory: "+error.message());
         if(created){root=candidate;break;}
@@ -238,7 +240,7 @@ Json owner(DWORD pid) {HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATI
 bool owner_alive(const Json& value) {if(!value.has("pid")||!value.has("startTicks"))return false;HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return false;bool alive=WaitForSingleObject(handle,0)==WAIT_TIMEOUT&&std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str();CloseHandle(handle);return alive;}
 void stop_owner(const Json& value) {if(!owner_alive(value))return;HANDLE handle=OpenProcess(PROCESS_TERMINATE|PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,static_cast<DWORD>(value.at("pid").number));if(!handle)return;if(std::to_string(birth(handle)+504911232000000000ULL)==value.at("startTicks").str()){TerminateProcess(handle,4);WaitForSingleObject(handle,5000);}CloseHandle(handle);}
 int test_main(int argc,char** argv,const std::function<void(const fs::path&)>& test) {try {require(argc>=2,"Repository argument required");test(fs::path(wide(argv[1])));std::cout<<"PASSED"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return 1;}}
-Coordinator::Coordinator(const fs::path& repo,const std::string& label,bool durableBatches):root(temporary(label)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration"),durableBatches_(durableBatches) {
+Coordinator::Coordinator(const fs::path& repo,const std::string& label,bool durableBatches,const fs::path& fixtureParent):root(temporary(label,fixtureParent)),scripts(root/L"scripts"),stateRoot(root/L".build/collaboration"),durableBatches_(durableBatches) {
     copy(repo,root,{"scripts/build_entry.ps1","scripts/build_run.ps1","scripts/build_telemetry.ps1","scripts/build_command.ps1","scripts/build_msbuild_logger.cs","scripts/build_runtime.ps1","scripts/build_manager.ps1","scripts/build_evidence.ps1","scripts/build_verification.ps1","scripts/build_acceptance.ps1","scripts/build_inputs.ps1","scripts/build_job.cs","scripts/build_protocol.ps1","scripts/build_ownership.ps1","scripts/build_preflight.ps1","scripts/build_waiter.ps1","scripts/build_wait_tasks.py","tools/build-dashboard/server.py"});
     write(scripts/L"build_preflight.ps1",R"PS(param([Alias('ReloadShell')][switch]$ExecuteReloadShell,[Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {

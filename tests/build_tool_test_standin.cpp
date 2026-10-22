@@ -10,8 +10,48 @@ bool contains(const std::vector<std::string>& args,const std::string& value) {re
 std::string argument(const std::vector<std::string>& args,const std::string& key) {auto item=std::find(args.begin(),args.end(),key);require(item!=args.end()&&item+1!=args.end(),"Stand-in missing argument "+key);return *(item+1);}
 void append(const fs::path& path,const std::string& value) {fs::create_directories(path.parent_path());std::ofstream output(path,std::ios::binary|std::ios::app);output<<value;}
 std::string target(const std::string& name) {return name=="theme_workflow"?"SnowDesktopThemeWorkflowTests":name=="widget_author_preview_cli"?"SnowDesktopWidgetAuthorPreviewCliTests":"SnowDesktop"+name+"Tests";}
+class CompilerCounter {
+    fs::path path_;
+    HANDLE mutex_=nullptr;
+    void update(int delta) {
+        const auto wait=WaitForSingleObject(mutex_,10000);
+        require(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED,"Compiler counter mutex timeout");
+        try {
+            auto data=fs::exists(path_)?Json::parse(read(path_)):Json::object({{"active",0},{"maximum",0},{"starts",0}});
+            const int active=data.at("active").integer()+delta;
+            require(active>=0,"Compiler counter underflow");data["active"]=active;
+            data["maximum"]=std::max(active,data.at("maximum").integer());
+            if(delta>0)data["starts"]=data.at("starts").integer()+1;
+            write(path_,data.dump());ReleaseMutex(mutex_);
+        }catch(...){ReleaseMutex(mutex_);throw;}
+    }
+public:
+    explicit CompilerCounter(const fs::path& root):path_(root/L"counter.json") {
+        mutex_=CreateMutexW(nullptr,FALSE,(L"Local\\SnowDesktopCompilerProbe."+root.filename().wstring()).c_str());
+        require(mutex_!=nullptr,"Cannot create compiler counter mutex");
+        try{update(1);}catch(...){CloseHandle(mutex_);mutex_=nullptr;throw;}
+    }
+    ~CompilerCounter(){try{update(-1);}catch(...){}if(mutex_)CloseHandle(mutex_);}
+};
 int execute(const std::vector<std::string>& args) {
     auto root=fs::current_path();auto name=utf8(executable().stem().wstring());
+    if(contains(args,"--budget-build-gate")){
+        const auto folder=fs::path(environment(L"SNOWDESKTOP_COMPILER_PROBE"));
+        require(!folder.empty(),"Missing compiler gate directory");
+        write(folder/(L"gate-"+environment(L"SNOWDESKTOP_COMPILER_PROJECT")),"ready");
+        until([&]{return fs::exists(folder/L"gate-left")&&fs::exists(folder/L"gate-right");},30);return 0;
+    }
+    if(name=="cl-budget"){
+        const auto folder=fs::path(environment(L"SNOWDESKTOP_COMPILER_PROBE"));
+        const auto compiler=fs::path(wide(read(fs::path(environment(L"SNOWDESKTOP_REAL_CL_FILE")))));
+        require(!folder.empty()&&compiler.is_absolute()&&fs::is_regular_file(compiler),"Missing actual compiler or probe directory");
+        CompilerCounter counter(folder);
+        // Keep two real MSBuild schedules overlapping long enough to observe
+        // their shared limit; the actual cl.exe still produces every object.
+        Sleep(700);
+        std::vector<std::wstring> command={compiler.wstring()};for(const auto& item:args)command.push_back(wide(item));
+        const auto result=run(command,root,30);std::cout<<result.out;std::cerr<<result.err;return result.code;
+    }
     if(contains(args,"--shell-descendant")){Sleep(60000);return 0;}
     if(contains(args,"--selected-probe")){auto selected=argument(args,"--selected-probe");append(root/L"executed.txt",selected+"\n");return selected=="Gamma"?23:selected=="Beta"&&fs::exists(root/L"fail-beta")?31:0;}
     if(name=="python") {

@@ -27,6 +27,7 @@ namespace SnowDesktop.Build
         [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
         readonly object sync = new object();
         readonly Dictionary<string, Operation> active = new Dictionary<string, Operation>();
+        readonly Dictionary<string, string> targets = new Dictionary<string, string>();
         StreamWriter output;
         string run, parent;
         bool capped;
@@ -35,9 +36,14 @@ namespace SnowDesktop.Build
         public LoggerVerbosity Verbosity { get; set; }
         static string Context(BuildEventContext value)
         { return value == null ? "none" : value.NodeId+":"+value.ProjectContextId+":"+value.TargetId+":"+value.TaskId; }
-        static string Phase(string task)
+        static string TargetContext(BuildEventContext value)
+        { return value == null ? "none" : value.NodeId+":"+value.ProjectContextId+":"+value.TargetId; }
+        static string Phase(string task, string target)
         {
             if (task == "CL") return "compile";
+            // MultiToolTask also runs MIDL/FXC. Only its actual ClCompile target
+            // denotes compiler work; do not label every parallel tool as CL.
+            if (task == "MultiToolTask" && target == "ClCompile") return "compile";
             if (task == "Link" || task == "Lib") return "link";
             if (task.IndexOf("Xaml", StringComparison.OrdinalIgnoreCase) >= 0 || task.StartsWith("MarkupCompile", StringComparison.Ordinal)) return "codegen";
             if (task == "CustomBuild") return "custom-build";
@@ -70,7 +76,7 @@ namespace SnowDesktop.Build
             if(fields.Length!=3 || !Guid.TryParseExact(fields[1],"N",out parsed)) throw new LoggerException("Invalid SnowDesktop observation parameters");
             run=fields[1];parent=fields[2];
             if(output!=null)Shutdown();
-            active.Clear();capped=false;written=0;
+            active.Clear();targets.Clear();capped=false;written=0;
             // CMake can invoke/reuse MSBuild once per selected target with the
             // same logger parameters. Each initialization owns a fresh file.
             string file=Path.ChangeExtension(fields[0],Guid.NewGuid().ToString("N")+".jsonl");
@@ -81,12 +87,19 @@ namespace SnowDesktop.Build
             events.TaskStarted+=Start;
             events.TaskFinished+=Finish;
             events.MessageRaised+=Message;
+            events.TargetStarted+=StartTarget;
+            events.TargetFinished+=FinishTarget;
         }
+        void StartTarget(object sender, TargetStartedEventArgs value)
+        { lock(sync) { targets[TargetContext(value.BuildEventContext)]=value.TargetName; } }
+        void FinishTarget(object sender, TargetFinishedEventArgs value)
+        { lock(sync) { targets.Remove(TargetContext(value.BuildEventContext)); } }
         void Start(object sender, TaskStartedEventArgs value)
         {
-            string phase=Phase(value.TaskName);if(phase==null)return;
             lock(sync)
             {
+                string target;targets.TryGetValue(TargetContext(value.BuildEventContext),out target);
+                string phase=Phase(value.TaskName,target);if(phase==null)return;
                 var op=new Operation{Name=phase,Task=value.TaskName,Project=value.ProjectFile,Tick=Stopwatch.GetTimestamp(),Timestamp=value.Timestamp.ToUniversalTime()};
                 active[Context(value.BuildEventContext)]=op;
                 Write("start",",\"id\":"+Json(op.Id)+",\"parentId\":"+Json(parent)+",\"name\":"+Json(phase)+",\"task\":"+Json(op.Task)+",\"project\":"+Json(Path.GetFileNameWithoutExtension(op.Project))+",\"sourceUtc\":"+Json(op.Timestamp.ToString("o")));

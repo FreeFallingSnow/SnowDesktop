@@ -4,6 +4,7 @@ include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
 snowdesktop_check_shared_output()
 
 project(SnowDesktop LANGUAGES C CXX)
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
 
 # Ship a deterministic WebP decoder, independent of installed WIC extensions.
 foreach(WEBP_TOOL ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO LIBWEBPMUX WEBPMUX EXTRAS)
@@ -42,7 +43,6 @@ if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
         "SnowDesktop WinUI 3 requires a Visual Studio/MSBuild generator")
 endif()
 
-include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.VersionResources.cmake")
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)

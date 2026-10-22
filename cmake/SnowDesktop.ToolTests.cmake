@@ -96,7 +96,13 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_telemetry_tests.cpp "tools;integration" 180)
     target_sources(SnowDesktopBuildTelemetryTests PRIVATE
         tests/build_tools/build_configuration_tests.cpp
+        tests/build_tools/build_compile_budget_tests.cpp
         tests/build_tools/build_resource_publication_tests.cpp)
+    add_test(NAME build_compile_budget COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --compile-budget)
+    set_tests_properties(build_compile_budget PROPERTIES TIMEOUT 240 LABELS "manual;tools;integration" PROCESSORS 9
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        RESOURCE_LOCK snowdesktop_compiler_budget
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
     add_test(NAME build_resource_publication COMMAND SnowDesktopBuildTelemetryTests
         "${CMAKE_CURRENT_SOURCE_DIR}" --resource-publication)
     set_tests_properties(build_resource_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration"
