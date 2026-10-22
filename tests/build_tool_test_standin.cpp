@@ -128,4 +128,4 @@ int execute(const std::vector<std::string>& args) {
     return 0;
 }
 }
-int main(int argc,char** argv) {try {std::vector<std::string> args;for(int i=1;i<argc;++i)args.emplace_back(argv[i]);return execute(args);}catch(const std::exception& error){std::cerr<<error.what()<<std::endl;return 1;}}
+int wmain(int argc,wchar_t** argv) {try {std::vector<std::string> args;for(int i=1;i<argc;++i)args.emplace_back(utf8(argv[i]));return execute(args);}catch(const std::exception& error){std::cerr<<error.what()<<std::endl;return 1;}}

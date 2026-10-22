@@ -61,14 +61,15 @@ Get-TestRuntimeModuleObservations $PSScriptRoot $tests (Join-Path $PSScriptRoot 
     const auto stale=bridge.call(root/L"inspect.ps1",{});require(stale.at("tests").items[0].at("status").str()=="incomplete"&&stale.dump().find("loaded-module-file-changed")!=std::string::npos,"Old successful observation accepted replaced DLL bytes");
     auto forged=Json::parse(oldReport);forged["mode"]="probe";write(root/L"reports/Alpha.manual.json",forged.dump());require(bridge.call(root/L"inspect.ps1",{}).at("tests").items[0].at("status").str()=="unavailable","Probe was accepted as runtime execution evidence");write(root/L"reports/Alpha.manual.json",oldReport);
     Child unrelated({standin().wstring(),L"--wait",L"--marker",(root/L"unrelated").wstring()},root);
-    until([&]{return fs::exists(root/L"unrelated");});
+    until([&]{return fs::exists(root/L"unrelated")||!unrelated.running();});
+    require(fs::exists(root/L"unrelated"),"Unrelated fixture exited before its marker: "+unrelated.out()+unrelated.err());
     auto timed=arguments("Timed",L"--wait");timed.insert(timed.begin()+1,{L"--timeout-ms",L"1000"});
-    Child timeout(timed,root);until([&]{return fs::exists(root/L"alive.json");});const auto owner=Json::parse(read(root/L"alive.json"));
+    Child timeout(timed,root);until([&]{return fs::exists(root/L"alive.json")||!timeout.running();});require(fs::exists(root/L"alive.json"),"Timed fixture exited before its marker: "+timeout.out()+timeout.err());const auto owner=Json::parse(read(root/L"alive.json"));
     HANDLE target=OpenProcess(SYNCHRONIZE,FALSE,static_cast<DWORD>(owner.at("pid").integer()));require(target!=nullptr,"Cannot bind timeout fixture process handle");
     const auto timedResult=timeout.wait(15);const bool exited=WaitForSingleObject(target,3000)==WAIT_OBJECT_0;CloseHandle(target);
     require(timedResult.code==2&&exited&&unrelated.running(),"Observer timeout failed to contain its own process lifetime");
     require(Json::parse(read(root/L"reports/Timed.manual.json")).at("timedOut").boolean,"Observer timeout lost its original report");fs::remove(root/L"alive.json");
-    auto heldArguments=arguments("Killed",L"--wait");Child held(heldArguments,root);until([&]{return fs::exists(root/L"alive.json");});
+    auto heldArguments=arguments("Killed",L"--wait");Child held(heldArguments,root);until([&]{return fs::exists(root/L"alive.json")||!held.running();});require(fs::exists(root/L"alive.json"),"Observer-loss fixture exited before its marker: "+held.out()+held.err());
     const auto child=Json::parse(read(root/L"alive.json"));target=OpenProcess(SYNCHRONIZE,FALSE,static_cast<DWORD>(child.at("pid").integer()));require(target!=nullptr,"Cannot bind observer-loss fixture process handle");
     HANDLE observerProcess=OpenProcess(PROCESS_TERMINATE,FALSE,held.pid());require(observerProcess!=nullptr,"Cannot bind owned observer process");require(TerminateProcess(observerProcess,55)!=0,"Cannot terminate owned observer fixture");CloseHandle(observerProcess);held.wait(15);
     const bool contained=WaitForSingleObject(target,3000)==WAIT_OBJECT_0;CloseHandle(target);require(contained&&unrelated.running(),"Observer loss orphaned its child or stopped unrelated work");
