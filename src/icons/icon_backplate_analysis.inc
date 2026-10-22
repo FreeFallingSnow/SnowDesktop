@@ -142,7 +142,10 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
         }
         if (last >= first) hull += last - first + 1;
     }
-    if (!count || double(count) / std::max(1, hull) < .985) return result;
+    int core = 0;
+    for (int y = 8; y < grid - 8; ++y) for (int x = 8; x < grid - 8; ++x) core += mask[y][x];
+    const bool opaqueCore = core >= 48 * 48 * .995;
+    if (!count || double(count) / std::max(1, hull) < (opaqueCore ? .96 : .985)) return result;
     for (int y = 0; y < grid; ++y) for (int x = 0; x < grid; ++x)
         if (mask[y][x]) symmetric += mask[y][grid - 1 - x] + mask[grid - 1 - y][x];
     if (double(symmetric) / (2 * count) < .965) return result;
@@ -166,15 +169,21 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     for (int radius = 0; radius <= 40; ++radius) fitShape(radius / 80., false);
     for (double power : {2., 2.5, 3., 3.5, 4., 5., 6., 8.}) fitShape(power, true);
     if (best < .965) return result;
-    // Discs are recognizable foreground contours, including their own shading.
-    // Extending them into another outline destroys that contour (e.g. Arctime).
-    if (circle) { result.kind = BackplateKind::Contour; return result; }
-    result.kind = BackplateKind::Artwork;
+    // Geometry authorizes cropping a complete image tile; color continuity
+    // separately authorizes extension. Photographs need no fictitious fill.
+    result.kind = circle ? BackplateKind::Contour : BackplateKind::Artwork;
+    if (!circle && opaqueCore)
+    {
+        PlateFill tile;
+        tile.cover = true;
+        result.fill = tile;
+    }
 
     constexpr int directions = 128, bands = 4, sectors = 16;
     const auto samples = SamplePlateContour(pixels, width, height, left, top, right, bottom);
     if (samples.size() < directions * bands * .95) return result;
     const auto base = DominantPlateColor(samples);
+    if (result.fill) static_cast<EdgeColor&>(*result.fill) = base;
     std::array<EdgeColor, bands> bandColors{};
     std::array<int, bands> bandCount{}, bandMatches{};
     for (int band = 0; band < bands; ++band) bandColors[band] = DominantPlateColor(samples, band);
@@ -191,7 +200,12 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
         for (int other = 0; other < band; ++other)
             bandDelta = std::max(bandDelta, PlateDistance(bandColors[band], bandColors[other]));
     }
-    if (uniformBands && bandDelta > 40 * 40) { result.kind = BackplateKind::Framed; return result; }
+    if (uniformBands && bandDelta > 40 * 40)
+    {
+        result.kind = BackplateKind::Framed;
+        if (result.fill) result.fill->inset = .035f;
+        return result;
+    }
 
     std::array<std::array<double, 3>, 3> coefficients{};
     std::vector<bool> keep(samples.size(), true);
@@ -257,6 +271,36 @@ BackplateAnalysis AnalyzeBackplate(const std::vector<std::uint32_t>& pixels, int
     else if (solidMatches >= samples.size() * .90 && solidSectors >= 14 && bandDelta <= 35 * 35)
     {
         result.kind = BackplateKind::Solid; result.fill = PlateFill(base);
+    }
+    else if (result.fill)
+    {
+        // A narrow rim can have a different color on every side. Fit only
+        // the two inner bands and require a continuous interior before
+        // discarding it (e.g. a green frame around a gradient plate).
+        std::vector<bool> inner(samples.size());
+        for (size_t i = 0; i < samples.size(); ++i) inner[i] = samples[i].band >= 2;
+        std::array<std::array<double, 3>, 3> plane{};
+        if (FitPlatePlane(samples, inner, plane))
+        {
+            int innerGood = 0, innerTotal = 0, rimDifferent = 0, rimTotal = 0;
+            for (const auto& s : samples)
+            {
+                const double color[]{double(s.color.r), double(s.color.g), double(s.color.b)};
+                double error = 0;
+                for (int c = 0; c < 3; ++c)
+                {
+                    const double delta = color[c] - (plane[0][c] + plane[1][c] * s.x + plane[2][c] * s.y);
+                    error += delta * delta;
+                }
+                if (s.band >= 2) { ++innerTotal; innerGood += error <= 24 * 24; }
+                if (s.band == 0) { ++rimTotal; rimDifferent += error > 35 * 35; }
+            }
+            if (innerGood >= innerTotal * .90 && rimDifferent >= rimTotal * .70)
+            {
+                result.kind = BackplateKind::Framed;
+                result.fill->inset = .035f;
+            }
+        }
     }
     return result;
 }

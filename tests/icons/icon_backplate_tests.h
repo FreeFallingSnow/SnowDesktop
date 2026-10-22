@@ -64,16 +64,41 @@ inline int RunIconBackplateTests()
         const auto framed = plate(2);
         const auto framedFill = beauty::DetectPlateFill(framed, size, size);
         const auto framedResult = beauty::Render(framed, size, size, style, framedFill);
-        check(!framedFill && framedResult[static_cast<size_t>(margin) * size + size / 2] == 0,
-            "straight decorative border moves intact into foreground fit rather than being clipped into the theme outline");
+        check(framedFill && framedFill->cover && framedFill->inset > 0 &&
+            framedResult[static_cast<size_t>(margin) * size + size / 2] == rgb(245, 245, 245),
+            "thin straight rim is cropped and its solid interior covers the theme without shrinking");
         const auto disc = plate(3);
         const auto discFill = beauty::DetectPlateFill(disc, size, size);
-        check(!discFill && beauty::Render(disc, size, size, style, discFill)[static_cast<size_t>(margin) * size + size / 2] == 0,
-            "shaded circular disc keeps its contour instead of becoming a ghost circle in an invented square plate");
+        const auto discResult = beauty::Render(disc, size, size, style, discFill);
+        check(discFill && discFill->gradient &&
+            std::abs(static_cast<int>((discResult[static_cast<size_t>(size / 2) * size + margin / 2] >> 8) & 255) - 245) <= 2,
+            "shaded circular plate extends its spatial gradient without an averaged ghost circle");
         auto discColor = discFill;
         if (!discColor) discColor = beauty::DetectEdgeFill(disc, size, size);
         check(discColor.has_value(),
             "a protected disc can still supply the large-icon color picker without authorizing smart clipping");
+
+        for (const auto color : {rgb(252, 30, 30), rgb(28, 144, 237), rgb(248, 248, 248)})
+        {
+            auto circle = disc;
+            for (auto& pixel : circle) if (pixel) pixel = color;
+            circle[static_cast<size_t>(size / 2) * size + size / 2] = rgb(255, 255, 255);
+            const auto fill = beauty::DetectPlateFill(circle, size, size);
+            check(fill && !fill->gradient && beauty::Render(circle, size, size, style, fill)
+                [static_cast<size_t>(size / 2) * size + margin / 2] == color,
+                "continuous red blue and neutral circular plates are eligible rather than categorically rejected");
+        }
+
+        auto photograph = solid;
+        for (int cy = margin; cy < size - margin; ++cy)
+            for (int cx = margin; cx < size - margin; ++cx)
+                photograph[static_cast<size_t>(cy) * size + cx] =
+                    ((cx * 8 / size + cy * 8 / size) % 2) ? rgb(180, 65, 40) : rgb(35, 80, 160);
+        const auto photoFill = beauty::DetectPlateFill(photograph, size, size);
+        const auto photoResult = beauty::Render(photograph, size, size, style, photoFill);
+        check(photoFill && photoFill->cover &&
+            (photoResult[static_cast<size_t>(margin) * size + size / 2] >> 24) == 255,
+            "complete photographic tiles crop real image pixels to the theme without requiring a uniform fill or shrinking");
 
         auto hollow = solid;
         for (int cy = size * 3 / 8; cy < size * 5 / 8; ++cy)

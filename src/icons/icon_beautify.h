@@ -127,6 +127,10 @@ struct PlateFill : EdgeColor
     bool gradient = false;
     // Change across one source canvas, measured from its center.
     std::array<float, 3> dx{}, dy{};
+    // Complete image tiles can cover the theme outline without inventing a
+    // flat edge color. A verified thin rim may be cropped from that tile.
+    bool cover = false;
+    float inset = 0.0f;
 };
 
 enum class BackplateKind { Foreground, Solid, Gradient, Artwork, Framed, Contour };

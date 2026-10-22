@@ -1084,6 +1084,42 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     std::vector<std::uint32_t> output(source.size(), 0);
 
+    Bounds tileBounds = bounds;
+    float tileInset = 0;
+    if (detectedEdgeFill && detectedEdgeFill->cover)
+    {
+        // Ignore antialiased shadows when fitting a complete image tile.
+        tileBounds = {false, width, height, -1, -1};
+        for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
+            if (PixelA(source[static_cast<size_t>(y) * width + x]) >= 160)
+            {
+                tileBounds.valid = true;
+                tileBounds.left = std::min(tileBounds.left, x); tileBounds.right = std::max(tileBounds.right, x);
+                tileBounds.top = std::min(tileBounds.top, y); tileBounds.bottom = std::max(tileBounds.bottom, y);
+            }
+        const float tw = static_cast<float>(tileBounds.right - tileBounds.left + 1);
+        const float th = static_cast<float>(tileBounds.bottom - tileBounds.top + 1);
+        bool covered = false;
+        // Find the smallest crop whose real pixels cover the selected outline.
+        // This also handles pixel-art corner gaps without shrinking the mark.
+        for (int step = 0; step <= 12; ++step)
+        {
+            tileInset = std::max(detectedEdgeFill->inset, step * .01f);
+            int tested = 0, opaque = 0;
+            for (int gy = 0; gy < 48; ++gy) for (int gx = 0; gx < 48; ++gx)
+            {
+                const int x = std::min(width - 1, (2 * gx + 1) * width / 96);
+                const int y = std::min(height - 1, (2 * gy + 1) * height / 96);
+                if (mask[static_cast<size_t>(y) * width + x] < 192) continue;
+                const float sx = tileBounds.left + (tileInset + (x + .5f) / width * (1 - 2 * tileInset)) * tw - .5f;
+                const float sy = tileBounds.top + (tileInset + (y + .5f) / height * (1 - 2 * tileInset)) * th - .5f;
+                ++tested; opaque += PixelA(SampleBilinear(source, width, height, sx, sy)) >= 240;
+            }
+            if (tested > 0 && opaque >= tested * .995) { covered = true; break; }
+        }
+        if (!covered) detectedEdgeFill.reset();
+    }
+
     if (detectedEdgeFill || settings.mode == 2)
     {
         // Smart recognition fills a detected original plate. Explicit theme
@@ -1107,7 +1143,16 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 background = ApplyFilter(PackPremultiplied(channel(fill.r, 0),
                     channel(fill.g, 1), channel(fill.b, 2), 255), settings);
             }
-            const auto foreground = ApplyFilter(source[i], settings);
+            std::uint32_t sampled = source[i];
+            if (detectedEdgeFill && detectedEdgeFill->cover)
+            {
+                const float sx = tileBounds.left + (tileInset + (static_cast<float>(i % width) + .5f) / width * (1 - 2 * tileInset)) *
+                    (tileBounds.right - tileBounds.left + 1) - .5f;
+                const float sy = tileBounds.top + (tileInset + (static_cast<float>(i / width) + .5f) / height * (1 - 2 * tileInset)) *
+                    (tileBounds.bottom - tileBounds.top + 1) - .5f;
+                sampled = SampleBilinear(source, width, height, sx, sy);
+            }
+            const auto foreground = ApplyFilter(sampled, settings);
             output[i] = detectedEdgeFill ? ScalePixel(SourceOver(foreground, background), mask[i]) :
                 SourceOver(ScalePixel(foreground, mask[i]), output[i]);
         }
