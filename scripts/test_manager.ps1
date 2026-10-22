@@ -401,7 +401,9 @@ try {
 . (Join-Path $PSScriptRoot 'build_verification.ps1')
 foreach($name in @(Get-VerificationObserverVariables)){
     $observerIdentity[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
-    [Environment]::SetEnvironmentVariable($name,$null,'Process')
+    # PowerShell converts $null to an empty string for this .NET overload.
+    # Modern .NET preserves empty environment entries; pass an actual null.
+    [Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')
 }
 $script:lastReportPath=$null
 if($Mode -eq 'verify'){
@@ -574,5 +576,10 @@ Write-Host "=== Tests complete ($Mode) ==="
 
 } finally {
     try{Exit-BuildEntry $entryLease}
-    finally{foreach($name in $observerIdentity.Keys){[Environment]::SetEnvironmentVariable($name,$observerIdentity[$name],'Process')}}
+    finally{
+        foreach($name in $observerIdentity.Keys){
+            if($null -eq $observerIdentity[$name]){[Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')}
+            else{[Environment]::SetEnvironmentVariable($name,$observerIdentity[$name],'Process')}
+        }
+    }
 }
