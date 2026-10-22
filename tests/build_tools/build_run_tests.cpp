@@ -156,7 +156,11 @@ void project_resources(const fs::path& repo){
     };
     const auto submit=[&]{return second.call(other/L"scripts/build_run.ps1",{"-Command","start","-Task","runner","-Action","release"}).at("id").str();};
     const auto awaitQueued=[&](const std::string& id){
-        until([&]{const auto value=Json::parse(read(other/L".build/collaboration/runs"/wide(id+".json")));return value.at("status").str()!="starting";},10);
+        until([&]{
+            const auto value=Json::parse(read(other/L".build/collaboration/runs"/wide(id+".json")));
+            const auto phase=value.at("status").str();
+            return (phase!="starting"&&phase!="queued")||!value.at("waitingFor").str().empty()||fs::exists(other/L"build-started");
+        },10);
         auto view=otherCommand(id,{"-Command","status"});
         if(view.at("record").at("owner").kind!=Json::Kind::Null)c.workers.push_back(view.at("record").at("owner"));
         require(view.at("status").str()=="queued"&&!fs::exists(other/L"build-started"),"Independent worktrees admitted heavy pipelines simultaneously");
