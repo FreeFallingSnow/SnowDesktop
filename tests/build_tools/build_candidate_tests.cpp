@@ -91,11 +91,48 @@ void rejects(Coordinator& c,const std::vector<std::string>& args,const std::stri
     const auto result=c.bridge->invoke(c.scripts/L"build_candidate.ps1",args,env);
     require(result.code==2&&result.err.find(reason)!=std::string::npos,"Candidate rejection missed its boundary: "+result.out+result.err);
 }
+void metadata_checks(Coordinator& c,const Json& candidate,const Json& manifest) {
+    const auto id=candidate.at("id").str();const auto probe=c.root/L"read-manifest.ps1";
+    write(probe,R"PS(param([string]$Id,[string]$Relative)
+$ErrorActionPreference='Stop'
+. $PSScriptRoot/scripts/build_entry.ps1
+. $PSScriptRoot/scripts/build_protocol.ps1
+. $PSScriptRoot/scripts/build_inputs.ps1
+. $PSScriptRoot/scripts/build_candidate.ps1
+try {
+ if($PSBoundParameters.ContainsKey('Relative')){@{relative=(Get-CandidateRelativePath $Relative)}|ConvertTo-Json}
+ else{$snapshot=Read-CandidateManifest $PSScriptRoot $Id;@{id=$snapshot.manifest.id;digest=$snapshot.digest;objectsVerified=$false}|ConvertTo-Json}
+}catch{[Console]::Error.WriteLine($_.Exception.Message);exit 2}
+)PS",true);
+    require(c.bridge->call(probe,{"-Relative","src\\nested/file.cpp"}).at("relative").str()=="src/nested/file.cpp","Candidate relative path normalization changed");
+    for(const std::string invalid:{"","../outside","./source","src//a","src/a.","src/a ","C:/outside","src/COM1.txt","src/a:stream","src/<","src/*"}){
+        const auto result=c.bridge->invoke(probe,{"-Relative",invalid});
+        require(result.code==2&&result.err.find("Unsafe candidate relative path")!=std::string::npos,"Candidate metadata accepted an unsafe relative path");
+    }
+    const auto outside=temporary("metadata-outside");write(outside/L"keep.txt","foreign content unchanged\n");
+    const auto validation=c.root/L".build/candidate-slots/validation/source";
+    fs::create_directories(validation.parent_path());
+    const auto linked=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("New-Item -ItemType Junction -Path "+ps_literal(validation)+" -Target "+ps_literal(outside)+" -ErrorAction Stop | Out-Null")},c.root);
+    require(linked.code==0,"Cannot establish unrelated validation junction: "+linked.err);
+    require(c.bridge->call(probe,{"-Id",id}).at("id").str()==id,"Metadata-only read depended on an unrelated validation filesystem path");
+    require(fs::remove(validation),"Cannot remove owned validation junction");
+    const auto object=fs::path(wide(candidate.at("manifest").str())).parent_path().parent_path()/L"objects"/wide(input(manifest,"src/common.h").at("sha256").str());
+    const auto retained=fs::path(object.wstring()+L".retained");fs::rename(object,retained);
+    const auto objectLink=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("New-Item -ItemType Junction -Path "+ps_literal(object)+" -Target "+ps_literal(outside)+" -ErrorAction Stop | Out-Null")},c.root);
+    require(objectLink.code==0,"Cannot establish actual object reparse fixture: "+objectLink.err);
+    require(c.bridge->call(probe,{"-Id",id}).at("id").str()==id,"Metadata-only read accessed an unused content object");
+    rejects(c,{"-Command","inspect","-Snapshot",id},"cannot traverse a reparse point");
+    const DWORD attributes=GetFileAttributesW(object.c_str());
+    require(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)&&RemoveDirectoryW(object.c_str()),"Cannot remove owned object junction");
+    fs::rename(retained,object);
+    require(inspect(c,id).at("id").str()==id&&read(outside/L"keep.txt")=="foreign content unchanged\n","Object verification did not recover or changed foreign content");
+}
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"s",false,fixture_parent(repo));prepare(c,repo,control);
     const auto a=capture(c);const auto aId=a.at("id").str();const auto manifest=inspect(c,aId);
     require(input(manifest,"src/main.cpp").at("state").str()=="present"&&input(manifest,"src/new.h").at("state").str()=="present"&&input(manifest,"src/obsolete.txt").at("state").str()=="deleted","Dirty/new/deleted files were not captured");
     input(manifest,"CMakeUserPresets.json");input(manifest,"generated/seed.h");input(manifest,"README.md");
+    if(control.empty())metadata_checks(c,a,manifest);
     write(c.root/L"src/main.cpp","int main(){return 19;}\n");
     write(c.root/L"generated/seed.h","#pragma once\ninline constexpr int seed=9;\n");
     write(c.root/L"src/obsolete.txt","restored only in the live tree\n");

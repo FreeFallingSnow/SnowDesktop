@@ -10,10 +10,14 @@ param(
 
 # Snapshot content is separate from Git's index and from mutable build output.
 # This foundation deliberately does not grant an executor or release a batch.
-function Resolve-CandidatePath([string]$Base,[string]$Relative) {
+function Get-CandidateRelativePath([string]$Relative) {
     $relative=$Relative.Replace('\','/')
     if(-not $relative -or [IO.Path]::IsPathRooted($relative) -or $relative -match '[:*?"<>|\x00-\x1f]' -or
         @($relative.Split('/')|Where-Object {$_ -in '', '.', '..' -or $_.EndsWith('.') -or $_.EndsWith(' ') -or $_ -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)'}).Count){throw 'Unsafe candidate relative path.'}
+    return $relative
+}
+function Resolve-CandidatePath([string]$Base,[string]$Relative) {
+    $relative=Get-CandidateRelativePath $Relative
     $basePath=[IO.Path]::GetFullPath($Base).TrimEnd('\','/')
     $path=[IO.Path]::GetFullPath((Join-Path $basePath $relative))
     if(-not $path.StartsWith($basePath+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Candidate path escaped its root.'}
@@ -196,12 +200,17 @@ function Read-CandidateManifest([string]$Root,[string]$Id,[switch]$VerifyObjects
         @($manifest.files).Count -gt 16384 -or (Get-CandidateSourceDigest $manifest.files $manifest.context.digest) -ne $manifest.sourceDigest){throw 'Invalid candidate manifest identity.'}
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($file in $manifest.files){
-        $null=Resolve-CandidatePath (Join-Path $store.slots 'validation/source') $file.path
+        # Metadata requires a valid relative name, not filesystem access to an
+        # unrelated hypothetical validation/source directory. Every real file
+        # access still resolves its actual path and checks reparse ancestors.
+        $null=Get-CandidateRelativePath $file.path
         if(-not (Test-CandidateSourcePath $file.path) -or -not $seen.Add($file.path) -or $file.state -notin 'present','deleted'){throw 'Invalid candidate file identity.'}
         if($file.state -eq 'present'){
             if($file.sha256 -notmatch '^[a-f0-9]{64}$' -or $file.bytes -lt 0 -or $file.lastWriteTicks -notmatch '^[0-9]{1,19}$'){throw 'Invalid candidate object identity.'}
-            $object=Resolve-CandidatePath $store.root ('objects/'+$file.sha256)
-            if($VerifyObjects -and ((Get-Item -LiteralPath $object).Length -ne $file.bytes -or (Get-FileDigest $object) -ne $file.sha256)){throw 'Candidate content object integrity check failed.'}
+            if($VerifyObjects){
+                $object=Resolve-CandidatePath $store.root ('objects/'+$file.sha256)
+                if((Get-Item -LiteralPath $object).Length -ne $file.bytes -or (Get-FileDigest $object) -ne $file.sha256){throw 'Candidate content object integrity check failed.'}
+            }
         }
     }
     return [pscustomobject]@{manifest=$manifest;path=$path;digest=$expected;store=$store}
