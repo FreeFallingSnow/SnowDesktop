@@ -21,6 +21,39 @@ void input_identity_tests(const fs::path& repo){
     require(first.at("algorithm").str()=="sha256-repository-inputs-v3","Changed environment input policy retained its old identity version");
     std::cout<<"PASS actual Steamworks SDK_ROOT invalidation, stable context, absent root and retained legacy binding; external file closure is not claimed\n";
 }
+void wait_progress_tests(const fs::path& repo){
+    // Preserve the durable Run and private Job; only the external build/test
+    // boundary is gated. Observers must report that actual execution phase.
+    Coordinator c(repo,"wait-progress",true);
+    auto fake=read(c.scripts/L"fake.ps1");
+    replace(fake,"$timer=[Diagnostics.Stopwatch]::StartNew()",R"PS(. (Join-Path $PSScriptRoot 'build_entry.ps1')
+. (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+$phaseName=if($Phase -eq 'test'){'test-execute'}else{'build-targets'}
+$stage=Start-BuildStage $root $phaseName
+$timer=[Diagnostics.Stopwatch]::StartNew())PS");
+    write(c.scripts/L"fake.ps1",fake,true);
+    c.gate("hold-build");c.gate("hold-test");
+    const auto batch=c.begin("worker").at("batchId").str();
+    auto first=c.start(c.bound("ready-and-wait","worker",batch));
+    until([&]{return fs::exists(c.root/L"build-started");},18);
+    const auto state=c.state();const auto id=state.at("current").at("runId").str();
+    const auto ownerBefore=Json::parse(read(c.stateRoot/L"runs"/wide(id+".launch.json")));
+    auto observe=[&](const std::string& stage){
+        auto args=c.bound("wait","worker",batch);args.insert(args.end(),{"-WaitSeconds","30"});auto p=c.start(args);
+        until([&]{const auto text=p->err();return text.find("Waiting for this batch")!=std::string::npos||text.find("Waiting for batch ")!=std::string::npos;},8);
+        const auto text=p->err();
+        require(text.find("executing Run "+id)!=std::string::npos&&text.find("editors must finish")==std::string::npos,"Executing durable Run was reported as waiting for editors: "+text);
+        require(text.find(stage)!=std::string::npos,"Wait progress omitted the observed execution stage: "+text);
+        p->stop();
+    };
+    observe("build-targets");c.gate("hold-build",false);
+    until([&]{return fs::exists(c.root/L"test-started");},10);
+    observe("test-execute");
+    require(first->running()&&owner_alive(ownerBefore)&&c.calls()==2,"Observing progress changed Run ownership or repeated the pipeline");
+    c.gate("hold-test",false);const auto result=first->wait(18);
+    require(result.code==0&&c.result(batch).at("runId").str()==id&&c.result(batch).at("outcome").str()=="passed","Observed Run did not retain its common successful result");
+    std::cout<<"PASS real durable build/test wait messages, stage provenance, observer exit, unchanged owner and one pipeline\n";
+}
 void run_tests(const fs::path& repo){
     entry_tests(repo);shell_recovery_tests(repo);
     Coordinator c(repo,"workflow");
@@ -57,4 +90,4 @@ try{Resolve-PlanTests $p $inv|Out-Null}catch{$missing=$true}
     std::cout<<"PASS barriers, revisions, foreground recovery, ownership, repair, literal plans, legacy and input freshness\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:run_tests);}
+int main(int argc,char** argv){return test_main(argc,argv,argc>2&&std::string(argv[2])=="--input-identity"?input_identity_tests:argc>2&&std::string(argv[2])=="--wait-progress"?wait_progress_tests:run_tests);}
