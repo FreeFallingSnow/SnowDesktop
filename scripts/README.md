@@ -1,5 +1,7 @@
 # 项目脚本
 
+标准 Visual Studio/MSVC 目标默认启用 `SNOWDESKTOP_SOURCE_DEPENDENCIES`。报告由每个源码的 `VS_SETTINGS` 元数据生成，路径身份命名，保存在目标与配置各自的 `IntDir`，覆盖 C/C++、子目录库和 CMake PCH；独立32位 Hook 也接入同一模块。已有 XAML/源码元数据保留。`test_dependency_reports` 实际验证并行同名源码、PCH复用、Release/Debug/MultiToolTask、无变化调用不改对象/报告时间及缺失报告恢复。关闭选项仅供明确的兼容/性能对照，缺少报告的证据保持不完整；报告启用不等于源码/运行时语义已闭合或可以自动复用结果。
+
 逐测试依赖观察保存在 coverage 的 `dependencyManifest`：共享文件身份只保存一份，逐条证据引用清单路径、SHA256 和测试摘要。`build_test_dependencies.ps1` 读取生成的 MSBuild 项目引用、编译器 `/sourceDependencies` JSON（存在时）、编译/链接读取日志及 CTest 显式运行文件，记录具体缺口和采集时间。FileTracker 会过滤 Temp/AppData 等目录，缺少源码报告不能推导依赖完整；标准目标尚未统一启用报告。`Get-TestDependencyAdvice` 可按变化路径给出目标/用例建议；未映射变化或记录不完整时保留运行建议，不删除显式计划。源码闭合、运行时动态加载、外部状态与语义依赖仍未全部闭合，`reuseAllowed=false`，不据此跳过构建或测试。`test_dependencies` 在真实临时目录中编译静态库和间接头，验证报告补足过滤盲区。
 
 工具回归按可独立补验的场景登记。`build_dashboard` 覆盖 HTTP/状态投影，`build_dashboard_startup` 覆盖启动、调用者退出及旧行为对照；`build_wait_retry` 覆盖重试策略，`build_retry_ctest_selection` 和 `build_retry_repairs` 分别覆盖真实 CTest 选择和失败续修；`build_run` 覆盖共同批次持久执行，`build_run_plans`、`build_run_batch_lifetime`、`build_run_default_entry`、`build_run_process_lifetime` 分别覆盖工具计划、批次进程归属、普通入口和独立 Run 生命周期。相关驱动保留 `--all` 供明确要求逐项串行诊断时使用。原有断言和负向对照保留在对应场景，CTest 按资源预算调度；同一驱动的多个条目仍只构建一次。显式定向选择时，应选齐修改影响的场景，不再把其中一项通过写成整组通过。

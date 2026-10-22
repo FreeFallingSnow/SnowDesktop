@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 using namespace build_test;
+void source_report_tests(const fs::path& repo,bool disableReports);
 namespace {
 const Json& named(const Json& rows,const std::string& name){
     for(const auto& row:rows.items)if(row.at("test").str()==name)return row;
@@ -85,4 +86,8 @@ uniqueFiles=$manifest.files.Count;pathCount=@($manifest.files.id|Sort-Object -Un
     std::cout<<"PASS real CMake/MSBuild static-library/include graph, actual compiler/linker reads, stable per-test identities, isolated impact, explicit runtime input, unmapped/missing-log fallback, shared sidecar and PS7/5.1; semantic/runtime closure remains unclosed\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){tests(repo,argc>2&&std::string(argv[2])=="--without-compiler-reads");});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    const std::string mode=argc>2?argv[2]:"";
+    if(mode=="--source-reports"||mode=="--without-standard-reports")source_report_tests(repo,mode=="--without-standard-reports");
+    else tests(repo,mode=="--without-compiler-reads");
+});}

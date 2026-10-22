@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 project(SnowDesktopDockMinimize32 LANGUAGES CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.ProductBuild.cmake")
 if (NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)

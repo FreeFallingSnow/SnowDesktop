@@ -47,7 +47,7 @@ function Read-TestDependencyProject($Context,[string]$Project) {
         # Unlike FileTracker, /sourceDependencies reports includes under Temp
         # and AppData too. A report is associated with its declared source.
         # https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies
-        foreach($report in @(Get-ChildItem -LiteralPath $trackingRoot -Filter '*.json' -File -Recurse|Where-Object Name -match '\.(c|cc|cpp|cxx|ixx)\.json$')){
+        foreach($report in @(Get-ChildItem -LiteralPath $trackingRoot -Filter '*.json' -File -Recurse|Where-Object Name -match '(^sd-[a-f0-9]{16}\.json$)|\.(c|cc|cpp|cxx|ixx)\.json$')){
             try {
                 if($report.Length -gt 64MB){throw 'source-report-too-large'}
                 $json=[IO.File]::ReadAllText($report.FullName)|ConvertFrom-Json

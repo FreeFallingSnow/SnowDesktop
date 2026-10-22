@@ -5,6 +5,7 @@ snowdesktop_check_shared_output()
 
 project(SnowDesktop LANGUAGES C CXX)
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ProductBuild.cmake")
 
 # Ship a deterministic WebP decoder, independent of installed WIC extensions.

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(SnowDesktopWallpaperHook32 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.ProductBuild.cmake")
 
