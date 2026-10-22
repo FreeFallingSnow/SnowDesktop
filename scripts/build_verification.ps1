@@ -124,7 +124,7 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     }
     if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}
     $result=[pscustomobject]@{schemaVersion=1;key=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 20 -Compress));baseline=$Baseline;binding=$binding;source=$source;executionContext=$context;tests=$tests;pattern=$pattern;noBuild=$true;reuseAllowed=$false}
-    $compatibility=Get-VerificationCompatibility $result
+    $compatibility=if(Get-Command Get-VerificationCompatibility -ErrorAction SilentlyContinue){Get-VerificationCompatibility $result}else{$null}
     if($compatibility){Set-Field $result 'compatibility' $compatibility}
     return $result
 }
