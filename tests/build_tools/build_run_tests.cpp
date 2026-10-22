@@ -138,6 +138,38 @@ void request_publication(const fs::path& repo,bool oldPublication=false){
     std::cout<<"PASS request producer termination and create-only collision\n";
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
+void observer_snapshot(const fs::path& repo){
+    Coordinator c(repo,"observer-snapshot");setup_run(c,repo);
+    auto entry=read(c.scripts/L"build_entry.ps1");
+    replace(entry,"function Read-EntryJson([string]$Path) {",R"PS(function Read-EntryJson([string]$Path) {
+    if($env:SNOWDESKTOP_OBSERVER_STATE_GAP -and [IO.Path]::GetFileName($Path) -eq 'state.json'){
+        $kind=$env:SNOWDESKTOP_OBSERVER_STATE_GAP
+        [Environment]::SetEnvironmentVariable('SNOWDESKTOP_OBSERVER_STATE_GAP',$null,'Process')
+        [IO.File]::WriteAllText((Join-Path (Split-Path $PSScriptRoot -Parent) ('observer-'+$kind)),'observed')
+        if($kind -eq 'no-ledger'){return [pscustomobject]@{schemaVersion=1;current=$null}}
+        return $null
+    })PS");
+    write(c.scripts/L"build_entry.ps1",entry,true);
+    ParentJob parent(c.root/L"launch-run.ps1",c.root,true);require(parent.wait()==0,"Snapshot fixture launch failed");
+    const auto id=Json::parse(read(c.root/L"submitted.json")).at("id").str();const auto running=await_running(c,id);parent.close();
+    const auto request=read(c.stateRoot/L"runs"/wide(id+".request.json"));
+    for(const std::string mode:{"null","no-ledger"}){
+        const auto ledgerBefore=read(c.stateRoot/L"state.json");
+        Child observer({powershell().wstring(),L"-NoProfile",L"-File",(c.scripts/L"build_run.ps1").wstring(),L"-Command",L"wait",L"-Task",L"runner",L"-RunId",wide(id),L"-Seconds",L"10"},c.root,{{L"SNOWDESKTOP_OBSERVER_STATE_GAP",wide(mode)}});
+        until([&]{return fs::exists(c.root/wide("observer-"+mode));},8);
+        require(read(c.stateRoot/L"state.json")==ledgerBefore,"Missing-snapshot observation rewrote the task ledger");
+        const auto posted=c.call({"event-post","runner","-Target","runner","-EventKind","requirements","-Importance","urgent","-Text","controlled snapshot recovery event","-EventKey","gap-"+mode});
+        const auto result=observer.wait(12);
+        require(result.code==6,"Transient "+mode+" task snapshot terminated the live Run observer: "+std::to_string(result.code)+" "+result.err);
+        const auto notice=Json::parse(result.out);
+        require(notice.at("runPreserved").boolean&&notice.at("events").items.size()==1&&notice.at("events").items[0].at("sequence").integer()==posted.at("sequence").integer(),"Recovered snapshot lost the unacknowledged urgent message");
+        c.call({"event-ack","runner","-Sequence",std::to_string(posted.at("sequence").integer()),"-AckLevel","agent"});
+        require(owner_alive(running.at("record").at("owner"))&&c.calls()==1&&read(c.stateRoot/L"runs"/wide(id+".request.json"))==request,"Snapshot recovery changed execution ownership, request or invocation count");
+    }
+    c.gate("hold-build",false);const auto completed=command(c,id,{L"-Command",L"wait",L"-Seconds",L"10"});
+    require(completed.code==0&&Json::parse(completed.out).at("status").str()=="passed","Recovered observer did not retain the original successful outcome");
+    std::cout<<"PASS unavailable/legacy task snapshots, later urgent delivery, explicit acknowledgement and preserved real Run\n";
+}
 void old_entry_edit_control(const fs::path& repo){
     Coordinator c(repo,"old-entry-edit-control");setup_run(c,repo);
     auto manager=read(c.scripts/L"build_manager.ps1");
@@ -353,4 +385,4 @@ void test(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--observer-snapshot"){observer_snapshot(repo);return;}if(argc>2&&std::string(argv[2])=="--request-publication"){request_publication(repo);return;}if(argc>2&&std::string(argv[2])=="--old-request-publication"){request_publication(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-entry-edit"){old_entry_edit_control(repo);return;}if(argc>2&&std::string(argv[2])=="--old-host-plan"){tool_plan(repo,true);return;}if(argc>2&&std::string(argv[2])=="--early-result-control"){durable_cancel(repo,true);return;}if(argc>2&&std::string(argv[2])=="--old-cancel-publication"){durable_cancel(repo,false,true);return;}test(repo);});}
