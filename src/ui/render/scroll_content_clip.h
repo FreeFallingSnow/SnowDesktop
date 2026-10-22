@@ -12,6 +12,8 @@
 namespace snowdesktop
 {
 
+enum class ScrollContentAxis { Vertical, Horizontal };
+
 // Each native scrolling widget reuses its mask while the viewport and edge
 // distances are unchanged. A new D2D device must never reuse the old brush.
 class ScrollContentFadeCache
@@ -19,31 +21,34 @@ class ScrollContentFadeCache
     friend class ScrollContentClip;
 
     ID2D1LinearGradientBrush* Resolve(ID2D1DeviceContext* context,
-        const D2D1_RECT_F& viewport, float top, float bottom)
+        const D2D1_RECT_F& viewport, float leading, float trailing,
+        ScrollContentAxis axis)
     {
-        if (top <= 0.0f && bottom <= 0.0f) return nullptr;
-        const float height = viewport.bottom - viewport.top;
+        if (leading <= 0.0f && trailing <= 0.0f) return nullptr;
+        const bool horizontal = axis == ScrollContentAxis::Horizontal;
+        const float extent = horizontal ? viewport.right - viewport.left
+            : viewport.bottom - viewport.top;
         Microsoft::WRL::ComPtr<ID2D1Device> device;
         context->GetDevice(&device);
-        if (device.Get() != device_.Get() || height != height_ ||
-            top != top_ || bottom != bottom_)
+        if (device.Get() != device_.Get() || extent != extent_ ||
+            leading != leading_ || trailing != trailing_)
         {
             brush_.Reset();
             device_ = device;
-            height_ = height;
-            top_ = top;
-            bottom_ = bottom;
+            extent_ = extent;
+            leading_ = leading;
+            trailing_ = trailing;
         }
         if (!brush_)
         {
             const D2D1_GRADIENT_STOP stops[] = {
                 { 0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f,
-                    top > 0.0f ? 0.0f : 1.0f) },
-                { top / height, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) },
-                { 1.0f - bottom / height,
+                    leading > 0.0f ? 0.0f : 1.0f) },
+                { leading / extent, D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) },
+                { 1.0f - trailing / extent,
                     D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f) },
                 { 1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f,
-                    bottom > 0.0f ? 0.0f : 1.0f) },
+                    trailing > 0.0f ? 0.0f : 1.0f) },
             };
             Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> collection;
             if (FAILED(context->CreateGradientStopCollection(stops, 4,
@@ -52,29 +57,32 @@ class ScrollContentFadeCache
             if (FAILED(context->CreateLinearGradientBrush(
                     D2D1::LinearGradientBrushProperties(
                         D2D1::Point2F(viewport.left, viewport.top),
-                        D2D1::Point2F(viewport.left, viewport.bottom)),
+                        D2D1::Point2F(horizontal ? viewport.right : viewport.left,
+                            horizontal ? viewport.top : viewport.bottom)),
                     collection.Get(), &brush_)))
                 return nullptr;
         }
         brush_->SetStartPoint(D2D1::Point2F(viewport.left, viewport.top));
-        brush_->SetEndPoint(D2D1::Point2F(viewport.left, viewport.bottom));
+        brush_->SetEndPoint(D2D1::Point2F(horizontal ? viewport.right : viewport.left,
+            horizontal ? viewport.top : viewport.bottom));
         return brush_.Get();
     }
 
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush_;
-    float height_ = 0.0f;
-    float top_ = 0.0f;
-    float bottom_ = 0.0f;
+    float extent_ = 0.0f;
+    float leading_ = 0.0f;
+    float trailing_ = 0.0f;
 };
 
-// Scope only the scrolling items, after fixed search/tabs/details headers.
+// Scope scrolling items or a horizontal tab strip, excluding fixed chrome.
 // Multiply content alpha rather than tinting the translucent panel background.
 class ScrollContentClip
 {
 public:
     ScrollContentClip(ID2D1DeviceContext* context, ScrollContentFadeCache& cache,
-        const RECT& viewport, int scrollOffset, int contentHeight, float fadeLength)
+        const RECT& viewport, int scrollOffset, int contentExtent, float fadeLength,
+        ScrollContentAxis axis = ScrollContentAxis::Vertical)
         : context_(context), backdropClip_(context, viewport)
     {
         if (!context_) return;
@@ -83,20 +91,21 @@ public:
             static_cast<float>((std::max)(viewport.left, viewport.right)),
             static_cast<float>((std::max)(viewport.top, viewport.bottom)));
         context_->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        const float height = bounds.bottom - bounds.top;
-        if (height <= 0.0f || bounds.right <= bounds.left || contentHeight <= 0 ||
+        const float extent = axis == ScrollContentAxis::Horizontal
+            ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+        if (bounds.bottom <= bounds.top || bounds.right <= bounds.left || contentExtent <= 0 ||
             !std::isfinite(fadeLength) || fadeLength <= 0.0f)
             return;
 
-        // Keep the middle half clear even in a very short viewport. Grow the
+        // Keep the middle half clear even in a very small viewport. Grow the
         // fade with the hidden distance so the first scroll pixel cannot dim
         // a whole row. Trailing scroll padding is not hidden content.
-        const float length = (std::min)(fadeLength, height * 0.25f);
+        const float length = (std::min)(fadeLength, extent * 0.25f);
         const float offset = static_cast<float>((std::max)(0, scrollOffset));
-        const float top = (std::min)(length, offset);
-        const float bottom = std::clamp(
-            static_cast<float>(contentHeight) - height - offset, 0.0f, length);
-        auto* brush = cache.Resolve(context_, bounds, top, bottom);
+        const float leading = (std::min)(length, offset);
+        const float trailing = std::clamp(
+            static_cast<float>(contentExtent) - extent - offset, 0.0f, length);
+        auto* brush = cache.Resolve(context_, bounds, leading, trailing, axis);
         if (!brush) return;
         context_->PushLayer(D2D1::LayerParameters1(bounds, nullptr,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(),

@@ -1300,7 +1300,13 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     RECT tabsRect = FileCategoryTabsRect(this);
     if (!IsRectEmptyRect(tabsRect))
     {
-        context->PushAxisAlignedClip(app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const int totalWidth = FileCategoryTabTotalWidth(
+            FileCategoryTabWidths(this, tabsRect.right - tabsRect.left));
+        const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+            data_->tabScrollOffset, totalWidth, tabsRect.right - tabsRect.left);
+        const snowdesktop::ScrollContentClip tabsClip(
+            context, tabContentFadeCache_, tabsRect, scroll, totalWidth,
+            static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
         for (size_t i = 0; i < categoryIds.size(); ++i)
         {
             RECT layoutTab = FileCategoryTabLayoutRect(this, i);
@@ -1324,7 +1330,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                                 static_cast<int>(i) &&
                             app_->OwnsWidgetKeyboardNavigation(this)));
         }
-        context->PopAxisAlignedClip();
     }
 
     const auto& keys = CachedCategoryKeys(activeCategory);

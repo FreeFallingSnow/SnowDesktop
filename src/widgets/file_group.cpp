@@ -2215,9 +2215,13 @@ void FileGroup::DrawSourceTabs(ID2D1DeviceContext* context)
     RECT tabs = FileGroupSourceTabsRect(this);
     if (IsRectEmptyRect(tabs)) return;
     const std::wstring active = GetActiveSourceId();
-    context->PushAxisAlignedClip(
-        app_->ToD2DRect(tabs),
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const int totalWidth = TotalTabWidth(
+        FileGroupSourceTabWidths(this, tabs.right - tabs.left));
+    const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+        data_->tabScrollOffset, totalWidth, tabs.right - tabs.left);
+    const snowdesktop::ScrollContentClip tabsClip(
+        context, tabContentFadeCache_, tabs, scroll, totalWidth,
+        static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
     for (size_t i = 0; i < sources.size(); ++i)
     {
         RECT layoutTab =
@@ -2240,7 +2244,6 @@ void FileGroup::DrawSourceTabs(ID2D1DeviceContext* context)
                             static_cast<int>(i) &&
                         app_->OwnsWidgetKeyboardNavigation(this)));
     }
-    context->PopAxisAlignedClip();
 }
 
 int FileGroup::GetBottomBarButtonCount() const

@@ -1299,7 +1299,7 @@ void ScrollingItemWidget::DrawCategorizedTab(
         return;
     const bool light = UsesLightContentTheme();
     app_->DrawD2DRoundedRectangle(
-        context, visibleTabRect,
+        context, layoutTabRect,
         static_cast<float>(Cu(8.0f)),
         active
             ? (light
@@ -1336,9 +1336,9 @@ void ScrollingItemWidget::DrawCategorizedTab(
             CategorizedControlOutlineWidth(
                 keyboardSelected));
 
-    // The background follows the visible segment so its remaining corners stay
-    // rounded. Text keeps the full tab geometry and is clipped by the tab strip,
-    // preventing a partially visible label from being re-centered.
+    // Preserve the full tab geometry. The strip's opacity mask fades the
+    // background, outline and text together without inventing a rounded end
+    // or re-centering a partially visible label at the viewport boundary.
     RECT textRect = layoutTabRect;
     InflateRect(&textRect, -Cu(7.0f), 0);
     IDWriteTextFormat* tabFormat =

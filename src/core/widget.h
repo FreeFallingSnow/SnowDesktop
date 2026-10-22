@@ -426,8 +426,8 @@ public:
         int availableWidth) const;
     /**
      * @brief 绘制统一样式的单个分类标签。
-     * @param visibleTabRect 裁剪后的背景与命中矩形。
-     * @param layoutTabRect 未裁剪的文字布局矩形。
+     * @param visibleTabRect 裁剪后的可见与命中矩形，仅用于判空。
+     * @param layoutTabRect 未裁剪的背景、边框与文字布局矩形。
      */
     void DrawCategorizedTab(
         ID2D1DeviceContext* context,
@@ -469,6 +469,7 @@ public:
 
 protected:
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
+    snowdesktop::ScrollContentFadeCache tabContentFadeCache_;
     std::wstring searchText_;
     snowdesktop::text_input::History searchHistory_;
     wchar_t searchHighSurrogate_ = 0;

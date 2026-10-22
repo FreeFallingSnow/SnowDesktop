@@ -13,6 +13,7 @@
 namespace
 {
 using Microsoft::WRL::ComPtr;
+using snowdesktop::ScrollContentAxis;
 using snowdesktop::ScrollContentClip;
 using snowdesktop::ScrollContentFadeCache;
 
@@ -40,6 +41,7 @@ struct DrawOptions
     float dpi = 96.0f;
     bool fixedChrome = false;
     bool translucentBackground = false;
+    ScrollContentAxis axis = ScrollContentAxis::Vertical;
 };
 
 struct Pixels
@@ -112,13 +114,19 @@ struct Raster
             // This is the production scope used around scrolling item drawing.
             // Deliberately overdraw horizontally to detect a lost viewport clip.
             ScrollContentClip clip(context.Get(), cache, o.viewport,
-                o.scrollOffset, o.contentHeight, o.fadeLength);
+                o.scrollOffset, o.contentHeight, o.fadeLength, o.axis);
             nativeClip = snowdesktop::ScopedIconBackdropClip::Current(context.Get());
-            context->FillRectangle(D2D1::RectF(left - 8,
-                top - static_cast<float>(o.scrollOffset),
-                right + (o.translucentBackground ? -8.0f : 8.0f),
-                top - static_cast<float>(o.scrollOffset) + static_cast<float>(o.contentHeight)),
-                brush.Get());
+            if (o.axis == ScrollContentAxis::Horizontal)
+                context->FillRectangle(D2D1::RectF(
+                    left - static_cast<float>(o.scrollOffset), top - 8,
+                    left - static_cast<float>(o.scrollOffset) + static_cast<float>(o.contentHeight),
+                    bottom + (o.translucentBackground ? -8.0f : 8.0f)), brush.Get());
+            else
+                context->FillRectangle(D2D1::RectF(left - 8,
+                    top - static_cast<float>(o.scrollOffset),
+                    right + (o.translucentBackground ? -8.0f : 8.0f),
+                    top - static_cast<float>(o.scrollOffset) + static_cast<float>(o.contentHeight)),
+                    brush.Get());
         }
         // The independent native layer consumes this snapshot after D2D has
         // popped its clip. Check the production geometry outside that stack.
@@ -183,6 +191,28 @@ void CheckBothEdges(const Pixels& pixels)
     Check((edgePixel & 0xffu) == topEdge && ((edgePixel >> 8) & 0xffu) == topEdge &&
             ((edgePixel >> 16) & 0xffu) == topEdge,
         "white content remains premultiplied white instead of receiving a dark overlay");
+}
+
+void CheckHorizontalEdges(const Pixels& pixels)
+{
+    const float left = static_cast<float>(pixels.options.viewport.left);
+    const float right = static_cast<float>(pixels.options.viewport.right);
+    const float y = static_cast<float>(pixels.options.viewport.top) + 12;
+    const unsigned leading = pixels.Alpha(left + 1, y);
+    const unsigned trailing = pixels.Alpha(right - 2, y);
+    Check(leading > 0 && leading < 80 && trailing > 0 && trailing < 80,
+        "hidden tabs fade to transparent at both horizontal overflow edges");
+    Check(pixels.Alpha(left + 12, y) > 160 && pixels.Alpha(left + 12, y) < 250 &&
+            pixels.Alpha(right - 13, y) > 160 && pixels.Alpha(right - 13, y) < 250,
+        "tab edge alpha changes gradually within the fade band");
+    Check(pixels.Alpha((left + right) / 2, y) == 255 &&
+            pixels.Alpha((left + right) / 2, static_cast<float>(pixels.options.viewport.top)) == 255 &&
+            pixels.Alpha((left + right) / 2, static_cast<float>(pixels.options.viewport.bottom - 1)) == 255,
+        "horizontal tab fading leaves the middle and top/bottom edges clear");
+    const auto pixel = pixels.At(left + 1, y);
+    Check((pixel & 0xffu) == leading && ((pixel >> 8) & 0xffu) == leading &&
+            ((pixel >> 16) & 0xffu) == leading,
+        "tab fade multiplies actual alpha instead of painting a colored cover");
 }
 } // namespace
 
@@ -284,5 +314,74 @@ void RunScrollContentClipTests()
     Raster replacement;
     options = {};
     CheckBothEdges(replacement.Draw(cache, options));
+    CheckBothEdges(raster.Draw(cache, options));
+
+    // Exercise the same production opacity scope used by all four native tab
+    // strips. Host tab geometry and final desktop appearance still need visual
+    // acceptance; these probes protect the alpha mask and its clipping boundary.
+    options = {};
+    options.axis = ScrollContentAxis::Horizontal;
+    pixels = raster.Draw(cache, options);
+    CheckHorizontalEdges(pixels);
+    Check(pixels.Alpha(22, 80) == 0 && pixels.Alpha(122, 80) == 0 &&
+            pixels.Alpha(48, 30) == 0 && pixels.Alpha(48, 130) == 0,
+        "horizontal tab painting remains inside the strip");
+
+    options.scrollOffset = 0;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.Alpha(24, 80) == 255 && pixels.Alpha(118, 80) < 80,
+        "tab scroll start fades only the overflowing right side");
+    options.scrollOffset = 96;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.Alpha(25, 80) < 80 && pixels.Alpha(119, 80) == 255,
+        "tab scroll end fades only the overflowing left side");
+
+    options.scrollOffset = 0;
+    options.contentHeight = 96;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.Alpha(24, 80) == 255 && pixels.Alpha(119, 80) == 255,
+        "a tab strip that fits has no fade at either edge");
+    options.contentHeight = 192;
+    options.scrollOffset = 1;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.Alpha(24, 80) > 0 && pixels.Alpha(24, 80) < 255 &&
+            pixels.Alpha(26, 80) == 255,
+        "one hidden tab pixel does not dim a whole label");
+
+    options.scrollOffset = 48;
+    options.viewport.right = 40;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.Alpha(24, 80) < 80 && pixels.Alpha(39, 80) < 80 &&
+            pixels.Alpha(28, 80) == 255 && pixels.Alpha(35, 80) == 255,
+        "a narrow tab strip retains a clear middle");
+
+    options = {};
+    options.axis = ScrollContentAxis::Horizontal;
+    options.translucentBackground = true;
+    pixels = raster.Draw(cache, options);
+    Check(pixels.At(25, 124) == pixels.At(72, 124) &&
+            pixels.At(118, 124) == pixels.At(72, 124) &&
+            pixels.Alpha(72, 124) >= 101 && pixels.Alpha(72, 124) <= 103,
+        "tab opacity masks preserve the translucent panel behind them");
+
+    for (const float dpi : {96.0f, 144.0f, 192.0f})
+    {
+        options = {};
+        options.axis = ScrollContentAxis::Horizontal;
+        options.dpi = dpi;
+        if (dpi == 96.0f)
+        {
+            options.scale = 1.5f;
+            options.translationX = 7;
+            options.translationY = 9;
+        }
+        CheckHorizontalEdges(raster.Draw(cache, options));
+    }
+
+    options = {};
+    options.axis = ScrollContentAxis::Horizontal;
+    CheckHorizontalEdges(replacement.Draw(cache, options));
+    CheckHorizontalEdges(raster.Draw(cache, options));
+    options.axis = ScrollContentAxis::Vertical;
     CheckBothEdges(raster.Draw(cache, options));
 }
