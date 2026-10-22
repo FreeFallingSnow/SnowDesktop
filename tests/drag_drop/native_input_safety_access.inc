@@ -249,6 +249,80 @@ end})
             throw std::runtime_error("volume gesture production route: "+failure.message);
     }
 
+    static void RunWidgetDockEdgeRevealSafety()
+    {
+        // Execute the production sampler and visibility policy on the inactive
+        // test desktop. Seed only an established gesture; GPU presentation is
+        // unavailable here and guarded so this checks routing, not pixels.
+        auto* app = new DesktopApp;
+        app->generalSettings_.dockEnabled = true;
+        app->generalSettings_.statusBar.enabled = false;
+        const HMONITOR monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        MONITORINFO info{sizeof(info)};
+        if (!monitor || !GetMonitorInfoW(monitor, &info))
+            throw std::runtime_error("widget edge reveal requires monitor geometry");
+        const RECT area = info.rcMonitor;
+        DockContainer dock(app, &app->dockEntries_, area);
+        auto ownedHost = std::make_unique<DesktopApp::PersistentDockHost>();
+        ownedHost->active = true; ownedHost->container = &dock; ownedHost->monitor = monitor;
+        ownedHost->compositionPaintInProgress = true;
+        auto& host = *ownedHost;
+        app->persistentDockHosts_.push_back(std::move(ownedHost));
+        DesktopWidget widget; widget.id = L"edge-reveal-component";
+        app->widgets_.push_back(widget);
+        const auto check = [](bool value, const char* message) {
+            if (!value) throw std::runtime_error(message);
+        };
+        for (const bool summonOnly : {true, false})
+        for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::LuaScript})
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        {
+            app->dockSettings_.showOnlyWhenSummoned = summonOnly;
+            app->dockSettings_.position = position;
+            app->widgets_.front().type = type;
+            const LONG cx = (area.left + area.right) / 2, cy = (area.top + area.bottom) / 2;
+            const bool horizontal = position == DockPosition::Bottom || position == DockPosition::Top;
+            const POINT edge = position == DockPosition::Bottom ? POINT{cx, area.bottom - 1} :
+                position == DockPosition::Top ? POINT{cx, area.top} :
+                position == DockPosition::Left ? POINT{area.left, cy} : POINT{area.right - 1, cy};
+            host.dockRect = horizontal ? RECT{cx - 100, edge.y - 30, cx + 100, edge.y + 30} :
+                RECT{edge.x - 30, cy - 100, edge.x + 30, cy + 100};
+            host.passivelyRevealed = false; host.passiveLeaveStartTick = 0;
+            app->mouseDown_ = true; app->mouseDownWidgetIndex_ = 0;
+            for (const auto action : {DesktopApp::WidgetAction::None, DesktopApp::WidgetAction::PendingMove,
+                DesktopApp::WidgetAction::PendingResize, DesktopApp::WidgetAction::Resize})
+            {
+                app->widgetAction_ = action;
+                check(!app->UpdatePassiveDragRevealHosts(edge) && !host.passivelyRevealed,
+                    "a click, pending gesture or widget resize must not summon the Dock");
+            }
+            app->widgetAction_ = DesktopApp::WidgetAction::Move;
+            app->mouseDownWidgetIndex_ = app->widgets_.size();
+            check(!app->UpdatePassiveDragRevealHosts(edge) && !host.passivelyRevealed,
+                "a stale widget move index must not summon the Dock");
+            app->mouseDownWidgetIndex_ = 0;
+            check(!app->UpdatePassiveDragRevealHosts({cx, cy}) && !host.passivelyRevealed,
+                "widget movement away from the configured edge must not summon the Dock");
+            check(app->UpdatePassiveDragRevealHosts(edge) && host.passivelyRevealed &&
+                !host.promoted && app->ShouldShowPersistentDockHost(host) &&
+                app->IsDockContainerInteractionVisible(&dock),
+                "moving a native or Lua component to its Dock edge must reveal an interactive passive host");
+            host.passiveLeaveStartTick = GetTickCount64() - 1000;
+            app->UpdatePassiveDragRevealHosts(edge);
+            check(host.passivelyRevealed && !host.passiveLeaveStartTick,
+                "remaining at the edge while dragging a widget cancels pending Dock dismissal");
+            app->CancelPointerPressWithoutCaptureRelease();
+            host.passiveLeaveStartTick = GetTickCount64() - 1000;
+            app->UpdatePassiveDragRevealHosts({cx, cy});
+            check(!host.passivelyRevealed && !host.promoted &&
+                app->ShouldShowPersistentDockHost(host) == !summonOnly,
+                "cancelled widget movement leaves summon-only Dock hidden after the leave delay");
+            check(!app->UpdatePassiveDragRevealHosts(edge) && !host.passivelyRevealed,
+                "a cancelled widget move must not reveal the Dock again at the edge");
+        }
+        app->persistentDockHosts_.clear();
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
@@ -260,6 +334,7 @@ end})
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
         RunWidgetReleaseSafety(cls.lpszClassName);
+        RunWidgetDockEdgeRevealSafety();
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
         app->instance_ = cls.hInstance;
         std::vector<HWND> windows;

@@ -205,7 +205,9 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
 
     const ULONGLONG now = GetTickCount64();
     const bool internalDragActive =
-        dragSession_.IsActive();
+        dragSession_.IsActive() ||
+        (widgetAction_ == WidgetAction::Move &&
+            mouseDownWidgetIndex_ < widgets_.size());
     const bool oleDragActive =
         dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active();
     const bool dragRevealActive =

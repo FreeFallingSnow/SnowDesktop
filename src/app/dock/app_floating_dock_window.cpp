@@ -516,6 +516,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         // full opacity. Animation never changes AppBar/work-area geometry.
         const bool shouldShow = ShouldShowPersistentDockHost(host);
         const bool immediateDrag = shouldShow && (dragSession_.IsActive() ||
+            (widgetAction_ == WidgetAction::Move && mouseDownWidgetIndex_ < widgets_.size()) ||
             dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
         const bool wasAnimating = host.mergedAnimation.IsAnimating();
         host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
