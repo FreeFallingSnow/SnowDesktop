@@ -254,10 +254,8 @@ private:
         // Both tracks retain the same exact deadline and zero-velocity C1 tail.
         double frequency = springDuration_ > 0.0
             ? (opening ? 6.638352067994 : 3.0) / (springDuration_ * 0.00075) : 0.0;
-        // A rapid reopen/close can inherit a faster inward velocity. Brake it
-        // without crossing zero, while preserving that velocity at the handoff.
-        if (!opening && motion_.position > 0.0 && motion_.velocity < 0.0)
-            frequency = std::max(frequency, -motion_.velocity / motion_.position);
+        frequency = popup_motion_curve::TargetBoundedFrequency(
+            motion_, opening ? 1.0 : 0.0, frequency);
         springTimeline_ = popup_motion_curve::Build(motion_, opening ? 1.0 : 0.0,
             frequency, springDuration_);
         animating_ = springDuration_ > 0.0;

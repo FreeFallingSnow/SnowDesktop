@@ -649,10 +649,23 @@ void DesktopApp::PositionQuickNavigationWindow()
     }
     RECT nextRect = GetQuickNavigationRect();
     auto& resize = quickNavigationAnimation_.Resize();
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    if (!resize.IsAnimating() && quickNavigationOpen_ && quickNavigationCollapsed_ &&
+        quickNavigationFixedTop_ && quickNavigationAnimation_.IsInteractive() &&
+        !snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigationAnimation_.GetEffect()) &&
+        !IsRectEmpty(&quickNavigationRect_) &&
+        quickNavigationRect_.left == nextRect.left && quickNavigationRect_.top == nextRect.top &&
+        quickNavigationRect_.right == nextRect.right && quickNavigationRect_.bottom != nextRect.bottom)
+    {
+        resize.StartResultFollow(
+            {quickNavigationRect_.left, quickNavigationRect_.top, quickNavigationRect_.right, quickNavigationRect_.bottom},
+            {nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now,
+            snowdesktop::animation::RuntimeAnimationsEnabled(), snowdesktop::animation::RuntimeDurationScale());
+    }
     if (resize.IsAnimating())
     {
-        const auto now = static_cast<std::uint64_t>(
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         resize.Retarget({nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now);
         const auto frame = resize.Advance(now, snowdesktop::animation::RuntimeAnimationsEnabled());
         nextRect = {frame.left, frame.top, frame.right, frame.bottom};

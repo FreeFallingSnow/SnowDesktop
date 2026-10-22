@@ -188,6 +188,23 @@ int main()
     }
 
     PopupMouseLeaveController mouseLeave;
+    {
+        State bounded;
+        bounded.Configure(false, 1.0, true);
+        bounded.Open(1000); bounded.Advance(1150);
+        const double velocity = bounded.Velocity();
+        const auto pose = bounded.GetVisual();
+        bounded.Close(1150); bounded.Open(1150);
+        Check(bounded.GetVisual().scale == pose.scale && bounded.Velocity() == velocity,
+            "collection same-tick reversal preserves the endpoint approach velocity");
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned ms = 0; ms <= 160; ++ms)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track, ms / 1000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "collection same-tick reversal at a soft endpoint stays within zero and full size");
+        }
+    }
     Check(!mouseLeave.Observe(1, false),
         "a newly opened popup stays reachable while the drag pointer is still on its opener");
     Check(!mouseLeave.Observe(1, true) && mouseLeave.Observe(1, false),

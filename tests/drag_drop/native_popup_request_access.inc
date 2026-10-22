@@ -34,6 +34,7 @@
     static void CheckLuaPopupReuse(DesktopApp& app)
     {
         CheckCollectionPopupSwitch(app);
+        CheckQuickSearchHeightFollow(app);
         const auto check = [](bool ok, const char* message) {
             if (!ok) throw std::runtime_error(message);
         };
@@ -222,6 +223,96 @@
         snowdesktop::animation::detail::speed.store(speed);
     }
 
+    static void CheckQuickSearchHeightFollow(DesktopApp& app)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        check(!app.quickNavigationHwnd_ && !app.quickNavigationSearchEdit_ && !app.d2dDevice_,
+            "search-height routing fixture must not own a desktop presentation window or graphics device");
+        const auto savedAnimation = app.quickNavigationAnimation_;
+        const auto savedPage = app.gridPages_.front();
+        const auto savedMenu = app.quickNavigationMenu_;
+        const auto savedSearchType = app.quickNavigationSearchType_;
+        const auto savedText = app.quickNavigationEffectiveSearchText_;
+        const bool savedCollapsed = app.quickNavigationCollapsed_;
+        const bool savedFixed = app.quickNavigationFixedTop_;
+        const int savedTop = app.quickNavigationAnchorTop_;
+        const POINT savedPoint = app.quickNavigationOpenPoint_;
+        const bool savedPainting = app.quickNavCompositionPaintInProgress_;
+        const int mode = snowdesktop::animation::detail::mode.exchange(snowdesktop::animation::AlwaysOn);
+        const int speed = snowdesktop::animation::detail::speed.exchange(1);
+        const auto cleanup = [&] {
+            app.StopQuickNavigationAnimationTimeline();
+            if (app.quickNavigationSearchEdit_) DestroyWindow(app.quickNavigationSearchEdit_);
+            if (app.quickNavigationHwnd_) DestroyWindow(app.quickNavigationHwnd_);
+            if (app.quickNavigationSearchFont_) DeleteObject(app.quickNavigationSearchFont_);
+            app.quickNavigationHwnd_ = app.quickNavigationSearchEdit_ = nullptr;
+            app.quickNavigationSearchFont_ = nullptr;
+            app.quickNavigationOpen_ = false;
+            app.quickNavigationRect_ = app.quickNavigationHostRect_ = {};
+            app.quickNavigationAnimation_ = savedAnimation;
+            app.gridPages_.front() = savedPage;
+            app.quickNavigationMenu_ = savedMenu;
+            app.quickNavigationSearchType_ = savedSearchType;
+            app.quickNavigationEffectiveSearchText_ = savedText;
+            app.quickNavigationCollapsed_ = savedCollapsed;
+            app.quickNavigationFixedTop_ = savedFixed;
+            app.quickNavigationAnchorTop_ = savedTop;
+            app.quickNavigationOpenPoint_ = savedPoint;
+            app.quickNavCompositionPaintInProgress_ = savedPainting;
+            snowdesktop::animation::detail::mode.store(mode);
+            snowdesktop::animation::detail::speed.store(speed);
+        };
+        try
+        {
+            // Message-only windows cannot appear on the user's desktop. Only
+            // painting/native text input is replaced; actual panel placement,
+            // result-row geometry and animation scheduling run in production.
+            app.quickNavigationHwnd_ = CreateWindowExW(0, L"STATIC", L"search-height-fixture", 0,
+                0, 0, 1, 1, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+            app.quickNavigationSearchEdit_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD,
+                0, 0, 1, 1, app.quickNavigationHwnd_, nullptr, GetModuleHandleW(nullptr), nullptr);
+            check(app.quickNavigationHwnd_ && app.quickNavigationSearchEdit_, "create message-only search routing boundary");
+            app.quickNavCompositionPaintInProgress_ = true;
+            app.quickNavigationOpen_ = app.quickNavigationCollapsed_ = true;
+            app.quickNavigationFixedTop_ = false;
+            app.quickNavigationMenu_ = DesktopApp::QuickNavigationMenu::None;
+            app.quickNavigationSearchType_ = QuickNavigationSearchType::All;
+            app.quickNavigationEffectiveSearchText_.clear();
+            app.quickNavigationOpenPoint_ = {400, 200};
+            app.gridPages_.front().bounds = app.gridPages_.front().workArea = {0, 0, 1200, 800};
+            app.quickNavigationAnimation_.Configure(snowdesktop::quick_navigation_animation_rules::Effect::Scale,
+                1.0, false, true);
+            app.quickNavigationAnimation_.ShowImmediately();
+            app.PositionQuickNavigationWindow();
+            const RECT initial = app.quickNavigationRect_;
+            check(!app.quickNavigationAnimation_.Resize().IsAnimating(), "initial placement must not resize from an empty rectangle");
+            app.quickNavigationSearchType_ = QuickNavigationSearchType::Calculator;
+            app.quickNavigationEffectiveSearchText_ = L"1+1";
+            const RECT target = app.GetQuickNavigationRect();
+            check(target.bottom < initial.bottom && target.top == initial.top && target.left == initial.left &&
+                target.right == initial.right, "actual search-row geometry changes only the settled panel height");
+            app.PositionQuickNavigationWindow();
+            check(app.quickNavigationAnimation_.Resize().IsAnimating(),
+                "the real stable-panel positioning entry must start result-height following");
+            check(app.quickNavigationRect_.top == initial.top && app.quickNavigationRect_.bottom > target.bottom,
+                "production result routing retains the current header and does not snap to the new height");
+            auto follow = app.quickNavigationAnimation_.Resize();
+            const auto endpoint = follow.Advance(static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()) + 80, true);
+            check(endpoint.bottom == target.bottom && endpoint.top == target.top && !follow.IsAnimating(),
+                "production search height reaches its latest geometry within the short follow deadline");
+            snowdesktop::animation::detail::mode.store(snowdesktop::animation::Disabled);
+            app.PositionQuickNavigationWindow();
+            check(EqualRect(&app.quickNavigationRect_, &target) && !app.quickNavigationAnimation_.Resize().IsAnimating(),
+                "the real positioning route immediately settles search height when motion is disabled");
+            check(!IsWindowVisible(app.quickNavigationHwnd_), "search routing cannot reveal its message-only test owner");
+        }
+        catch (...) { cleanup(); throw; }
+        cleanup();
+    }
+
     static void CheckPopupRenderStorage(DesktopApp& app, ID2D1Device* device,
         ID2D1DeviceContext* ctx, ID2D1Bitmap1* target, IDXGIDevice* dxgi)
     {
@@ -297,6 +388,11 @@
         check(app.AnimateCompositionAnimationOverlay(overlay, quickMotion.HiddenScale(), 1, POINT{40, 64}, 1, 1,
             static_cast<UINT>(quickScale.durationMilliseconds), 0, &quickScale) && app.FlushPendingCompositionCommit(),
             "DirectComposition accepts the same responsive quick-panel scale coefficients as native glass");
+        quickMotion.Close(1150); quickMotion.Open(1150);
+        const auto boundedQuickScale = quickMotion.RemainingScaleTimeline();
+        check(app.AnimateCompositionAnimationOverlay(overlay, quickMotion.GetVisual().scale, 1, POINT{40, 64}, 1, 1,
+            static_cast<UINT>(boundedQuickScale.durationMilliseconds), 0, &boundedQuickScale) && app.FlushPendingCompositionCommit(),
+            "DirectComposition accepts the bounded soft-endpoint reversal used by native glass");
         app.dcompVisual_->RemoveVisual(overlay.visual.Get());
         // Exercise the real warmup against a test-owned, never-shown HWND.
         // It must initialize storage without publishing popup state or input.

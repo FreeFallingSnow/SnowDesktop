@@ -857,6 +857,12 @@ int RunDesktopBackdropCompositorTests()
                 check(springGlass.StartVisualTransformAnimation(visual.scale, quick.HiddenScale(), visual.opacity, 0.0f,
                     160.0f, 240.0f, 110, 0.0f, &closeScale, &closeReveal),
                     "native glass accepts responsive scale and opacity reversal through their turning points");
+                quick.ResetHidden(); quick.Open(2000); quick.Close(2150); quick.Open(2150);
+                const auto boundedReveal = quick.RemainingTimeline(), boundedScale = quick.RemainingScaleTimeline();
+                const auto bounded = quick.GetVisual();
+                check(springGlass.StartVisualTransformAnimation(bounded.scale, 1.0f, bounded.opacity, 1.0f,
+                    160.0f, 240.0f, 160, 0.0f, &boundedScale, &boundedReveal),
+                    "native glass accepts bounded same-tick endpoint reversals for both opacity and scale");
             }
             springGlass.CommitVisualChanges();
             check(springGlass.IsAvailable(), "zero-sized glass completion remains available for the next open");

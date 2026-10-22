@@ -1817,6 +1817,11 @@ void CheckStatusBarFullscreenDockSession()
     responsiveBar.Advance(1126);
     Check(!MergedDockPresentationFrame(responsiveBar).visible,
         "merged bar close retires both surfaces at the finite endpoint");
+    responsiveBar.ShowImmediately(); responsiveBar.Close(1130); responsiveBar.Advance(1185);
+    const auto middleClose = MergedDockPresentationFrame(responsiveBar);
+    Check(middleClose.visible && middleClose.opacity == 1.f && !middleClose.inputEnabled &&
+        middleClose.hiddenFraction > .45f && middleClose.hiddenFraction < .70f,
+        "merged close distributes visible movement through its middle with the shared popup close curve");
     responsiveBar.Open(1200); responsiveBar.Advance(1360);
     Check(MergedDockPresentationFrame(responsiveBar).inputEnabled &&
         MergedDockPresentationFrame(responsiveBar).hiddenFraction == 0.f,

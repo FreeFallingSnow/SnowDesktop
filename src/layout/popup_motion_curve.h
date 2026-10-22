@@ -28,6 +28,17 @@ inline bool AtRest(Sample sample, double target)
         std::abs(sample.velocity) <= 0.01;
 }
 
+// At a finite track's soft endpoint the remaining distance can be tiny while
+// velocity is still nonzero. A new critical spring must be fast enough to
+// absorb that target-directed momentum without crossing its target.
+inline double TargetBoundedFrequency(Sample initial, double target, double frequency)
+{
+    const double distance = target - initial.position;
+    if (distance * initial.velocity > 0.0)
+        frequency = std::max(frequency, initial.velocity / distance);
+    return frequency;
+}
+
 struct CubicSegment
 {
     double startSeconds = 0.0, durationSeconds = 0.0;
@@ -88,7 +99,14 @@ inline Timeline Build(Sample initial, double target, double frequency, double mi
         double error = 0.0;
         for (const double fraction : {0.25, 0.5, 0.75})
             error = std::max(error, std::abs(segment.EvaluateLocal(span * fraction).position - sample(begin + span * fraction).position));
-        if (error > 0.00005 && depth < 10)
+        const double delta = last.position - first.position;
+        // A small absolute fitting error can still cross a nearby endpoint.
+        // Preserve velocity by subdividing monotone segments whose Bezier
+        // controls would leave their endpoint range, rather than clamping them.
+        const bool unboundedControls = std::abs(delta) > 1e-12 &&
+            first.velocity * delta >= 0.0 && last.velocity * delta >= 0.0 &&
+            (first.velocity * span / delta > 3.0 || last.velocity * span / delta > 3.0);
+        if ((error > 0.00005 || unboundedControls) && depth < 18)
         {
             const double middle = (begin + end) * 0.5;
             self(self, begin, middle, depth + 1);

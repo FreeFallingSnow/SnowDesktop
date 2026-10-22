@@ -614,6 +614,10 @@ void TestResponsiveAnimationRules()
         const auto close = state.RemainingTimeline();
         Check(close.durationMilliseconds == std::ceil(110.0 * speed),
             "responsive closing retains the normal close duration");
+        const auto midClose = snowdesktop::popup_motion_curve::Evaluate(close,
+            close.durationMilliseconds * .0005);
+        Check(midClose.position > .30 && midClose.position < .55,
+            "quick panel and shared sliding surfaces keep meaningful size halfway through closing");
         state.Advance(10000 + static_cast<std::uint64_t>(close.durationMilliseconds));
         Check(state.IsHidden(), "responsive closing reaches zero and retires its surface");
     }
@@ -636,6 +640,41 @@ void TestResponsiveAnimationRules()
     state.Configure(Effect::None, 1.0, false, true); state.Open(2000);
     Check(!state.IsAnimating() && state.GetVisual().opacity == 1.0f,
         "disabled motion still opens immediately");
+    for (const auto effect : {Effect::Scale, Effect::Fade})
+    {
+        State bounded;
+        bounded.Configure(effect, 1.0, false, true);
+        bounded.Open(1000); bounded.Advance(1150);
+        const auto pose = bounded.GetVisual();
+        const double currentVelocity = bounded.Velocity();
+        bounded.Close(1150); bounded.Open(1150);
+        Check(bounded.GetVisual().scale == pose.scale && bounded.Velocity() == currentVelocity,
+            "same-tick reversal keeps its actual position and velocity rather than clamping the handoff");
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned ms = 0; ms <= 160; ++ms)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track, ms / 1000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "same-tick reversal near the soft endpoint cannot overshoot the reveal range");
+        }
+    }
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    for (unsigned beforeEnd = 1; beforeEnd <= 20; ++beforeEnd)
+    {
+        State bounded;
+        bounded.Configure(Effect::Scale, speed, false, true);
+        const auto duration = static_cast<std::uint64_t>(bounded.DurationMilliseconds(true));
+        const auto reverseAt = 1000 + duration - beforeEnd;
+        bounded.Open(1000); bounded.Close(reverseAt); bounded.Open(reverseAt);
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned step = 0; step <= 128; ++step)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track,
+                track.durationMilliseconds * step / 128000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "native curve fitting also stays bounded when the remaining endpoint distance is tiny");
+        }
+    }
 }
 
 void TestAnimationRules()
@@ -830,6 +869,44 @@ void TestResizeAnimation()
     state.ResetHidden();
     Check(!state.Resize().IsAnimating() && state.IsHidden(),
         "destroying the panel clears resize state before the next opening");
+}
+
+void TestSearchHeightFollow()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect initial{100, 80, 740, 280}, results{100, 80, 740, 680};
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    {
+        ResizeState follow;
+        follow.StartResultFollow(initial, results, 1000, true, speed);
+        const auto firstFrame = follow.Advance(1016, true);
+        Check(firstFrame.bottom > 450 && firstFrame.top == initial.top &&
+            firstFrame.left == initial.left && firstFrame.right == initial.right,
+            "search height follows immediately within the first frame without moving its header or width");
+        const auto middle = follow.Advance(1032, true);
+        Check(middle.bottom > 600,
+            "search height covers most displacement within 32ms instead of trailing live input");
+        follow.Retarget(results, 1040);
+        Check(follow.Advance(1080, true) == results && !follow.IsAnimating(),
+            "search height settles within 80ms even with a slow preset or duplicate result notification");
+    }
+    ResizeState follow;
+    follow.StartResultFollow(initial, results, 2000, true, 1.0);
+    ResizeRect latest = results;
+    for (std::uint64_t time = 2016; time <= 2112; time += 16)
+    {
+        const auto before = follow.Advance(time, true);
+        const auto velocity = follow.Velocity();
+        latest.bottom = time % 32 ? 500 : 800;
+        follow.Retarget(latest, time);
+        Check(follow.Advance(time, true) == before && follow.Velocity() == velocity,
+            "streaming search results retarget the current frame and velocity without queueing old heights");
+    }
+    Check(follow.Advance(2192, true) == latest && !follow.IsAnimating(),
+        "only the latest streamed height owns the final 80ms deadline");
+    follow.StartResultFollow(initial, results, 3000, false, 1.0);
+    Check(!follow.IsAnimating() && follow.Advance(3000, false) == results,
+        "disabled motion applies result height immediately");
 }
 
 void TestResizePresentationLifetime()
@@ -1640,6 +1717,7 @@ int main()
     TestAnimationRules();
     TestResponsiveAnimationRules();
     TestResizeAnimation();
+    TestSearchHeightFollow();
     TestResizePresentationLifetime();
     TestResizeHostOrigin();
     TestAnimationEffects();

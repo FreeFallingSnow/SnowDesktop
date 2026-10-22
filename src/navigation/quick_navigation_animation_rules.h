@@ -106,9 +106,26 @@ public:
     void Start(ResizeRect from, ResizeRect target, std::uint64_t now,
         bool enabled, double durationScale)
     {
+        StartMotion(from, target, now, enabled,
+            180.0 * std::clamp(durationScale, 0.1, 10.0));
+    }
+
+    void StartResultFollow(ResizeRect from, ResizeRect target, std::uint64_t now,
+        bool enabled, double durationScale)
+    {
+        // Geometry follows live input, so slower presentation presets must not
+        // leave it trailing repeated result arrivals. Faster presets still apply.
+        StartMotion(from, target, now, enabled,
+            80.0 * std::clamp(durationScale, 0.1, 1.0));
+    }
+
+private:
+    void StartMotion(ResizeRect from, ResizeRect target, std::uint64_t now,
+        bool enabled, double duration)
+    {
         const bool continuing = animating_;
         if (continuing) Advance(now, enabled);
-        durationMs_ = 180.0 * std::clamp(durationScale, 0.1, 10.0);
+        durationMs_ = duration;
         from_ = current_ = from;
         target_ = target;
         started_ = now;
@@ -121,6 +138,7 @@ public:
         else Settle();
     }
 
+public:
     // Search results and available work areas can change during the resize.
     // Continue from the displayed frame instead of jumping to either endpoint.
     void Retarget(ResizeRect target, std::uint64_t now)
@@ -419,8 +437,10 @@ private:
         const double duration = popup_motion_curve::AtRest(motion_, target)
             ? 0.0 : DurationMilliseconds(targetVisible_);
         elapsed_ = 0.0;
+        const double frequency = popup_motion_curve::TargetBoundedFrequency(motion_, target,
+            duration > 0.0 ? (targetVisible_ ? 6.638352067994 : 3.0) / (duration * 0.00075) : 0.0);
         timeline_ = popup_motion_curve::Build(motion_, target,
-            duration > 0.0 ? 6.638352067994 / (duration * 0.00075) : 0.0, duration);
+            frequency, duration);
         animating_ = duration > 0.0;
         if (!animating_) motion_ = {target, 0.0};
         progress_ = ClampUnit(static_cast<float>(motion_.position));
