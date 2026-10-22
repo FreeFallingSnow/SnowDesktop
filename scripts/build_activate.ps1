@@ -75,12 +75,9 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         if(-not $process){$result.status='not-running';return $result}
         $result.oldPid=$ownerId
         $command=(Get-CimInstance Win32_Process -Filter ('ProcessId = '+$ownerId) -ErrorAction Stop).CommandLine
-        $prefix='"'+$executable+'"'
-        if(-not $command.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){
-            $prefix=$executable
-            if(-not ($command -eq $prefix -or $command.StartsWith($prefix+' ',[StringComparison]::OrdinalIgnoreCase))){throw 'Cannot preserve the running application arguments.'}
-        }
-        $arguments=$command.Substring($prefix.Length).Trim()
+        $launch=[regex]::Match($command,'^\s*(?:"(?<exe>[^"]+)"|(?<exe>\S+))(?<args>.*)$')
+        if(-not $launch.Success -or [IO.Path]::GetFullPath($launch.Groups['exe'].Value) -ne $executable){throw 'Cannot preserve the running application arguments.'}
+        $arguments=$launch.Groups['args'].Value.Trim()
         # Internal handoff handles/PIDs describe the previous launch only.
         $arguments=([regex]::Replace($arguments,'(^|\s)--(?:wait-for-pid|watch-process-handle)=\d+(?=\s|$)',' ')).Trim()
         $changes=@($Artifact.manifest.files|Where-Object{
