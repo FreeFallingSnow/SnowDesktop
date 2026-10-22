@@ -312,7 +312,8 @@ struct Service::Impl
                     wchar_t message[192]{};
                     swprintf_s(message, L"Tray modern bootstrap symbols error=%lu resolverError=%lu",
                         resolved.modernTrayError, resolved.error);
-                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Warning);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message,
+                        resolved.modernTrayError || resolved.error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                 }
                 const auto epoch = static_cast<std::uint64_t>(Read(state.epoch));
                 bool refreshTooltips = false;

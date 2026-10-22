@@ -136,6 +136,14 @@ void TestFailedStartupWindows()
 
 void TestStartupDiagnostics()
 {
+    const auto previousModules = snowdesktop::diagnostics::enabledLogModules.load();
+    struct RestoreModules
+    {
+        std::uint32_t value;
+        ~RestoreModules() { snowdesktop::diagnostics::SetLogModules(value); }
+    } restore{previousModules};
+    snowdesktop::diagnostics::SetLogModules(
+        snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Runtime));
     using snowdesktop::startup_diagnostics::Call;
     using snowdesktop::startup_diagnostics::Scope;
     Call(L"ordinary paint", [] {});

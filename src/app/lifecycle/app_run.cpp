@@ -430,7 +430,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
 
     MigrateLegacyDataPaths();
-    WriteDiagnosticLogEntry(L"Run start");
+    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(SNOWDESKTOP_VERSION) +
+        L" pid=" + std::to_wstring(GetCurrentProcessId()) +
+        L" logModules=" + std::to_wstring(snowdesktop::diagnostics::enabledLogModules.load(std::memory_order_relaxed));
+    WriteDiagnosticLogEntry(startupIdentity.c_str());
 
     {
         std::wstring langDir = GetExecutableDirectoryPath();

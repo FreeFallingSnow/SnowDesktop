@@ -1100,6 +1100,9 @@ public:
         {
             app_.generalSettings_ = snapshot.values.general;
             snowdesktop::diagnostics::SetLogModules(app_.generalSettings_.diagnosticLogModules);
+            const auto message = L"Detailed log modules changed mask=" +
+                std::to_wstring(app_.generalSettings_.diagnosticLogModules);
+            WriteDiagnosticLogEntry(message.c_str());
             return snowdesktop::SettingsActionResult::Success(domains);
         }
         if (domains == SettingsDomain::General &&

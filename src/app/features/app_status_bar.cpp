@@ -490,7 +490,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         swprintf_s(message, L"StatusBar input method %ls hr=0x%08lX anchor=%ld,%ld,%ld,%ld",
             action == Action::SystemInputMethodPanel ? L"layout-panel" : action == Action::InputMethodMenu ? L"context" : L"toggle", static_cast<unsigned long>(result),
             anchor.left, anchor.top, anchor.right, anchor.bottom);
-        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         hold->shortcutFinished = true;
         TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
             SUCCEEDED(result) ? L"requested" : L"failed");
