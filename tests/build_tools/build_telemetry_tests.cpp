@@ -3,6 +3,7 @@
 using namespace build_test;
 void configuration_cache_tests(const fs::path& repo,bool omitHeaderIdentity);
 void resource_publication_tests(const fs::path& repo,bool formerBehavior);
+void resource_queue_publication_tests(const fs::path& repo,bool formerBehavior);
 void compile_budget_tests(const fs::path& repo,const std::string& control);
 void test_build_roots_tests(const fs::path& repo);
 namespace {
@@ -102,6 +103,7 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
         if(mode=="--configuration-cache"){configuration_cache_tests(repo,false);return;}
         if(mode=="--configuration-header-control"){configuration_cache_tests(repo,true);return;}
         if(mode=="--resource-publication"||mode=="--resource-single-attempt"){resource_publication_tests(repo,mode=="--resource-single-attempt");return;}
+        if(mode=="--queue-single-attempt"){resource_queue_publication_tests(repo,true);return;}
     }
     test(repo,argc>2&&std::string(argv[2])=="--without-logger");
 });}

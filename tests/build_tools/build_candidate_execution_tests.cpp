@@ -457,11 +457,12 @@ void weighted_candidate(const fs::path& repo) {
     // headroom protection. The independent CTest case bounds the total wait.
     for(int observation=0;observation<5;++observation){
         const auto reply=c.bridge->invoke(c.scripts/L"build_run.ps1",{"-Command","wait","-Task","candidate","-RunId",id,"-Seconds","30"},{},40);
-        require(reply.code==0,"Weighted candidate observation failed: "+reply.out+reply.err);
+        require(reply.code==0||reply.code==10,"Weighted candidate observation failed: "+reply.out+reply.err);
         weighted=Json::parse(reply.out);
         require(weighted.at("stageError").str().empty(),"Weighted candidate lost its stage observations");
-        if(weighted.at("terminal").boolean)break;
-        require(weighted.at("id").str()==id&&weighted.at("ownerState").str()=="alive","Weighted candidate lost its live execution owner");
+        if(weighted.at("terminal").boolean){require(reply.code==0,"Weighted candidate terminal exit code changed");break;}
+        // Exit 10 is the CLI's bounded, nonterminal observation result.
+        require(reply.code==10&&weighted.at("id").str()==id&&weighted.at("ownerState").str()=="alive","Weighted candidate lost its live execution owner");
     }
     require(weighted.at("terminal").boolean&&weighted.at("status").str()=="passed","Weighted candidate remained nonterminal: "+id+" / "+weighted.at("status").str()+" / "+weighted.at("record").at("waitingFor").str());
     program(fs::path(wide(weighted.at("record").at("candidateExecution").at("output").str())),7);

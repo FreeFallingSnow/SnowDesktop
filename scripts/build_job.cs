@@ -11,6 +11,32 @@ using System.Collections.Generic;
 
 namespace SnowDesktop.Build
 {
+    internal static class AtomicPublication
+    {
+        const int ResourcePublicationBudgetMilliseconds = 1000;
+        internal static void Publish(string temporary, string destination)
+        {
+            Stopwatch waiting = Stopwatch.StartNew();
+            for (;;)
+            {
+                try
+                {
+                    if (File.Exists(destination)) File.Replace(temporary, destination, null);
+                    else File.Move(temporary, destination);
+                    return;
+                }
+                catch (IOException error)
+                {
+                    int native = error.HResult & 0xffff;
+                    // These errors preserve the original names. Partial-move
+                    // errors1176/1177 must not replay a file publication.
+                    if ((native != 32 && native != 33 && native != 1175) ||
+                        waiting.ElapsedMilliseconds >= ResourcePublicationBudgetMilliseconds) throw;
+                    System.Threading.Thread.Sleep(20);
+                }
+            }
+        }
+    }
     public static class Job
     {
         [StructLayout(LayoutKind.Sequential)]
@@ -123,28 +149,9 @@ namespace SnowDesktop.Build
             try { return File.ReadAllText(cancelPath, Encoding.UTF8).Trim() == cancelNonce; }
             catch (IOException) { return false; }
         }
-        const int ResourcePublicationBudgetMilliseconds = 1000;
         static void PublishResourceFile(string temporary)
         {
-            Stopwatch waiting = Stopwatch.StartNew();
-            for (;;)
-            {
-                try
-                {
-                    if (File.Exists(metricsPath)) File.Replace(temporary, metricsPath, null);
-                    else File.Move(temporary, metricsPath);
-                    return;
-                }
-                catch (IOException error)
-                {
-                    int native = error.HResult & 0xffff;
-                    // ReplaceFile error1175 retains both original names. The
-                    // partial-move errors1176/1177 are deliberately not retried.
-                    if ((native != 32 && native != 33 && native != 1175) ||
-                        waiting.ElapsedMilliseconds >= ResourcePublicationBudgetMilliseconds) throw;
-                    System.Threading.Thread.Sleep(20);
-                }
-            }
+            AtomicPublication.Publish(temporary, metricsPath);
         }
         static void Sample(IntPtr job, int pid, Stopwatch elapsed, bool finished, bool cancelled)
         {
@@ -404,7 +411,7 @@ namespace SnowDesktop.Build
                     byte[] bytes = Encoding.UTF8.GetBytes(next.ToString(CultureInfo.InvariantCulture));
                     using (FileStream output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     { output.Write(bytes, 0, bytes.Length); output.Flush(true); }
-                    if (File.Exists(counter)) File.Replace(temporary, counter, null); else File.Move(temporary, counter);
+                    AtomicPublication.Publish(temporary, counter);
                 }
                 finally { if (File.Exists(temporary)) File.Delete(temporary); }
                 string ticket = Path.Combine(folder, next.ToString("D20", CultureInfo.InvariantCulture) + "-" + runId + ".ticket");

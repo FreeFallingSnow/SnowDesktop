@@ -4,6 +4,42 @@
 using namespace build_test;
 
 namespace {
+void queue_case(const fs::path& repo,bool formerBehavior,bool heldToTerminal){
+    Coordinator c(repo,"queue-counter-publication");auto source=read(c.scripts/L"build_job.cs");
+    if(formerBehavior)replace(source,"const int ResourcePublicationBudgetMilliseconds = 1000;","const int ResourcePublicationBudgetMilliseconds = 0;");
+    replace(source,"AtomicPublication.Publish(temporary, counter);","File.WriteAllText(counter + \".publication-attempt\", \"ready\"); AtomicPublication.Publish(temporary, counter);");
+    write(c.scripts/L"build_job.cs",source);
+    const auto script=c.root/L"join-queue.ps1",resource=c.root/L"resource";
+    write(script,R"PS(param([string]$Id)
+. $PSScriptRoot/scripts/build_entry.ps1
+Initialize-ResourceRuntime
+$waiter=$null
+try {
+ $waiter=[SnowDesktop.Build.ResourceWaiter]::Join((Join-Path $PSScriptRoot 'resource'),$Id)
+ @{sequence=$waiter.Sequence;position=$waiter.Inspect().Position}|ConvertTo-Json -Compress
+}catch{
+ $failure=$_.Exception;while($failure.InnerException){$failure=$failure.InnerException}
+ @{native=($failure.HResult -band 0xffff);error=$failure.Message}|ConvertTo-Json -Compress
+ exit 2
+}finally{if($waiter){$waiter.Dispose()}}
+)PS",true);
+    require(c.bridge->call(script,{"-Id",std::string(32,'a')}).at("sequence").integer()==1,"Cannot establish original queue sequence");
+    const auto counter=resource/L"admission/sequence",marker=fs::path(counter.wstring()+L".publication-attempt");fs::remove(marker);
+    struct Reader {HANDLE handle=INVALID_HANDLE_VALUE;~Reader(){if(handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);}void close(){require(CloseHandle(handle)!=FALSE,"Cannot close queue counter reader");handle=INVALID_HANDLE_VALUE;}} reader;
+    reader.handle=CreateFileW(counter.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
+    require(reader.handle!=INVALID_HANDLE_VALUE,"Cannot hold real queue counter reader");
+    Child publisher({powershell().wstring(),L"-NoProfile",L"-File",script.wstring(),L"-Id",std::wstring(32,L'b')},c.root);
+    until([&]{return fs::exists(marker);},12);const auto started=std::chrono::steady_clock::now();
+    if(!heldToTerminal){std::this_thread::sleep_for(std::chrono::milliseconds(350));reader.close();}
+    const auto result=publisher.wait(6);
+    if(heldToTerminal){
+        reader.close();const auto error=Json::parse(result.out);const auto native=error.at("native").integer();
+        require(result.code==2&&(native==32||native==33||native==1175)&&read(counter)=="1"&&std::chrono::steady_clock::now()-started<std::chrono::seconds(5),"Held queue reader changed the original sequence or escaped bounded failure");
+    }else{
+        require(result.code==0&&Json::parse(result.out).at("sequence").integer()==2&&read(counter)=="2","Queue counter was not published after the reader released");
+    }
+    for(const auto& file:fs::directory_iterator(counter.parent_path()))require(file.path().extension()!=L".ticket","Queue publication leaked or duplicated a scheduling ticket");
+}
 void resource_case(const fs::path& repo,bool formerBehavior,bool heldToTerminal){
     Coordinator c(repo,formerBehavior?"metric-single-attempt":(heldToTerminal?"metric-reader-held":"metric-reader-release"));
     auto source=read(c.scripts/L"build_job.cs");
@@ -52,6 +88,14 @@ void resource_case(const fs::path& repo,bool formerBehavior,bool heldToTerminal)
     require(c.calls()==1,"Resource publication replayed the pipeline");
 }
 }
+void resource_queue_publication_tests(const fs::path& repo,bool formerBehavior){
+    queue_case(repo,formerBehavior,false);
+    if(!formerBehavior){
+        queue_case(repo,false,true);
+        const auto control=run({executable().wstring(),repo.wstring(),L"--queue-single-attempt"},repo,35,{},true);
+        require(control.code==1&&control.err.find("Queue counter was not published after the reader released")!=std::string::npos,"Single-attempt queue control did not reach its publication assertion: "+control.out+control.err);
+    }
+}
 void resource_publication_tests(const fs::path& repo,bool formerBehavior){
     resource_case(repo,formerBehavior,false);
     if(!formerBehavior){
@@ -60,6 +104,7 @@ void resource_publication_tests(const fs::path& repo,bool formerBehavior){
         const auto control=run({executable().wstring(),repo.wstring(),L"--resource-single-attempt"},root,55,{},true);
         require(control.code==1&&control.err.find("Terminal resource record was not published after the reader released")!=std::string::npos,
             "Former single-attempt writer did not fail at terminal resource publication: "+control.out+control.err);
+        resource_queue_publication_tests(repo,false);
     }
     std::cout<<"PASS real terminal Job resources survive a bounded reader conflict without pipeline replay\n";
 }
