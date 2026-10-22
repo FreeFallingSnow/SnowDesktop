@@ -70,7 +70,8 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_test_dependency_tests.cpp "tools;core;integration" 120)
     snowdesktop_add_native_tool_test(SnowDesktopRuntimeObserverTests test_runtime_modules
         build_tools/build_runtime_observer_tests.cpp "tools;core;integration" 120)
-    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB)
+    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB
+        SnowDesktopDemoModeRulesTests SnowDesktopWidgetCompositionLayerRulesTests)
     target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp tests/build_tools/build_test_runtime_inputs_tests.cpp)
     add_test(NAME test_runtime_inputs COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --runtime-inputs)
     set_tests_properties(test_runtime_inputs PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"

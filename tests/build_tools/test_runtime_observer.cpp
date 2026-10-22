@@ -71,11 +71,37 @@ void save_report(const fs::path& path,const Json& report){
     if(!MoveFileExW(pending.c_str(),path.c_str(),MOVEFILE_WRITE_THROUGH)){DeleteFileW(pending.c_str());throw std::runtime_error("Cannot publish module report without replacing existing data");}
 }
 struct Process {HANDLE handle=nullptr;bool initialBreakpoint=false;std::map<void*,size_t> bases;};
+struct EntryBreakpoint {
+    void* address=nullptr;BYTE original=0;DWORD rva=0;
+    template<class T> static T read(HANDLE process,const void* address){
+        T value{};SIZE_T count=0;
+        require(ReadProcessMemory(process,address,&value,sizeof(value),&count)&&count==sizeof(value),"Cannot read native image headers");return value;
+    }
+    static void patch(HANDLE process,void* address,BYTE value){
+        DWORD protection=0;require(VirtualProtectEx(process,address,1,PAGE_EXECUTE_READWRITE,&protection)!=0,"Cannot protect owned image entry breakpoint");
+        SIZE_T count=0;const bool written=WriteProcessMemory(process,address,&value,1,&count)&&count==1;
+        DWORD previous=0;const bool restored=VirtualProtectEx(process,address,1,protection,&previous)!=0;
+        require(written&&restored&&FlushInstructionCache(process,address,1),"Cannot write/restore owned image entry breakpoint");
+    }
+    void install(HANDLE process,void* base){
+        const auto* bytes=static_cast<const BYTE*>(base);const auto dos=read<IMAGE_DOS_HEADER>(process,base);
+        require(dos.e_magic==IMAGE_DOS_SIGNATURE&&dos.e_lfanew>=static_cast<LONG>(sizeof(IMAGE_DOS_HEADER))&&dos.e_lfanew<=1024*1024,"Unsupported image DOS header");
+        const auto headers=read<IMAGE_NT_HEADERS64>(process,bytes+dos.e_lfanew);
+        require(headers.Signature==IMAGE_NT_SIGNATURE&&headers.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64&&headers.FileHeader.SizeOfOptionalHeader==sizeof(IMAGE_OPTIONAL_HEADER64)&&headers.OptionalHeader.Magic==IMAGE_NT_OPTIONAL_HDR64_MAGIC,"Entry probe requires a native AMD64 PE64 image");
+        const auto& optional=headers.OptionalHeader;
+        require(optional.NumberOfRvaAndSizes<=IMAGE_NUMBEROF_DIRECTORY_ENTRIES&&optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress==0,"Managed image entry probes are unsupported");
+        rva=optional.AddressOfEntryPoint;require(rva>0&&rva<optional.SizeOfImage,"Native image entry point is unavailable");
+        address=static_cast<BYTE*>(base)+rva;original=read<BYTE>(process,address);require(original!=0xcc,"Native entry already contains a breakpoint");
+        patch(process,address,0xcc);
+    }
+    void restore(HANDLE process)const{patch(process,address,original);}
+};
 int observe(int argc,wchar_t** argv){
-    std::wstring name;fs::path report;ULONGLONG timeout=0;bool probe=false;int first=0;
+    std::wstring name;fs::path report;ULONGLONG timeout=0;bool probe=false,entryProbe=false;int first=0;
     for(int i=1;i<argc;++i){const std::wstring option=argv[i];
         if(option==L"--"){first=i+1;break;}
         if(option==L"--probe"){probe=true;continue;}
+        if(option==L"--entry-probe"){entryProbe=true;continue;}
         require(i+1<argc,"Missing observer option value");const std::wstring value=argv[++i];
         if(option==L"--test")name=value;
         else if(option==L"--report")report=value;
@@ -83,6 +109,7 @@ int observe(int argc,wchar_t** argv){
         else throw std::runtime_error("Unknown runtime observer option");
     }
     require(first>0&&first<argc&&!name.empty()&&name.size()<=160,"Observer requires --test NAME -- PROGRAM [ARGUMENTS]");
+    require(!(probe&&entryProbe),"Select only one runtime probe boundary");
     for(wchar_t value:name)require((value>=L'A'&&value<=L'Z')||(value>=L'a'&&value<=L'z')||(value>=L'0'&&value<=L'9')||value==L'_'||value==L'-',"Invalid runtime observation name");
     if(report.empty()){
         auto root=environment(L"SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT");if(root.empty())root=(fs::current_path()/L"Testing/runtime-modules").wstring();
@@ -101,7 +128,7 @@ int observe(int argc,wchar_t** argv){
     if(!AssignProcessToJobObject(job.value,created.hProcess)){TerminateProcess(created.hProcess,2);throw std::runtime_error("Cannot assign observed process to its private Job");}
     require(ResumeThread(created.hThread)!=static_cast<DWORD>(-1),"Cannot resume observed process");
     Json images=Json::array({}),issues=Json::array({});std::map<DWORD,Process> processes;
-    const ULONGLONG started=GetTickCount64();ULONGLONG stopped=0;DWORD rootExit=2;bool rootSeen=false,rootExited=false,timedOut=false,probeStopped=false;int processCount=0;
+    const ULONGLONG started=GetTickCount64();ULONGLONG stopped=0;DWORD rootExit=2;bool rootSeen=false,rootExited=false,timedOut=false,probeStopped=false,entryReached=false;int processCount=0;EntryBreakpoint entry;
     auto image=[&](const DEBUG_EVENT& event,HANDLE file,void* base,const char* kind){
         Handle eventFile(file);auto& process=processes.at(event.dwProcessId);
         if(images.items.size()>=4096){issues.items.emplace_back("module-event-budget-exceeded");return;}
@@ -125,11 +152,13 @@ int observe(int argc,wchar_t** argv){
         switch(event.dwDebugEventCode){
         case CREATE_PROCESS_DEBUG_EVENT:
             processes[event.dwProcessId].handle=event.u.CreateProcessInfo.hProcess;++processCount;if(event.dwProcessId==created.dwProcessId)rootSeen=true;
-            image(event,event.u.CreateProcessInfo.hFile,event.u.CreateProcessInfo.lpBaseOfImage,"executable");break;
+            image(event,event.u.CreateProcessInfo.hFile,event.u.CreateProcessInfo.lpBaseOfImage,"executable");
+            if(entryProbe&&event.dwProcessId==created.dwProcessId)entry.install(event.u.CreateProcessInfo.hProcess,event.u.CreateProcessInfo.lpBaseOfImage);break;
         case LOAD_DLL_DEBUG_EVENT:image(event,event.u.LoadDll.hFile,event.u.LoadDll.lpBaseOfDll,"dll");break;
         case UNLOAD_DLL_DEBUG_EVENT:{auto& process=processes.at(event.dwProcessId);const auto found=process.bases.find(event.u.UnloadDll.lpBaseOfDll);if(found!=process.bases.end()){images.items[found->second]["unloaded"]=true;process.bases.erase(found);}break;}
         case EXCEPTION_DEBUG_EVENT:{auto& process=processes.at(event.dwProcessId);
-            if(event.u.Exception.ExceptionRecord.ExceptionCode==EXCEPTION_BREAKPOINT&&!process.initialBreakpoint){process.initialBreakpoint=true;if(probe&&event.dwProcessId==created.dwProcessId){probeStopped=true;stopped=GetTickCount64();TerminateJobObject(job.value,0);}}
+            if(entryProbe&&event.dwProcessId==created.dwProcessId&&event.u.Exception.ExceptionRecord.ExceptionCode==EXCEPTION_BREAKPOINT&&event.u.Exception.ExceptionRecord.ExceptionAddress==entry.address){entry.restore(process.handle);entryReached=true;probeStopped=true;stopped=GetTickCount64();require(TerminateJobObject(job.value,0)!=0,"Cannot stop entry probe Job");}
+            else if(event.u.Exception.ExceptionRecord.ExceptionCode==EXCEPTION_BREAKPOINT&&!process.initialBreakpoint){process.initialBreakpoint=true;if(probe&&event.dwProcessId==created.dwProcessId){probeStopped=true;stopped=GetTickCount64();TerminateJobObject(job.value,0);}}
             else continuation=DBG_EXCEPTION_NOT_HANDLED;break;}
         case EXIT_PROCESS_DEBUG_EVENT:if(event.dwProcessId==created.dwProcessId){rootExit=event.u.ExitProcess.dwExitCode;rootExited=true;}processes.erase(event.dwProcessId);break;
         default:break;
@@ -139,12 +168,14 @@ int observe(int argc,wchar_t** argv){
         require(ContinueDebugEvent(event.dwProcessId,event.dwThreadId,continuation)!=0,"Cannot continue a debug event");
     }
     require(rootSeen&&rootExited,"Observed root process had no complete lifecycle");
-    const auto result=Json::object({{"schemaVersion",1},{"test",utf8(name)},{"mode",probe?"probe":"run"},{"status",issues.items.empty()?"observed":"incomplete"},
+    const auto result=Json::object({{"schemaVersion",1},{"test",utf8(name)},{"mode",entryProbe?"entry-probe":probe?"probe":"run"},{"status",issues.items.empty()?"observed":"incomplete"},
         {"rootPid",static_cast<double>(created.dwProcessId)},{"rootExitCode",static_cast<double>(rootExit)},{"processCount",processCount},{"timedOut",timedOut},{"probeStopped",probeStopped},
         {"argv",arguments},{"workingDirectory",utf8(fs::current_path().wstring())},{"images",images},{"issues",issues},{"elapsedSeconds",static_cast<double>(GetTickCount64()-started)/1000.0},
-        {"phaseBoundary","initial-loader-breakpoint"},{"runtimeClosure","unclosed"},{"reuseAllowed",false},{"timingComparableToUnobservedRun",false}});
+        {"phaseBoundary","initial-loader-breakpoint"},{"probeStopBoundary",entryProbe?"native-image-entry":probe?"initial-loader-breakpoint":"none"},
+        {"imageEntryReached",entryReached},{"entryPointRva",static_cast<double>(entry.rva)},{"dllInitializationMayRun",entryProbe},
+        {"runtimeClosure","unclosed"},{"reuseAllowed",false},{"timingComparableToUnobservedRun",false}});
     save_report(report,result);
-    if(probe)return probeStopped&&!timedOut?0:2;
+    if(probe||entryProbe)return probeStopped&&!timedOut?0:2;
     return static_cast<int>(rootExit);
 }
 }
