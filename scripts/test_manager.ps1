@@ -413,6 +413,7 @@ if($Mode -eq 'verify'){
         $verificationBudget=Get-EntryResourceBudget $repositoryRoot
         $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget
         Set-Field $coverage 'observedExecutionContext' $snapshot.executionContext
+        Set-Field $coverage 'observedReviewContext' (Get-Field $snapshot.binding 'reviewedReuse')
         if($snapshot.key -ne $request.verification.key){
             $before=Get-Field $request.verification.executionContext 'environmentFields'
             $after=$snapshot.executionContext.environmentFields

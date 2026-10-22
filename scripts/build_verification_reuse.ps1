@@ -59,13 +59,15 @@ function Get-ReviewedVerificationContext([string]$Root,$Tests,$Candidate) {
             try{if(-not $known){return $null};$knownBindings=@($known.GetValueNames()|Sort-Object|ForEach-Object {$_+':'+[string]$known.GetValue($_)})}finally{if($known){$known.Dispose()}}
         }finally{$machine.Dispose();$user.Dispose()}
         $system=[Environment]::SystemDirectory
-        $token=& (Join-Path $system 'whoami.exe') /all /fo csv /nh
-        if($LASTEXITCODE -ne 0){return $null}
+        if(-not ('SnowDesktop.Verification.NativeToken' -as [type])){
+            Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build_verification_token.cs')))
+        }
+        $token=[SnowDesktop.Verification.NativeToken]::Capture()
         $boot=(Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
         $platform=[pscustomobject]@{os=[Environment]::OSVersion.VersionString;boot=$boot;system=$system;
             kernel=(Get-FileDigest (Join-Path $system 'ntoskrnl.exe'));apiSet=(Get-FileDigest (Join-Path $system 'ApiSetSchema.dll'));
-            tokenDigest=(Get-VerificationTextDigest ($token -join "`n"));knownDlls=(Get-VerificationTextDigest ($knownBindings -join "`n"))}
-        return [pscustomobject]@{policy='reviewed-native-files-v1';platformDigest=(Get-VerificationTextDigest ($platform|ConvertTo-Json -Compress));reviews=$reviews}
+            tokenKind='windows-token-v1';tokenDigest=(Get-VerificationTextDigest $token);knownDlls=(Get-VerificationTextDigest ($knownBindings -join "`n"))}
+        return [pscustomobject]@{policy='reviewed-native-files-v1';platformDigest=(Get-VerificationTextDigest ($platform|ConvertTo-Json -Compress));platformBinding=$platform;reviews=$reviews}
     }catch{return $null} # Unknown review/host conditions execute a fresh test.
 }
 function Get-CompletedVerificationProposal([string]$Root,$Verification) {

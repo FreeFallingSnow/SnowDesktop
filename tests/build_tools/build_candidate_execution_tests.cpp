@@ -45,7 +45,11 @@ void program(const fs::path& output,int expected) {
 }
 void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
     for(const auto& file:fs::directory_iterator(repo/L"scripts")){
-        if(file.is_regular_file())fs::copy_file(file.path(),c.scripts/file.path().filename(),fs::copy_options::overwrite_existing);
+        if(file.is_regular_file()){
+            const auto destination=c.scripts/file.path().filename();
+            if(fs::exists(destination)&&read(destination)==read(file.path()))continue;
+            fs::copy_file(file.path(),destination,fs::copy_options::overwrite_existing);
+        }
     }
     copy(repo,c.root,{"cmake/SnowDesktop.SharedBuildGuard.cmake","cmake/SnowDesktop.PowerShell.cmake"});
     // Optional UI service is outside this execution fixture's resources.
@@ -463,6 +467,18 @@ void completed_verification(const fs::path& repo,bool noReference=false) {
     cmake+="\nconfigure_file(\""+utf8(observer.generic_wstring())+"\" \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe\" COPYONLY)\n"
         "set_target_properties(SnowDesktopCandidateFixtureTests PROPERTIES MSVC_RUNTIME_LIBRARY MultiThreaded TEST_LAUNCHER \"${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopTestRuntimeObserver.exe;--test;candidate_rule;--\")\n";
     write(c.root/L"CMakeLists.txt",cmake);
+    write(c.scripts/L"check-native-token.ps1",R"PS(
+if(-not ('SnowDesktop.Verification.NativeToken' -as [type])){Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build_verification_token.cs')))}
+$encoding=[Console]::OutputEncoding
+try{
+ [Console]::OutputEncoding=[Text.Encoding]::GetEncoding(936);$first=[SnowDesktop.Verification.NativeToken]::Capture()
+ [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$second=[SnowDesktop.Verification.NativeToken]::Capture()
+ @{stable=($first -ceq $second);hasRights=$first.Contains('privilege:');hasIntegrity=$first.Contains('integrity:')}|ConvertTo-Json
+}finally{[Console]::OutputEncoding=$encoding}
+)PS",true);
+    const auto nativeToken=c.bridge->call(c.scripts/L"check-native-token.ps1",{});
+    require(nativeToken.at("stable").boolean&&nativeToken.at("hasRights").boolean&&nativeToken.at("hasIntegrity").boolean,
+        "Native token identity depended on console encoding or omitted rights/integrity");
     write(c.scripts/L"review-cache.ps1",R"PS(param([string]$Binary='')
 $root=Split-Path $PSScriptRoot -Parent
 $sources=@('src/main.cpp','src/value.h')|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $root $_)).Hash.ToLowerInvariant()}}
