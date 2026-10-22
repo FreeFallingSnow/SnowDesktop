@@ -248,7 +248,14 @@ void dashboard(const fs::path& repo,bool browser){
         require(cdp->evaluate("document.querySelector('#evidence [data-evidence-id]').textContent.includes('第 1 次执行') && document.querySelector('#evidence [data-evidence-id]').textContent.includes('未自动复用结果')").boolean,"Browser lost original attempts or presented observations as result reuse");
         cdp->evaluate("document.querySelector('#evidence [data-test-evidence]').scrollIntoView({block:'start'})");
         const auto evidenceShot=cdp->send("Page.captureScreenshot",Json::object({{"format","png"},{"captureBeyondViewport",false}}));write(root/L"evidence-detail.png",unbase64(evidenceShot.at("data").str()));
-        cdp->evaluate("document.querySelector('#evidence [data-evidence-id]').open=false;document.querySelector('#evidence [data-test-evidence]').open=false");
+        cdp->send("Emulation.setDeviceMetricsOverride",Json::object({{"width",360},{"height",800},{"deviceScaleFactor",1},{"mobile",false}}));
+        cdp->evaluate("document.querySelector('[data-evidence-id=\"55555555555555555555555555555555\"]').open=true;document.querySelector('#evidence [data-test-evidence]').scrollIntoView({block:'start'})");
+        const auto beforeEvidenceRefresh=cdp->evaluate("document.getElementById('updated').textContent").str();
+        until([&]{return cdp->evaluate("document.getElementById('updated').textContent").str()!=beforeEvidenceRefresh;},10);
+        require(cdp->evaluate("document.documentElement.scrollWidth<=innerWidth && document.querySelector('#evidence [data-test-evidence]').open && document.querySelector('#evidence [data-evidence-id]').open && document.querySelector('[data-evidence-id=\"55555555555555555555555555555555\"]').open && getComputedStyle(document.querySelector('#evidence .test-observation>.detail')).fontSize==='13px'").boolean,"Narrow evidence view overflowed, lost expanded observations on refresh or reduced main fact text");
+        const auto narrowEvidenceShot=cdp->send("Page.captureScreenshot",Json::object({{"format","png"},{"captureBeyondViewport",false}}));write(root/L"evidence-narrow.png",unbase64(narrowEvidenceShot.at("data").str()));
+        cdp->send("Emulation.setDeviceMetricsOverride",Json::object({{"width",1440},{"height",1080},{"deviceScaleFactor",1},{"mobile",false}}));
+        cdp->evaluate("document.querySelector('#evidence [data-evidence-id]').open=false;document.querySelector('[data-evidence-id=\"55555555555555555555555555555555\"]').open=false;document.querySelector('#evidence [data-test-evidence]').open=false");
         const auto beforeCapturedBrowser=read(state/L"state.json");showCaptured();render("candidate-queue","编辑中");
         require(cdp->evaluate("document.getElementById('runTelemetry').textContent.includes('候选运行 · 1') && document.getElementById('runTelemetry').textContent.includes('captured-task')").boolean,
             "Browser hid the captured candidate while a new editing window was open");

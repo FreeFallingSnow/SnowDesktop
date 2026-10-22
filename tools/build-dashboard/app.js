@@ -101,7 +101,7 @@ function appendTestEvidence(target,evidence,scope){
  const state=value=>({observed:"已采集",stable:"起止一致",changed:"输入已改变",incomplete:"采集不完整",unclosed:"依赖未闭合",unreviewed:"尚未审阅",unavailable:"记录不可用","not-instrumented":"未启用模块观察","not-recorded":"未记录",unproven:"完整性未证明",closed:"范围已闭合",recorded:"身份已记录",invalidated:"输入已改变"}[value]||value||"未记录");
  const number=value=>typeof value==="number"&&Number.isFinite(value)?value:"未记录";
  for(const item of items){
-  const row=element("details"),build=item.dependencies||{},inputs=item.runtimeInputs||{},modules=item.runtimeModules||{};row.dataset.evidenceId=item.id;
+  const row=element("details",null,"test-observation"),build=item.dependencies||{},inputs=item.runtimeInputs||{},modules=item.runtimeModules||{};row.dataset.evidenceId=item.id;
   retainFold(row,JSON.stringify(["test-observation",item.id]));row.append(element("summary",item.test+" · "+label(item.status)+" · "+preciseTime(item.seconds)));
   detail(row,"测试执行",label(item.status),tone(item.status));detail(row,"输入身份",state(item.identityStatus),item.identityStatus==="invalidated"?"bad":"");
   detail(row,"编译依赖",state(build.status)+" · "+state(build.sourceClosure)+" · 编译器报告 "+number(build.sourceReports));
