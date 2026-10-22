@@ -616,6 +616,11 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 常规测试使用 `SnowDesktopAppTests`，工具回归使用 `SnowDesktopBuildToolTests`；
 协作计划合并应用与显式工具需求时使用完整聚合，不让常规 full 隐式加入工具用例。
 
+候选执行的正常流程由 `build_candidate_execution` 验证；原工作区占用和冻结源码写保护的故障对照分别为
+`build_candidate_checkout_lock`、`build_candidate_source_lock`。三项共用原生驱动，保留原断言、控制变异和
+子进程预算；对照必须在指定业务断言失败，不能只凭非零退出码通过。故障对照可独立补验，驱动的 `--all`
+仍顺序执行全部三项。配置/编译门控与槽位等待失败附带对应 Run 观测，不用笼统等待超时掩盖具体阶段。
+
 `ready-and-wait` 两种依赖环境下直接返回共同 batch.exitCode：通过/明确豁免 0，失败原码，
 用法/状态/检查 attention/等待超时 2，恢复出的取消/中断 4，输入失效 5。
 观察 `watch wait` 的 eligible/completed=0 仅表示观察条件满足，其他观察结论=2；result 内仍保留

@@ -164,6 +164,13 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
+    foreach(control checkout_lock source_lock)
+        string(REPLACE "_" "-" control_option "${control}")
+        add_test(NAME build_candidate_${control} COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --verify-${control_option})
+        set_tests_properties(build_candidate_${control} PROPERTIES TIMEOUT 100 LABELS "tools;integration" PROCESSORS 4
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    endforeach()
     add_test(NAME build_candidate_batches COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --batches)
     add_test(NAME build_candidate_tool_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --tool-verification)
     set_tests_properties(build_candidate_tool_verification PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4

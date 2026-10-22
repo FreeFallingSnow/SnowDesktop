@@ -12,6 +12,10 @@ fs::path fixture_parent(const fs::path& repo) {
 Json view(Coordinator& c,const std::string& id) {
     return c.bridge->call(c.scripts/L"build_run.ps1",{"-Command","status","-RunId",id});
 }
+void candidate_until(Coordinator& c,const std::string& id,const std::function<bool()>& predicate,int seconds,const std::string& phase) {
+    try{until(predicate,seconds);}
+    catch(const std::exception& error){throw std::runtime_error(phase+": "+error.what()+"; Run observations: "+view(c,id).dump());}
+}
 std::string submit(Coordinator& c,std::vector<std::string> args,const Env& env={}) {
     args.insert(args.begin(),{"-Command","start","-Task","candidate"});
     const auto result=c.bridge->call(c.scripts/L"build_run.ps1",args,0,env);
@@ -372,7 +376,7 @@ void scenario(const fs::path& repo,const std::string& control) {
     const auto snapshot=capture(c);const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
     const Env env={{L"CANDIDATE_FIXTURE_GATE",gate.wstring()}};
     const auto first=submit(c,execution(snapshot),env);
-    until([&]{return fs::exists(gate.wstring()+L".ready")||view(c,first).at("terminal").boolean;},40);
+    candidate_until(c,first,[&]{return fs::exists(gate.wstring()+L".ready")||view(c,first).at("terminal").boolean;},40,"Candidate configure/build gate was not reached");
     require(fs::exists(gate.wstring()+L".ready"),"Actual candidate configure/build did not reach its private child: "+view(c,first).dump());
     const auto running=view(c,first);const auto context=running.at("record").at("candidateExecution");
     const auto source=fs::path(wide(context.at("source").str())),output=fs::path(wide(context.at("output").str()));
@@ -383,7 +387,7 @@ void scenario(const fs::path& repo,const std::string& control) {
     c.call({"claim","editor","-Batch",batch,"-Revision","0","-Files","src/value.h,scripts/build_command.ps1"});
     write(c.root/L"src/value.h","#pragma once\ninline constexpr int value=11;\n");
     const auto second=submit(c,execution(snapshot),env);
-    until([&]{const auto value=view(c,second);return value.at("record").at("waitingFor").str().find("Candidate slot is busy")!=std::string::npos||value.at("terminal").boolean;},15);
+    candidate_until(c,second,[&]{const auto value=view(c,second);return value.at("record").at("waitingFor").str().find("Candidate slot is busy")!=std::string::npos||value.at("terminal").boolean;},15,"Second candidate did not report its occupied slot");
     require(view(c,second).at("status").str()=="queued","Same candidate slot admitted overlapping executors");
     const auto writeAttempt=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("try{[IO.File]::WriteAllText("+ps_literal(source/L"src/value.h")+",'changed');exit 0}catch{exit 9}")},c.root);
     require(writeAttempt.code==9,"Active candidate source accepted a concurrent writer");
@@ -440,11 +444,14 @@ void scenario(const fs::path& repo,const std::string& control) {
         weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==2048&&
         weighted.at("resources").at("finished").boolean&&weighted.at("resources").at("accountingAvailable").boolean,
         "Candidate private entry did not reuse its admitted runtime and parent CPU/memory budget");
-    for(const auto& mutation:std::vector<std::pair<std::string,std::string>>{{"checkout-lock","Original checkout editing remained blocked"},{"unlocked-source","Active candidate source accepted a concurrent writer"}}){
-        const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation.first)},c.root,85,{},true);
-        require(result.code==1&&result.err.find(mutation.second)!=std::string::npos,"Executor negative control did not reach its business assertion: "+result.out+result.err);
-    }
-    std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports, owner loss and both legacy controls\n";
+    std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";
+}
+void executor_control(const fs::path& repo,bool checkout) {
+    const std::string mutation=checkout?"checkout-lock":"unlocked-source";
+    const std::string assertion=checkout?"Original checkout editing remained blocked":"Active candidate source accepted a concurrent writer";
+    const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation)},repo,85,{},true);
+    require(result.code==1&&result.err.find(assertion)!=std::string::npos,"Executor "+mutation+" negative control did not reach its business assertion: "+result.out+result.err);
+    std::cout<<"PASS executor "<<mutation<<" negative control reached its business assertion\n";
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
@@ -453,5 +460,8 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
     else if(mode=="--artifacts"||mode=="--artifacts-slot-reference")artifacts(repo,mode=="--artifacts-slot-reference");
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
+    else if(mode=="--verify-checkout-lock")executor_control(repo,true);
+    else if(mode=="--verify-source-lock")executor_control(repo,false);
+    else if(mode=="--all"){scenario(repo,"");executor_control(repo,true);executor_control(repo,false);}
     else scenario(repo,mode.empty()?"":mode.substr(2));
 });}
