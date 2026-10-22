@@ -60,7 +60,7 @@
       "music.drop": "Drop audio or folders (top level only)",
       "music.importing": "Reading music files…",
       "music.play": "Play",
-      "music.volume": "Volume",
+      "music.volume": "Local playback volume",
       "music.files": "Add music",
       "music.folder": "Add folder",
       "music.playlist": "Playlist",
@@ -84,7 +84,13 @@
       "workshop.aurora_player.source": "Playback source",
       "workshop.aurora_player.source_system": "System media",
       "workshop.aurora_player.source_local": "Local playback",
-      "workshop.aurora_player.local_unavailable": "Local playback requires a newer SnowDesktop audio capability."
+      "workshop.aurora_player.local_unavailable": "Local playback requires a newer SnowDesktop audio capability.",
+      "shared.system_volume": "System volume",
+      "shared.mute": "Mute system output",
+      "shared.output_device": "Default output (system and communications)",
+      "shared.unavailable": "No available output devices",
+      "shared.permissions": "Manage audio permissions",
+      "shared.error": "Could not change the system audio setting."
     },
     "zh-CN": {
       "workshop.aurora_player.name": "音乐控制",
@@ -131,7 +137,7 @@
       "music.drop": "拖入音频或文件夹（不含子文件夹）",
       "music.importing": "正在读取音乐列表…",
       "music.play": "播放",
-      "music.volume": "音量",
+      "music.volume": "本地播放音量",
       "music.files": "添加音乐",
       "music.folder": "添加文件夹",
       "music.playlist": "播放列表",
@@ -155,7 +161,13 @@
       "workshop.aurora_player.source": "播放来源",
       "workshop.aurora_player.source_system": "系统媒体",
       "workshop.aurora_player.source_local": "本地播放",
-      "workshop.aurora_player.local_unavailable": "本地播放需要支持新音频能力的 SnowDesktop。"
+      "workshop.aurora_player.local_unavailable": "本地播放需要支持新音频能力的 SnowDesktop。",
+      "shared.system_volume": "系统音量",
+      "shared.mute": "系统输出静音",
+      "shared.output_device": "默认输出设备（系统和通信）",
+      "shared.unavailable": "没有可用的输出设备",
+      "shared.permissions": "管理音频权限",
+      "shared.error": "无法更改系统音频设置。"
     },
     "zh-TW": {
       "workshop.aurora_player.name": "音樂控制",
@@ -202,7 +214,7 @@
       "music.drop": "拖入音訊或資料夾（不含子資料夾）",
       "music.importing": "正在讀取音樂清單…",
       "music.play": "播放",
-      "music.volume": "音量",
+      "music.volume": "本機播放音量",
       "music.files": "加入音樂",
       "music.folder": "加入資料夾",
       "music.playlist": "播放清單",
@@ -226,7 +238,13 @@
       "workshop.aurora_player.source": "播放來源",
       "workshop.aurora_player.source_system": "系統媒體",
       "workshop.aurora_player.source_local": "本機播放",
-      "workshop.aurora_player.local_unavailable": "本機播放需要支援新音訊功能的 SnowDesktop。"
+      "workshop.aurora_player.local_unavailable": "本機播放需要支援新音訊功能的 SnowDesktop。",
+      "shared.system_volume": "系統音量",
+      "shared.mute": "系統輸出靜音",
+      "shared.output_device": "預設輸出裝置（系統和通訊）",
+      "shared.unavailable": "沒有可用的輸出裝置",
+      "shared.permissions": "管理音訊權限",
+      "shared.error": "無法變更系統音訊設定。"
     },
     "ja-JP": {
       "workshop.aurora_player.name": "音楽コントロール",
@@ -273,7 +291,7 @@
       "music.drop": "音声ファイルやフォルダーをドロップ（サブフォルダーを除く）",
       "music.importing": "音楽ファイルを読み込み中…",
       "music.play": "再生",
-      "music.volume": "音量",
+      "music.volume": "ローカル再生の音量",
       "music.files": "音楽を追加",
       "music.folder": "フォルダーを追加",
       "music.playlist": "プレイリスト",
@@ -297,7 +315,13 @@
       "workshop.aurora_player.source": "再生ソース",
       "workshop.aurora_player.source_system": "システムメディア",
       "workshop.aurora_player.source_local": "ローカル再生",
-      "workshop.aurora_player.local_unavailable": "ローカル再生には新しい音声機能に対応した SnowDesktop が必要です。"
+      "workshop.aurora_player.local_unavailable": "ローカル再生には新しい音声機能に対応した SnowDesktop が必要です。",
+      "shared.system_volume": "システム音量",
+      "shared.mute": "システム出力をミュート",
+      "shared.output_device": "既定の出力（システムと通信）",
+      "shared.unavailable": "利用可能な出力デバイスがありません",
+      "shared.permissions": "音声の権限を管理",
+      "shared.error": "システムの音声設定を変更できませんでした。"
     },
     "ko-KR": {
       "workshop.aurora_player.name": "음악 제어",
@@ -344,7 +368,7 @@
       "music.drop": "오디오 또는 폴더 놓기 (하위 폴더 제외)",
       "music.importing": "음악 파일을 읽는 중…",
       "music.play": "재생",
-      "music.volume": "음량",
+      "music.volume": "로컬 재생 음량",
       "music.files": "음악 추가",
       "music.folder": "폴더 추가",
       "music.playlist": "재생 목록",
@@ -368,7 +392,13 @@
       "workshop.aurora_player.source": "재생 소스",
       "workshop.aurora_player.source_system": "시스템 미디어",
       "workshop.aurora_player.source_local": "로컬 재생",
-      "workshop.aurora_player.local_unavailable": "로컬 재생에는 새 오디오 기능을 지원하는 SnowDesktop이 필요합니다."
+      "workshop.aurora_player.local_unavailable": "로컬 재생에는 새 오디오 기능을 지원하는 SnowDesktop이 필요합니다.",
+      "shared.system_volume": "시스템 음량",
+      "shared.mute": "시스템 출력 음소거",
+      "shared.output_device": "기본 출력 장치(시스템 및 통신)",
+      "shared.unavailable": "사용 가능한 출력 장치 없음",
+      "shared.permissions": "오디오 권한 관리",
+      "shared.error": "시스템 오디오 설정을 변경하지 못했습니다."
     },
     "de-DE": {
       "workshop.aurora_player.name": "Musiksteuerung",
@@ -415,7 +445,7 @@
       "music.drop": "Audio oder Ordner ablegen (ohne Unterordner)",
       "music.importing": "Musikdateien werden eingelesen…",
       "music.play": "Wiedergabe",
-      "music.volume": "Lautstärke",
+      "music.volume": "Lautstärke der lokalen Wiedergabe",
       "music.files": "Musik hinzufügen",
       "music.folder": "Ordner hinzufügen",
       "music.playlist": "Wiedergabeliste",
@@ -439,7 +469,13 @@
       "workshop.aurora_player.source": "Wiedergabequelle",
       "workshop.aurora_player.source_system": "Systemmedien",
       "workshop.aurora_player.source_local": "Lokale Wiedergabe",
-      "workshop.aurora_player.local_unavailable": "Die lokale Wiedergabe erfordert die neuen Audiofunktionen von SnowDesktop."
+      "workshop.aurora_player.local_unavailable": "Die lokale Wiedergabe erfordert die neuen Audiofunktionen von SnowDesktop.",
+      "shared.system_volume": "Systemlautstärke",
+      "shared.mute": "Systemausgabe stummschalten",
+      "shared.output_device": "Standardausgabe (System und Kommunikation)",
+      "shared.unavailable": "Keine Ausgabegeräte verfügbar",
+      "shared.permissions": "Audioberechtigungen verwalten",
+      "shared.error": "Die Systemaudioeinstellung konnte nicht geändert werden."
     },
     "fr-FR": {
       "workshop.aurora_player.name": "Commandes musicales",
@@ -486,7 +522,7 @@
       "music.drop": "Déposez des fichiers audio ou des dossiers (sans sous-dossiers)",
       "music.importing": "Lecture des fichiers musicaux…",
       "music.play": "Lire",
-      "music.volume": "Volume",
+      "music.volume": "Volume de la lecture locale",
       "music.files": "Ajouter de la musique",
       "music.folder": "Ajouter un dossier",
       "music.playlist": "Liste de lecture",
@@ -510,7 +546,13 @@
       "workshop.aurora_player.source": "Source de lecture",
       "workshop.aurora_player.source_system": "Médias du système",
       "workshop.aurora_player.source_local": "Lecture locale",
-      "workshop.aurora_player.local_unavailable": "La lecture locale nécessite les nouvelles fonctions audio de SnowDesktop."
+      "workshop.aurora_player.local_unavailable": "La lecture locale nécessite les nouvelles fonctions audio de SnowDesktop.",
+      "shared.system_volume": "Volume du système",
+      "shared.mute": "Couper la sortie du système",
+      "shared.output_device": "Sortie par défaut (système et communications)",
+      "shared.unavailable": "Aucun périphérique de sortie disponible",
+      "shared.permissions": "Gérer les autorisations audio",
+      "shared.error": "Impossible de modifier le réglage audio du système."
     },
     "es-ES": {
       "workshop.aurora_player.name": "Controles de música",
@@ -557,7 +599,7 @@
       "music.drop": "Arrastra audio o carpetas (sin subcarpetas)",
       "music.importing": "Leyendo archivos de música…",
       "music.play": "Reproducir",
-      "music.volume": "Volumen",
+      "music.volume": "Volumen de reproducción local",
       "music.files": "Añadir música",
       "music.folder": "Añadir carpeta",
       "music.playlist": "Lista de reproducción",
@@ -581,7 +623,13 @@
       "workshop.aurora_player.source": "Fuente de reproducción",
       "workshop.aurora_player.source_system": "Medios del sistema",
       "workshop.aurora_player.source_local": "Reproducción local",
-      "workshop.aurora_player.local_unavailable": "La reproducción local requiere las nuevas funciones de audio de SnowDesktop."
+      "workshop.aurora_player.local_unavailable": "La reproducción local requiere las nuevas funciones de audio de SnowDesktop.",
+      "shared.system_volume": "Volumen del sistema",
+      "shared.mute": "Silenciar la salida del sistema",
+      "shared.output_device": "Salida predeterminada (sistema y comunicaciones)",
+      "shared.unavailable": "No hay dispositivos de salida disponibles",
+      "shared.permissions": "Gestionar permisos de audio",
+      "shared.error": "No se pudo cambiar el ajuste de audio del sistema."
     },
     "es-419": {
       "workshop.aurora_player.name": "Controles de música",
@@ -628,7 +676,7 @@
       "music.drop": "Arrastra audio o carpetas (sin subcarpetas)",
       "music.importing": "Leyendo archivos de música…",
       "music.play": "Reproducir",
-      "music.volume": "Volumen",
+      "music.volume": "Volumen de reproducción local",
       "music.files": "Agregar música",
       "music.folder": "Agregar carpeta",
       "music.playlist": "Lista de reproducción",
@@ -652,7 +700,13 @@
       "workshop.aurora_player.source": "Fuente de reproducción",
       "workshop.aurora_player.source_system": "Medios del sistema",
       "workshop.aurora_player.source_local": "Reproducción local",
-      "workshop.aurora_player.local_unavailable": "La reproducción local requiere las nuevas funciones de audio de SnowDesktop."
+      "workshop.aurora_player.local_unavailable": "La reproducción local requiere las nuevas funciones de audio de SnowDesktop.",
+      "shared.system_volume": "Volumen del sistema",
+      "shared.mute": "Silenciar la salida del sistema",
+      "shared.output_device": "Salida predeterminada (sistema y comunicaciones)",
+      "shared.unavailable": "No hay dispositivos de salida disponibles",
+      "shared.permissions": "Administrar permisos de audio",
+      "shared.error": "No se pudo cambiar el ajuste de audio del sistema."
     },
     "pt-BR": {
       "workshop.aurora_player.name": "Controles de música",
@@ -699,7 +753,7 @@
       "music.drop": "Solte áudio ou pastas (sem subpastas)",
       "music.importing": "Lendo arquivos de música…",
       "music.play": "Reproduzir",
-      "music.volume": "Volume",
+      "music.volume": "Volume da reprodução local",
       "music.files": "Adicionar músicas",
       "music.folder": "Adicionar pasta",
       "music.playlist": "Lista de reprodução",
@@ -723,7 +777,13 @@
       "workshop.aurora_player.source": "Fonte de reprodução",
       "workshop.aurora_player.source_system": "Mídia do sistema",
       "workshop.aurora_player.source_local": "Reprodução local",
-      "workshop.aurora_player.local_unavailable": "A reprodução local exige os novos recursos de áudio do SnowDesktop."
+      "workshop.aurora_player.local_unavailable": "A reprodução local exige os novos recursos de áudio do SnowDesktop.",
+      "shared.system_volume": "Volume do sistema",
+      "shared.mute": "Silenciar a saída do sistema",
+      "shared.output_device": "Saída padrão (sistema e comunicações)",
+      "shared.unavailable": "Nenhum dispositivo de saída disponível",
+      "shared.permissions": "Gerenciar permissões de áudio",
+      "shared.error": "Não foi possível alterar a configuração de áudio do sistema."
     }
   },
   "previewData": {
@@ -778,7 +838,11 @@
     "audio.output.analyze",
     "app.launch",
     "audio.playback",
-    "filesystem.userSelected.read"
+    "filesystem.userSelected.read",
+    "audio.output.read",
+    "audio.output.control",
+    "audio.devices.read",
+    "audio.devices.control"
   ],
   "requiredFeatures": [
     "animation.frame",
@@ -823,7 +887,10 @@
     "audio.playback.mode",
     "audio.playback.rate",
     "audio.playback.systemMediaControls",
+    "data.audio.devices",
     "data.audio.output.analysis",
+    "data.audio.output.default",
+    "data.audio.output.volume",
     "interaction.fileDrop",
     "interaction.fileDrop.async",
     "interaction.pointerActions",
@@ -832,6 +899,8 @@
     "storage.transaction",
     "storage.typed",
     "task.app.launch",
+    "task.audio.devices.control",
+    "task.audio.output.control",
     "task.audio.playback",
     "task.filesystem.access",
     "task.filesystem.list.names",
@@ -845,6 +914,7 @@
     "view.inputControls",
     "view.pointer.events",
     "view.scroll",
+    "view.selectionControls",
     "view.surface.panel",
     "view.theme.tokens",
     "widget.panel"

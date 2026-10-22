@@ -1,5 +1,6 @@
 local player = module.require("modules/player.lua")
 local localPlayback = module.require("modules/local_playback.lua")
+local systemAudio = module.require("modules/system_audio.lua")
 local responsive = module.require("modules/responsive.lua")
 
 local mediaCurrent
@@ -197,6 +198,7 @@ local function setup(context)
     })
     local model = {
         localPlayback = localPlayback.setup(context),
+        systemAudio = systemAudio.new(context),
         preview = context.preview == true,
         visualizer = false,
         tasks = {},
@@ -881,6 +883,7 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(context, model, value)
+    if systemAudio.event(model.systemAudio,value) then return end
     local previousSource=model.localPlayback.source
     if localPlayback.event(context,model.localPlayback,value) then
         if previousSource~=model.localPlayback.source then
@@ -1156,6 +1159,7 @@ local function menu(_context, model, request)
 end
 
 local function dispose(_context,model)
+    if model and model.systemAudio then systemAudio.dispose(model.systemAudio) end
     if model and model.localPlayback then model.localPlayback.player:stop() end
     animation.cancelFrame(RECORD_FRAME)
     schedule.cancel(PROGRESS_TICK)
@@ -1187,7 +1191,9 @@ descriptor = {
         blurRadius = 8,
     },
     view = viewTree,
-    panel = function(context,model) return localPlayback.panel(context,model.localPlayback) end,
+    panel = function(context,model)
+        return localPlayback.panel(context,model.localPlayback,systemAudio.view(model.systemAudio))
+    end,
     event = event,
     menu = menu,
     dispose = dispose,

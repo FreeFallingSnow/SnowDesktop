@@ -81,7 +81,7 @@ local function modeKey(p)
     return p.shuffle and "shuffle" or p.repeatMode=="track" and "loop" or p.repeatMode=="list" and "repeat" or "sequential"
 end
 local rates={0.25,0.5,0.75,1,1.25,1.5,2,3,4}
-function M.panel(_context,model)
+function M.panel(_context,model,sharedControls)
     local p=model.player
     if model.drag and not model.preview and widget.hasFeature("interaction.pointerActions") then
         local track=p.tracks[model.drag.from]
@@ -98,8 +98,11 @@ function M.panel(_context,model)
         command("files","music.files",M.available()),command("folder","music.folder",M.available()),
         command(model.panelKind=="playlist" and "options" or "playlist",model.panelKind=="playlist" and "music.options" or "music.playlist"),
     }})}
+    if model.panelKind=="options" and sharedControls then children[#children+1]=sharedControls end
     if model.source~="local" then
-        children[#children+1]=label("source.hint",l10n.tr(M.available() and "music.drop" or "workshop.aurora_player.local_unavailable"))
+        if model.panelKind~="options" then
+            children[#children+1]=label("source.hint",l10n.tr(M.available() and "music.drop" or "workshop.aurora_player.local_unavailable"))
+        end
     elseif model.panelKind=="options" then
         children[#children+1]=label("volume.label",l10n.tr("music.volume").."  "..math.floor(p.volume*100+0.5).."%")
         children[#children+1]=view.slider({key="music.volume",width="fill",height=row,min=0,max=1,step=0.01,value=p.volume,
