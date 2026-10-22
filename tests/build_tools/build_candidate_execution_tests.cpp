@@ -479,9 +479,14 @@ if($Binary){$contract.resultReuse=@{kind='reviewed-native-files-v1';binary='.bui
         require(finished.code==0,"Real native baseline failed: "+finished.out+finished.err);return c.result(id);
     };
     const auto original=baseline();
+    const auto loggerRoot=c.stateRoot/L"instrumentation";
+    std::vector<std::pair<fs::path,std::string>> cachedLoggers;
+    for(const auto& file:fs::directory_iterator(loggerRoot))if(file.path().extension()==L".dll")cachedLoggers.emplace_back(file.path(),read(file.path()));
+    require(!cachedLoggers.empty(),"Nested candidate did not publish the logger at its owning Run root");
     const auto binary=fs::path(wide(original.at("candidateExecution").at("output").str()))/L"Release/tests/SnowDesktopCandidateFixtureTests.exe";
     c.bridge->call(c.scripts/L"review-cache.ps1",{"-Binary",utf8(binary.wstring())});
     const auto reviewed=baseline();const auto batch=reviewed.at("batchId").str();
+    for(const auto& [path,bytes]:cachedLoggers)require(read(path)==bytes,"Repeated candidate build overwrote an identity-bound logger cache entry");
     auto verify=[&](bool fresh=false){
         std::vector<std::string> args={"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Review identical native execution evidence"};
         if(fresh)args.push_back("-Fresh");return c.bridge->call(c.scripts/L"build_run.ps1",args);

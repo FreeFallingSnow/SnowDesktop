@@ -1,7 +1,8 @@
 # Completed references have their own receipts. They never manufacture a new
 # execution, alter the original evidence, or grant candidate editing authority.
-function Get-ReviewedVerificationContext([string]$Root,$Tests) {
+function Get-ReviewedVerificationContext([string]$Root,$Tests,$Candidate) {
     try {
+        if(-not $Candidate -or $Candidate.source -ne $Root){return $null}
         . (Join-Path $PSScriptRoot 'build_test_dependencies.ps1')
         $context=[pscustomobject]@{root=$Root;files=@{}};$reviews=@();$names=@()
         Initialize-TestRuntimeContracts $context
@@ -10,8 +11,19 @@ function Get-ReviewedVerificationContext([string]$Root,$Tests) {
             if(-not $policy -or $policy.kind -ne 'reviewed-native-files-v1' -or $policy.binarySha256 -notmatch '^[a-f0-9]{64}$'){return $null}
             $command=@($test.command)
             if($command.Count -lt 5 -or [IO.Path]::GetFileName($command[0]) -ne 'SnowDesktopTestRuntimeObserver.exe' -or $command[1] -ne '--test' -or $command[2] -cne $test.name -or $command[3] -ne '--'){return $null}
-            $binary=Resolve-TestRuntimePath $context $policy.binary
-            if([IO.Path]::GetFullPath($command[4]) -ne $binary -or (Get-FileDigest $binary) -ne $policy.binarySha256){return $null}
+            $relative=([string]$policy.binary).Replace('\','/')
+            if(-not $relative.StartsWith('.build/',[StringComparison]::Ordinal)){return $null}
+            # This is the already authenticated immutable candidate binding,
+            # not an execution credential. Resolve the physical output without
+            # traversing the .build junction through a live executor API.
+            $binary=Resolve-CandidatePath $Candidate.output $relative.Substring(7)
+            $alias=[IO.Path]::GetFullPath((Join-Path $Root $relative))
+            $invoked=[IO.Path]::GetFullPath($command[4])
+            if(($invoked -ne $alias -and $invoked -ne $binary) -or (Get-FileDigest $binary) -ne $policy.binarySha256){return $null}
+            # Build-output data inputs need a separate reviewed mapping. Do not
+            # let availability of a live credential change cache eligibility.
+            if(@($contract.inputs|Where-Object {([string]$_.path).Replace('\','/').StartsWith('.build/',[StringComparison]::Ordinal)}).Count){return $null}
+            if(@(@($contract.reviewedSources)+@($policy.reviewedSources)|Where-Object {([string]$_.path).Replace('\','/').StartsWith('.build/',[StringComparison]::Ordinal)}).Count){return $null}
             foreach($image in @($binary,[string]$command[0])){if([IO.File]::Exists($image+'.local') -or [IO.Directory]::Exists($image+'.local') -or [IO.File]::Exists($image+'.manifest')){return $null}}
             $inputs=Get-TestRuntimeInputs $context $test.name
             if($inputs.status -ne 'observed' -or $inputs.sourceReview -ne 'valid'){return $null}

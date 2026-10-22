@@ -115,7 +115,7 @@ function Get-VerificationSnapshot([string]$Root,[string]$Baseline,[string]$Filte
     $binding=[pscustomobject]@{sourceDigest=$source.digest;configuration='Release';names=$names;definitions=$definitions;artifacts=$artifacts;runtimeFiles=$runtimeFiles;environmentDigest=$context.digest}
     if($candidate){Set-Field $binding 'candidate' $candidate}
     if($candidate -and (Get-Command Get-ReviewedVerificationContext -ErrorAction SilentlyContinue)){
-        $review=Get-ReviewedVerificationContext $Root $tests
+        $review=Get-ReviewedVerificationContext $Root $tests $candidate
         if($review){Set-Field $binding 'reviewedReuse' $review}
     }
     if($ResourceBudget){$binding|Add-Member NoteProperty resourceBudget $ResourceBudget}

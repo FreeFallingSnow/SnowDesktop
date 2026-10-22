@@ -100,14 +100,29 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
     $source=Join-Path $PSScriptRoot 'build_msbuild_logger.cs'
     $sha=[Security.Cryptography.SHA256]::Create()
     try{$identity=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes((Get-FileHash -LiteralPath $source).Hash+(Get-FileHash -LiteralPath $framework).Hash+(Get-FileHash -LiteralPath $compiler).Hash)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
-    $directory=Join-Path $Root '.build/collaboration/instrumentation'
+    # The DLL is an identity-bound compiler cache, not a candidate output.
+    # Keep it at the originating Run root: nested candidate aliases can exceed
+    # the Framework C# compiler's output-path limit even on long-path Windows.
+    $directory=Join-Path (Get-EntryRunRoot $Root) '.build/collaboration/instrumentation'
     [void][IO.Directory]::CreateDirectory($directory)
     $assembly=Join-Path $directory ('msbuild-'+$identity+'.dll')
-    $receipt=Read-EntryJson ($assembly+'.json')
-    if(-not [IO.File]::Exists($assembly) -or -not $receipt -or $receipt.sha256 -ne (Get-FileHash -LiteralPath $assembly).Hash){
-        & $compiler /nologo /target:library /optimize+ /warn:4 /warnaserror+ ('/reference:'+$framework) ('/out:'+$assembly) $source | ForEach-Object {[Console]::Out.WriteLine($_)}
-        if($LASTEXITCODE -ne 0){throw 'MSBuild observation logger compilation failed.'}
-        [IO.File]::WriteAllText($assembly+'.json',(@{sha256=(Get-FileHash -LiteralPath $assembly).Hash;sourceIdentity=$identity}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
+    $lease=$null;$wait=[Diagnostics.Stopwatch]::StartNew();$temporary=$assembly+'.'+[Guid]::NewGuid().ToString('N')+'.dll'
+    try{
+        while(-not $lease){
+            try{$lease=[IO.File]::Open($assembly+'.lock','OpenOrCreate','ReadWrite','None')}
+            catch [IO.IOException]{if($wait.Elapsed.TotalSeconds -ge 30){throw 'MSBuild logger cache remains busy; preserve the Run for diagnosis.'};Start-Sleep -Milliseconds 25}
+        }
+        $receipt=Read-EntryJson ($assembly+'.json')
+        if(-not [IO.File]::Exists($assembly) -or -not $receipt -or $receipt.sha256 -ne (Get-FileHash -LiteralPath $assembly).Hash){
+            & $compiler /nologo /target:library /optimize+ /warn:4 /warnaserror+ ('/reference:'+$framework) ('/out:'+$temporary) $source | ForEach-Object {[Console]::Out.WriteLine($_)}
+            if($LASTEXITCODE -ne 0){throw 'MSBuild observation logger compilation failed.'}
+            if([IO.File]::Exists($assembly)){[IO.File]::Replace($temporary,$assembly,$null)}else{[IO.File]::Move($temporary,$assembly)}
+            [IO.File]::WriteAllText($temporary+'.json',(@{sha256=(Get-FileHash -LiteralPath $assembly).Hash;sourceIdentity=$identity}|ConvertTo-Json),(New-Object Text.UTF8Encoding($false)))
+            if([IO.File]::Exists($assembly+'.json')){[IO.File]::Replace($temporary+'.json',$assembly+'.json',$null)}else{[IO.File]::Move($temporary+'.json',$assembly+'.json')}
+        }
+    }finally{
+        if($lease){$lease.Dispose()}
+        foreach($path in @($temporary,$temporary+'.json')){if([IO.File]::Exists($path)){[IO.File]::Delete($path)}}
     }
     $eventFile=Join-Path (Get-EntryRunRoot $Root) ('.build/collaboration/runs/'+$id+'.msbuild.'+[Guid]::NewGuid().ToString('N')+'.jsonl')
     $parameters=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($eventFile+"`n"+$id+"`n"+[Environment]::GetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT','Process')))
