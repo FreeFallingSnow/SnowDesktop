@@ -24,6 +24,14 @@ function Get-VerificationEnvironment([string]$Root) {
     $environment['SNOWDESKTOP_ENTRY_POWERSHELL']=$runtime
     $environment['MSBUILDDISABLENODEREUSE']='1'
     $environment['PSEXECUTIONPOLICYPREFERENCE']='Bypass'
+    # ConsoleHost prefixes the selected pwsh executable directory unless that
+    # exact prefix is already first. A native caller can provide a PATH that
+    # has not gone through this startup step; bind the child's effective PATH.
+    # https://github.com/PowerShell/PowerShell/blob/master/src/Microsoft.PowerShell.ConsoleHost/host/msh/ConsoleHost.cs
+    if([IO.Path]::GetFileNameWithoutExtension($runtime) -eq 'pwsh'){
+        $prefix=[IO.Path]::GetDirectoryName($runtime)+[IO.Path]::PathSeparator
+        if(-not ([string]$environment['PATH']).StartsWith($prefix,[StringComparison]::Ordinal)){$environment['PATH']=$prefix+[string]$environment['PATH']}
+    }
     # cmd.exe, used by the leased pipeline, supplies this default only when the
     # caller has no PROMPT. Bind its effective value; custom prompts still differ.
     if(-not $environment.Contains('PROMPT')){$environment['PROMPT']='$P$G'}

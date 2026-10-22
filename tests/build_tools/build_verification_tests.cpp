@@ -30,6 +30,10 @@ void scenario(const fs::path& repo,const std::string& control){
         auto source=read(c.scripts/L"build_run.ps1");replace(source,"$ledger.entries|Where-Object key -eq $verification.key","$ledger.entries|Where-Object {$false}");
         write(c.scripts/L"build_run.ps1",source,true);
     }
+    if(control=="path"){
+        auto source=read(c.scripts/L"build_verification.ps1");replace(source,"if([IO.Path]::GetFileNameWithoutExtension($runtime) -eq 'pwsh')","if($false)");
+        write(c.scripts/L"build_verification.ps1",source,true);
+    }
     fs::create_directories(c.root/L"fake-bin");for(const auto& name:{L"cmake.exe",L"ctest.exe"})fs::copy_file(standin(),c.root/L"fake-bin"/name);
     Env env={{L"PATH",(c.root/L"fake-bin").wstring()+L";"+environment(L"PATH")}};
     write(c.root/L".build/known-runtime.txt","original explicit runtime resource");
@@ -103,12 +107,12 @@ void scenario(const fs::path& repo,const std::string& control){
     fs::remove(c.root/L".build/verification-started");c.gate(".build/hold-verification");const auto during=start("owner",env);const auto duringId=during.at("id").str();
     await_execution(c,duringId);write(binary,"changed during execution");c.gate(".build/hold-verification",false);
     require(wait_run(c,env,duringId,5).at("status").str()=="invalidated","Changed assertion binary retained a passing result");write(binary,bytes);
-    for(const std::string mutation:{"configure","duplicate"}){
+    for(const std::string mutation:{"configure","duplicate","path"}){
         const auto negative=run({executable().wstring(),repo.wstring(),wide("--verification-"+mutation)},c.root,65);
-        const auto signal=mutation=="configure"?"Verification repeated configure/build instead of executing the existing candidate":"Equivalent verification requests launched duplicate Runs";
+        const auto signal=mutation=="configure"?"Verification repeated configure/build instead of executing the existing candidate":mutation=="duplicate"?"Equivalent verification requests launched duplicate Runs":"Verification was rejected before test execution";
         require(negative.code==1&&negative.err.find(signal)!=std::string::npos,"Negative control did not reach the verification business assertion: "+negative.out+negative.err);
     }
-    std::cout<<"PASS durable existing-artifact verification, exact active-intent dedup, independent observer/subscriber lifetime, environment separation, immutable evidence and queued/during-run invalidation; forced build and duplicate controls fail\n";
+    std::cout<<"PASS durable existing-artifact verification, exact active-intent dedup, independent observer/subscriber lifetime, environment separation, immutable evidence and queued/during-run invalidation; forced build, duplicate and startup PATH controls fail\n";
 }
 }
 void verification_records_tests(const fs::path& repo,const std::string& control){scenario(repo,control);}
