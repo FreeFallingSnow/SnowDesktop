@@ -419,7 +419,7 @@ void DesktopApp::OnMouseMoveAt(
                     localX, localY, 1, 0);
             }
             UpdateHostInputImePosition();
-            (void)PresentDesktopForegroundComposition(content);
+            (void)PresentDesktopForegroundComposition(GetLuaWidgetPanelRect());
             return;
         }
 

@@ -38,6 +38,18 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     {
         const RECT content =
             GetLuaWidgetPanelContentRect();
+        if (!PtInRect(&content, pt) &&
+            PtInRect(&luaWidgetPanelRect_, pt))
+        {
+            if (widgetEngine_ && widgetEngine_->HandleHostUiPointer(
+                    luaWidgetPanelRequest_.widgetId,
+                    pt.x - content.left, pt.y - content.top,
+                    GET_WHEEL_DELTA_WPARAM(wp), true,
+                    luaWidgetPanelRequest_.surface))
+                (void)PresentDesktopForegroundComposition(
+                    GetLuaWidgetPanelRect());
+            return;
+        }
         if (PtInRect(&content, pt))
         {
             const int delta =
@@ -66,7 +78,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 }
             }
             UpdateHostInputImePosition();
-            (void)PresentDesktopForegroundComposition(content);
+            (void)PresentDesktopForegroundComposition(GetLuaWidgetPanelRect());
             return;
         }
         return;

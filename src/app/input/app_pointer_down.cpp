@@ -91,14 +91,20 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             const RECT content =
                 GetLuaWidgetPanelContentRect();
-            if (!PtInRect(&content, pt))
-                return;
             const int localX =
                 pt.x - content.left;
             const int localY =
                 pt.y - content.top;
             const std::string& surface =
                 luaWidgetPanelRequest_.surface;
+            // The host track can lie in the gutter outside Lua content bounds.
+            const bool onContent = PtInRect(&content, pt) != FALSE;
+            const bool gutterHandled = !onContent && widgetEngine_ &&
+                widgetEngine_->HandleHostUiPointer(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY, 0, false, surface);
+            if (!onContent && !gutterHandled)
+                return;
             if (widgetEngine_ &&
                 widgetEngine_->HasFocusedHostInput() &&
                 !widgetEngine_->IsFocusedHostInputAt(
@@ -120,10 +126,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             SetCapture(panelCaptureHost);
             if (GetCapture() == panelCaptureHost)
                 luaWidgetPanelCaptureHwnd_ = panelCaptureHost;
-            if (!widgetEngine_ ||
+            if (!gutterHandled && (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, 0, false, surface))
+                    localX, localY, 0, false, surface)))
             {
                 if (widgetEngine_)
                 {

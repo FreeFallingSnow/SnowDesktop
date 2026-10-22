@@ -5167,6 +5167,65 @@ void TestScrollPageRestoration()
     Check(Near(renderPage("results:2", 500), 0), "new query results start at the top");
 }
 
+void TestSurfaceScrollbarGutters()
+{
+    const auto make = [](ViewOrientation orientation) {
+        ViewNode scroll;
+        scroll.type = ViewNodeType::Scroll;
+        scroll.key = "outer";
+        scroll.height = {ViewLengthKind::Fill, 0};
+        scroll.orientation = orientation;
+        scroll.padding = 4;
+        ViewNode body;
+        body.key = "body";
+        body.width = {ViewLengthKind::Fixed, 600};
+        body.height = {ViewLengthKind::Fixed, 600};
+        scroll.children = {body};
+        return scroll;
+    };
+    for (auto orientation : {ViewOrientation::Vertical, ViewOrientation::Horizontal})
+    {
+        auto root = make(orientation);
+        std::string error;
+        std::vector<ViewScrollViewport> ports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error) &&
+            ApplyViewScrollOffsets(root, {}, ports, error), "surface scroll fixture lays out");
+        const auto content = root.children.front().frame;
+        const auto clip = root.clipFrame;
+        const auto port = ports.front();
+        ApplyViewSurfaceScrollbarGutters(root, ports, {0, 0, 200, 100}, {0, 0, 214, 114});
+        Check(root.scrollbarFrame && ports.front().scrollbarFrame == root.scrollbarFrame &&
+            root.children.front().frame == content && root.clipFrame == clip &&
+            ports.front().frame == port.frame && Near(ports.front().maximum, port.maximum),
+            "track projection shares paint/hit geometry without moving content or changing scroll range");
+        Check(orientation == ViewOrientation::Vertical ?
+            Near(root.scrollbarFrame->x + root.scrollbarFrame->width, 214) &&
+                Near(root.scrollbarFrame->height, clip->height) :
+            Near(root.scrollbarFrame->y + root.scrollbarFrame->height, 114) &&
+                Near(root.scrollbarFrame->width, clip->width),
+            "only the track cross edge moves into the host gutter");
+    }
+    for (int scenario = 0; scenario != 4; ++scenario)
+    {
+        auto scroll = make(ViewOrientation::Vertical);
+        ViewNode root;
+        root.key = "wrapper";
+        root.height = {ViewLengthKind::Fill, 0};
+        if (scenario == 0) root.padding = 10;
+        if (scenario == 1) root.clipChildren = true;
+        if (scenario == 2) root.transform = ViewTransform{};
+        if (scenario == 3) scroll.showScrollbar = false;
+        root.children = {scroll};
+        std::string error;
+        std::vector<ViewScrollViewport> ports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error) &&
+            ApplyViewScrollOffsets(root, {}, ports, error), "local scroll fixture lays out");
+        ApplyViewSurfaceScrollbarGutters(root, ports, {0, 0, 200, 100}, {0, 0, 214, 114});
+        Check(!root.children.front().scrollbarFrame && !ports.front().scrollbarFrame,
+            "inset, clipped, transformed or hidden tracks must keep local bounds");
+    }
+}
+
 int main()
 {
     const auto lightButton = ResolveWidgetButtonFill({}, 0x161616, true, false, false);
@@ -5185,6 +5244,7 @@ int main()
     Check(customButton.color == 0x175CD3 && Near(customButton.alpha, 1.0f),
         "explicit component background colors retain their authored appearance");
     TestSurfaceThemeRouting();
+    TestSurfaceScrollbarGutters();
     TestScrollPageRestoration();
     TestTimePickerController();
     TestDurationPickerController();

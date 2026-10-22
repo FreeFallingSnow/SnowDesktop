@@ -660,6 +660,8 @@ struct ViewNode
     // keeps scrolling separate from opt-in layout transitions.
     ViewRect layoutTransitionFrame;
     std::optional<ViewRect> clipFrame;
+    // Host-owned track bounds; content clipping and layout remain independent.
+    std::optional<ViewRect> scrollbarFrame;
     float scrollOffset = 0.0f;
     float scrollViewportExtent = 0.0f;
     float scrollContentExtent = 0.0f;
@@ -691,6 +693,7 @@ struct ViewScrollViewport
     float maximum = 0.0f;
     bool initialized = false;
     bool selectPopup = false;
+    std::optional<ViewRect> scrollbarFrame;
 };
 
 struct ViewInputControl
@@ -851,6 +854,12 @@ bool HasVisibleIndeterminateProgress(const ViewNode& root) noexcept;
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);
+
+// Move a surface-filling scroll container's track into host chrome gutters.
+// Clipped, transformed and local/nested scroll areas keep their own bounds.
+void ApplyViewSurfaceScrollbarGutters(ViewNode& root,
+    std::vector<ViewScrollViewport>& viewports,
+    const ViewRect& contentBounds, const ViewRect& trackBounds);
 bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     std::size_t columns, float rowGap, float viewportExtent,
     float requestedOffset, std::size_t overscan,

@@ -18601,6 +18601,121 @@ private:
     bool active_ = false;
 };
 
+class WidgetPanelContentClip
+{
+public:
+    WidgetPanelContentClip(ID2D1DeviceContext* context, const RECT& bounds)
+        : context_(context), bounds_(D2D1::RectF(
+            static_cast<float>(bounds.left),
+            static_cast<float>(bounds.top), static_cast<float>(bounds.right),
+            static_cast<float>(bounds.bottom)))
+    {
+        Resume();
+    }
+    ~WidgetPanelContentClip() { Suspend(); }
+    WidgetPanelContentClip(const WidgetPanelContentClip&) = delete;
+    WidgetPanelContentClip& operator=(const WidgetPanelContentClip&) = delete;
+    void Suspend()
+    {
+        if (!active_) return;
+        context_->PopAxisAlignedClip();
+        active_ = false;
+    }
+    void Resume()
+    {
+        if (active_) return;
+        context_->PushAxisAlignedClip(bounds_, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        active_ = true;
+    }
+private:
+    ID2D1DeviceContext* context_;
+    D2D1_RECT_F bounds_;
+    bool active_ = false;
+};
+
+struct ViewScrollbarPaint
+{
+    const snowdesktop::widget_runtime::ViewNode* node;
+    snowdesktop::widget_runtime::ViewStyle style;
+    float opacity;
+};
+
+static void DrawWidgetViewScrollbar(D2DState* state,
+    const snowdesktop::widget_runtime::ViewNode& node,
+    const snowdesktop::widget_runtime::ViewStyle& style, float opacity)
+{
+    using snowdesktop::widget_runtime::ViewOrientation;
+    if (!node.clipFrame) return;
+    const auto& clip = *node.clipFrame;
+    if (node.showScrollbar && node.scrollContentExtent >
+            node.scrollViewportExtent &&
+        node.scrollViewportExtent > 0.0f)
+    {
+        const bool vertical = node.orientation ==
+            ViewOrientation::Vertical;
+        const auto& track = node.scrollbarFrame.value_or(clip);
+        const float crossExtent = vertical ? track.width : track.height;
+        const float edgeInset = std::min(2.0f, crossExtent * 0.25f);
+        const float barThickness = std::min(3.0f,
+            std::max(0.0f, crossExtent - edgeInset));
+        const int viewportExtent = std::max(1,
+            static_cast<int>(std::lround(
+                vertical ? clip.height : clip.width)));
+        const auto scrollbar = snowdesktop::widget_scroll_rules::
+            ResolveScrollbarAxisGeometry(
+                0, viewportExtent,
+                std::max(viewportExtent,
+                    static_cast<int>(std::lround(
+                        node.scrollContentExtent))),
+                viewportExtent,
+                static_cast<int>(std::lround(node.scrollOffset)),
+                CalculateWidgetCellScale(
+                    state->gridCellW, state->gridCellH));
+        const std::uint32_t scrollbarColor =
+            style.foreground.value_or(0xFFFFFF);
+        ID2D1SolidColorBrush* trackBrush = GetCachedBrush(state,
+            static_cast<int>(scrollbarColor), opacity * 0.10f);
+        ID2D1SolidColorBrush* thumbBrush = GetCachedBrush(state,
+            static_cast<int>(scrollbarColor), opacity * 0.48f);
+        D2D1_RECT_F trackRect{};
+        D2D1_RECT_F thumbRect{};
+        if (vertical)
+        {
+            const float right = state->widgetRect.left + track.x +
+                track.width - edgeInset;
+            trackRect = D2D1::RectF(right - barThickness,
+                state->widgetRect.top + clip.y + scrollbar.trackStart,
+                right,
+                state->widgetRect.top + clip.y + scrollbar.trackEnd);
+            thumbRect = D2D1::RectF(trackRect.left,
+                state->widgetRect.top + clip.y + scrollbar.thumbStart,
+                trackRect.right,
+                state->widgetRect.top + clip.y + scrollbar.thumbEnd);
+        }
+        else
+        {
+            const float bottom = state->widgetRect.top + track.y +
+                track.height - edgeInset;
+            trackRect = D2D1::RectF(
+                state->widgetRect.left + clip.x + scrollbar.trackStart,
+                bottom - barThickness,
+                state->widgetRect.left + clip.x + scrollbar.trackEnd,
+                bottom);
+            thumbRect = D2D1::RectF(
+                state->widgetRect.left + clip.x + scrollbar.thumbStart,
+                trackRect.top,
+                state->widgetRect.left + clip.x + scrollbar.thumbEnd,
+                trackRect.bottom);
+        }
+        if (trackBrush)
+            state->ctx->FillRoundedRectangle(
+                D2D1::RoundedRect(trackRect, 1.5f, 1.5f), trackBrush);
+        if (thumbBrush)
+            state->ctx->FillRoundedRectangle(
+                D2D1::RoundedRect(thumbRect, 1.5f, 1.5f), thumbBrush);
+    }
+}
+
 static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
@@ -18611,7 +18726,8 @@ static void DrawWidgetViewNode(D2DState* state,
     const snowdesktop::widget_runtime::ViewThemePalette& palette,
     float inheritedScale = 1.0f,
     const snowdesktop::widget_runtime::ViewTransitionPresentation*
-        forcedPresentation = nullptr)
+        forcedPresentation = nullptr,
+    std::vector<ViewScrollbarPaint>* gutterPaints = nullptr)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
     using snowdesktop::widget_runtime::ViewShapeKind;
@@ -19444,83 +19560,21 @@ static void DrawWidgetViewNode(D2DState* state,
                 ViewChildrenInPaintOrder(node))
             DrawWidgetViewNode(
                 state, *child, regions, focusedKey, transitions,
-                now, reducedMotion, palette, cumulativeScale);
+                now, reducedMotion, palette, cumulativeScale, nullptr, gutterPaints);
         state->ctx->PopAxisAlignedClip();
         --state->widgetClipDepth;
 
-        if (node.showScrollbar && node.scrollContentExtent >
-                node.scrollViewportExtent &&
-            node.scrollViewportExtent > 0.0f)
-        {
-            const bool vertical = node.orientation ==
-                ViewOrientation::Vertical;
-            const float crossExtent = vertical ? clip.width : clip.height;
-            const float edgeInset = std::min(2.0f, crossExtent * 0.25f);
-            const float barThickness = std::min(3.0f,
-                std::max(0.0f, crossExtent - edgeInset));
-            const int viewportExtent = std::max(1,
-                static_cast<int>(std::lround(
-                    vertical ? clip.height : clip.width)));
-            const auto scrollbar = snowdesktop::widget_scroll_rules::
-                ResolveScrollbarAxisGeometry(
-                    0, viewportExtent,
-                    std::max(viewportExtent,
-                        static_cast<int>(std::lround(
-                            node.scrollContentExtent))),
-                    viewportExtent,
-                    static_cast<int>(std::lround(node.scrollOffset)),
-                    CalculateWidgetCellScale(
-                        state->gridCellW, state->gridCellH));
-            const std::uint32_t scrollbarColor =
-                style.foreground.value_or(0xFFFFFF);
-            ID2D1SolidColorBrush* trackBrush = GetCachedBrush(state,
-                static_cast<int>(scrollbarColor), opacity * 0.10f);
-            ID2D1SolidColorBrush* thumbBrush = GetCachedBrush(state,
-                static_cast<int>(scrollbarColor), opacity * 0.48f);
-            D2D1_RECT_F trackRect{};
-            D2D1_RECT_F thumbRect{};
-            if (vertical)
-            {
-                const float right = state->widgetRect.left + clip.x +
-                    clip.width - edgeInset;
-                trackRect = D2D1::RectF(right - barThickness,
-                    state->widgetRect.top + clip.y + scrollbar.trackStart,
-                    right,
-                    state->widgetRect.top + clip.y + scrollbar.trackEnd);
-                thumbRect = D2D1::RectF(trackRect.left,
-                    state->widgetRect.top + clip.y + scrollbar.thumbStart,
-                    trackRect.right,
-                    state->widgetRect.top + clip.y + scrollbar.thumbEnd);
-            }
-            else
-            {
-                const float bottom = state->widgetRect.top + clip.y +
-                    clip.height - edgeInset;
-                trackRect = D2D1::RectF(
-                    state->widgetRect.left + clip.x + scrollbar.trackStart,
-                    bottom - barThickness,
-                    state->widgetRect.left + clip.x + scrollbar.trackEnd,
-                    bottom);
-                thumbRect = D2D1::RectF(
-                    state->widgetRect.left + clip.x + scrollbar.thumbStart,
-                    trackRect.top,
-                    state->widgetRect.left + clip.x + scrollbar.thumbEnd,
-                    trackRect.bottom);
-            }
-            if (trackBrush)
-                state->ctx->FillRoundedRectangle(
-                    D2D1::RoundedRect(trackRect, 1.5f, 1.5f), trackBrush);
-            if (thumbBrush)
-                state->ctx->FillRoundedRectangle(
-                    D2D1::RoundedRect(thumbRect, 1.5f, 1.5f), thumbBrush);
-        }
+        if (node.scrollbarFrame && gutterPaints)
+            gutterPaints->push_back({&node, style, opacity});
+        else
+            DrawWidgetViewScrollbar(state, node, style, opacity);
         return;
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
         DrawWidgetViewNode(
             state, *child, regions, focusedKey, transitions,
-            now, reducedMotion, palette, cumulativeScale);
+            now, reducedMotion, palette, cumulativeScale, nullptr, gutterPaints);
     if (focused && specialGeometry && style.borderColor)
     {
         if (ID2D1SolidColorBrush* focus = GetCachedBrush(state,
@@ -19537,11 +19591,12 @@ static bool DrawWidgetViewTree(D2DState* state,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
     std::string_view focusedKey,
     snowdesktop::widget_runtime::ViewTransitionRuntime& transitions,
-    bool reducedMotion)
+    bool reducedMotion, WidgetPanelContentClip* contentClip = nullptr)
 {
     snowdesktop::performance::Scope scope("widget.view", "draw",
         state ? std::wstring_view(state->currentWidgetId) : std::wstring_view{});
     if (!state || !state->ctx) return false;
+    std::vector<ViewScrollbarPaint> gutterPaints;
     const auto now = snowdesktop::widget_runtime::
         ViewTransitionRuntime::Clock::now();
     const auto palette = BuildWidgetViewThemePalette(state);
@@ -19549,7 +19604,7 @@ static bool DrawWidgetViewTree(D2DState* state,
     transitions.SetDurationScale(snowdesktop::animation::RuntimeDurationScale());
     transitions.BeginFrame();
     DrawWidgetViewNode(state, tree, regions, focusedKey,
-        &transitions, now, reducedMotion, palette);
+        &transitions, now, reducedMotion, palette, 1.0f, nullptr, &gutterPaints);
     transitions.EndFrame();
     for (const auto& exit : transitions.ExitFrames(now, reducedMotion))
     {
@@ -19576,13 +19631,21 @@ static bool DrawWidgetViewTree(D2DState* state,
             DrawWidgetViewNode(state, *exit.node, regions, {}, nullptr,
                 now, reducedMotion, palette,
                 std::max(0.000001f, inheritedScale),
-                &exit.presentation);
+                &exit.presentation, &gutterPaints);
         }
         if (pushedClip)
         {
             state->ctx->PopAxisAlignedClip();
             --state->widgetClipDepth;
         }
+    }
+    // Content stays inside its original viewport; host edge tracks paint last.
+    if (!gutterPaints.empty())
+    {
+        if (contentClip) contentClip->Suspend();
+        for (const auto& paint : gutterPaints)
+            DrawWidgetViewScrollbar(state, *paint.node, paint.style, paint.opacity);
+        if (contentClip) contentClip->Resume();
     }
     const auto textCountsAfter = state->textLayoutCache.Statistics();
     if (textCountsAfter.hits != textCountsBefore.hits)
@@ -19828,6 +19891,14 @@ static std::vector<LuaWidget::HostControl> BuildViewHostControls(
             static_cast<LONG>(std::lround(
                 viewport.frame.y + viewport.frame.height)),
         };
+        if (viewport.scrollbarFrame)
+        {
+            const auto& track = *viewport.scrollbarFrame;
+            control.rect.right = static_cast<LONG>(std::lround(
+                track.x + track.width));
+            control.rect.bottom = static_cast<LONG>(std::lround(
+                track.y + track.height));
+        }
         control.horizontal = viewport.orientation ==
             snowdesktop::widget_runtime::ViewOrientation::Horizontal;
         const int viewportExtent = std::max(1,
@@ -21158,7 +21229,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
 bool WidgetEngine::RenderWidgetPanel(
     const std::wstring& widgetId,
     ID2D1DeviceContext* context, RECT bounds,
-    std::string_view surface)
+    std::string_view surface, const RECT* scrollbarBounds)
 {
     snowdesktop::performance::Scope performanceScope("widget.render", surface, widgetId);
     snowdesktop::performance::DrawLink(surface, widgetId, true);
@@ -21186,6 +21257,7 @@ bool WidgetEngine::RenderWidgetPanel(
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
+    WidgetPanelContentClip contentClip(context, bounds);
     DrainShellIconResults(d2dState_);
     const RECT previousPanelBounds = widget.panelBounds;
     const std::string previousPanelSurface = widget.panelSurface;
@@ -21209,7 +21281,7 @@ bool WidgetEngine::RenderWidgetPanel(
             VisualViewFocusForSurface(widget, normalizedSurface),
             widget.panelViewTransitions,
             widget.preview || !widgetTimerRequestCallback_ ||
-                HostManagedAnimationsSuppressed());
+                HostManagedAnimationsSuppressed(), &contentClip);
         DrawWidgetSelectOverlays(d2dState_, *widget.panelViewTree,
             widget.panelInteractionRegions,
             VisualViewFocusForSurface(widget, normalizedSurface),
@@ -21385,6 +21457,13 @@ bool WidgetEngine::RenderWidgetPanel(
         std::vector<LuaWidget::HostControl> viewControls;
         if (panelAccepted && hasView)
         {
+            if (scrollbarBounds)
+                snowdesktop::widget_runtime::ApplyViewSurfaceScrollbarGutters(
+                    candidate, scrollViewports,
+                    {0, 0, static_cast<float>(bounds.right - bounds.left),
+                        static_cast<float>(bounds.bottom - bounds.top)},
+                    {0, 0, static_cast<float>(scrollbarBounds->right - bounds.left),
+                        static_cast<float>(scrollbarBounds->bottom - bounds.top)});
             viewControls = BuildViewHostControls(*this, d2dState_,
                 widgetId, scrollViewports, inputControls);
             const std::size_t existingCount =
@@ -21549,7 +21628,7 @@ bool WidgetEngine::RenderWidgetPanel(
                             current, normalizedSurface),
                         current.panelViewTransitions,
                         current.preview || !widgetTimerRequestCallback_ ||
-                            HostManagedAnimationsSuppressed());
+                            HostManagedAnimationsSuppressed(), &contentClip);
                     DrawWidgetSelectOverlays(d2dState_,
                         *current.panelViewTree,
                         current.panelInteractionRegions,
@@ -21594,7 +21673,7 @@ bool WidgetEngine::RenderWidgetPanel(
                         current, normalizedSurface),
                     current.panelViewTransitions,
                     current.preview || !widgetTimerRequestCallback_ ||
-                        HostManagedAnimationsSuppressed());
+                        HostManagedAnimationsSuppressed(), &contentClip);
                 DrawWidgetSelectOverlays(d2dState_,
                     *current.panelViewTree,
                     current.panelInteractionRegions,

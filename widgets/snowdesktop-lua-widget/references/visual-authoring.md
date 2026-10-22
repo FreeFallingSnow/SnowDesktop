@@ -114,6 +114,22 @@ foreground or `1` for a dark/black foreground so host chrome follows that
 preset. Pass it directly to the preview CLI for authoring overrides, and never
 read or persist it from component Lua.
 
+## Scrollable auxiliary surfaces
+
+Keep a panel, dialog or popover's outer `view.scroll` at `width="fill"` and
+`height="fill"`. Put content padding on its child column/list, so the scroll
+viewport reaches the host content boundary. The host can then place the outer
+scrollbar in the popup's edge gutter while preserving content insets. Avoid an
+extra padded wrapper around the scroll viewport: it makes the track follow the
+inset content edge. Local and nested scrolling areas keep tracks at their own
+viewport edges. Do not imitate an outer track with drawing or pointer offsets;
+the host owns track rendering, clipping and dragging.
+
+Review an overflowing device list or playlist as well as a short list. Check
+that the track stays near the popup border, clear of rounded corners, while
+content retains its intended spacing. Verify wheel and thumb dragging at that
+same edge; a routed desktop preview cannot establish popup-gutter hit testing.
+
 ## Real preview contract
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process

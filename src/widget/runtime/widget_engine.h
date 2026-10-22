@@ -988,7 +988,8 @@ public:
     void ApplyHostAnimationPreferences();
     bool RenderWidgetPanel(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds,
-        std::string_view surface = "panel");
+        std::string_view surface = "panel",
+        const RECT* scrollbarBounds = nullptr);
     void TickRuntime();
     /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
     void OnAudioAnalysisWake();

@@ -1977,6 +1977,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         frame.y + margin.top + node.offsetY,
         resolved.width, resolved.height };
     node.clipFrame.reset();
+    node.scrollbarFrame.reset();
     node.scrollOffset = 0.0f;
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
@@ -5920,6 +5921,49 @@ bool ApplyViewScrollOffsets(ViewNode& root,
             viewport.frame.height <= 0.0f;
     });
     return true;
+}
+
+void ApplyViewSurfaceScrollbarGutters(ViewNode& root,
+    std::vector<ViewScrollViewport>& viewports,
+    const ViewRect& contentBounds, const ViewRect& trackBounds)
+{
+    const auto visit = [&](auto&& self, ViewNode& node) -> void {
+        node.scrollbarFrame.reset();
+        if (!node.visible || node.visibility != ViewVisibility::Visible ||
+            node.transform || node.transition || node.enterTransition ||
+            node.exitTransition)
+            return;
+        if (IsScrollContainer(node.type))
+        {
+            const auto sameEdge = [](float a, float b) {
+                return std::abs(a - b) < 0.5f;
+            };
+            if (!node.showScrollbar || !node.clipFrame ||
+                node.scrollContentExtent <= node.scrollViewportExtent ||
+                !sameEdge(node.frame.x, contentBounds.x) ||
+                !sameEdge(node.frame.y, contentBounds.y) ||
+                !sameEdge(node.frame.width, contentBounds.width) ||
+                !sameEdge(node.frame.height, contentBounds.height))
+                return;
+            ViewRect track = *node.clipFrame;
+            if (node.orientation == ViewOrientation::Vertical)
+                track.width = std::max(track.width,
+                    trackBounds.x + trackBounds.width - track.x);
+            else
+                track.height = std::max(track.height,
+                    trackBounds.y + trackBounds.height - track.y);
+            node.scrollbarFrame = track;
+            for (auto& viewport : viewports)
+                if (viewport.key == node.key && !viewport.selectPopup)
+                    viewport.scrollbarFrame = track;
+            return; // A child scrollbar cannot escape this content clip.
+        }
+        if (node.clipFrame)
+            return;
+        for (auto& child : node.children)
+            self(self, child);
+    };
+    visit(visit, root);
 }
 
 bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
