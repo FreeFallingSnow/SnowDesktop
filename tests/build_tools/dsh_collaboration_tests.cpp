@@ -165,7 +165,7 @@ try{
  }finally{Date.now=realNow;agent.status='idle';bridge.call=originalCall;}
  const afterHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id===beforeHeartbeat.id);
  const utcKey=value=>value.replace(/(\.\d*?)0+Z$/,'$1Z').replace(/\.Z$/,'Z');
- const heartbeat={progress:afterHeartbeat.progress,revisionPreserved:afterHeartbeat.revision===beforeHeartbeat.revision,
+ const heartbeat={capabilities:afterHeartbeat.capabilities,progress:afterHeartbeat.progress,revisionPreserved:afterHeartbeat.revision===beforeHeartbeat.revision,
   progressTimePreserved:utcKey(afterHeartbeat.lastProgressUtc)===utcKey(beforeHeartbeat.lastProgressUtc),
   refreshed:afterHeartbeat.lastHeartbeatUtc!==beforeHeartbeat.lastHeartbeatUtc};
  await bridge.call('begin','synthetic-peer');
@@ -193,6 +193,8 @@ console.log(JSON.stringify(result));
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
     const auto& heartbeat=observed.at("heartbeat");
+    for(const auto& capability:{"beforeWriteGate","boundedWait","liveProgress","activeTurnSteering"})require(heartbeat.at("capabilities").at(capability).boolean,"Production Host failed to declare an installed adapter capability");
+    require(!heartbeat.at("capabilities").at("idleWake").boolean,"Disabled cold wake was advertised as available");
     require(heartbeat.at("progress").str()=="Meaningful progress 中文"&&heartbeat.at("revisionPreserved").boolean&&heartbeat.at("progressTimePreserved").boolean&&heartbeat.at("refreshed").boolean,
             "Production Host heartbeat overwrote meaningful progress or failed to refresh liveness");
     require(observed.at("denied").items.size()==2&&observed.at("denied").items[0].boolean&&observed.at("denied").items[1].boolean,"Host write/edit hooks did not deny missing grants");
@@ -312,6 +314,7 @@ console.log(JSON.stringify(result));
         require(cold.at("currentPreserved").boolean&&cold.at("mainTask").at("revision").integer()==0&&cold.at("mainTask").at("phase").str()=="investigating","Cold recovery changed an editing grant or business task revision");
         for(const auto& phase:{"duplicate","unloaded"})require(cold.at(phase).at("lists").integer()==0&&cold.at(phase).at("resumes").integer()==0&&cold.at(phase).at("notices").integer()==0,"Repeated poll or disposed plugin repeated cold recovery");
         if(mode==L"enabled"){
+            require(cold.at("mainTask").at("capabilities").at("idleWake").boolean,"Available configured Session Controller wake was not declared");
             requireRestored(cold);
         }else{
             require(cold.at("deliveries").items.empty()&&cold.at("receipts").items.empty()&&cold.at("errors").items.empty(),"Disabled/unavailable/disposed recovery delivered or acknowledged an event");

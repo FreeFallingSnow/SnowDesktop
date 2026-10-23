@@ -59,8 +59,8 @@ export function powershellPath(){
  if(!found)throw new Error('A supported PowerShell runtime is required');return found;
 }
 export class CollaborationBridge{
- constructor(root,{port=8765,powershell=powershellPath()}={}){
-  this.root=fs.realpathSync.native(root);this.port=port;this.powershell=powershell;this.grants=new Map();
+ constructor(root,{port=8765,powershell=powershellPath(),capabilities=()=>[]}={}){
+  this.root=fs.realpathSync.native(root);this.port=port;this.powershell=powershell;this.capabilities=capabilities;this.grants=new Map();
   if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid dashboard port');
   this.script=path.join(this.root,'scripts/build_manager.ps1');
   if(!fs.existsSync(this.script)||!fs.existsSync(path.join(this.root,'.git')))throw new Error('Not a SnowDesktop coordinator checkout');
@@ -92,7 +92,7 @@ export class CollaborationBridge{
    throw new Error(String(error.stderr||error.message).trim());
   }
  }
- async open(agentId){return this.call('task-open',taskId(agentId),['-TaskName','DSH '+agentId.slice(0,12),'-Adapter','dsh']);}
+ async open(agentId){return this.call('task-open',taskId(agentId),['-TaskName','DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);}
  async verifyWrite(agentId,file){
   const target=canonicalTarget(file);
   if(!inside(this.root,target)){

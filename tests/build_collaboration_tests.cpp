@@ -76,13 +76,26 @@ void run_progress_notices(const fs::path& repo,bool legacy,bool former=false){
             "Former progress response did not fail its actual pending-message assertion: "+negative.out+negative.err);
     }
 }
-void run_presence(const fs::path& repo,bool legacy){
+void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false){
         Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
+        if(fixedCapabilities){auto script=read(presence.scripts/L"build_manager.ps1");replace(script,"Set-TaskCapabilities $task $Capabilities","$null=$Capabilities");write(presence.scripts/L"build_manager.ps1",script,true);}
         if(legacy)presence.bridge=std::make_unique<Bridge>(repo,presence.root,true);
         auto empty=presence.call({"task-list"});
         require(empty.at("tasks").items.empty()&&!fs::exists(presence.stateRoot/L"state.json"),"Read-only task list wrote state");
         auto opened=presence.call({"task-open","reader","-TaskName","Investigate deadlock","-Adapter","dsh"});
         require(opened.at("task").at("phase").str()=="investigating"&&!opened.at("editingAuthority").boolean&&presence.state().at("current").kind==Json::Kind::Null,"Investigation joined editing barrier");
+        const auto declared=presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","beforeWriteGate,boundedWait,idleWake"});
+        const auto& capabilities=declared.at("task").at("capabilities");
+        require(capabilities.at("beforeWriteGate").boolean&&capabilities.at("boundedWait").boolean&&capabilities.at("idleWake").boolean&&
+            !capabilities.at("liveProgress").boolean&&!declared.at("editingAuthority").boolean&&declared.at("task").at("revision").integer()==0&&
+            declared.at("task").at("lastProgressUtc").str()==opened.at("task").at("lastProgressUtc").str()&&presence.state().at("current").kind==Json::Kind::Null,
+            "Adapter capability declaration was lost or granted editing/business progress");
+        require(presence.call({"task-open","reader"}).at("task").at("capabilities").at("idleWake").boolean,"An omitted declaration silently revoked adapter capabilities");
+        presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","madeUp"},2);
+        presence.call({"task-open","reader","-Adapter","cli","-Capabilities","idleWake"},2);
+        require(!presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","none"}).at("task").at("capabilities").at("idleWake").boolean,"Explicit capability withdrawal was ignored");
+        if(!legacy&&!fixedCapabilities){const auto control=run({executable().wstring(),repo.wstring(),L"--capabilities-fixed-false"},presence.root,25,{},true);
+            require(control.code==1&&control.err.find("Adapter capability declaration was lost")!=std::string::npos,"Fixed-false control did not reach the capability behavior assertion: "+control.out+control.err);}
         presence.call({"edit-verify","reader","-Files","src/a.txt"},2);
         auto batch=presence.begin("editor").at("batchId").str();
         auto state=presence.state();
@@ -216,6 +229,7 @@ void run_tests(const fs::path& repo,bool sequential){
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2&&std::string(argv[2])=="--capabilities-fixed-false"){run_presence(repo,false,true);return;}
     if(argc>2&&std::string(argv[2])=="--progress-events-old"){run_progress_notices(repo,false,true);return;}
     run_tests(repo,argc>2&&std::string(argv[2])=="--sequential");
 });}

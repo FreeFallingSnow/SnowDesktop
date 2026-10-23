@@ -19,14 +19,17 @@ class SnapshotService extends TypertRemoteService{
 for(const name of ['snapshot','read'])Remote(SnapshotService.prototype[name],{kind:'method',name,static:false,private:false,addInitializer(fn){remoteInitializers.push(fn);}});
 
 export function apply(ctx,config){
- const bridge=new CollaborationBridge(config.repositoryRoot,{port:config.dashboardPort});
- new SnapshotService(ctx,bridge);
  const agents=new Map(),pending=new Map(),released=new Set(),wakeAttempts=new Set();let disposed=false,polling=false,cold;
+ const capabilities=()=>['beforeWriteGate','boundedWait','liveProgress','activeTurnSteering',...(config.wakeResidentAgents&&cold?['idleWake']:[])];
+ const bridge=new CollaborationBridge(config.repositoryRoot,{port:config.dashboardPort,capabilities});
+ new SnapshotService(ctx,bridge);
+ const refreshDeclarations=()=>{if(!disposed)for(const entry of agents.values())void bridge.open(entry.agent.id).catch(error=>ctx.logger.warn(String(error)));};
  // Use the Host's ordinary-session owner so persisted presets and tools are
  // composed before publication. The base plugin also works without this API.
  ctx.inject(['sessionController'],scope=>{
   const abort=new AbortController(),binding={service:scope.sessionController,signal:abort.signal};cold=binding;wakeAttempts.clear();
-  scope.effect(()=>()=>{abort.abort();if(cold===binding)cold=undefined;});
+  refreshDeclarations();
+  scope.effect(()=>()=>{abort.abort();if(cold===binding){cold=undefined;refreshDeclarations();}});
  });
  const belongs=agent=>agent&&inside(bridge.root,ctx.workingDirectory.get(agent.session));
  const ensure=async agent=>{

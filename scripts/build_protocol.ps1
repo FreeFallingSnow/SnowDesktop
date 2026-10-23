@@ -62,6 +62,16 @@ function Open-VisibleTask($Ledger, [string]$Id, [string]$Name, [string]$Adapter,
     $Ledger.tasks=@($Ledger.tasks)+@($task)
     return $task
 }
+function Set-TaskCapabilities($Task,[string]$Names) {
+    $supported=@('beforeWriteGate','boundedWait','liveProgress','activeTurnSteering','idleWake')
+    $declared=@($Names.Split(',')|Where-Object {$_}|Sort-Object -Unique)
+    if(-not $declared.Count -or ($declared -contains 'none' -and $declared.Count -ne 1) -or
+        @($declared|Where-Object {$_ -ne 'none' -and $_ -cnotin $supported}).Count){throw 'Capabilities must be supported literal names or none.'}
+    $value=[ordered]@{taskRegistration=$true}
+    foreach($name in $supported){$value[$name]=$declared -ccontains $name}
+    # Adapter declarations are metadata, never an edit grant or message receipt.
+    $Task.capabilities=[pscustomobject]$value
+}
 function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
     if(-not $Ledger){return @()}
     return @($Ledger.events | Where-Object {

@@ -19,6 +19,7 @@ param(
     [switch]$ResourceShared,
     [switch]$AutoCheck,
     [ValidateLength(0,160)][string]$TaskName='',
+    [ValidateLength(0,300)][string]$Capabilities='',
     [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
     [long]$TaskRevision=-1, [long]$RequirementsRevision=-1,
     [ValidateLength(0,2000)][string]$Progress='', [ValidateLength(0,2000)][string]$Blocker='',
@@ -414,6 +415,10 @@ try {
                 $ledger=Get-TaskLedger $state
                 if($Command -eq 'task-open') {
                     $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
+                    if($PSBoundParameters.ContainsKey('Capabilities')){
+                        if($task.adapter -ne $Adapter){throw 'Capability declaration must name the registered adapter.'}
+                        Set-TaskCapabilities $task $Capabilities
+                    }
                     $task.lastHeartbeatUtc=[DateTime]::UtcNow.ToString('o')
                 } else { $task=Find-VisibleTask $ledger $Participant }
                 if($Command -in 'task-stage','task-close') {

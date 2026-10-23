@@ -139,7 +139,7 @@ function renderPresence(snapshot){
   row.append(element("small",(task.adapter||"未记录宿主")+" · 最近进展 "+time(task.lastProgressUtc)+" · 心跳距今 "+duration(task.heartbeatAgeSeconds)));
   const more=element("details");more.append(element("summary","登记与宿主能力"));retainFold(more,JSON.stringify(["presence",task.id]));
   more.append(element("p",task.id+" · 任务修订 "+task.revision+" · 需求修订 "+task.requirementsRevision+" · 来源 "+task.registrationOrigin));
-  more.append(element("p","写入拦截："+(task.capabilities.beforeWriteGate?"已接入":"未接入")+"；空闲唤醒："+(task.capabilities.idleWake?"已接入":"未接入")));
+  more.append(element("p","适配器声明 · 写入拦截："+(task.capabilities.beforeWriteGate?"支持":"未声明")+"；空闲唤醒："+(task.capabilities.idleWake?"支持":"未声明")));
   row.append(more);return row;
  }));
  if(!tasks.length)$("taskPresence").append(element("p",recorded.length?"没有匹配的调查与进展。":"暂无调查登记。调查登记不占编辑权，也不阻塞构建。","empty"));

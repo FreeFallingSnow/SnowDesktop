@@ -404,7 +404,7 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 开始时要求候选已通过且输入稳定、任务需求修订一致，运行文件须属于该候选的输入、已记录构建输出或测试输出。
 旧格式缺少需求关联、未验证的现有输出以及路径链接均不推断为可验收候选。文件关联表示可核对的文件身份，
 实际进程加载与可见行为仍由观察和引用证明，不能仅凭文件哈希宣称实机通过。
-独立候选 Run 使用 `-CandidateRun`，不填写批次或编辑修订，`-Files` 相对于该 Run 保存的 runtime 目录。
+独立候选 Run 使用 `-CandidateRun`，不填写批次或编辑修订，`-Files` 优先匹配该 Run 保存的 runtime 目录；未匹配的路径须为原快照中仍存在的源码输入，按仓库相对路径核对内容对象与实际加载源文件。验收结束再次核对所选源码，源码改变则拒绝通过；无关源码变化不影响所选文件。链接、快照外文件及缺失对象不允许用于验收，不把源码输入标成测试输出。
 第4版批次验收仍用 `-Batch/-Revision`，保留实际成员和需求修订；运行文件绑定保存的产物，兼容识别 `.build/Release/` 前缀。
 原工作区可以继续编辑，第1～3版批次原有的当前输入核对保持不变。
 它要求提交时保存的需求修订及通过且输入稳定的运行记录，核对 Run、快照、清单和逐文件哈希；
@@ -607,6 +607,8 @@ scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -
 ```
 
 `task-open` 对未关闭 ID 幂等；重复调用只刷新 `lastHeartbeatUtc`，保留 progress、lastProgressUtc、任务/需求修订、阶段、名称及编辑许可，不复活已关闭 ID。每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。阶段变化和活动期间不超过 60 秒报告有意义进展；存活心跳不代替这项汇报。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
+
+适配器可在 `task-open` 显式传入 `-Capabilities beforeWriteGate,boundedWait,liveProgress,activeTurnSteering,idleWake`，只声明已实现且配置可用的名称；`none` 撤回声明。声明须与登记的 `-Adapter` 一致，未知名称拒绝。省略参数保留既有声明；更新声明不改变业务修订、业务进展时间或编辑许可。这是适配器最近声明的功能范围，不是在线探测、实机验收或授权，仍结合心跳时间与实际证据判断。
 
 `task-stage` 回执附带本任务尚未由 Agent 确认的急件索引：`urgentEvents` 最多 8 条，只含序号、发送者、种类等元数据；`pendingUrgentCount` 是未读总数，`urgentEventsTruncated` 表示仍有未展示项。普通消息和其他任务的定向急件不触发提示。发现急件后用现有 `event-read`（DSH 为 `messages`）读取正文，再显式 `event-ack -AckLevel agent`；返回提示、读取正文和 adapter 确认均不会代替 Agent 确认，也不改变编辑许可。
 

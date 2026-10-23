@@ -105,6 +105,18 @@ function Start-RunAcceptance([string]$Root,$State,$Task,[string]$Id,$Request,$Ru
     $artifact=Get-RunAcceptanceArtifact $Root $Request $Run $Id
     return New-SavedRuntimeAcceptance $Root $State $Task $artifact $Id $Criterion $Files
 }
+function Get-CandidateInputAcceptance([string]$Root,$Artifact,[string]$Relative) {
+    $snapshot=Read-CandidateManifest $Root $Artifact.manifest.candidate
+    if($snapshot.digest -ne $Artifact.manifest.sourceManifestDigest -or $snapshot.manifest.sourceDigest -ne $Artifact.manifest.sourceDigest){throw 'Acceptance candidate input binding changed.'}
+    $matches=@($snapshot.manifest.files|Where-Object {$_.path -eq $Relative.Replace('\','/') -and $_.state -eq 'present'})
+    if($matches.Count -ne 1){throw 'Acceptance file is neither a saved runtime nor a present candidate input.'}
+    $file=$matches[0]
+    $object=Resolve-CandidatePath $snapshot.store.root ('objects/'+$file.sha256)
+    if(-not [IO.File]::Exists($object) -or (Get-Item -LiteralPath $object).Length -ne $file.bytes -or (Get-FileDigest $object) -ne $file.sha256){throw 'Acceptance candidate input object changed.'}
+    $current=@(Get-AcceptanceArtifacts $Root $file.path)[0]
+    if($current.sha256 -ne $file.sha256){throw 'Loaded candidate input differs from the saved candidate.'}
+    return [pscustomobject]@{file=$file.path;sha256=$file.sha256;sourceAssociation='candidate input'}
+}
 function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string]$Id,[string]$Criterion,[string]$Files,$BatchId=$null,$EditRevision=$null) {
     $ledger=Get-TaskLedger $State;$records=@(Get-AcceptanceRecords $ledger)
     if($records.Count -ge 4096){throw 'Acceptance ledger is full; preserve its history.'}
@@ -115,7 +127,11 @@ function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string
     foreach($relative in $paths){
         $null=Resolve-CandidatePath $artifact.runtime $relative
         $matches=@($artifact.manifest.files|Where-Object path -eq $relative.Replace('\','/'))
-        if($matches.Count -ne 1){throw 'Acceptance runtime file is not in the saved candidate manifest.'}
+        if($matches.Count -ne 1){
+            # Preserve the pre-v4 input-acceptance contract for linked tools.
+            $selected+=@(Get-CandidateInputAcceptance $Root $Artifact $relative)
+            continue
+        }
         $selected+=@([pscustomobject]@{file=$matches[0].path;sha256=$matches[0].sha256;
             sourceAssociation=$(if($artifact.manifest.productRuntime){'saved product runtime'}else{'saved test output'})})
     }
@@ -141,6 +157,11 @@ function Complete-TaskAcceptance([string]$Root,$State,$Task,[string]$Id,[string]
             $saved=Read-CandidateArtifact $Root $entry.runId $entry.artifactManifestDigest -VerifyFiles
             if($saved.manifest.candidate -ne $entry.candidate -or $saved.manifest.sourceDigest -ne $entry.sourceDigest -or $saved.runtime -ne $entry.artifactRuntime){throw 'Acceptance saved runtime binding changed.'}
             foreach($artifact in $entry.artifacts){
+                if($artifact.sourceAssociation -eq 'candidate input'){
+                    $current=Get-CandidateInputAcceptance $Root $saved $artifact.file
+                    if($current.sha256 -ne $artifact.sha256){throw 'Acceptance candidate input changed during observation.'}
+                    continue
+                }
                 $matches=@($saved.manifest.files|Where-Object {$_.path -eq $artifact.file -and $_.sha256 -eq $artifact.sha256})
                 if($matches.Count -ne 1){throw 'Acceptance runtime artifact changed; the pass would refer to a different program.'}
             }
