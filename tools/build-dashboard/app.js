@@ -60,7 +60,6 @@ function renderTask(task,batchId,batch){
  if(task.withdrawalReason)more.append(element("p","退出原因："+task.withdrawalReason));row.append(more);return row;
 }
 function render(snapshot,batch){
- renderPresence(snapshot);
  text("waitCount",(snapshot.waits||[]).length+" 条 · "+(view.waits.open?"点击收起":"点击展开"));
  $("waits").replaceChildren(...(snapshot.waits||[]).map(wait=>{const box=element("article",null,"task-row");detail(box,wait.participant+" / "+label(wait.condition),label(wait.status),tone(wait.status));detail(box,"票据",wait.id);detail(box,"原因",wait.reason);detail(box,"恢复入口",wait.next);detail(box,"截止",time(wait.deadlineUtc));return box;}));
  $("waits").scrollTop=view.waits.top;
@@ -126,10 +125,15 @@ function appendTestEvidence(target,evidence,scope){
 }
 function renderPresence(snapshot){
  const phases={investigating:"调查中",editing:"报告正在编辑",waiting:"等待中",awaiting_input:"等待用户",blocked:"有阻塞",validating:"验证中",completed:"任务结束",cancelled:"任务取消"};
- const tasks=snapshot.taskPresence||[];
+ const query=view.filters.task.trim().toLocaleLowerCase();
+ const recorded=snapshot.taskPresence||[];
+ const ended=task=>["completed","cancelled"].includes(task.phase);
+ const progressed=task=>{const value=Date.parse(task.lastProgressUtc||task.openedUtc||"");return Number.isFinite(value)?value:0;};
+ const tasks=recorded.filter(task=>[task.id,task.displayName,task.progress,task.blocker].join(" ").toLocaleLowerCase().includes(query))
+  .sort((a,b)=>Number(ended(a))-Number(ended(b))||progressed(b)-progressed(a)||String(a.id).localeCompare(String(b.id)));
  text("presenceCount",tasks.length+" / "+(snapshot.taskPresenceTotal||0)+" 项");
  $("taskPresence").replaceChildren(...tasks.map(task=>{
-  const row=element("article",null,"presence-row");row.append(element("strong",task.displayName||task.id),element("span",phases[task.phase]||task.phase,"badge"));
+  const row=element("article",null,"presence-row");row.dataset.presenceTask=task.id;row.append(element("strong",task.displayName||task.id),element("span",phases[task.phase]||task.phase,"badge"));
   row.append(element("p",task.progress||"尚未报告进展"));
   if(task.blocker)row.append(element("p","阻塞："+task.blocker,"warn"));
   row.append(element("small",(task.adapter||"未记录宿主")+" · 最近进展 "+time(task.lastProgressUtc)+" · 心跳距今 "+duration(task.heartbeatAgeSeconds)));
@@ -138,7 +142,7 @@ function renderPresence(snapshot){
   more.append(element("p","写入拦截："+(task.capabilities.beforeWriteGate?"已接入":"未接入")+"；空闲唤醒："+(task.capabilities.idleWake?"已接入":"未接入")));
   row.append(more);return row;
  }));
- if(!tasks.length)$("taskPresence").append(element("p","暂无调查登记。调查登记不占编辑权，也不阻塞构建。","empty"));
+ if(!tasks.length)$("taskPresence").append(element("p",recorded.length?"没有匹配的调查与进展。":"暂无调查登记。调查登记不占编辑权，也不阻塞构建。","empty"));
  const events=snapshot.events||[];text("eventCount",events.length+" / "+(snapshot.eventTotal||0)+" 条");
  $("collaborationEvents").replaceChildren(...[...events].reverse().map(event=>{
   const row=element("article",null,"presence-row");row.append(element("strong",(event.importance==="urgent"?"需处理 · ":"")+event.sender+" → "+event.target),element("p",event.text));
@@ -181,6 +185,7 @@ function batchDescription(batch){
  return batch.buildStartedUtc?"执行开始于 "+time(batch.buildStartedUtc)+"。":"正在核对执行记录。";
 }
 function filterTasks(){
+ if(latestSnapshot)renderPresence(latestSnapshot);
  const query=view.filters.task.trim().toLocaleLowerCase(),filter=view.filters.state;
  let visible=0;
  for(const row of $("tasks").children){
