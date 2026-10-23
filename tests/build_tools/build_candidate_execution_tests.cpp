@@ -488,6 +488,7 @@ void completed_verification(const fs::path& repo,bool noReference=false,bool com
         "return $false # Controlled former exact-key-only completed history.");write(c.scripts/L"build_verification_reuse.ps1",source,true);}
     if(automatic){
         copy(repo,c.root,{"tools/build-dashboard/server.py"});
+        write(c.root/L".gitignore",read(c.root/L".gitignore")+"!/tools/\n!/tools/build-dashboard/\n!/tools/build-dashboard/server.py\n");
         write(c.scripts/L"build_runtime.ps1",read(repo/L"scripts/build_runtime.ps1")+"\nfunction Ensure-BuildDashboard {}\n",true);
         if(oldAutomatic){auto source=read(c.scripts/L"build_test_selection.ps1");replace(source,
             "$proposal=Find-CompletedVerificationProof $context.runRoot $snapshot -BatchOrigins",

@@ -221,7 +221,7 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
         clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
         clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&
-        clientObserved.at("referenceOnlyText").str().find("Executed · 0 / 1")!=std::string::npos,
+        clientObserved.at("referenceOnlyText").str().find("Executed / selected · 0 / 1")!=std::string::npos,
         "Overlay conflated mixed/reference-only coverage with newly executed passes or lost translated receipt details");
     const auto budgetText=clientObserved.at("budgetText").str(),missingBudgetText=clientObserved.at("missingBudgetText").str();
     require(budgetText.find("CPU reservation / capacity")!=std::string::npos&&budgetText.find("2 / 6 CPU slots")!=std::string::npos&&budgetText.find("25.00% / 3072 MiB")!=std::string::npos&&budgetText.find("Insufficient CPU capacity")!=std::string::npos,"Overlay lost budget, kernel limit or queue content from the public Run projection");
@@ -262,6 +262,7 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("projections").items.size()==4,"SDK did not exercise normal and strict input projections");
     for(const auto& projection:observed.at("projections").items)require(!projection.has("error")&&projection.at("schema").at("type").str()=="object","Generated Host input codec failed normal or strict projection");
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
+    require(observed.at("cold").at("requestedPort").integer()>=49152&&observed.at("cold").at("actualPort").integer()==observed.at("cold").at("requestedPort").integer(),"Isolated SDK cold-start ignored its reserved browser-compatible high port");
     require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration");
     bool locale=false,provider=false;
     for(const auto& name:observed.at("cold").at("names").items){locale|=name.str()=="locale";provider|=name.str()=="llm-deepseek";}

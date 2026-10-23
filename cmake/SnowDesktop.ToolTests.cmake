@@ -263,6 +263,11 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
     add_test(NAME build_resource_publication COMMAND SnowDesktopBuildTelemetryTests
         "${CMAKE_CURRENT_SOURCE_DIR}" --resource-publication)
+    add_test(NAME build_run_publication COMMAND SnowDesktopBuildTelemetryTests
+        "${CMAKE_CURRENT_SOURCE_DIR}" --run-record-publication)
+    set_tests_properties(build_run_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
     set_tests_properties(build_resource_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration"
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")

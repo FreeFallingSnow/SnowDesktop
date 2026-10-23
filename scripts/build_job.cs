@@ -11,10 +11,10 @@ using System.Collections.Generic;
 
 namespace SnowDesktop.Build
 {
-    internal static class AtomicPublication
+    public static class AtomicPublication
     {
         const int ResourcePublicationBudgetMilliseconds = 1000;
-        internal static void Publish(string temporary, string destination)
+        public static void Publish(string temporary, string destination)
         {
             Stopwatch waiting = Stopwatch.StartNew();
             for (;;)

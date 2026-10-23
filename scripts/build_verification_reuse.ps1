@@ -90,7 +90,8 @@ function Get-VerificationCompatibility($Verification) {
     # configurations; actual invocation, executable bytes, presets and tools
     # are bound separately, along with every effective environment value.
     $implementation=@()
-    foreach($file in @('build_verification.ps1','build_verification_reuse.ps1','build_test_runtime_inputs.ps1','build_test_runtime_modules.ps1','build_verification_token.cs','test_manager.ps1','build_test_selection.ps1')){
+    foreach($file in @('build_verification.ps1','build_verification_reuse.ps1','build_test_runtime_inputs.ps1','build_test_runtime_modules.ps1','build_verification_token.cs','test_manager.ps1','build_test_selection.ps1',
+        'build_entry.ps1','build_job.cs','build_run.ps1','build_protocol.ps1','build_candidate_execution.ps1','build_candidate.ps1','build_test_dependencies.ps1')){
         $digest=Get-FileDigest (Join-Path $candidate.source ('scripts/'+$file))
         if($digest -notmatch '^[a-f0-9]{64}$'){return $null}
         $implementation+=@([pscustomobject]@{file=$file;sha256=$digest})
@@ -148,6 +149,7 @@ function Test-VerificationCompatibilityProof($Current,$Origin,$Entry) {
 function Find-CompletedVerificationProof([string]$Root,$Verification,[switch]$BatchOrigins,[string]$OnlyRun='') {
     try {
     $current=$Verification;$binding=$current.binding.candidate
+    . (Join-Path $PSScriptRoot 'build_test_dependencies.ps1')
     . (Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1')
     $state=Read-EntryJson (Join-Path $Root '.build/collaboration/state.json')
     $ledger=Get-Field $state 'verificationLedger'

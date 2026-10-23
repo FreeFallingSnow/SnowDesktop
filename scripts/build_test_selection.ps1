@@ -3,11 +3,12 @@
 function Write-CompiledSelectionState($State,[string]$Path) {
     $text=$State|ConvertTo-Json -Depth 40 -Compress
     if($text.Length -gt 7MB){throw 'Verification metadata budget requires explicit maintenance.'}
-    $temp=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp';$backup=$temp+'.bak'
+    $temp=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temp,$text,[Text.UTF8Encoding]::new($false))
-        [IO.File]::Replace($temp,$Path,$backup)
-    }finally{foreach($file in @($temp,$backup)){if([IO.File]::Exists($file)){[IO.File]::Delete($file)}}}
+        Initialize-ResourceRuntime
+        [SnowDesktop.Build.AtomicPublication]::Publish($temp,$Path)
+    }finally{if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}}
 }
 function Get-VerificationOriginView([string]$Root,$Entry) {
     $id=[string]$Entry.runId
@@ -154,7 +155,7 @@ function Assert-CompiledTestReferences([string]$Root,$Coverage) {
         if(-not $review -or ($review|ConvertTo-Json -Depth 12 -Compress) -cne ($snapshot.binding.reviewedReuse|ConvertTo-Json -Depth 12 -Compress) -or
             (Get-VerificationEnvironment $Root).digest -ne $snapshot.executionContext.digest){throw 'Referenced test inputs or environment changed during execution.'}
         $proof=Find-CompletedVerificationProof $context.runRoot $snapshot -BatchOrigins -OnlyRun $reference.sourceRunId
-        if(-not $proof -or $proof.runId -ne $reference.sourceRunId -or $proof.originKey -ne $reference.originKey){throw 'Referenced original evidence no longer validates.'}
+        if(-not $proof -or $proof.runId -ne $reference.sourceRunId -or $proof.originKey -ne $reference.originKey){throw ('Referenced original evidence no longer validates: '+(Get-Field $snapshot 'referenceCheck' 'proof identity mismatch'))}
     }
 }
 function Publish-CompiledTestHistory([string]$Root,$Request,$Record) {

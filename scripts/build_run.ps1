@@ -65,8 +65,9 @@ function Write-RunJson($Value,[string]$Path){
     $temporary=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temporary,($Value|ConvertTo-Json -Depth 30),(New-Object Text.UTF8Encoding($false)))
-        if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,$temporary+'.bak')}else{[IO.File]::Move($temporary,$Path)}
-    } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)};if([IO.File]::Exists($temporary+'.bak')){[IO.File]::Delete($temporary+'.bak')}}
+        Initialize-ResourceRuntime
+        [SnowDesktop.Build.AtomicPublication]::Publish($temporary,$Path)
+    } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
 }
 function Write-NewRunRequest($Request){
     $path=Run-Path $Request.id '.request.json'

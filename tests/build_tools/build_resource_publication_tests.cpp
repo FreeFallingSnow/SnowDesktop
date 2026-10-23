@@ -87,6 +87,61 @@ void resource_case(const fs::path& repo,bool formerBehavior,bool heldToTerminal)
     }
     require(c.calls()==1,"Resource publication replayed the pipeline");
 }
+void run_record_case(const fs::path& repo,bool formerBehavior,bool heldToTerminal){
+    Coordinator c(repo,"run-record-publication");
+    if(formerBehavior){auto source=read(c.scripts/L"build_job.cs");replace(source,
+        "const int ResourcePublicationBudgetMilliseconds = 1000;","const int ResourcePublicationBudgetMilliseconds = 0;");write(c.scripts/L"build_job.cs",source);}
+    const auto script=c.root/L"publish-run-record.ps1",record=c.root/L"record.json",marker=c.root/L"publication-ready";
+    write(record,"{\"sequence\":1}");
+    // Load the exact production writer AST without executing its CLI entry.
+    // The adapter only invokes that producer and returns raw exception data;
+    // native C++ owns the reader lifetime and every acceptance assertion.
+    write(script,R"PS(
+. $PSScriptRoot/scripts/build_entry.ps1
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'scripts/build_run.ps1'),[ref]$tokens,[ref]$errors)
+$definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-RunJson'},$false)
+. ([ScriptBlock]::Create($definition.Extent.Text))
+Initialize-ResourceRuntime
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'publication-ready'),'ready')
+[IO.File]::AppendAllText((Join-Path $PSScriptRoot 'write-calls'),"1`n")
+try {
+ Write-RunJson ([pscustomobject]@{sequence=2}) (Join-Path $PSScriptRoot 'record.json')
+ @{published=$true}|ConvertTo-Json -Compress
+}catch{
+ $failure=$_.Exception;while($failure.InnerException){$failure=$failure.InnerException}
+ @{native=($failure.HResult -band 0xffff);error=$failure.Message}|ConvertTo-Json -Compress
+ exit 2
+}
+)PS",true);
+    struct Reader{HANDLE handle=INVALID_HANDLE_VALUE;~Reader(){if(handle!=INVALID_HANDLE_VALUE)CloseHandle(handle);}void close(){require(CloseHandle(handle)!=FALSE,"Cannot close Run record reader");handle=INVALID_HANDLE_VALUE;}} reader;
+    reader.handle=CreateFileW(record.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
+    require(reader.handle!=INVALID_HANDLE_VALUE,"Cannot hold actual Run record read handle");
+    Child publisher({powershell().wstring(),L"-NoProfile",L"-File",script.wstring()},c.root);
+    until([&]{return fs::exists(marker);},12);const auto started=std::chrono::steady_clock::now();
+    if(!heldToTerminal){std::this_thread::sleep_for(std::chrono::milliseconds(350));reader.close();}
+    const auto result=publisher.wait(6);
+    if(heldToTerminal){
+        reader.close();const auto error=Json::parse(result.out);const auto native=error.at("native").integer();
+        require(result.code==2&&(native==32||native==33||native==1175)&&Json::parse(read(record)).at("sequence").integer()==1&&
+            std::chrono::steady_clock::now()-started<std::chrono::seconds(5),"Held Run reader changed original JSON or escaped bounded failure");
+    }else{
+        require(result.code==0&&Json::parse(read(record)).at("sequence").integer()==2,
+            "Run record was not published after the reader released: "+result.out+result.err);
+    }
+    require(read(c.root/L"write-calls")=="1\n","Run JSON publication replayed the producer");
+    for(const auto& item:fs::directory_iterator(c.root))require(item.path().extension()!=L".tmp","Run JSON publication leaked a temporary file");
+}
+}
+void run_record_publication_tests(const fs::path& repo,bool formerBehavior){
+    run_record_case(repo,formerBehavior,false);
+    if(!formerBehavior){
+        run_record_case(repo,false,true);
+        const auto control=run({executable().wstring(),repo.wstring(),L"--run-record-single-attempt"},repo,35,{},true);
+        require(control.code==1&&control.err.find("Run record was not published after the reader released")!=std::string::npos,
+            "Former single-attempt Run writer failed outside its reader-publication assertion: "+control.out+control.err);
+    }
+    std::cout<<"PASS production Run JSON writer survives a released reader, bounds persistent sharing failure and does not replay its producer\n";
 }
 void resource_queue_publication_tests(const fs::path& repo,bool formerBehavior){
     queue_case(repo,formerBehavior,false);

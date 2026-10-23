@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
+import {randomInt} from 'node:crypto';
 import vm from 'node:vm';
 import {createRequire,registerHooks} from 'node:module';
 import {pathToFileURL} from 'node:url';
@@ -72,7 +73,7 @@ fs.writeFileSync(path.join(repository,'scripts/build_manager.ps1'),'# No coordin
 fs.writeFileSync(path.join(profile,'package.json'),JSON.stringify({name:'dsh-cold-start-fixture',private:true,dependencies:{'@local/snowdesktop-collaboration':'link:'+path.dirname(process.argv[2])},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@local/snowdesktop-collaboration']}}}));
 fs.writeFileSync(path.join(profile,'cordis.yml'),'[]\n');
 fs.writeFileSync(path.join(profile,'cordis.patch.yml'),JSON.stringify([{id:'snowdesktop-collaboration',config:{repositoryRoot:repository,dashboardPort:18765,wakeResidentAgents:false}},{id:'desktop-product-telemetry',disabled:true},{id:'product-analytics',disabled:true}]));
-let app,cold;
+let app,cold,requestedPort,actualPort;
 const originalWrite=process.stdout.write;
 const bootOutput=[];
 process.stdout.write=function(chunk,encoding,callback){const text=String(chunk).replace(/([?&]token=)[^\s]+/g,'$1[redacted]');bootOutput.push(text.slice(-8192));if(bootOutput.length>20)bootOutput.shift();const done=typeof encoding==='function'?encoding:callback;done?.();return true;};
@@ -80,13 +81,18 @@ try{
  const {loadProfileDirectory,loadLayeredEnv}=await sdk('@deepseek-ai/dsh-app-boot');
  const {runProfile}=await sdk('@deepseek-ai/dsh/profile-boot');
  const installAnchor=requireSdk.resolve('@deepseek-ai/dsh/package.json');
- // DSH's CLI turns 0 into a random low port, including Fetch-forbidden 5060.
- // Ask the OS for an ephemeral port and pass it explicitly; bind races fail.
- const reservation=net.createServer();
- await new Promise((resolve,reject)=>{reservation.once('error',reject);reservation.listen(0,'127.0.0.1',resolve);});
- const port=reservation.address().port;
+ // A customized ephemeral range can return Fetch-forbidden ports (10080).
+ // Reserve an available high loopback port before boot; a later bind race fails.
+ let reservation;
+ for(let attempt=0;attempt<8;attempt++){
+  reservation=net.createServer();
+  try{await new Promise((resolve,reject)=>{reservation.once('error',reject);reservation.listen(randomInt(49152,65536),'127.0.0.1',resolve);});break;}
+  catch(error){if(error.code!=='EADDRINUSE'||attempt===7)throw error;}
+ }
+ const port=reservation.address().port;requestedPort=port;
  await new Promise((resolve,reject)=>reservation.close(error=>error?reject(error):resolve()));
  app=await runProfile({environment:loadLayeredEnv('dsh',profile),profile:'desktop',resolvedProfile:{profile:loadProfileDirectory('dsh',profile,installAnchor),installAnchor},patchFiles:[],args:['--no-open','--host','127.0.0.1','--port',String(port)]});
+ actualPort=app.ctx.webServer.port;
  const address=app.ctx.connection.authenticatedUrl(`${app.ctx.webServer.protocol}//127.0.0.1:${app.ctx.webServer.port}`);
  const authenticated=await fetch(address,{redirect:'manual'});await authenticated.body?.cancel();
  const cookie=authenticated.headers.getSetCookie().map(value=>value.split(';')[0]).join('; ');
@@ -94,8 +100,8 @@ try{
  const response=await fetch(new URL('/api/'+method,address),{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({type:'client-request',rpcId,method,payload:{args:{}}})});
  const envelope=await response.json();
  const configuredRoot=app.ctx.get('snowCollaboration')?.bridge.root;
- cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository)};
-}catch(error){cold={ok:false,error:String(error.stack||error),cause:String(error.cause?.message||''),bootOutput};}
+ cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository),requestedPort,actualPort};
+}catch(error){cold={ok:false,error:String(error.stack||error),cause:String(error.cause?.message||''),bootOutput,requestedPort,actualPort};}
 finally{
  try{if(app)await app.shutdown.shutdown(0);}finally{
   process.stdout.write=originalWrite;
