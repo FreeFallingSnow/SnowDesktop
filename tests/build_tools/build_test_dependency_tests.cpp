@@ -16,7 +16,7 @@ void checked(const std::vector<std::wstring>& args,const fs::path& root){
 void tests(const fs::path& repo,bool omitReads){
     const auto root=temporary("dependency graph");
     copy(repo,root,{"scripts/build_test_dependencies.ps1"});
-    if(omitReads){auto text=read(root/L"scripts/build_test_dependencies.ps1");replace(text,"$node.files+=Add-TestDependencyFile $Context $inputPath","# Legacy project-only graph omits actual compiler/linker reads");replace(text,"$node.files+=Add-TestDependencyFile $Context ([string]$reportInput)","# Legacy graph omits compiler source-level dependencies");write(root/L"scripts/build_test_dependencies.ps1",text,true);}
+    if(omitReads){auto text=read(root/L"scripts/build_test_dependencies.ps1");replace(text,"[void]$node.files.Add((Add-TestDependencyFile $Context $inputPath))","# Legacy project-only graph omits actual compiler/linker reads");replace(text,"[void]$node.files.Add((Add-TestDependencyFile $Context ([string]$reportInput)))","# Legacy graph omits compiler source-level dependencies");write(root/L"scripts/build_test_dependencies.ps1",text,true);}
     write(root/L"CMakeLists.txt",R"CM(cmake_minimum_required(VERSION 3.25)
 project(DependencyFixture LANGUAGES CXX)
 add_library(DependencyLeaf STATIC shared.cpp)

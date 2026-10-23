@@ -42,9 +42,9 @@ function Read-TestDependencyProject($Context,[string]$Project) {
     $absolute=[IO.Path]::GetFullPath($Project);$key=$absolute.ToLowerInvariant()
     if($Context.projects.ContainsKey($key)){return $Context.projects[$key]}
     if($Context.projects.Count -ge 4096){throw 'Observed test dependency project budget exceeded.'}
-    $node=[pscustomobject]@{project=$absolute;files=@();references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0;sourceFiles=@();reportedSources=@();sourceReports=0;expectedReports=@{}}
+    $node=[pscustomobject]@{project=$absolute;files=(New-Object 'System.Collections.Generic.List[string]');references=@();issues=@();compilerReadLogs=0;linkerReadLogs=0;sourceFiles=@();reportedSources=@();sourceReports=0;expectedReports=@{}}
     $Context.projects[$key]=$node # Cache before descending through references.
-    $node.files+=Add-TestDependencyFile $Context $absolute
+    [void]$node.files.Add((Add-TestDependencyFile $Context $absolute))
     if(-not [IO.File]::Exists($absolute)){$node.issues+='missing-project';return $node}
     $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
     $reader=$null;$document=New-Object Xml.XmlDocument;$document.XmlResolver=$null
@@ -68,7 +68,7 @@ function Read-TestDependencyProject($Context,[string]$Project) {
                 if($expected){$node.expectedReports[$sourceKey]=$expected.ToLowerInvariant()}else{$node.issues+=('unresolved-source-report-path:'+ $path)}
             }
         }
-        if($item.LocalName -eq 'ProjectReference'){$node.references+=$path}else{$node.files+=Add-TestDependencyFile $Context $path}
+        if($item.LocalName -eq 'ProjectReference'){$node.references+=$path}else{[void]$node.files.Add((Add-TestDependencyFile $Context $path))}
     }
     if($Context.reportingDisabled -and $node.sourceFiles.Count){$node.issues+='compiler-source-reporting-disabled'}
     if([IO.Directory]::Exists($trackingRoot)){
@@ -89,9 +89,9 @@ function Read-TestDependencyProject($Context,[string]$Project) {
                 foreach($unit in @(Get-TestDependencyField $data 'ImportedHeaderUnits' @())){$inputs+=@(Get-TestDependencyField $unit 'Header')+@(Get-TestDependencyField $unit 'BMI')}
                 foreach($reportInput in @($inputs|Where-Object {$_})){
                     if(-not [IO.Path]::IsPathRooted([string]$reportInput)){throw 'relative-source-report-input'}
-                    $node.files+=Add-TestDependencyFile $Context ([string]$reportInput)
+                    [void]$node.files.Add((Add-TestDependencyFile $Context ([string]$reportInput)))
                 }
-                $node.files+=Add-TestDependencyFile $Context $report.FullName
+                [void]$node.files.Add((Add-TestDependencyFile $Context $report.FullName))
                 $node.reportedSources+=$source;$node.sourceReports++
             }catch{$node.issues+=('invalid-source-report:'+ $report.FullName+':'+$_.Exception.Message)}
         }
@@ -100,7 +100,7 @@ function Read-TestDependencyProject($Context,[string]$Project) {
             if($log.Name -match '(?i)(^|\.)CL\.read\.'){$node.compilerReadLogs++};if($log.Name -match '(?i)^(Lib-)?link\.read\.'){$node.linkerReadLogs++}
             foreach($line in [IO.File]::ReadLines($log.FullName)){foreach($inputPath in $line.TrimStart('^').Split('|')){
                 if(-not $inputPath){continue};if(-not [IO.Path]::IsPathRooted($inputPath)){$node.issues+=('unresolved-tracking-input:'+ $inputPath);continue}
-                $node.files+=Add-TestDependencyFile $Context $inputPath
+                [void]$node.files.Add((Add-TestDependencyFile $Context $inputPath))
             }}
         }
     }
