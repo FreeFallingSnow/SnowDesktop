@@ -152,6 +152,15 @@ try{
  const registration=JSON.parse((await tool.execute({action:'begin'},{agent})).json);await tool.execute({action:'claim',files:'src/a.txt',adoptExistingChanges:true},{agent});
  const kept=[];for(const name of ['write','edit'])kept.push(await mutate(name,()=>({sentinel:'kept'})));
  const bridge=services.snowCollaboration.bridge;
+ await tool.execute({action:'progress',text:'Meaningful progress 中文'},{agent});
+ const beforeHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id.startsWith('dsh-')&&task.displayName.startsWith('DSH host-fixture'));
+ const realNow=Date.now;
+ try{Date.now=()=>realNow()+61000;agent.status='running';await poll();}finally{Date.now=realNow;agent.status='idle';}
+ const afterHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id===beforeHeartbeat.id);
+ const utcKey=value=>value.replace(/(\.\d*?)0+Z$/,'$1Z').replace(/\.Z$/,'Z');
+ const heartbeat={progress:afterHeartbeat.progress,revisionPreserved:afterHeartbeat.revision===beforeHeartbeat.revision,
+  progressTimePreserved:utcKey(afterHeartbeat.lastProgressUtc)===utcKey(beforeHeartbeat.lastProgressUtc),
+  refreshed:afterHeartbeat.lastHeartbeatUtc!==beforeHeartbeat.lastHeartbeatUtc};
  await bridge.call('begin','synthetic-peer');
  await tool.execute({action:'plan',scope:'tool',suites:'none',inputs:'src/a.txt',reason:'isolated gate contract fixture; no host test needed'},{agent});
  const ownId=(await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')))).taskId(agent.id);
@@ -169,13 +178,16 @@ try{
  // admission both dereference source.kind, including when a notice is replayed.
  const replayed=JSON.parse(JSON.stringify(notices));
  const consumerKinds=replayed.map(message=>message.source.kind);
- result={denied,kept,ready,stale,rebound,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
+ result={denied,kept,ready,stale,rebound,heartbeat,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
     const auto host=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
+    const auto& heartbeat=observed.at("heartbeat");
+    require(heartbeat.at("progress").str()=="Meaningful progress 中文"&&heartbeat.at("revisionPreserved").boolean&&heartbeat.at("progressTimePreserved").boolean&&heartbeat.at("refreshed").boolean,
+            "Production Host heartbeat overwrote meaningful progress or failed to refresh liveness");
     require(observed.at("denied").items.size()==2&&observed.at("denied").items[0].boolean&&observed.at("denied").items[1].boolean,"Host write/edit hooks did not deny missing grants");
     require(observed.at("notices").items.size()==2&&observed.at("kept").items[0].at("sentinel").str()=="kept"&&observed.at("kept").items[1].at("sentinel").str()=="kept","Plugin lost registration/event delivery or another policy's write intent");
     for(const auto& notice:observed.at("notices").items){

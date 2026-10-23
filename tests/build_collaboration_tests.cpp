@@ -51,6 +51,12 @@ void run_presence(const fs::path& repo,bool legacy){
         require(presence.calls()==2&&presence.state().at("taskLedger").at("tasks").items.size()==3,"Investigation delayed build or was lost at retirement");
         auto updated=presence.call({"task-stage","reader","-TaskRevision","0","-TaskPhase","blocked","-Progress","Located delay","-Blocker","Waiting for dependency"});
         require(updated.at("task").at("revision").integer()==1,"Task progress revision missing");
+        const auto heartbeat=presence.call({"task-open","reader","-TaskName","Do not replace report","-Adapter","cli"});
+        auto retained=heartbeat.at("task"),reported=updated.at("task");
+        require(retained.at("lastHeartbeatUtc").str()!=reported.at("lastHeartbeatUtc").str(),"Repeated task-open did not refresh the heartbeat");
+        retained.fields.erase("lastHeartbeatUtc");reported.fields.erase("lastHeartbeatUtc");
+        require(registration_semantics(retained).dump()==registration_semantics(reported).dump()&&!heartbeat.at("editingAuthority").boolean,
+                "Heartbeat changed meaningful progress, phase, revision, identity or edit authority");
         presence.call({"task-stage","reader","-TaskRevision","0"},2);
         auto waiting=presence.begin("waiter").at("batchId").str();presence.begin("peer");
         auto waiter=presence.start(presence.bound("finish","waiter",waiting));
@@ -87,6 +93,7 @@ void run_presence(const fs::path& repo,bool legacy){
         presence.call({"task-close","waiter","-TaskRevision","1","-TaskPhase","completed"},2);
         auto shared=presence.finish("peer",waiting);require(shared.at("outcome").str()=="passed","Acknowledged event blocked resumed build");
         presence.call({"task-close","reader","-TaskRevision","1","-TaskPhase","completed"});
+        presence.call({"task-open","reader"},2);
         require(!presence.call({"task-list"}).at("tasks").items[0].at("capabilities").at("idleWake").boolean,"CLI falsely advertised host wake");
 }
 void run_contracts(const fs::path& repo){

@@ -108,6 +108,10 @@ export class CollaborationBridge{
   const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
   return this.call('task-stage',task.id,['-TaskRevision',String(task.revision),'-TaskPhase',task.phase,'-Progress',text.slice(0,2000)]);
  }
+ async heartbeat(agentId){
+  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
+  return this.open(agentId);
+ }
  async snapshot(){return this.read('/api/status');}
  async read(route){
   if(typeof route!=='string'||!(/^(?:\/api\/status|\/api\/batches\/[a-f0-9]{32}|\/api\/retries\/[a-f0-9]{32}\/(?:build_dashboard|build_dashboard_browser)\/[23]\/log)$/.test(route)))throw new Error('Unsupported read-only dashboard route');

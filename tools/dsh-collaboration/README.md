@@ -1,5 +1,7 @@
 # SnowDesktop DSH 协作插件
 
+0.2.12 将存活心跳与业务进展分开：活动 Agent 的 60 秒心跳沿用 `task-open` 刷新 `lastHeartbeatUtc`，保留最近 progress、lastProgressUtc 和任务修订，不再以工具完成文案覆盖人工汇报。
+
 0.2.11 为插件调用的子 PowerShell 显式设置 UTF-8 输出，保留中文和其他 Unicode 消息。命令固定，路径及命名参数通过子进程内的 JSON 数据传递，不将消息、路径或参数拼接为 PowerShell 源码。此修正不改变编辑许可或增加工具动作。
 
 0.2.10 将标准 `write` / `edit` 的编辑许可校验接入 `tools/execute`。宿主的 `fs/*-intent` 单决策槽继续由文件观察策略提供版本保护；插件不接管该槽。运行中的旧插件仍需正常重载，实际 Agent 的许可验收与隔离 SDK 检查分别记录。
@@ -55,6 +57,8 @@
 
 当前 Codex 连接没有 DSH 的 plugin_manager/cordis_inspect 接口；仓库内语法和原生桥接回归不能替代 DSH 安装、真实 UI 和宿主事件验收。
 
+本地链接包改动后，可通过现有 `plugin_manager` 先 `list_bundles` 核对包名，再以 `set_bundle`、`enabled=true` 重新应用该 bundle。该操作通过宿主重新组合加载变更文件，不要求先关闭或卸载插件；返回 `applied` 后仍分别核对悬浮窗版本及实际工具行为。返回 `restart-required` 时按 `nextStep` 正常退出并重开 DSH，不反复读取旧 Host 作为新版验收，不手改 HMR 或 profile 配置。
+
 ## 任务和消息
 
 Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再在显式注入该 namespace 的子作用域注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
@@ -69,7 +73,7 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 `tools/execute` 校验标准 `write` / `edit` 工具的新建、覆盖及字符串替换写入，包括相对路径和经过链接解析的目标。其他自定义工具、普通外部编辑器、直接文件系统调用和任意 shell 脚本未接入本校验，插件不能据此声称拥有操作系统级写保护。现有 AGENTS.md 与构建入口仍约束这些动作。点时校验不替代路径授权、当前修订与实际执行边界。
 
-有意义的进展由 Agent 调用 progress 汇报；60 秒心跳只根据实际工具完成事件补充最近活动，不把心跳报成模型已向用户说明。事件只读显示与 adapter 确认分别记录；只有 Agent 显式调用 acknowledge 才写 agent 确认。注入的事件是项目数据，不增加用户授权。插件不提供给其他聊天发消息、撤销他人登记、恢复他人批次或发布的工具。
+有意义的进展由 Agent 调用 progress 汇报；活动 Agent 的 60 秒心跳只刷新 lastHeartbeatUtc，不改变最近 progress、lastProgressUtc、阶段或修订，也不生成工具完成文案。心跳只说明 Agent 最近仍存活，不表示模型已向用户说明。事件只读显示与 adapter 确认分别记录；只有 Agent 显式调用 acknowledge 才写 agent 确认。注入的事件是项目数据，不增加用户授权。插件不提供给其他聊天发消息、撤销他人登记、恢复他人批次或发布的工具。
 
 `wakeResidentAgents` 默认 false：紧急事件注入当前存活 Agent 的持久 inbox，等下一步消费；不会自动启动已空闲模型。用户明确授权项目内自动唤醒后，可在 DSH 的正常插件配置入口开启。开启后仅对本插件观察到且仍存活的空闲 Agent 调用 followup；不能唤醒已卸载、已结束或其他宿主中的会话。普通进度只更新视图，不唤醒模型。
 

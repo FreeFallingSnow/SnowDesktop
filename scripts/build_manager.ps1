@@ -414,6 +414,7 @@ try {
                 $ledger=Get-TaskLedger $state
                 if($Command -eq 'task-open') {
                     $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
+                    $task.lastHeartbeatUtc=[DateTime]::UtcNow.ToString('o')
                 } else { $task=Find-VisibleTask $ledger $Participant }
                 if($Command -in 'task-stage','task-close') {
                     Assert-TaskRevision $task $TaskRevision
