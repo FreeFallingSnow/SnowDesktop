@@ -4,4 +4,4 @@
       config:
         repositoryRoot: 'D:/Code/Other/SnowDesktop'
         dashboardPort: 8765
-        wakeResidentAgents: false
+        wakeResidentAgents: true

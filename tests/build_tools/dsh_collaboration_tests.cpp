@@ -202,6 +202,63 @@ console.log(JSON.stringify(result));
     for(const auto& phase:{"ready","stale"})require(observed.at(phase).items[0].boolean&&observed.at(phase).items[1].boolean,"Host gate accepted a ready or superseded cached grant");
     require(observed.at("rebound").at("sentinel").str()=="fresh","Explicit Host reacquisition failed");
     require(observed.at("rendered").items[0].at("type").str()=="text"&&observed.at("tool").str()=="snow_collaboration","Plugin tool output violated the inspected content contract");
+    // Keep the real coordinator and production delivery loop. Only the Agent
+    // API is a carrier; actual idle-model startup is a separate live check.
+    write(c.root/L"wake.mjs",R"JS(import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+const [moduleFile,root,mode]=process.argv.slice(2),enabled=mode==='enabled';
+const {apply}=await import(pathToFileURL(moduleFile));
+const {taskId}=await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')));
+const hooks=new Map(),disposers=[],services={},notices=[],errors=[];let poll,notify,acks=0;
+const nativeSetInterval=globalThis.setInterval;
+globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
+const record=(agent,method,message)=>{notices.push({agent,method,message});notify?.();};
+const make=(name,status,cwd=root)=>({id:'wake-'+mode+'-'+name,session:{cwd},status,inject:message=>record(name,'inject',message),followup:message=>record(name,'followup',message)});
+const idle=make('idle','idle'),active=make('active','running'),released=make('released','idle'),outside=make('outside','idle',root+'-outside');
+const ctx={services,logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+async function delivered(count){if(notices.length>=count)return;await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Production event delivery did not complete')),10000);notify=()=>{if(notices.length>=count){clearTimeout(timeout);notify=null;resolve();}};notify();});}
+let result;
+try{
+ apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:enabled});
+ for(const agent of [idle,active,released,outside])await hooks.get('tools/pre-execute')({agent,name:'read'},()=>null);
+ hooks.get('agent/disposed')({agent:released});
+ const bridge=services.snowCollaboration.bridge,call=bridge.call.bind(bridge);
+ bridge.call=(...args)=>{if(args[0]==='event-ack')acks++;return call(...args);};
+ const post=(key,importance)=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Target','*','-EventKey','wake-'+mode+'-'+key,'-Importance',importance,'-Text','Isolated authorized delivery check'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+ const registered=notices.length;
+ await post('normal','normal');poll();
+ const normal={notices:notices.length-registered,acks};
+ await post('urgent','urgent');poll();await delivered(registered+2);
+ const event=bridge.state().taskLedger.events.find(event=>event.key==='wake-'+mode+'-urgent');
+ const deliveredAcks=acks,deliveredNotices=notices.length;poll();
+ const duplicate={acks:acks-deliveredAcks,notices:notices.length-deliveredNotices};
+ for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();
+ await post('unloaded','urgent');poll();
+ const unloaded={acks:acks-deliveredAcks,notices:notices.length-deliveredNotices};
+ result={enabled,normal,duplicate,unloaded,deliveries:notices.slice(registered),registered:registered,
+  receiptTasks:event.receipts.map(receipt=>receipt.task).sort(),expectedTasks:[taskId(idle.id),taskId(active.id)].sort(),
+  receiptLevels:event.receipts.map(receipt=>receipt.level),outsideRegistered:bridge.state().taskLedger.tasks.some(task=>task.id===taskId(outside.id)),errors};
+}finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
+console.log(JSON.stringify(result));
+)JS");
+    for(const std::wstring mode:{L"disabled",L"enabled"}){
+        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"wake.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring(),mode},c.root,30);
+        require(execution.code==0,"Production wake delivery carrier failed: "+execution.out+execution.err);
+        const auto wake=Json::parse(execution.out);
+        require(wake.at("normal").at("notices").integer()==0&&wake.at("normal").at("acks").integer()==0,"Normal progress woke or notified a model");
+        require(wake.at("registered").integer()==3&&!wake.at("outsideRegistered").boolean&&wake.at("deliveries").items.size()==2,"Broadcast reached a released/outside Agent or lost a resident recipient");
+        bool idleSeen=false,activeSeen=false;
+        for(const auto& delivery:wake.at("deliveries").items){
+            const auto name=delivery.at("agent").str();
+            if(name=="idle"){idleSeen=true;require(delivery.at("method").str()==(mode==L"enabled"?"followup":"inject"),"Idle event did not respect the configured wake boundary");}
+            else if(name=="active"){activeSeen=true;require(delivery.at("method").str()=="inject","An active model received a competing followup");}
+            else require(false,"Broadcast reached a non-resident Agent");
+            require(delivery.at("message").at("source").at("kind").str()=="snowdesktop-collaboration","Wake notice lost its producer identity");
+        }
+        require(idleSeen&&activeSeen&&wake.at("receiptTasks").items.size()==2,"Broadcast recipient or adapter receipt missing");
+        for(size_t index=0;index<2;++index)require(wake.at("receiptTasks").items[index].str()==wake.at("expectedTasks").items[index].str()&&wake.at("receiptLevels").items[index].str()=="adapter","Delivery manufactured Agent acknowledgement or acknowledged a wrong recipient");
+        for(const auto& phase:{"duplicate","unloaded"})require(wake.at(phase).at("acks").integer()==0&&wake.at(phase).at("notices").integer()==0,"Repeated polling or unloaded plugin delivered an event");
+        require(wake.at("errors").items.empty(),"Production delivery reported an unexpected error");
+    }
     write(c.root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
 const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
 let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};

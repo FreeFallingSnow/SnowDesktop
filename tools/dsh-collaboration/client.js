@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.12';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.13';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
