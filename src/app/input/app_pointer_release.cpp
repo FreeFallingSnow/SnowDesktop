@@ -12,6 +12,17 @@
 
 namespace
 {
+bool RetainStartButtonHover(const auto& hosts, HMONITOR monitor, int left, int top)
+{
+    POINT cursor{};
+    if (!monitor || !GetCursorPos(&cursor)) return false;
+    cursor.x -= left; cursor.y -= top;
+    return std::any_of(hosts.begin(), hosts.end(), [&](const auto& host) {
+        return host && host->active && host->monitor == monitor && host->container &&
+            host->container->IsWindowsButtonPoint(cursor);
+    });
+}
+
 bool OpenMissingWidgetWorkshopPage(HWND owner,
     const DesktopWidget& widget)
 {
@@ -52,7 +63,9 @@ void DesktopApp::OnMouseLeave()
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
-    if (HasActiveContextMenuSession() ||
+    if ((IsDockStartMenuActive() && RetainStartButtonHover(
+            persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
+        HasActiveContextMenuSession() ||
         snowdesktop::desktop_hover_rules::
             ShouldHoldHoverDuringNativeShellPopup(
                 shellPopupMenuLayerDepth_ > 0))
@@ -174,7 +187,9 @@ void DesktopApp::ReconcileDesktopHoverState(
     const HWND shellDialogOwner = ShellDialogOwnerHwnd();
     const bool shellDialogOwnerAvailable =
         shellDialogOwner && IsWindow(shellDialogOwner);
-    if (HasActiveContextMenuSession() ||
+    if ((IsDockStartMenuActive() && RetainStartButtonHover(
+            persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
+        HasActiveContextMenuSession() ||
         !snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
                 shellPopupMenuLayerDepth_ > 0,

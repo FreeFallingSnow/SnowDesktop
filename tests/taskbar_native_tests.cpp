@@ -21,6 +21,14 @@ namespace
 {
 UINT_PTR appBarState = 0;
 bool rejectAppBarChange = false;
+bool useSampleCursor = false;
+POINT sampleCursor{};
+BOOL WINAPI TestCursorPosition(LPPOINT point)
+{
+    if (!useSampleCursor) return GetCursorPos(point);
+    *point = sampleCursor;
+    return TRUE;
+}
 snowdesktop::taskbar_hook::SharedState* connectionState = nullptr;
 bool acknowledgeConnection = true;
 struct MenuProbe
@@ -142,6 +150,26 @@ int RunNativeTaskbarTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
+    {
+        StartMenuProtection start;
+        check(start.Update(true, false, true, true, {0, 0}, 1000),
+            "the initial pointer already at an edge is not a second reveal action");
+        start.Reveal(1100);
+        check(start.Update(true, false, true, true, {0, 0}, 1100),
+            "the native Win activation used to open Start does not release its opening guard");
+        start.Reveal(1300);
+        check(!start.Update(true, false, true, false, {20, 20}, 1300),
+            "later explicit keyboard taskbar access releases automatic-hide protection");
+        check(!start.Update(true, false, true, false, {20, 20}, 2000),
+            "lease renewal preserves explicit taskbar access for this invocation");
+        start.Reset();
+        check(start.Update(true, true, true, false, {20, 20}, 3000) &&
+            start.Update(true, true, true, true, {0, 0}, 3300),
+            "permanent hiding retains its independent policy when the pointer reaches the edge");
+        check(!start.Update(false, false, true, false, {20, 20}, 3400) &&
+            start.Update(true, false, true, false, {20, 20}, 3500),
+            "ending the lease resets explicit-access state for a new native invocation");
+    }
     const auto dwmEntry = [] {
         std::array<BYTE, 16> bytes{};
         std::memcpy(bytes.data(), reinterpret_cast<const void*>(&DwmSetWindowAttribute), bytes.size());
@@ -322,7 +350,7 @@ int RunNativeTaskbarTests()
     check(!cloaked(), "uncontrolled window provides an independent visible baseline");
     {
         // Exercise real DWM and native subclasses on two private taskbars.
-        // Only the Windows preference boundary is substituted; no Explorer
+        // Only Windows preference and cursor sampling are substituted; no Explorer
         // windows, cursor movement or user application minimization is used.
         registration.lpszClassName = L"Shell_SecondaryTrayWnd";
         check(RegisterClassW(&registration) != 0, "register private secondary taskbar for temporary suppression");
@@ -348,8 +376,13 @@ int RunNativeTaskbarTests()
         temporary.targets[0].protectAutoHideActivation = TRUE;
         temporary.targets[1].protectAutoHideActivation = TRUE;
         appBarState = ABS_AUTOHIDE;
-        check(native::Attach(window, &temporary, false, TestAppBarMessage) &&
-            native::Attach(secondary, &temporary, false, TestAppBarMessage) &&
+        MONITORINFO fixtureMonitor{sizeof(fixtureMonitor)};
+        check(GetMonitorInfoW(snowdesktop::taskbar_monitor::Resolve(window), &fixtureMonitor) != FALSE,
+            "resolve the private taskbar's monitor without moving the physical cursor");
+        useSampleCursor = true;
+        sampleCursor = {fixtureMonitor.rcMonitor.left + 100, fixtureMonitor.rcMonitor.top + 100};
+        check(native::Attach(window, &temporary, false, TestAppBarMessage, TestCursorPosition) &&
+            native::Attach(secondary, &temporary, false, TestAppBarMessage, TestCursorPosition) &&
             !cloaked() && !secondaryCloaked(),
             "automatic hiding alone attaches offline protection without permanently hiding either screen");
         temporary.dockStartMenuUntil = GetTickCount64() + 3000;
@@ -362,10 +395,26 @@ int RunNativeTaskbarTests()
         const BOOL startUncloak = FALSE;
         DwmSetWindowAttribute(secondary, DWMWA_CLOAK, &startUncloak, sizeof(startUncloak));
         check(secondaryCloaked(), "Shell cannot uncloak a bar during a Dock-origin Start session");
+        sampleCursor.y = fixtureMonitor.rcMonitor.top;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked() && appBarState == ABS_AUTOHIDE,
+            "moving to the native reveal edge releases opening protection without changing automatic hiding");
+        sampleCursor.y += 100;
+        temporary.dockStartMenuUntil = GetTickCount64() + 3000;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked(), "lease renewal cannot rehide a taskbar explicitly revealed in this Start session");
+        SendMessageW(window, apply, temporary.ownerProcessId + 1, kStartMenuBeginCommand);
+        check(!cloaked(), "a different owner cannot rearm the Start opening guard");
+        SendMessageW(window, apply, temporary.ownerProcessId, kStartMenuBeginCommand);
+        SendMessageW(secondary, apply, temporary.ownerProcessId, kStartMenuBeginCommand);
+        check(cloaked() && secondaryCloaked(), "the next authenticated Dock opening rearms both native taskbar guards");
         temporary.dockStartMenuUntil = 0;
         SendMessageW(window, apply, 0, 0);
         SendMessageW(secondary, apply, 0, 0);
         check(!cloaked() && !secondaryCloaked(), "ending Start restores both bars independently of minimize protection");
+        useSampleCursor = false;
         temporary.targets[0].shellPanelVisible = FALSE;
         temporary.targets[1].shellPanelVisible = FALSE;
         temporary.minimizeSource = reinterpret_cast<std::uintptr_t>(source);

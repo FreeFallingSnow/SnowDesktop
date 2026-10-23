@@ -1,10 +1,56 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 namespace snowdesktop::start_menu
 {
 enum class Dismissal { Closed, Cancelled, NotFound, ProtectionLost };
+
+// The opening down can reach the global sampler after the Dock handler.
+// It belongs to the open action, not an immediate outside-click dismissal.
+class PointerDismissal final
+{
+public:
+    void Reset() noexcept { released_ = false; }
+    bool Observe(bool down, bool pressed, bool ownedSurface) noexcept
+    {
+        if (!released_) { released_ = !down; return false; }
+        return pressed && ownedSurface;
+    }
+private:
+    bool released_ = false;
+};
+
+class CloseRequest final
+{
+public:
+    void Reset() noexcept { requested_.store(0); sent_ = false; }
+    void Request(std::uint64_t now) noexcept
+    {
+        std::uint64_t empty = 0;
+        requested_.compare_exchange_strong(empty, now + 1);
+    }
+    bool Requested() const noexcept { return requested_.load() != 0; }
+    bool Take(std::uint64_t now, bool visible, bool foreground) noexcept
+    {
+        const auto request = requested_.load();
+        if (!request || sent_ || !visible) return false;
+        // A normal activating click can already be dismissing native Start.
+        // Allow it to settle, but do not abandon a nonactivating Dock/bar click.
+        if (!foreground && now - (request - 1) < 150) return false;
+        sent_ = true;
+        return true;
+    }
+    bool Expired(std::uint64_t now) const noexcept
+    {
+        const auto request = requested_.load();
+        return request && now - (request - 1) >= 1500;
+    }
+private:
+    std::atomic<std::uint64_t> requested_{0};
+    bool sent_ = false; // Worker only; Reset runs before the worker starts.
+};
 
 // Keep the taskbar lease alive until the native Start menu is dismissed.
 // Observe/renew/wait/clock are the external Windows boundaries of this loop.

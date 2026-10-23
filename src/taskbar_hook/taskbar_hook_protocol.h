@@ -48,6 +48,7 @@ inline constexpr LONG kStatusConnected = 2;
 inline constexpr LONG kStatusApplied = 3;
 inline constexpr LONG kStatusFailed = -1;
 inline constexpr LRESULT kMinimizeApplyAcknowledged = 0x53444d50; // "SDMP"
+inline constexpr LPARAM kStartMenuBeginCommand = 0x5344534d; // "SDSM"
 
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
 inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
@@ -222,12 +223,12 @@ inline bool ProtectsTaskbarMinimize(const Snapshot& snapshot, std::uintptr_t tas
     return false;
 }
 inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar,
-    ULONGLONG now = GetTickCount64()) noexcept
+    ULONGLONG now = GetTickCount64(), bool protectStart = true) noexcept
 {
     if (!snapshot.enabled) return false;
     for (LONG index = 0; index < snapshot.targetCount; ++index)
         if (snapshot.targets[index].taskbar == taskbar)
-            return (snapshot.dockStartMenuUntil > now &&
+            return (protectStart && snapshot.dockStartMenuUntil > now &&
                     snapshot.dockStartMenuUntil - now <= 3000 &&
                     snapshot.targets[index].protectAutoHideActivation != FALSE) ||
                 (snapshot.suppressTaskbar && snapshot.targets[index].suppressTaskbar != FALSE &&

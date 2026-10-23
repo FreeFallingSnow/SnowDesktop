@@ -543,6 +543,17 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         desktopPoint.y -= virtualTop_;
     }
 
+    if (dockStartMenu_ && dockStartMenu_->Active())
+    {
+        const bool onDock = std::any_of(persistentDockHosts_.begin(), persistentDockHosts_.end(),
+            [&](const auto& host) {
+                return host && host->active && host->container && IsWindowVisible(host->hwnd) &&
+                    host->container->ContainsInteractivePoint(desktopPoint);
+            });
+        dockStartMenu_->ObservePointer(buttonsDown != 0, pointerPressed,
+            onDock || (statusBar_ && statusBar_->ContainsPoint(cursor)));
+    }
+
     GUITHREADINFO dragGui{sizeof(dragGui)};
     const bool haveDragGui = GetGUIThreadInfo(0, &dragGui) != FALSE;
     DWORD dragSourceProcess = 0;

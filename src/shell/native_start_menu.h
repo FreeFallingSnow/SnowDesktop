@@ -24,6 +24,8 @@ public:
     bool Active() const noexcept;
     HMONITOR Monitor() const noexcept;
     bool ContainsPoint(POINT screen) const noexcept;
+    // UI sampler: disregard the opening press, dismiss on later owned surfaces.
+    void ObservePointer(bool down, bool pressed, bool ownedSurface) noexcept;
     static bool Toggle() noexcept;
 private:
     struct Impl;

@@ -12,6 +12,27 @@ int RunDockStartMenuTests()
     const auto check = [&](bool ok, const char* message) {
         if (!ok) { ++failures; std::cerr << "FAIL: " << message << '\n'; }
     };
+    PointerDismissal pointer;
+    check(!pointer.Observe(true, true, true), "the opening down sampled after Open cannot dismiss its own menu");
+    check(!pointer.Observe(false, false, true), "the first physical release arms later owned-surface dismissal");
+    check(!pointer.Observe(true, true, false), "a native menu click is left to native input handling");
+    check(!pointer.Observe(false, false, false) && pointer.Observe(true, true, true),
+        "a later status bar/fused bar/Dock down requests dismissal");
+    check(!pointer.Observe(true, false, true), "holding a pointer button is not another dismissal request");
+    pointer.Reset();
+    check(!pointer.Observe(false, true, true), "an opening down/up between samples still belongs to the opening click");
+
+    CloseRequest close;
+    close.Request(1000);
+    check(!close.Take(1000, false, false), "a hidden menu cannot be reopened by a close request");
+    check(!close.Take(1100, true, false), "an activating click has a bounded native dismissal grace");
+    close.Request(1100);
+    check(close.Take(1150, true, false),
+        "loss of Start foreground cannot abandon an owned Dock/bar dismissal after the grace");
+    check(!close.Take(1200, true, true), "repeated clicks cannot send a second Win key while native close is pending");
+    check(!close.Expired(2499) && close.Expired(2500), "a close that never completes has a bounded deadline");
+    close.Reset(); close.Request(100);
+    check(close.Take(100, true, true), "a nonactivating click can immediately close the foreground native menu");
     // Production worker/UI handoff, with only the Shell input and Dock window
     // callbacks replaced. Completion cannot permit another open until the old
     // promotion has been released, even if a click arrives before the UI timer.
@@ -90,6 +111,21 @@ int RunDockStartMenuTests()
     check(WaitForDismissal(true, [] { return true; }, renew, [](int) { return false; }, clock) ==
         Dismissal::Cancelled && now == 0,
         "cancellation exits the native hold without waiting for another native action");
+
+    // Run the production close decision inside the production visibility loop.
+    // Focus may already belong to the Dock, but protection ends on native
+    // disappearance, not on the request. Only Win input/clock are substituted.
+    now = 0; renewals = 0; close.Reset();
+    unsigned closeInputs = 0;
+    const auto closeResult = WaitForDismissal(false, [&] {
+        if (now == 200) close.Request(now);
+        const bool visible = now < 500;
+        if (close.Take(now, visible, false)) ++closeInputs;
+        check(now < leaseUntil, "the close request cannot release protection before native Start disappears");
+        return visible;
+    }, renew, wait, clock);
+    check(closeResult == Dismissal::Closed && now == 550 && closeInputs == 1 && renewals == 2,
+        "a Dock/bar close with different foreground sends once and retains protection until native dismissal");
 
     // Exercise the production traversal against a private hidden parent;
     // never enumerate or open the user's actual Start menu for this test.

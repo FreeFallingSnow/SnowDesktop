@@ -25,7 +25,8 @@ bool IsVisible(HWND window) noexcept
 struct NativeStartMenu::Impl
 {
     start_menu::Invocation invocation;
-    std::atomic_bool dismiss{false};
+    start_menu::CloseRequest close;
+    start_menu::PointerDismissal pointer;
     std::atomic<CancelReason> cancelReason{CancelReason::Requested};
     std::atomic<HMONITOR> monitor{nullptr};
     std::jthread worker;
@@ -54,7 +55,7 @@ struct NativeStartMenu::Impl
         using namespace start_menu;
         const runtime_modules::Activity activity{runtime_modules::Module::StartMenu};
         HWND window = nullptr;
-        bool invoked = false, opened = false, observed = false, protection = false;
+        bool invoked = false, protection = false;
         const ULONGLONG started = GetTickCount64();
         unsigned protectionAttempts = 0;
         DWORD failure = ERROR_SUCCESS;
@@ -81,20 +82,32 @@ struct NativeStartMenu::Impl
                     if (protection || GetTickCount64() - started >= 750) break;
                 } while (Pause(stop, 75));
                 if (!protection && !stop.stop_requested()) failure = ERROR_NOT_READY;
-                if (protection && !stop.stop_requested())
+                if (protection && !stop.stop_requested() && !close.Requested())
                 {
                     invoked = NativeStartMenu::Toggle();
                     if (!invoked) failure = ERROR_ACCESS_DENIED;
                     else
                     {
-                        opened = true;
                         WriteDiagnosticLogEntry(L"[DockStartMenu] opened native menu with taskbar protection");
                         // Only observe the native host's visibility. No Hook,
                         // XAML access, relocation or foreign UI message.
                         result = WaitForDismissal(false, [&] {
                             if (!window || !IsWindow(window)) window = FindVisibleStartWindow(discovery);
                             const bool visible = IsVisible(window);
-                            observed |= visible;
+                            DWORD foregroundProcess = 0, startProcess = 0;
+                            if (visible)
+                            {
+                                GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+                                GetWindowThreadProcessId(window, &startProcess);
+                            }
+                            if (close.Take(GetTickCount64(), visible,
+                                    foregroundProcess && foregroundProcess == startProcess))
+                            {
+                                const bool sent = NativeStartMenu::Toggle();
+                                if (!sent) failure = ERROR_ACCESS_DENIED;
+                                WriteDiagnosticLogEntry(sent ? L"[DockStartMenu] native close sent; retaining protection until dismissal" :
+                                    L"[DockStartMenu] native close input failed");
+                            }
                             PublishHitBounds(visible ? window : nullptr);
                             return visible;
                         }, [] {
@@ -102,32 +115,14 @@ struct NativeStartMenu::Impl
                                 runtime_modules::Allowed(runtime_modules::Module::Taskbar) &&
                                 UpdateSystemTaskbarStartMenuProtection(true);
                         },
-                            [&](int ms) { return Pause(stop, ms); }, [] { return GetTickCount64(); });
+                            [&](int ms) {
+                                if (close.Expired(GetTickCount64()))
+                                { failure = ERROR_TIMEOUT; return false; }
+                                return Pause(stop, ms);
+                            }, [] { return GetTickCount64(); });
                         if (result == Dismissal::ProtectionLost) failure = ERROR_NOT_READY;
                         else if (result == Dismissal::NotFound) failure = ERROR_NOT_FOUND;
                     }
-                }
-            }
-            if (dismiss.load() && opened)
-            {
-                // A rapid second click can precede the first visible host.
-                // Keep the lease while allowing that queued open to surface,
-                // then close only a visible Start host that owns foreground.
-                const auto closingStarted = GetTickCount64();
-                do
-                {
-                    if (!window || !IsWindow(window)) window = FindVisibleStartWindow(discovery);
-                    if (IsVisible(window) || observed || GetTickCount64() - closingStarted >= 350) break;
-                } while (Pause(std::stop_token{}, 25));
-                if (IsVisible(window))
-                {
-                    DWORD foregroundProcess = 0, startProcess = 0;
-                    GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-                    GetWindowThreadProcessId(window, &startProcess);
-                    // The physical down can already have dismissed Start.
-                    // Never send a blind Win key that would reopen it.
-                    if (foregroundProcess && foregroundProcess == startProcess)
-                        NativeStartMenu::Toggle();
                 }
             }
         }
@@ -139,7 +134,7 @@ struct NativeStartMenu::Impl
             wchar_t ended[320]{};
             swprintf_s(ended, L"[DockStartMenu] native session finished; elapsed=%llu invoked=%d cancelled=%d cancelReason=%d dismiss=%d error=%lu protectionAttempts=%u endReason=%d deferredFallback=%d",
                 GetTickCount64() - started, invoked ? 1 : 0, stop.stop_requested() ? 1 : 0,
-                static_cast<int>(cancelReason.load()), dismiss.load() ? 1 : 0, failure,
+                static_cast<int>(cancelReason.load()), close.Requested() ? 1 : 0, failure,
                 protectionAttempts, static_cast<int>(result), !invoked && !stop.stop_requested() ? 1 : 0);
             WriteDiagnosticLogEntry(ended);
         }
@@ -162,7 +157,8 @@ bool NativeStartMenu::Open(HMONITOR monitor)
         Active() || !monitor || !impl_->invocation.Begin()) return false;
     if (impl_->worker.joinable()) impl_->worker.join();
     impl_->monitor.store(monitor);
-    impl_->dismiss.store(false);
+    impl_->close.Reset();
+    impl_->pointer.Reset();
     impl_->cancelReason.store(CancelReason::Requested);
     try
     {
@@ -176,8 +172,8 @@ void NativeStartMenu::Cancel(bool dismiss, CancelReason reason) noexcept
     impl_->invocation.Cancel();
     if (!impl_->worker.get_stop_token().stop_requested())
         impl_->cancelReason.store(dismiss ? CancelReason::Dismissed : reason);
-    if (dismiss) impl_->dismiss.store(true);
-    impl_->worker.request_stop();
+    if (dismiss) impl_->close.Request(GetTickCount64());
+    else impl_->worker.request_stop();
     impl_->wake.notify_all();
 }
 bool NativeStartMenu::Finish(const std::function<void()>& releaseHold,
@@ -194,6 +190,10 @@ bool NativeStartMenu::ContainsPoint(POINT screen) const noexcept
     // span the screen; native outside-click dismissal ends this hold shortly.
     std::lock_guard lock(impl_->boundsMutex);
     return PtInRect(&impl_->bounds, screen) != FALSE;
+}
+void NativeStartMenu::ObservePointer(bool down, bool pressed, bool ownedSurface) noexcept
+{
+    if (Active() && impl_->pointer.Observe(down, pressed, ownedSurface)) Cancel(true);
 }
 bool NativeStartMenu::Toggle() noexcept
 {

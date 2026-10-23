@@ -834,7 +834,9 @@ public:
         for (HWND taskbar : taskbars)
         {
             DWORD_PTR result = 0;
-            applied &= SendMessageTimeoutW(taskbar, message, 0, 0,
+            applied &= SendMessageTimeoutW(taskbar, message,
+                active && !renewal ? GetCurrentProcessId() : 0,
+                active && !renewal ? kStartMenuBeginCommand : 0,
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
                 result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
                 GetPropW(taskbar, native::kAttachedProperty) != nullptr;
