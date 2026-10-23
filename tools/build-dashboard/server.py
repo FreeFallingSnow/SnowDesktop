@@ -26,6 +26,9 @@ MAX_METADATA_BYTES = 8 * 1024 * 1024
 def redact(text):
     return SECRET.sub(r"\1\2[redacted]", str(text))[:4000]
 
+def redact_log(text):
+    return SECRET.sub(r"\1\2[redacted]", text)
+
 def safe_path(root, name):
     path = root / name
     if path.parent != root or path.is_symlink():
@@ -617,11 +620,34 @@ class Store:
         log_root = directory
         if pipeline_logs:
             log_root, log_key = self.root, sorted(pipeline_logs)[-1][1]
-        cache_key = "run:" + run_id
-        if cache_key not in self.logs:
-            if len(self.logs) > 50:
-                self.logs.clear()
-            self.logs[cache_key] = LogReader()
+        sources = [("execution", "执行", log_root, log_key)]
+        batch_id = request.get("batch")
+        if request.get("action") == "batch" and HEX.fullmatch(str(batch_id)):
+            sources = [("product", "产品构建", self.root, batch_id + ".log.product.log"),
+                       ("tests", "测试构建与执行", self.root, batch_id + ".log")]
+        sources += [("stdout", "执行器输出", directory, run_id + ".stdout.log"),
+                    ("stderr", "执行器诊断", directory, run_id + ".stderr.log")]
+        logs = []
+        for key, title, base, name in sources:
+            path = safe_path(base, name)
+            if not path.is_file():
+                continue
+            cache_key = "run:" + run_id + ":" + key
+            if cache_key not in self.logs:
+                if len(self.logs) > 150:
+                    self.logs.clear()
+                self.logs[cache_key] = LogReader()
+            logs.append({"key": key, "title": title, "downloadUrl": "/api/runs/" + run_id + "/logs/" + key,
+                         "log": self.logs[cache_key].read(path)})
+        primary = [item for item in logs if item["key"] in ("product", "tests", "execution") and item["log"].get("lines")]
+        if not primary:
+            primary = [item for item in logs if item["log"].get("lines")]
+        combined = dict(primary[-1]["log"]) if primary else {"lines": [], "stage": "unknown"}
+        combined["lines"] = [line for item in primary for line in (["=== " + item["title"] + " ==="] + item["log"]["lines"])]
+        if primary:
+            combined.update(bytesRead=sum(item["log"].get("bytesRead", 0) for item in primary),
+                            bytesTotal=sum(item["log"].get("bytesTotal", 0) for item in primary),
+                            prefixOmitted=any(item["log"].get("prefixOmitted") for item in primary))
         segments.sort(key=lambda item: (str(item["startedUtc"]), item["id"]))
         verification = None
         if request.get("mode") == "verify":
@@ -654,8 +680,39 @@ class Store:
                 "compiler": {"collectorCount": collectors, "attemptedUnits": units if collectors else None, "unknownTasks": unknown_units,
                              "complete": bool(terminal and collectors and finished_collectors == collectors and not unknown_units and not unfinished and not limited and not pending_line)},
                 "collectionLimited": limited, "pendingLine": pending_line, "unfinishedTasks": unfinished,
-                "log": self.logs[cache_key].read(safe_path(log_root, log_key)),
+                "log": combined, "logs": logs,
                 "limitation": "Task intervals may overlap; taskSeconds is accumulated task time, not Run wall time. Compiler counts are attempted source units from observed CL commands; missing projections remain unknown."}
+
+    def download_log(self, run_id, key):
+        # Resolve through the same verified Run/request identity and fixed names.
+        run = self.run(run_id)
+        if not run or not any(item["key"] == key for item in run["logs"]):
+            return None
+        directory = safe_path(self.root, "runs")
+        request = read_json(directory, run_id + ".request.json")
+        if key in ("product", "tests"):
+            suffix = ".log.product.log" if key == "product" else ".log"
+            path = safe_path(self.root, request["batch"] + suffix)
+        elif key in ("stdout", "stderr"):
+            path = safe_path(directory, run_id + "." + key + ".log")
+        else:
+            # Entry logs are selected only from matching, bounded stage events.
+            names = []
+            for stage in directory.glob(run_id + ".stages.*.jsonl"):
+                with shared_open(safe_path(directory, stage.name)) as stream:
+                    for line in stream.read(4 * 1024 * 1024 + 1).decode("utf-8-sig").split("\n")[:-1]:
+                        if not line:
+                            continue
+                        event = json.loads(line)
+                        hint = Path(event.get("logPath") or "")
+                        if event.get("runId") == run_id and event.get("kind") == "start" and event.get("name", "").endswith("-pipeline") and hint.parent == self.root and re.fullmatch(r"entry-[a-f0-9]{32}\.log", hint.name):
+                            names.append((event.get("utc", ""), hint.name))
+            path = safe_path(self.root, sorted(names)[-1][1]) if names else safe_path(directory, run_id + ".stdout.log")
+        with shared_open(path) as stream:
+            data = stream.read(64 * 1024 * 1024 + 1)
+        if len(data) > 64 * 1024 * 1024:
+            raise ValueError("Log download exceeds 64 MiB; original retained locally")
+        return redact_log(data.decode("utf-8-sig", "replace")).encode("utf-8")
 
     def runs(self):
         directory = safe_path(self.root, "runs")
@@ -856,13 +913,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send(self, status, content, kind="application/json"):
+    def send(self, status, content, kind="application/json", filename=None):
         self.send_response(status)
         self.send_header("Content-Type", kind + "; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        if filename:
+            self.send_header("Content-Disposition", 'attachment; filename="' + filename + '"')
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self.end_headers()
         self.wfile.write(content)
@@ -890,6 +949,13 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.server.store.snapshot()
             elif path == "/api/history":
                 data = self.server.store.snapshot()["history"]
+            elif re.fullmatch(r'/api/runs/[a-f0-9]{32}/logs/(product|tests|execution|stdout|stderr)', path):
+                _, _, _, rid, _, key = path.split('/')
+                with self.server.store.lock:
+                    content = self.server.store.download_log(rid, key)
+                if content is None:
+                    return self.send(404, b'{"error":"Unknown Run log"}')
+                return self.send(200, content, "text/plain", rid + "." + key + ".log")
             elif re.fullmatch(r'/api/retries/[a-f0-9]{32}/(build_dashboard|build_dashboard_browser)/[23]/log',path):
                 parts=path.split('/')
                 with self.server.store.lock:data=self.server.store.retry_log(parts[3],parts[4],int(parts[5]))

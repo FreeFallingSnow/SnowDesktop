@@ -11,7 +11,7 @@ try {
  const saved = raw && raw.length <= 65536 ? JSON.parse(raw) : null;
  if(saved && saved.schema===1){
   view.paused=saved.paused===true;
-  if(saved.filters){for(const key of ["task","state","history"]){if(typeof saved.filters[key]==="string"&&saved.filters[key].length<=200)view.filters[key]=saved.filters[key];}}
+  if(saved.filters){for(const key of ["task","state","history","logSource"]){if(typeof saved.filters[key]==="string"&&saved.filters[key].length<=200)view.filters[key]=saved.filters[key];}}
   if(saved.waits){view.waits.open=saved.waits.open!==false;view.waits.top=Number.isFinite(saved.waits.top)&&saved.waits.top>=0?saved.waits.top:0;}
   for(const [name,limit] of [["folds",250],["logs",50],["previews",50]]){
    const entries=saved[name];
@@ -372,12 +372,21 @@ function filterHistory(){
 }
 function filterLog(){
  const batchLog=latestBatch?.log,runLog=displayedRun?.log;
- const source=batchLog?.lines?.length?batchLog:runLog||batchLog;
+ const sources=displayedRun?.logs||[],selector=$("logSource"),previous=selector.dataset.run?selector.value:view.filters.logSource;
+ if(selector.dataset.run!==displayedRun?.id||selector.options.length!==sources.length+1){
+  selector.replaceChildren(new Option("全部阶段","all"),...sources.map(item=>new Option(item.title,item.key)));
+  selector.dataset.run=displayedRun?.id||"";
+  if(sources.some(item=>item.key===previous))selector.value=previous;
+ }
+ const selectedSource=sources.find(item=>item.key===selector.value),source=selectedSource?.log||(runLog?.lines?.length?runLog:batchLog);
+ const download=$("logDownload");download.hidden=!selectedSource?.downloadUrl;
+ if(selectedSource?.downloadUrl)download.href=selectedSource.downloadUrl;else download.removeAttribute("href");
  const lines=source?.lines||[],query=$("logSearch").value.trim().toLocaleLowerCase(),errorsOnly=$("errorsOnly").checked;
  const matches=lines.filter(line=>(!query||line.toLocaleLowerCase().includes(query))&&(!errorsOnly||/error|warning|failed|fatal|exception|错误|失败|警告/i.test(line)));
- const position=$("log").scrollTop;
+ logView=latestBatch?.id||displayedRun?.id||null;
+ const position=paused&&logView?view.logs[logView]||0:$("log").scrollTop;
  text("log",matches.length?matches.join("\n"):query||errorsOnly?"没有匹配的日志行。":displayedRun?"本轮日志接口暂无内容":"暂无日志");
- text("logHint",source?.bytesTotal!=null?(source===runLog?"Run 日志":"批次日志")+" · 已读取 "+source.bytesRead+" / "+source.bytesTotal+" 字节"+(source.prefixOmitted?" · 仅尾部":""):"等待日志记录");
+ text("logHint",source?.bytesTotal!=null?(selectedSource?.title||"全部阶段")+" · "+(source.prefixOmitted?"仅尾部":"")+(source.bytesTotal?" "+source.bytesTotal+" 字节":""):"等待日志记录");
  text("logMatches",lines.length?"尾部 "+matches.length+" / "+lines.length+" 行":"");
  $("log").scrollTop=paused?position:$("log").scrollHeight;
 }
@@ -444,8 +453,10 @@ function saveWorkspace(){
  history.replaceState(null,"",location.pathname+location.search+"#"+params);
 }
 function setWorkTab(tab,save=true){
+ if(paused&&logView&&!$("pane-builds").hidden)remember("logs",logView,$("log").scrollTop,50);
  workView.tab=tabs.includes(tab)?tab:"activity";
  for(const name of tabs){$("pane-"+name).hidden=name!==workView.tab;$("tab-"+name).setAttribute("aria-selected",String(name===workView.tab));$("tab-"+name).tabIndex=name===workView.tab?0:-1;}
+ if(workView.tab==="builds")$("log").scrollTop=paused&&logView?view.logs[logView]||0:$("log").scrollHeight;
  if(save)saveWorkspace();
 }
 function makeWorkItems(snapshot){
@@ -579,7 +590,7 @@ async function poll(){
  finally{inflight=false;if(refreshRequested){refreshRequested=false;poll();}}
 }
 text("pause",paused?"恢复跟随":"暂停跟随");
-$("log").addEventListener("scroll",()=>{if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);});
+$("log").addEventListener("scroll",()=>{if(paused&&logView&&!$("pane-builds").hidden)remember("logs",logView,$("log").scrollTop,50);});
 $("pause").addEventListener("click",()=>{paused=!paused;view.paused=paused;saveView();text("pause",paused?"恢复跟随":"暂停跟随");if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);if(!paused)$("log").scrollTop=$("log").scrollHeight;});
 $("current").addEventListener("click",()=>selectBatch(null));
 window.addEventListener("hashchange",()=>{navigationRevision++;readWorkspaceHash();poll();});
@@ -595,6 +606,7 @@ $("taskSearch").addEventListener("input",()=>{view.filters.task=$("taskSearch").
 $("taskFilter").addEventListener("change",()=>{view.filters.state=$("taskFilter").value;saveView();filterTasks();});
 $("historyFilter").addEventListener("change",()=>{view.filters.history=$("historyFilter").value;saveView();filterHistory();});
 $("logSearch").addEventListener("input",filterLog);$("errorsOnly").addEventListener("change",filterLog);
+$("logSource").addEventListener("change",()=>{view.filters.logSource=$("logSource").value;saveView();filterLog();});
 $("workSearch").value=workView.query;$("workFilter").value=workView.filter;
 $("workSearch").addEventListener("input",()=>{workView.query=$("workSearch").value;saveWorkspace();renderWorkList();});
 $("workFilter").addEventListener("change",()=>{workView.filter=$("workFilter").value;saveWorkspace();renderWorkList();});
