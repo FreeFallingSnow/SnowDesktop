@@ -63,14 +63,28 @@ function Initialize-CandidateOutput($Slot,[string]$Configuration,[switch]$Existi
     }
     if(-not $Existing){[void][IO.Directory]::CreateDirectory((Join-Path $Slot.output 'collaboration/runs'))}
 }
-function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExisting) {
+function Get-CandidateExecutionSnapshot([string]$Root,$Request) {
     $snapshot=Read-CandidateManifest $Root $Request.snapshot
     if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration){throw 'Candidate snapshot/configuration identity changed.'}
     Assert-CandidateToolset $snapshot $Request.runnerRuntime
+    return $snapshot
+}
+function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExisting,$SnapshotForSlot=$null) {
+    # Repeated busy probes only need the already validated immutable slot identity.
+    # The manifest, objects and toolset are checked again after acquiring the lease.
+    $snapshot=if($SnapshotForSlot){$SnapshotForSlot}else{Get-CandidateExecutionSnapshot $Root $Request}
+    if($snapshot.manifest.id -ne $Request.snapshot -or $snapshot.digest -ne $Request.snapshotManifestDigest -or
+        $snapshot.manifest.context.binding.configuration -ne $Request.configuration){throw 'Candidate snapshot/configuration identity changed.'}
     $slot=$null;$entry=$null;$inputLocks=@()
     try {
         $slot=Enter-CandidateSlot $snapshot $Request.candidateSlot
-        $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects -StoreContext $snapshot.store
+        $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects
+        $expectedKey=$snapshot.manifest.context.digest.Substring(0,16)+'-'+$Request.candidateSlot
+        if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration -or
+            $slot.key -ne $expectedKey -or $slot.directory -ne (Resolve-CandidatePath $snapshot.store.slots $expectedKey)){
+            throw 'Candidate snapshot/configuration identity changed after slot acquisition.'
+        }
+        Assert-CandidateToolset $snapshot $Request.runnerRuntime
         if($RequireExisting){
             $old=Read-CandidateJson $slot.state
             if($old.snapshot -ne $Request.snapshot -or $old.manifestDigest -ne $Request.snapshotManifestDigest){throw 'Verification candidate slot changed; use a matching new baseline.'}

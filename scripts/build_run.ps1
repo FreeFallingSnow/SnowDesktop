@@ -448,7 +448,7 @@ try {
     # and make owner loss an explicit interrupted outcome rather than a takeover.
     $candidateBatch=Get-Field $request 'candidateBatch' $false
     $candidateVerification=Get-Field $request 'candidateVerification' $false
-    $candidateBinding=$null
+    $candidateBinding=$null;$candidateSnapshotForSlot=$null
     $ownerLease=$null;$entry=$null;$resourceLease=$null;$record=$null;$ownsRun=$false;$queue=$null;$candidateExecution=$null;$runnerLocks=@();$stage=$null;$resourceWaiter=$null
     try {
         $ownerLease=[IO.File]::Open((Run-Path $RunId '.owner.lock'),'OpenOrCreate','ReadWrite','None')
@@ -515,7 +515,8 @@ try {
                         }finally{Complete-RunStage $record $captureStage $captureCode;Exit-BuildEntry $captureLease}
                     }
                     $candidateRequest=if($candidateBatch){Get-CandidateBatchExecutionRequest $root $request}else{$request}
-                    $candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification
+                    if(-not $candidateSnapshotForSlot){$candidateSnapshotForSlot=Get-CandidateExecutionSnapshot $root $candidateRequest}
+                    $candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification -SnapshotForSlot $candidateSnapshotForSlot
                     $entry=$candidateExecution.entry
                     Set-Field $record 'candidateExecution' $candidateExecution.context
                     Set-Field $record 'materialization' $candidateExecution.prepared

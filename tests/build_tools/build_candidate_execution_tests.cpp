@@ -55,7 +55,23 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
     // Optional UI service is outside this execution fixture's resources.
     write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+
         "\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Candidate fixture has no dashboard'}}\n",true);
-    if(control=="checkout-lock"){
+    if(control.empty()||control=="poll-reparse"){
+        // Observe the real readers and file-lock attempts without replacing them.
+        auto script=read(c.scripts/L"build_candidate.ps1");
+        replace(script,"    $store=if($StoreContext){$StoreContext}else{Get-CandidateStore $Root}",
+            "    if($env:CANDIDATE_FIXTURE_PROBE){[IO.File]::AppendAllText((Join-Path $env:CANDIDATE_FIXTURE_PROBE ($PID.ToString()+'.reads')),\"manifest`n\")}\n"
+            "    $store=if($StoreContext){$StoreContext}else{Get-CandidateStore $Root}");
+        replace(script,"function Enter-CandidateSlot($Snapshot,[string]$Name) {",
+            "function Enter-CandidateSlot($Snapshot,[string]$Name) {\n"
+            "    if($env:CANDIDATE_FIXTURE_PROBE){[IO.File]::AppendAllText((Join-Path $env:CANDIDATE_FIXTURE_PROBE ($PID.ToString()+'.reads')),\"slot`n\")}");
+        write(c.scripts/L"build_candidate.ps1",script,true);
+    }
+    if(control=="poll-reparse"){
+        auto script=read(c.scripts/L"build_candidate_execution.ps1");
+        replace(script,"$snapshot=if($SnapshotForSlot){$SnapshotForSlot}else{Get-CandidateExecutionSnapshot $Root $Request}",
+            "$snapshot=Get-CandidateExecutionSnapshot $Root $Request");
+        write(c.scripts/L"build_candidate_execution.ps1",script,true);
+    }else if(control=="checkout-lock"){
         auto script=read(c.scripts/L"build_run.ps1");
         replace(script,"$candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification",
             "$originalEntry=Enter-BuildEntry $root; $candidateExecution=Enter-CandidateExecution $root $candidateRequest -RequireExisting:$candidateVerification");
@@ -379,7 +395,8 @@ void artifacts(const fs::path& repo,bool slotReference) {
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"x",true,fixture_parent(repo));prepare(c,repo,control);
     const auto snapshot=capture(c);const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
-    const Env env={{L"CANDIDATE_FIXTURE_GATE",gate.wstring()}};
+    const auto probe=c.stateRoot/L"candidate-read-probe";fs::create_directories(probe);
+    const Env env={{L"CANDIDATE_FIXTURE_GATE",gate.wstring()},{L"CANDIDATE_FIXTURE_PROBE",probe.wstring()}};
     const auto first=submit(c,execution(snapshot),env);
     candidate_until(c,first,[&]{return fs::exists(gate.wstring()+L".ready")||view(c,first).at("terminal").boolean;},40,"Candidate configure/build gate was not reached");
     require(fs::exists(gate.wstring()+L".ready"),"Actual candidate configure/build did not reach its private child: "+view(c,first).dump());
@@ -394,9 +411,30 @@ void scenario(const fs::path& repo,const std::string& control) {
     const auto second=submit(c,execution(snapshot),env);
     candidate_until(c,second,[&]{const auto value=view(c,second);return value.at("record").at("waitingFor").str().find("Candidate slot is busy")!=std::string::npos||value.at("terminal").boolean;},15,"Second candidate did not report its occupied slot");
     require(view(c,second).at("status").str()=="queued","Same candidate slot admitted overlapping executors");
+    if(control.empty()||control=="poll-reparse"){
+        const auto owner=view(c,second).at("record").at("owner").at("pid").integer();
+        const auto reads=probe/wide(std::to_string(owner)+".reads");
+        const auto count=[&](const std::string& name){
+            if(!fs::exists(reads))return std::size_t{0};
+            const auto text=read(reads);std::size_t result=0,offset=0;
+            while((offset=text.find(name+"\n",offset))!=std::string::npos){++result;offset+=name.size()+1;}
+            return result;
+        };
+        candidate_until(c,second,[&]{return count("slot")>=4||view(c,second).at("terminal").boolean;},15,
+            "Queued candidate did not make repeated real slot attempts");
+        require(count("slot")>=4&&count("manifest")==1,
+            "Waiting candidate reparsed its immutable manifest before acquiring the occupied slot");
+    }
     const auto writeAttempt=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("try{[IO.File]::WriteAllText("+ps_literal(source/L"src/value.h")+",'changed');exit 0}catch{exit 9}")},c.root);
     require(writeAttempt.code==9,"Active candidate source accepted a concurrent writer");
     if(!control.empty())return;
+    // A cached wait identity must never authorize changed metadata on admission.
+    const auto pendingSnapshot=capture(c);
+    const auto invalidated=submit(c,execution(pendingSnapshot),env);
+    candidate_until(c,invalidated,[&]{return view(c,invalidated).at("record").at("waitingFor").str().find("Candidate slot is busy")!=std::string::npos;},15,
+        "Metadata-change candidate did not reach its occupied slot");
+    const auto pendingManifest=c.root/L".git/snowdesktop-candidates/manifests"/wide(pendingSnapshot+".json");
+    write(pendingManifest,read(pendingManifest)+"\n");
     const auto busy=c.bridge->invoke(c.scripts/L"build_candidate.ps1",{"-Command","materialize","-Task","candidate","-Snapshot",snapshot,"-Slot","warm"});
     require(busy.code==2&&busy.err.find("Candidate slot is busy")!=std::string::npos,"Public materialization overwrote an active executor");
     c.bridge->call(c.scripts/L"build_run.ps1",{"-Command","cancel","-Task","candidate","-RunId",second});wait(c,second,4);
@@ -408,6 +446,11 @@ void scenario(const fs::path& repo,const std::string& control) {
     c.call({"event-ack","candidate","-Sequence",std::to_string(posted.at("sequence").integer()),"-AckLevel","agent"});
     fs::remove(gate);
     const auto completed=wait(c,first);program(output,7);
+    candidate_until(c,invalidated,[&]{return view(c,invalidated).at("terminal").boolean;},25,
+        "Changed candidate manifest was not rejected after slot acquisition");
+    const auto rejected=view(c,invalidated);
+    require(rejected.at("status").str()=="failed"&&rejected.at("record").at("error").str().find("Candidate manifest integrity check failed")!=std::string::npos,
+        "Queued cached identity bypassed the full manifest validation on admission: "+rejected.dump());
     require(completed.at("record").at("inputStart").at("digest").str()==completed.at("record").at("inputEnd").at("digest").str(),"Live checkout edits invalidated the frozen source identity");
     require(!completed.at("stageEvents").items.empty()&&completed.at("resources").kind==Json::Kind::Object,"Candidate observations were not returned to the parent Run");
     require(read(source/L"scripts/build_command.ps1")==originalCommand,"Candidate tool used the modified live script");
@@ -417,6 +460,9 @@ void scenario(const fs::path& repo,const std::string& control) {
     const auto exe=output/L"Release/tests/SnowDesktopCandidateFixtureTests.exe";const auto exeTime=fs::last_write_time(exe);
     write(output/L"cache-sentinel.txt","preserve warm cache");
     wait(c,submit(c,execution(snapshot)));program(output,7);
+    const auto pollControl=run({executable().wstring(),repo.wstring(),L"--poll-reparse"},c.root,100,{},true);
+    require(pollControl.code==1&&pollControl.err.find("Waiting candidate reparsed its immutable manifest")!=std::string::npos,
+        "Former busy polling did not fail its repeated-manifest-read assertion: "+pollControl.out+pollControl.err);
     require(fs::last_write_time(exe)==exeTime&&read(output/L"cache-sentinel.txt")=="preserve warm cache","Same candidate discarded or rebuilt unchanged outputs");
     const auto tests=submit(c,execution(snapshot,"tests"));wait(c,tests);
     const auto coverage=Json::parse(read(c.stateRoot/L"runs"/wide(tests+".candidate-tests.json")));
