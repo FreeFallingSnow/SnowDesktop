@@ -154,8 +154,13 @@ try{
  const bridge=services.snowCollaboration.bridge;
  await tool.execute({action:'progress',text:'Meaningful progress 中文'},{agent});
  const beforeHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id.startsWith('dsh-')&&task.displayName.startsWith('DSH host-fixture'));
- const realNow=Date.now;
- try{Date.now=()=>realNow()+61000;agent.status='running';await poll();}finally{Date.now=realNow;agent.status='idle';}
+ const realNow=Date.now,originalCall=bridge.call;let heartbeatCall;
+ bridge.call=(...args)=>{heartbeatCall=originalCall.apply(bridge,args);return heartbeatCall;};
+ try{
+  Date.now=()=>realNow()+61000;agent.status='running';poll();
+  if(!heartbeatCall)throw new Error('Production timer did not request a coordinator heartbeat');
+  await heartbeatCall;
+ }finally{Date.now=realNow;agent.status='idle';bridge.call=originalCall;}
  const afterHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id===beforeHeartbeat.id);
  const utcKey=value=>value.replace(/(\.\d*?)0+Z$/,'$1Z').replace(/\.Z$/,'Z');
  const heartbeat={progress:afterHeartbeat.progress,revisionPreserved:afterHeartbeat.revision===beforeHeartbeat.revision,
