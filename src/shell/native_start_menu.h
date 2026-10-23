@@ -2,6 +2,7 @@
 
 #include "start_menu_position.h"
 #include <atomic>
+#include <functional>
 #include <memory>
 
 namespace snowdesktop
@@ -11,12 +12,15 @@ namespace snowdesktop
 class NativeStartMenu final
 {
 public:
+    enum class CancelReason { Requested, Dismissed, ConfigurationChanged, PlacementChanged };
     NativeStartMenu();
     ~NativeStartMenu();
     NativeStartMenu(const NativeStartMenu&) = delete;
     NativeStartMenu& operator=(const NativeStartMenu&) = delete;
     bool Open(HWND owner, HMONITOR monitor, const start_menu::Placement& placement);
-    void Cancel(bool dismiss = false) noexcept;
+    void Cancel(bool dismiss = false, CancelReason reason = CancelReason::Requested) noexcept;
+    // UI thread only: release the Dock before dispatching deferred fallback.
+    bool Finish(const std::function<void()>& releaseHold, const std::function<void()>& nativeFallback);
     bool Active() const noexcept;
     HMONITOR Monitor() const noexcept;
     bool ContainsPoint(POINT screen) const noexcept;

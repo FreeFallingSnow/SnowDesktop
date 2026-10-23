@@ -39,6 +39,10 @@ struct Session
     media::Transform original{nullptr};
     media::TransformGroup group{nullptr};
     media::TranslateTransform translation{nullptr};
+    bool layoutOwned = false, ticking = false;
+    xaml::HorizontalAlignment originalHorizontal{}, appliedHorizontal{};
+    xaml::VerticalAlignment originalVertical{}, appliedVertical{};
+    xaml::Thickness originalMargin{}, appliedMargin{};
 
     ~Session()
     {
@@ -47,16 +51,33 @@ struct Session
         if (owner) CloseHandle(owner);
     }
 
-    void Restore() noexcept
+    static bool SameMargin(const xaml::Thickness& a, const xaml::Thickness& b) noexcept
     {
-        PublishBounds(*request, RECT{});
+        return a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+    }
+
+    void RestoreFrame() noexcept
+    {
         try
         {
             if (frame && group && frame.RenderTransform() == group)
                 frame.RenderTransform(original);
-            frame = nullptr; visualRoot = nullptr; group = nullptr; translation = nullptr; original = nullptr;
+            if (frame && layoutOwned)
+            {
+                if (frame.HorizontalAlignment() == appliedHorizontal) frame.HorizontalAlignment(originalHorizontal);
+                if (frame.VerticalAlignment() == appliedVertical) frame.VerticalAlignment(originalVertical);
+                if (SameMargin(frame.Margin(), appliedMargin)) frame.Margin(originalMargin);
+            }
         }
         catch (...) {}
+        layoutOwned = false;
+        frame = nullptr; visualRoot = nullptr; group = nullptr; translation = nullptr; original = nullptr;
+    }
+
+    void Restore() noexcept
+    {
+        PublishBounds(*request, RECT{});
+        RestoreFrame();
         if (moved && IsWindow(window))
         {
             RECT current{};
@@ -68,6 +89,46 @@ struct Session
                     SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
         }
         moved = false;
+    }
+
+    bool PrepareRedesignedLayout(double scale)
+    {
+        // The redesigned menu participates in a Grid's layout. Moving only its
+        // render transform leaves the original layout allocation/clipping in
+        // place. Reserve the inward area during layout, then measure again on
+        // the next pulse. See Windhawk's shell-flyout-positions capability path:
+        // https://github.com/ramensoftware/windhawk-mods/blob/main/mods/shell-flyout-positions.wh.cpp
+        const auto area = AvailableArea(placement);
+        if (!area) return false;
+        originalHorizontal = frame.HorizontalAlignment();
+        originalVertical = frame.VerticalAlignment();
+        originalMargin = frame.Margin();
+        appliedHorizontal = placement.edge == Edge::Left ? xaml::HorizontalAlignment::Left :
+            placement.edge == Edge::Right ? xaml::HorizontalAlignment::Right : xaml::HorizontalAlignment::Center;
+        appliedVertical = placement.edge == Edge::Top ? xaml::VerticalAlignment::Top :
+            placement.edge == Edge::Bottom ? xaml::VerticalAlignment::Bottom : xaml::VerticalAlignment::Center;
+        appliedMargin = {
+            std::max(0.0, (area->left - placement.screen.left) / scale),
+            std::max(0.0, (area->top - placement.screen.top) / scale),
+            std::max(0.0, (placement.screen.right - area->right) / scale),
+            std::max(0.0, (placement.screen.bottom - area->bottom) / scale)};
+        if (appliedHorizontal == xaml::HorizontalAlignment::Center)
+            appliedMargin.Left = appliedMargin.Right = std::max({appliedMargin.Left,
+                appliedMargin.Right, originalMargin.Left, originalMargin.Right});
+        if (appliedVertical == xaml::VerticalAlignment::Center)
+            appliedMargin.Top = appliedMargin.Bottom = std::max({appliedMargin.Top,
+                appliedMargin.Bottom, originalMargin.Top, originalMargin.Bottom});
+        // Retain native breathing room on the opposite edge. The near edge is
+        // owned by the Dock gap, not the Windows taskbar's original spacing.
+        if (placement.edge == Edge::Bottom) appliedMargin.Top = std::max(appliedMargin.Top, originalMargin.Top);
+        if (placement.edge == Edge::Top) appliedMargin.Bottom = std::max(appliedMargin.Bottom, originalMargin.Bottom);
+        if (placement.edge == Edge::Left) appliedMargin.Right = std::max(appliedMargin.Right, originalMargin.Right);
+        if (placement.edge == Edge::Right) appliedMargin.Left = std::max(appliedMargin.Left, originalMargin.Left);
+        layoutOwned = true;
+        frame.HorizontalAlignment(appliedHorizontal);
+        frame.VerticalAlignment(appliedVertical);
+        frame.Margin(appliedMargin);
+        return true;
     }
 
     bool Fail(DWORD error)
@@ -157,10 +218,7 @@ struct Session
         }
 
         if (frame && candidate != frame)
-        {
-            if (group && frame.RenderTransform() == group) frame.RenderTransform(original);
-            frame = nullptr; group = nullptr; translation = nullptr; original = nullptr;
-        }
+            RestoreFrame();
         if (candidate.ActualWidth() <= 0 || candidate.ActualHeight() <= 0)
         {
             InterlockedExchange(&request->stage, WaitingForLayout);
@@ -180,6 +238,8 @@ struct Session
             return true;
         }
 
+        const double scale = static_cast<double>(GetDpiForWindow(window)) / 96.0;
+        if (scale <= 0 || !std::isfinite(scale)) return Fail(ERROR_INVALID_DATA);
         if (!frame)
         {
             frame = candidate;
@@ -190,12 +250,19 @@ struct Session
             if (original) group.Children().Append(original);
             group.Children().Append(translation);
             frame.RenderTransform(group);
+            if (winrt::get_class_name(root) == L"StartMenu.StartBlendedFlexFrame")
+            {
+                if (!PrepareRedesignedLayout(scale)) return Fail(ERROR_NOT_SUPPORTED);
+                InterlockedExchange(&request->stage, WaitingForLayout);
+                return true;
+            }
         }
         else if (frame.RenderTransform() != group)
             return Fail(ERROR_NOT_SUPPORTED); // Another Shell customizer owns it now.
+        if (layoutOwned && (frame.HorizontalAlignment() != appliedHorizontal ||
+            frame.VerticalAlignment() != appliedVertical || !SameMargin(frame.Margin(), appliedMargin)))
+            return Fail(ERROR_NOT_SUPPORTED); // Do not fight a concurrent layout owner.
 
-        const double scale = static_cast<double>(GetDpiForWindow(window)) / 96.0;
-        if (scale <= 0 || !std::isfinite(scale)) return Fail(ERROR_INVALID_DATA);
         POINT origin{};
         if (!ClientToScreen(window, &origin)) return Fail(ERROR_INVALID_WINDOW_HANDLE);
         const auto measure = [&] {
@@ -229,7 +296,13 @@ struct Session
 
     bool Tick()
     {
-        if (moving) return true;
+        if (moving || ticking) return true;
+        struct TickGuard
+        {
+            bool& flag;
+            explicit TickGuard(bool& value) : flag(value) { flag = true; }
+            ~TickGuard() { flag = false; }
+        } guard(ticking);
         InterlockedIncrement(&request->ticks);
         const ULONGLONG now = GetTickCount64();
         const auto beat = static_cast<ULONGLONG>(InterlockedCompareExchange64(&request->heartbeat, 0, 0));

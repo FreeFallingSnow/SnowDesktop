@@ -1,6 +1,7 @@
 #include "shell/start_menu_position.h"
 #include "shell/start_menu_protocol.h"
 #include "shell/start_menu_window.h"
+#include "shell/start_menu_session.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include <filesystem>
 #include <iostream>
@@ -16,6 +17,59 @@ int RunDockStartMenuTests()
     const auto equals = [](const std::optional<RECT>& value, RECT expected) {
         return value && EqualRect(&*value, &expected);
     };
+
+    // Production worker/UI handoff, with only the Shell input and Dock window
+    // callbacks replaced. Completion cannot permit another open until the old
+    // promotion has been released, even if a click arrives before the UI timer.
+    Invocation lifecycle;
+    bool held = true;
+    unsigned releases = 0, fallbacks = 0;
+    const auto release = [&] {
+        check(!lifecycle.Begin(), "reentrant UI cleanup cannot start another invocation");
+        held = false;
+        ++releases;
+    };
+    const auto fallback = [&] {
+        check(!held, "native fallback only runs after the temporary Dock hold is released");
+        check(!lifecycle.Begin(), "fallback input cannot start an overlapping positioned invocation");
+        ++fallbacks;
+    };
+    check(lifecycle.Begin(), "begin the first positioned invocation");
+    check(!lifecycle.Finish(release, fallback) && held, "UI cannot release a running worker's hold");
+    std::thread failedWorker([&] { lifecycle.Complete(true); });
+    failedWorker.join();
+    check(lifecycle.Pending() && !lifecycle.Begin(),
+        "worker failure remains reserved until UI cleanup, closing the rapid-click gap");
+    check(lifecycle.Finish(release, fallback) && releases == 1 && fallbacks == 1 && !lifecycle.Pending(),
+        "failure releases the hold and falls back exactly once");
+    check(!lifecycle.Finish(release, fallback) && releases == 1 && fallbacks == 1,
+        "a later UI timer cannot duplicate completed fallback input");
+    held = true;
+    check(lifecycle.Begin(), "a cleaned invocation allows the next click");
+    lifecycle.Complete(true);
+    lifecycle.Cancel(); // A second click after worker failure but before UI drain.
+    check(lifecycle.Finish(release, fallback) && !held && fallbacks == 1,
+        "a repeated click cancels pending fallback instead of sending a delayed extra Win press");
+    held = true;
+    check(lifecycle.Begin(), "cancellation does not poison a later invocation");
+    lifecycle.Cancel(); // Cancellation can also precede worker completion.
+    lifecycle.Complete(true);
+    check(lifecycle.Finish(release, fallback) && !held && fallbacks == 1,
+        "worker completion cannot resurrect input after cancellation");
+    held = true;
+    check(lifecycle.Begin(), "start an invocation cancelled reentrantly by Dock cleanup");
+    lifecycle.Complete(true);
+    check(lifecycle.Finish([&] { release(); lifecycle.Cancel(); }, fallback) && !held && fallbacks == 1,
+        "cancellation during UI cleanup suppresses fallback before it dispatches input");
+    held = true;
+    check(lifecycle.Begin(), "start a successfully opened invocation");
+    lifecycle.Complete(false);
+    check(lifecycle.Finish(release, fallback) && !held && fallbacks == 1,
+        "an already invoked menu is never toggled again by normal cleanup");
+    check(lifecycle.Begin(), "start an invocation whose worker cannot be created");
+    lifecycle.AbortBegin();
+    check(!lifecycle.Pending() && !lifecycle.Finish(release, fallback),
+        "thread creation failure leaves no deferred input or UI hold");
 
     // Exercise the production traversal against a private hidden parent;
     // never enumerate or open the user's actual Start menu for this test.
@@ -76,6 +130,17 @@ int RunDockStartMenuTests()
     p.avoid = {30, 980, 430, 1060};
     check(equals(Position(p, {600, 700}), {660, 272, 1260, 972}),
         "an off-center Dock does not move the menu's screen-centered axis");
+    auto changed = p;
+    changed.avoid = {300, 980, 1500, 1060};
+    check(PlacementStillFits(p, changed), "along-edge Dock width/hover changes retain the safe menu placement");
+    changed.avoid.top = 1000;
+    check(PlacementStillFits(p, changed), "a shrinking interaction area cannot unnecessarily restore native placement");
+    changed.avoid.top = 950;
+    check(!PlacementStillFits(p, changed), "an expanded bar entering the reserved menu area invalidates placement");
+    changed = p; changed.work.bottom = 1020;
+    check(PlacementStillFits(p, changed), "taskbar work-area changes below the Dock do not end the menu session");
+    changed.work.top = 100;
+    check(!PlacementStillFits(p, changed), "a newly reserved upper region still invalidates unsafe placement");
     p.edge = Edge::Top; p.avoid = {0, 0, 1920, 80};
     check(equals(Position(p, {600, 700}), {660, 88, 1260, 788}), "top merged bar reserves its full strip");
     p.edge = Edge::Left; p.avoid = {20, 100, 100, 900};
@@ -181,10 +246,10 @@ int RunDockStartMenuTests()
         check(request->status == Closed && EqualRect(&restored, &original),
             "an expired owner heartbeat restores geometry even without a graceful host close");
 
-        request->active = TRUE; request->status = Pending; request->version = 1;
+        request->active = TRUE; request->status = Pending; request->version = 2;
         receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
         check(request->status == Pending, "a previous protocol cannot acquire the new placement receiver");
-        request->version = 2;
+        request->version = kVersion;
         InterlockedExchange64(&request->heartbeat, static_cast<LONG64>(GetTickCount64()));
         receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
         const HANDLE pulseFinished = CreateEventW(nullptr, TRUE, FALSE, nullptr);

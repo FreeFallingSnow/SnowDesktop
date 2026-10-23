@@ -2,17 +2,18 @@
 
 bool DesktopApp::IsDockStartMenuActive(HMONITOR monitor) const
 {
-    return dockStartMenu_ && dockStartMenu_->Active() &&
+    return dockStartMenuHeldMonitor_ && dockStartMenu_ && dockStartMenu_->Active() &&
         (!monitor || dockStartMenu_->Monitor() == monitor);
 }
 
 void DesktopApp::ToggleWindowsStartMenu(DockContainer* dock)
 {
-    if (IsDockStartMenuActive())
+    if (dockStartMenu_ && dockStartMenu_->Active())
     {
         // The physical down may already have dismissed the native window.
         // Cancel never sends a second Win press unless Start still owns focus.
         dockStartMenu_->Cancel(true);
+        UpdateDockStartMenu();
         return;
     }
     const auto native = [this] {
@@ -44,7 +45,8 @@ void DesktopApp::ToggleWindowsStartMenu(DockContainer* dock)
     placement.gap = MulDiv(8, static_cast<int>(dpiX), 96);
     if (!snowdesktop::start_menu::Position(placement, SIZE{1, 1})) { native(); return; }
 
-    RefreshSystemTaskbarAppearance(true);
+    // The periodic taskbar controller owns discovery/attachment. Never force
+    // synchronous Shell visibility COM calls from the Start button handler.
     if (!dockStartMenu_) dockStartMenu_ = std::make_unique<snowdesktop::NativeStartMenu>();
     if (!dockStartMenu_->Open(controlHwnd_ ? controlHwnd_ : hwnd_, host->monitor, placement))
     { native(); return; }
@@ -72,10 +74,9 @@ void DesktopApp::UpdateDockStartMenu()
         !dockSettings_.showWindowsButton || dockSettings_.position != dockStartMenuPosition_ ||
         desktopPassthroughActive_ || !GetMonitorInfoW(monitor, &info) ||
         !EqualRect(&info.rcMonitor, &dockStartMenuPlacement_.screen) ||
-        !EqualRect(&info.rcWork, &dockStartMenuPlacement_.work) ||
         found == persistentDockHosts_.end() ||
         (!dockSettings_.suppressSystemTaskbar && !IsSystemTaskbarAutoHideEnabled()))
-        dockStartMenu_->Cancel();
+        dockStartMenu_->Cancel(false, snowdesktop::NativeStartMenu::CancelReason::ConfigurationChanged);
     if (found != persistentDockHosts_.end() && (*found)->container)
     {
         RECT avoid = (*found)->container->GetInteractiveBounds();
@@ -87,18 +88,25 @@ void DesktopApp::UpdateDockStartMenu()
                 UnionRect(&combined, &avoid, &*strip);
                 avoid = combined;
             }
-        if (!EqualRect(&avoid, &dockStartMenuPlacement_.avoid)) dockStartMenu_->Cancel();
+        auto current = dockStartMenuPlacement_;
+        current.avoid = avoid;
+        current.work = info.rcWork;
+        if (!snowdesktop::start_menu::PlacementStillFits(dockStartMenuPlacement_, current))
+            dockStartMenu_->Cancel(false, snowdesktop::NativeStartMenu::CancelReason::PlacementChanged);
     }
-    if (dockStartMenu_->Active()) return;
-    dockStartMenuHeldMonitor_ = nullptr;
-    if (found != persistentDockHosts_.end())
-    {
-        auto& host = **found;
-        // An outside click may already have explicitly closed the Dock.
-        if (!dockStartMenuWasPromoted_ && host.promoted)
-            CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
-        if (statusBar_) statusBar_->RefreshDockState(monitor);
-        UpdatePersistentDockHostVisibility(host);
-    }
-    RefreshSystemTaskbarAppearance(true);
+    dockStartMenu_->Finish([&] {
+        dockStartMenuHeldMonitor_ = nullptr;
+        if (found != persistentDockHosts_.end())
+        {
+            auto& host = **found;
+            // An outside click may already have explicitly closed the Dock.
+            if (!dockStartMenuWasPromoted_ && host.promoted)
+                CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+            if (statusBar_) statusBar_->RefreshDockState(monitor);
+            UpdatePersistentDockHostVisibility(host);
+        }
+    }, [this] {
+        CloseFloatingDockThen([] { snowdesktop::NativeStartMenu::Toggle(); },
+            FloatingDockCloseFocusPolicy::PreserveCurrent);
+    });
 }

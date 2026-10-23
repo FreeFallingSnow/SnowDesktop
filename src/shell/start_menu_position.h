@@ -21,10 +21,10 @@ inline bool ValidRect(const RECT& r) noexcept
     return r.right > r.left && r.bottom > r.top;
 }
 
-inline std::optional<RECT> Position(const Placement& p, SIZE menu) noexcept
+inline std::optional<RECT> AvailableArea(const Placement& p) noexcept
 {
     if (!ValidRect(p.screen) || !ValidRect(p.work) || !ValidRect(p.avoid) ||
-        menu.cx <= 0 || menu.cy <= 0 || p.gap < 0 || p.gap > 256 ||
+        p.gap < 0 || p.gap > 256 ||
         p.edge < Edge::Bottom || p.edge > Edge::Right) return {};
     RECT area{};
     if (!IntersectRect(&area, &p.screen, &p.work)) return {};
@@ -37,7 +37,25 @@ inline std::optional<RECT> Position(const Placement& p, SIZE menu) noexcept
     case Edge::Left: area.left = std::max(area.left, p.avoid.right + p.gap); break;
     case Edge::Right: area.right = std::min(area.right, p.avoid.left - p.gap); break;
     }
-    if (!ValidRect(area) || menu.cx > area.right - area.left || menu.cy > area.bottom - area.top)
+    return ValidRect(area) ? std::optional<RECT>{area} : std::nullopt;
+}
+
+inline bool PlacementStillFits(const Placement& original, const Placement& current) noexcept
+{
+    if (original.edge != current.edge || !EqualRect(&original.screen, &current.screen)) return false;
+    const auto before = AvailableArea(original), after = AvailableArea(current);
+    // A bar shrinking or changing width along its edge does not invalidate a
+    // screen-centered menu. Only a newly occupied part of its safe area does.
+    return before && after && after->left <= before->left && after->top <= before->top &&
+        after->right >= before->right && after->bottom >= before->bottom;
+}
+
+inline std::optional<RECT> Position(const Placement& p, SIZE menu) noexcept
+{
+    const auto available = AvailableArea(p);
+    if (!available || menu.cx <= 0 || menu.cy <= 0) return {};
+    const RECT area = *available;
+    if (menu.cx > area.right - area.left || menu.cy > area.bottom - area.top)
         return {}; // Never shrink/crop a system menu to manufacture a fit.
     LONG x = p.screen.left + (p.screen.right - p.screen.left - menu.cx) / 2;
     LONG y = p.screen.top + (p.screen.bottom - p.screen.top - menu.cy) / 2;

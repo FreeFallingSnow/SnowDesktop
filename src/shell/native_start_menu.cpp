@@ -1,6 +1,7 @@
 #include "native_start_menu.h"
 #include "start_menu_protocol.h"
 #include "start_menu_window.h"
+#include "start_menu_session.h"
 #include "dock/dock_settings.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
@@ -42,7 +43,9 @@ void ReportFallback(DWORD error, const start_menu::Request* request, HWND window
 
 struct NativeStartMenu::Impl
 {
-    std::atomic_bool active{false}, dismiss{false}, positioningDisabled{false};
+    start_menu::Invocation invocation;
+    std::atomic_bool dismiss{false}, positioningDisabled{false};
+    std::atomic<CancelReason> cancelReason{CancelReason::Requested};
     std::atomic<HMONITOR> monitor{nullptr};
     std::jthread worker;
     std::mutex waitMutex;
@@ -72,6 +75,8 @@ struct NativeStartMenu::Impl
         HWND window = nullptr;
         bool invoked = false, protection = false;
         bool bridgeTimedOut = false, reportedPlacement = false;
+        const ULONGLONG sessionStarted = GetTickCount64();
+        unsigned protectionAttempts = 0;
         WindowDiscovery discovery;
         DWORD failure = ERROR_SUCCESS;
         try
@@ -79,15 +84,22 @@ struct NativeStartMenu::Impl
             // A pre-existing native menu belongs to its own input session.
             // This button press only toggles it closed, without relocating it.
             window = FindVisibleStartWindow(discovery);
-            if (window)
+            if (window && !stop.stop_requested())
             {
                 NativeStartMenu::Toggle();
                 invoked = true;
             }
             else if (!stop.stop_requested())
             {
-                protection = UpdateSystemTaskbarStartMenuProtection(true);
-                if (!protection) failure = ERROR_NOT_READY;
+                // Taskbar attachment is asynchronous. Give it a bounded chance
+                // to finish without forcing Shell COM scans on the input thread.
+                do
+                {
+                    ++protectionAttempts;
+                    protection = UpdateSystemTaskbarStartMenuProtection(true);
+                    if (protection || GetTickCount64() - sessionStarted >= 750) break;
+                } while (Pause(stop, 75));
+                if (!protection) failure = stop.stop_requested() ? ERROR_SUCCESS : ERROR_NOT_READY;
                 else
                 {
                     const auto path = deployment::GetTaskbarHookPath();
@@ -196,17 +208,9 @@ struct NativeStartMenu::Impl
                                     if (status == Closed) break;
                                     if (status != Positioned && now - started >= 2000)
                                     { failure = ERROR_TIMEOUT; break; }
-                                    // Search is a separate system surface. Unsupported transitions
-                                    // restore native placement and release only this invocation's hold.
-                                    if (status == Positioned && window && IsVisible(window))
-                                    {
-                                        DWORD foregroundProcess = 0, startProcess = 0;
-                                        GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-                                        GetWindowThreadProcessId(window, &startProcess);
-                                        if (foregroundProcess && foregroundProcess != startProcess &&
-                                            foregroundProcess != process)
-                                            break;
-                                    }
+                                    // Start can transiently yield focus to Explorer during
+                                    // opening/animation. The receiver observes its actual
+                                    // visibility; a foreign foreground process is not closure.
                                     if (!Pause(stop, 50)) break;
                                 }
                             }
@@ -221,21 +225,29 @@ struct NativeStartMenu::Impl
         if (failure)
         {
             ReportFallback(failure, request, window, discovery);
-            // Do not repeatedly enter an unresponsive Shell bridge in this run.
-            // A discovery/layout deadline is not evidence of a hung GUI
-            // thread. Allow a later invocation after Shell startup/restart.
-            if (bridgeTimedOut) positioningDisabled.store(true);
+            // A failed positioning attempt is a circuit breaker for this run.
+            // Repeated clicks must use native input, never repeatedly re-enter
+            // the failing Shell path. This is not a diagnosis of a hung thread.
+            positioningDisabled.store(true);
         }
         PublishHitBounds(RECT{});
         if (request)
         {
             InterlockedExchange(&request->active, FALSE);
-            if (window && IsWindow(window))
+            if (window && IsWindow(window) && !bridgeTimedOut)
             {
                 DWORD_PTR ignored = 0;
-                SendMessageTimeoutW(window, RegisterWindowMessageW(start_menu::kMessage),
-                    0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &ignored);
+                SetLastError(ERROR_SUCCESS);
+                if (!SendMessageTimeoutW(window, RegisterWindowMessageW(start_menu::kMessage),
+                        0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &ignored))
+                {
+                    const DWORD cleanupError = GetLastError();
+                    if (!failure) failure = cleanupError ? cleanupError : ERROR_TIMEOUT;
+                    positioningDisabled.store(true);
+                    PostMessageW(window, RegisterWindowMessageW(start_menu::kMessage), 0, 0);
+                }
             }
+            else if (window) PostMessageW(window, RegisterWindowMessageW(start_menu::kMessage), 0, 0);
         }
         if (protection) UpdateSystemTaskbarStartMenuProtection(false);
         if (dismiss.load() && window && IsVisible(window))
@@ -245,11 +257,16 @@ struct NativeStartMenu::Impl
             GetWindowThreadProcessId(window, &startProcess);
             if (foregroundProcess == startProcess) NativeStartMenu::Toggle();
         }
-        if (!invoked && !stop.stop_requested()) NativeStartMenu::Toggle();
+        wchar_t ended[384]{};
+        swprintf_s(ended, L"[DockStartMenu] finished; elapsed=%llu invoked=%d positioned=%d cancelled=%d cancelReason=%d dismiss=%d error=%lu receiverStatus=%ld protectionAttempts=%u deferredFallback=%d",
+            GetTickCount64() - sessionStarted, invoked ? 1 : 0, reportedPlacement ? 1 : 0,
+            stop.stop_requested() ? 1 : 0, static_cast<int>(cancelReason.load()), dismiss.load() ? 1 : 0, failure,
+            request ? request->status : -1, protectionAttempts, !invoked && !stop.stop_requested() ? 1 : 0);
+        WriteDiagnosticLogEntry(ended);
         if (request) UnmapViewOfFile(request);
         if (mapping) CloseHandle(mapping);
         if (module) FreeLibrary(module);
-        active.store(false, std::memory_order_release);
+        invocation.Complete(!invoked && !stop.stop_requested());
     }
 };
 
@@ -264,27 +281,35 @@ NativeStartMenu::~NativeStartMenu()
 bool NativeStartMenu::Open(HWND owner, HMONITOR monitor, const start_menu::Placement& placement)
 {
     if (Active() || impl_->positioningDisabled.load() || !owner || !monitor ||
-        !start_menu::Position(placement, SIZE{1, 1})) return false;
+        !start_menu::Position(placement, SIZE{1, 1}) || !impl_->invocation.Begin()) return false;
     if (impl_->worker.joinable()) impl_->worker.join();
     impl_->monitor.store(monitor);
     impl_->dismiss.store(false);
-    impl_->active.store(true);
+    impl_->cancelReason.store(CancelReason::Requested);
     try
     {
         impl_->worker = std::jthread([state = impl_.get(), owner, placement](std::stop_token stop) {
             state->Run(stop, owner, placement);
         });
     }
-    catch (...) { impl_->active.store(false); return false; }
+    catch (...) { impl_->invocation.AbortBegin(); return false; }
     return true;
 }
-void NativeStartMenu::Cancel(bool dismiss) noexcept
+void NativeStartMenu::Cancel(bool dismiss, CancelReason reason) noexcept
 {
+    impl_->invocation.Cancel();
+    if (!impl_->worker.get_stop_token().stop_requested())
+        impl_->cancelReason.store(dismiss ? CancelReason::Dismissed : reason);
     if (dismiss) impl_->dismiss.store(true);
     impl_->worker.request_stop();
     impl_->wake.notify_all();
 }
-bool NativeStartMenu::Active() const noexcept { return impl_->active.load(std::memory_order_acquire); }
+bool NativeStartMenu::Finish(const std::function<void()>& releaseHold,
+    const std::function<void()>& nativeFallback)
+{
+    return impl_->invocation.Finish(releaseHold, nativeFallback);
+}
+bool NativeStartMenu::Active() const noexcept { return impl_->invocation.Pending(); }
 HMONITOR NativeStartMenu::Monitor() const noexcept { return Active() ? impl_->monitor.load() : nullptr; }
 bool NativeStartMenu::ContainsPoint(POINT screen) const noexcept
 {

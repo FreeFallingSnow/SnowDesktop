@@ -6,13 +6,14 @@
 
 namespace snowdesktop::start_menu
 {
-inline constexpr wchar_t kMessage[] = L"SnowDesktop.StartMenu.Place.v2";
+inline constexpr wchar_t kMessage[] = L"SnowDesktop.StartMenu.Place.v3";
 inline constexpr DWORD kMagic = 0x5344534d;
+inline constexpr DWORD kVersion = 3;
 enum Status : LONG { Pending, Prepared, Positioned, Closed, Unsupported };
 enum Stage : LONG { WaitingForWindow, Attached, ReadingRoot, WaitingForLayout, MovingHost, MovingFrame, PlacementApplied };
 struct Request
 {
-    DWORD magic = kMagic, version = 2, bytes = sizeof(Request), owner = 0, target = 0;
+    DWORD magic = kMagic, version = kVersion, bytes = sizeof(Request), owner = 0, target = 0;
     std::uint64_t token = 0;
     std::uintptr_t ownerWindow = 0;
     Placement placement;
@@ -28,11 +29,11 @@ struct Request
 };
 inline std::wstring MappingName(DWORD owner, std::uint64_t token)
 {
-    return L"Local\\SnowDesktop.StartMenu.v2." + std::to_wstring(owner) + L"." + std::to_wstring(token);
+    return L"Local\\SnowDesktop.StartMenu.v3." + std::to_wstring(owner) + L"." + std::to_wstring(token);
 }
 inline bool ValidRequest(const Request& r, DWORD owner, DWORD target, std::uint64_t token) noexcept
 {
-    return r.magic == kMagic && r.version == 2 && r.bytes == sizeof(Request) &&
+    return r.magic == kMagic && r.version == kVersion && r.bytes == sizeof(Request) &&
         owner != 0 && r.owner == owner && target != 0 && r.target == target &&
         token != 0 && r.token == token && r.ownerWindow != 0 &&
         Position(r.placement, SIZE{1, 1}).has_value();
