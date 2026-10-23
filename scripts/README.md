@@ -69,6 +69,10 @@ scripts\build.bat run unsubscribe -Task my-task -RunId <runId>
 历史凭据只在该字段按等价UTC表示比较，其余内容精确核对；小数有效位、原Run或哈希变化仍判为不匹配，
 只读投影不重写旧凭据。
 
+看板HTTP基础检查与引用凭据检查分别为 `build_dashboard` 和 `build_dashboard_references`，
+共用原生驱动并保留各自全部断言；浏览器场景保留独立数据种子，`--all` 包含两组HTTP检查。
+引用校验可独立补验，不再消耗基础聚合条目的60秒预算。
+
 引用仅限仍匹配的同一候选和完整选择集合：检查期间持有执行器共用的候选槽租约，重核源码、调用、产物、环境、文件端点、实际模块报告及原 JUnit；同一意图存在失败/失效/中断历史时不引用。平台信任边界为同次 Windows 启动、内核/ApiSet、有效用户权限和原生系统 CRT；AppInit、AppCert、IFEO、兼容层或应用旁加载重定向不在支持范围。缺少审阅、插桩、报告或平台依据时执行新补验。
 
 命中返回 `status=referenced,reused=true` 和原 Run ID；`.build/verification/references/<id>.json` 保存任务/需求修订、原 Run/报告身份和本次核对凭据，Run 状态的 `references` 展示引用关联。引用的 `newExecution=false`，不创建新 Run/JUnit，不改原执行时间、请求者或通过记录。`run start ... -Fresh` 强制实际执行，适用于要求重跑或核查缓存的情况。自动选测尚未启用；跨候选引用仅适用上述 v2 审阅范围和相同输出位置。

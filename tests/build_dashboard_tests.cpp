@@ -89,6 +89,104 @@ void dashboard_startup(const fs::path& repo,bool formerBehavior=false,bool forme
     std::cout<<"PASS managed dashboard survives caller Job, remembers its port, avoids Python on fresh identity, and rejects invalid identities; former controls fail\n";
 }
 Json task(const std::string& name="task-a",const std::string& date="2026-10-02T10:00:00Z"){return Json::object({{"id",name},{"state","finished"},{"editRevision",1},{"registeredUtc",date},{"reopenedUtc",date},{"testPlan",Json::object({{"scope","module"},{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha"})},{"reason","fixture scoped input"}})},{"ownedFiles",Json::array({"src/fixture.cpp"})}});}
+Json seed_dashboard_references(const fs::path& repo,const fs::path& root,const Json& base,const std::string& observedRunId,
+    Json& runRecord,Json& runRequest,int port,const std::string& bid,bool exercise){
+    const auto state=root/L".build/collaboration",runRoot=state/L"runs";
+    auto current=[&](){return base;};auto save=[&](const std::string& name,const Json& value){atomic(state/name,value.dump());};
+    const std::string intentKey(64,'a');
+    runRequest["mode"]="verify";runRequest["planBatch"]=bid;
+    runRequest["verification"]=Json::object({{"key",intentKey},{"binding",Json::object({{"names",Json::array({"Alpha"})}})}});
+    auto subscribed=current();subscribed["verificationLedger"]=Json::object({{"schemaVersion",1},{"entries",Json::array({Json::object({{"runId",observedRunId},{"key",intentKey},{"subscriptions",Json::array({Json::object({{"id",std::string(32,'3')},{"task","observer"},{"requirementsRevision",2},{"withdrawnUtc",Json{}},{"reason","Verify existing candidate"}})})}})})}});
+    save("state.json",subscribed);atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());if(exercise){refresh();
+    const auto standalone=Json::parse(http(port).body).at("runs").items[0].at("verification");
+    require(standalone.at("noBuild").boolean&&!standalone.at("reuseAllowed").boolean&&standalone.at("baseline").str()==bid&&standalone.at("names").items[0].str()=="Alpha"&&standalone.at("subscriptions").items[0].at("requirementsRevision").integer()==2,"HTTP projection lost standalone verification/subscriber provenance");
+    }
+    runRecord["exitCode"]=0;atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());
+    const auto referenceRoot=root/L".build/verification/references",originCoverage=runRoot/wide(observedRunId+".verification.json");
+    write(originCoverage,Json::object({{"schemaVersion",1},{"runId",observedRunId},{"status","passed"},{"selected",Json::array({"Alpha"})}}).dump());
+    write(root/L"reference-hashes.ps1","param([string]$Run,[string]$Coverage)\n@{run=(Get-FileHash -LiteralPath $Run -Algorithm SHA256).Hash.ToLowerInvariant();coverage=(Get-FileHash -LiteralPath $Coverage -Algorithm SHA256).Hash.ToLowerInvariant()}|ConvertTo-Json\n",true);
+    const auto hashResult=run({powershell().wstring(),L"-NoProfile",L"-File",(root/L"reference-hashes.ps1").wstring(),(runRoot/wide(observedRunId+".json")).wstring(),originCoverage.wstring()},root,10);
+    require(hashResult.code==0,"Cannot capture actual original reference hashes: "+hashResult.err);
+    const auto hashes=Json::parse(hashResult.out);
+    auto reference=Json::object({{"schemaVersion",1},{"kind","completed-verification-reference"},{"id",std::string(32,'7')},{"task","reference-observer"},{"requirementsRevision",2},
+        {"baseline",bid},{"sourceRunId",observedRunId},{"key",intentKey},{"checkedUtc","2026-10-02T10:04:00Z"},{"execution","referenced"},{"newExecution",false},{"reuseAllowed",true},{"scope","exact-candidate-reviewed-binary"},
+        {"sourceRunSha256",hashes.at("run")},{"coverageSha256",hashes.at("coverage")},{"review",Json::object({{"policy","reviewed-native-files-v1"}})},
+        {"tests",Json::array({Json::object({{"test","Alpha"},{"evidenceId",std::string(32,'6')}})})}});
+    const auto referencePath=referenceRoot/wide(reference.at("id").str()+".json");write(referencePath,reference.dump());
+    auto missingReference=reference;missingReference["id"]=std::string(32,'8');
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference});save("state.json",subscribed);if(!exercise)return subscribed;refresh();
+    auto references=Json::parse(http(port).body).at("runs").items[0].at("verification");
+    require(references.at("referenceCount").integer()==2&&references.at("references").items[0].at("status").str()=="recorded"&&
+        !references.at("references").items[0].at("newExecution").boolean&&references.at("references").items[1].at("status").str()=="unavailable"&&
+        !references.at("reuseAllowed").boolean,"Completed-reference HTTP projection invented execution/reuse or lost independent receipt integrity");
+    const auto referenceBytes=read(referencePath),originBytes=read(originCoverage),runBytes=read(runRoot/wide(observedRunId+".json"));
+    write(referencePath,"{}");refresh();
+    require(Json::parse(http(port).body).at("runs").items[0].at("verification").at("references").items[0].at("status").str()=="unavailable","Mismatched reference receipt was displayed as recorded");
+    write(referencePath,referenceBytes);write(originCoverage,originBytes+" ");refresh();
+    require(Json::parse(http(port).body).at("runs").items[0].at("verification").at("references").items[0].at("status").str()=="unavailable","Changed original coverage was displayed as a valid reference");
+    write(originCoverage,originBytes);refresh();
+    require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,"Readonly reference projection changed original execution or independent receipt");
+    auto compatibleReference=reference;
+    compatibleReference["id"]=std::string(32,'9');compatibleReference["scope"]="candidate-compatible-reviewed-binary";
+    compatibleReference["originKey"]=intentKey;compatibleReference["key"]=std::string(64,'b');
+    compatibleReference["currentCandidate"]=Json::object({{"snapshot",std::string(32,'c')}});
+    compatibleReference["originCandidate"]=Json::object({{"snapshot",std::string(32,'d')}});
+    compatibleReference["review"]["candidateCompatibility"]="same-output-reviewed-inputs-v1";
+    compatibleReference["compatibleTests"]=Json::array({Json::object({{"test","Alpha"},{"key",std::string(64,'e')}})});
+    write(referenceRoot/wide(compatibleReference.at("id").str()+".json"),compatibleReference.dump());
+    auto wrongOrigin=compatibleReference;wrongOrigin["id"]=std::string(32,'a');wrongOrigin["originKey"]=std::string(64,'f');
+    write(referenceRoot/wide(wrongOrigin.at("id").str()+".json"),wrongOrigin.dump());
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference,compatibleReference,wrongOrigin});
+    save("state.json",subscribed);refresh();references=Json::parse(http(port).body).at("runs").items[0].at("verification");
+    require(references.at("references").items[2].at("status").str()=="recorded"&&
+        references.at("references").items[2].at("originKey").str()==intentKey&&
+        references.at("references").items[2].at("currentSnapshot").str()==std::string(32,'c')&&
+        references.at("references").items[3].at("status").str()=="unavailable"&&
+        !references.at("reuseAllowed").boolean,"Compatible-reference HTTP projection lost origin identity or granted new execution authorization");
+    require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,
+        "Compatible-reference HTTP projection changed the original execution");
+    auto precisionFile=reference;precisionFile["id"]=std::string(32,'b');precisionFile["checkedUtc"]="2026-10-02T10:04:00.1234560Z";
+    auto precisionIndex=precisionFile;precisionIndex["checkedUtc"]="2026-10-02T10:04:00.123456Z";
+    const auto precisionPath=referenceRoot/wide(precisionFile.at("id").str()+".json");write(precisionPath,precisionFile.dump());
+    auto changedTick=precisionFile;changedTick["id"]=std::string(32,'c');write(referenceRoot/wide(changedTick.at("id").str()+".json"),changedTick.dump());changedTick["checkedUtc"]="2026-10-02T10:04:00.1234561Z";
+    auto zeroFile=reference;zeroFile["id"]=std::string(32,'d');zeroFile["checkedUtc"]="2026-10-02T10:04:00.0000000Z";
+    const auto zeroPath=referenceRoot/wide(zeroFile.at("id").str()+".json");write(zeroPath,zeroFile.dump());auto zeroIndex=zeroFile;zeroIndex["checkedUtc"]="2026-10-02T10:04:00Z";
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({precisionIndex,changedTick,zeroIndex});save("state.json",subscribed);refresh();
+    const auto checkReferenceTimes=[](const Json& snapshot){const auto& times=snapshot.at("runs").items[0].at("verification").at("references").items;
+        require(times.size()==3&&times[0].at("status").str()=="recorded"&&times[1].at("status").str()=="unavailable"&&times[2].at("status").str()=="recorded",
+            "Equivalent UTC precision was displayed as missing reference evidence");};
+    checkReferenceTimes(Json::parse(http(port).body));
+    require(read(precisionPath)==precisionFile.dump()&&read(zeroPath)==zeroFile.dump(),"Reference time normalization rewrote an immutable receipt");
+    {
+        auto strict=read(repo/L"tools/build-dashboard/server.py");
+        replace(strict,"if not reference_receipt_matches(read_json(directory, item[\"id\"] + \".json\"), item):","if read_json(directory, item[\"id\"] + \".json\") != item:");
+        const auto controlFile=root/L"tools/build-dashboard/server-reference-time-control.py";write(controlFile,strict);
+        const int controlPort=free_port();Child control({production_python().wstring(),controlFile.wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(controlPort)},root);
+        until([&]{try{return http(controlPort).code==200;}catch(...){return false;}},10);
+        bool rejected=false;try{checkReferenceTimes(Json::parse(http(controlPort).body));}catch(const std::exception& error){rejected=std::string(error.what())=="Equivalent UTC precision was displayed as missing reference evidence";}
+        require(rejected,"Former strict receipt equality escaped the actual HTTP timestamp assertion");
+    }
+    // Keep the original compact seed for dashboard/browser presence checks.
+    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference});save("state.json",subscribed);
+    return subscribed;
+}
+void dashboard_references(const fs::path& repo){
+    const auto root=temporary("dashboard-references"),state=root/L".build/collaboration",runRoot=state/L"runs";
+    fs::create_directories(runRoot);const int port=free_port();const std::string bid(32,'d'),runId(32,'5');
+    auto base=Json::object({{"schemaVersion",1},{"repositoryRoot",utf8(root.wstring())},{"current",Json{}}});
+    auto record=Json::object({{"schemaVersion",1},{"id",runId},{"repositoryRoot",utf8(root.wstring())},{"nonce",std::string(32,'9')},
+        {"status","passed"},{"owner",owner(GetCurrentProcessId())},{"createdUtc","2026-10-02T10:00:00Z"},{"completedUtc","2026-10-02T10:04:00Z"},{"exitCode",0},{"stages",Json::array({})}});
+    auto request=Json::object({{"schemaVersion",1},{"id",runId},{"repositoryRoot",utf8(root.wstring())},{"nonce",std::string(32,'9')},
+        {"task","observer"},{"action","tests"},{"mode","list"},{"createdUtc","2026-10-02T10:00:00Z"}});
+    atomic(state/L"state.json",base.dump());atomic(runRoot/wide(runId+".json"),record.dump());atomic(runRoot/wide(runId+".request.json"),request.dump());
+    Child server({production_python().wstring(),(repo/L"tools/build-dashboard/server.py").wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(port)},root);
+    until([&]{try{return http(port).code==200;}catch(...){return false;}},10);
+    (void)seed_dashboard_references(repo,root,base,runId,record,request,port,bid,true);
+    const auto info=Json::parse(read(root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json")));
+    write(root/L".build/dashboard"/wide("stop-"+info.at("instance").str()+".request"),info.at("instance").str());
+    require(server.wait(8).code==0,"Independent reference dashboard did not stop with its verified nonce");
+    std::cout<<"PASS independent reference HTTP: exact/compatible receipts, immutable origins, missing/corrupt proofs, lossless UTC comparison and strict-equality control\n";
+}
 void dashboard(const fs::path& repo,bool browser){
     auto root=temporary("dashboard");auto state=root/L".build/collaboration";fs::create_directories(state);int port=free_port();std::string bid(32,'d'),largeId(32,'a'),child(32,'e'),ticket(32,'f');
     auto current=[&](const std::string& phase="editing",Json participants=Json::array({}),Json process=Json{}){if(participants.items.empty()){auto b=task("task-b");b["state"]="editing";participants=Json::array({task(),b});}return Json::object({{"schemaVersion",1},{"repositoryRoot",utf8(root.wstring())},{"current",Json::object({{"id",bid},{"protocolVersion",2},{"phase",phase},{"participants",participants},{"createdUtc","2026-10-02T10:00:00Z"},{"owner",process},{"inputStart",Json::object({{"algorithm","fixture"},{"digest",std::string(64,'f')},{"fileCount",2}})}})}});};
@@ -157,78 +255,7 @@ void dashboard(const fs::path& repo,bool browser){
     require(observed.at("resources").at("status").str()=="unrecorded","Missing resource record became a measured result");
     resourceRecord["finished"]=true;atomic(resourcePath,resourceRecord.dump());refresh();observed=Json::parse(http(port).body).at("current").at("run");
     require(observed.at("resources").at("status").str()=="complete"&&observed.at("resources").at("accountingAvailable").boolean,"Valid terminal accounting was not preserved");
-    const std::string intentKey(64,'a');
-    runRequest["mode"]="verify";runRequest["planBatch"]=bid;
-    runRequest["verification"]=Json::object({{"key",intentKey},{"binding",Json::object({{"names",Json::array({"Alpha"})}})}});
-    auto subscribed=current();subscribed["verificationLedger"]=Json::object({{"schemaVersion",1},{"entries",Json::array({Json::object({{"runId",observedRunId},{"key",intentKey},{"subscriptions",Json::array({Json::object({{"id",std::string(32,'3')},{"task","observer"},{"requirementsRevision",2},{"withdrawnUtc",Json{}},{"reason","Verify existing candidate"}})})}})})}});
-    save("state.json",subscribed);atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());refresh();
-    const auto standalone=Json::parse(http(port).body).at("runs").items[0].at("verification");
-    require(standalone.at("noBuild").boolean&&!standalone.at("reuseAllowed").boolean&&standalone.at("baseline").str()==bid&&standalone.at("names").items[0].str()=="Alpha"&&standalone.at("subscriptions").items[0].at("requirementsRevision").integer()==2,"HTTP projection lost standalone verification/subscriber provenance");
-    runRecord["exitCode"]=0;atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());
-    const auto referenceRoot=root/L".build/verification/references",originCoverage=runRoot/wide(observedRunId+".verification.json");
-    write(originCoverage,Json::object({{"schemaVersion",1},{"runId",observedRunId},{"status","passed"},{"selected",Json::array({"Alpha"})}}).dump());
-    write(root/L"reference-hashes.ps1","param([string]$Run,[string]$Coverage)\n@{run=(Get-FileHash -LiteralPath $Run -Algorithm SHA256).Hash.ToLowerInvariant();coverage=(Get-FileHash -LiteralPath $Coverage -Algorithm SHA256).Hash.ToLowerInvariant()}|ConvertTo-Json\n",true);
-    const auto hashResult=run({powershell().wstring(),L"-NoProfile",L"-File",(root/L"reference-hashes.ps1").wstring(),(runRoot/wide(observedRunId+".json")).wstring(),originCoverage.wstring()},root,10);
-    require(hashResult.code==0,"Cannot capture actual original reference hashes: "+hashResult.err);
-    const auto hashes=Json::parse(hashResult.out);
-    auto reference=Json::object({{"schemaVersion",1},{"kind","completed-verification-reference"},{"id",std::string(32,'7')},{"task","reference-observer"},{"requirementsRevision",2},
-        {"baseline",bid},{"sourceRunId",observedRunId},{"key",intentKey},{"checkedUtc","2026-10-02T10:04:00Z"},{"execution","referenced"},{"newExecution",false},{"reuseAllowed",true},{"scope","exact-candidate-reviewed-binary"},
-        {"sourceRunSha256",hashes.at("run")},{"coverageSha256",hashes.at("coverage")},{"review",Json::object({{"policy","reviewed-native-files-v1"}})},
-        {"tests",Json::array({Json::object({{"test","Alpha"},{"evidenceId",std::string(32,'6')}})})}});
-    const auto referencePath=referenceRoot/wide(reference.at("id").str()+".json");write(referencePath,reference.dump());
-    auto missingReference=reference;missingReference["id"]=std::string(32,'8');
-    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference});save("state.json",subscribed);refresh();
-    auto references=Json::parse(http(port).body).at("runs").items[0].at("verification");
-    require(references.at("referenceCount").integer()==2&&references.at("references").items[0].at("status").str()=="recorded"&&
-        !references.at("references").items[0].at("newExecution").boolean&&references.at("references").items[1].at("status").str()=="unavailable"&&
-        !references.at("reuseAllowed").boolean,"Completed-reference HTTP projection invented execution/reuse or lost independent receipt integrity");
-    const auto referenceBytes=read(referencePath),originBytes=read(originCoverage),runBytes=read(runRoot/wide(observedRunId+".json"));
-    write(referencePath,"{}");refresh();
-    require(Json::parse(http(port).body).at("runs").items[0].at("verification").at("references").items[0].at("status").str()=="unavailable","Mismatched reference receipt was displayed as recorded");
-    write(referencePath,referenceBytes);write(originCoverage,originBytes+" ");refresh();
-    require(Json::parse(http(port).body).at("runs").items[0].at("verification").at("references").items[0].at("status").str()=="unavailable","Changed original coverage was displayed as a valid reference");
-    write(originCoverage,originBytes);refresh();
-    require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,"Readonly reference projection changed original execution or independent receipt");
-    auto compatibleReference=reference;
-    compatibleReference["id"]=std::string(32,'9');compatibleReference["scope"]="candidate-compatible-reviewed-binary";
-    compatibleReference["originKey"]=intentKey;compatibleReference["key"]=std::string(64,'b');
-    compatibleReference["currentCandidate"]=Json::object({{"snapshot",std::string(32,'c')}});
-    compatibleReference["originCandidate"]=Json::object({{"snapshot",std::string(32,'d')}});
-    compatibleReference["review"]["candidateCompatibility"]="same-output-reviewed-inputs-v1";
-    compatibleReference["compatibleTests"]=Json::array({Json::object({{"test","Alpha"},{"key",std::string(64,'e')}})});
-    write(referenceRoot/wide(compatibleReference.at("id").str()+".json"),compatibleReference.dump());
-    auto wrongOrigin=compatibleReference;wrongOrigin["id"]=std::string(32,'a');wrongOrigin["originKey"]=std::string(64,'f');
-    write(referenceRoot/wide(wrongOrigin.at("id").str()+".json"),wrongOrigin.dump());
-    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference,compatibleReference,wrongOrigin});
-    save("state.json",subscribed);refresh();references=Json::parse(http(port).body).at("runs").items[0].at("verification");
-    require(references.at("references").items[2].at("status").str()=="recorded"&&
-        references.at("references").items[2].at("originKey").str()==intentKey&&
-        references.at("references").items[2].at("currentSnapshot").str()==std::string(32,'c')&&
-        references.at("references").items[3].at("status").str()=="unavailable"&&
-        !references.at("reuseAllowed").boolean,"Compatible-reference HTTP projection lost origin identity or granted new execution authorization");
-    require(read(referencePath)==referenceBytes&&read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,
-        "Compatible-reference HTTP projection changed the original execution");
-    auto precisionFile=reference;precisionFile["id"]=std::string(32,'b');precisionFile["checkedUtc"]="2026-10-02T10:04:00.1234560Z";
-    auto precisionIndex=precisionFile;precisionIndex["checkedUtc"]="2026-10-02T10:04:00.123456Z";
-    const auto precisionPath=referenceRoot/wide(precisionFile.at("id").str()+".json");write(precisionPath,precisionFile.dump());
-    auto changedTick=precisionFile;changedTick["id"]=std::string(32,'c');write(referenceRoot/wide(changedTick.at("id").str()+".json"),changedTick.dump());changedTick["checkedUtc"]="2026-10-02T10:04:00.1234561Z";
-    auto zeroFile=reference;zeroFile["id"]=std::string(32,'d');zeroFile["checkedUtc"]="2026-10-02T10:04:00.0000000Z";
-    const auto zeroPath=referenceRoot/wide(zeroFile.at("id").str()+".json");write(zeroPath,zeroFile.dump());auto zeroIndex=zeroFile;zeroIndex["checkedUtc"]="2026-10-02T10:04:00Z";
-    subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({precisionIndex,changedTick,zeroIndex});save("state.json",subscribed);refresh();
-    const auto checkReferenceTimes=[](const Json& snapshot){const auto& times=snapshot.at("runs").items[0].at("verification").at("references").items;
-        require(times.size()==3&&times[0].at("status").str()=="recorded"&&times[1].at("status").str()=="unavailable"&&times[2].at("status").str()=="recorded",
-            "Equivalent UTC precision was displayed as missing reference evidence");};
-    checkReferenceTimes(Json::parse(http(port).body));
-    require(read(precisionPath)==precisionFile.dump()&&read(zeroPath)==zeroFile.dump(),"Reference time normalization rewrote an immutable receipt");
-    {
-        auto strict=read(repo/L"tools/build-dashboard/server.py");
-        replace(strict,"if not reference_receipt_matches(read_json(directory, item[\"id\"] + \".json\"), item):","if read_json(directory, item[\"id\"] + \".json\") != item:");
-        const auto controlFile=root/L"tools/build-dashboard/server-reference-time-control.py";write(controlFile,strict);
-        const int controlPort=free_port();Child control({production_python().wstring(),controlFile.wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(controlPort)},root);
-        until([&]{try{return http(controlPort).code==200;}catch(...){return false;}},10);
-        bool rejected=false;try{checkReferenceTimes(Json::parse(http(controlPort).body));}catch(const std::exception& error){rejected=std::string(error.what())=="Equivalent UTC precision was displayed as missing reference evidence";}
-        require(rejected,"Former strict receipt equality escaped the actual HTTP timestamp assertion");
-    }
+    auto subscribed=seed_dashboard_references(repo,root,current(),observedRunId,runRecord,runRequest,port,bid,false);
     runRequest["mode"]="list";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());save("state.json",current());refresh();
     auto wrongRun=runRecord;wrongRun["nonce"]=std::string(32,'8');atomic(runRoot/wide(observedRunId+".json"),wrongRun.dump());save("state.json",current());refresh();
     auto badRuns=Json::parse(http(port).body).at("runs");require(badRuns.items[0].at("status").str()=="unavailable","Mismatched Run nonce was projected as valid");
@@ -372,8 +399,9 @@ int main(int argc,char** argv){try{
     if(mode=="--old-dashboard-startup"||mode=="--old-dashboard-lifetime"){
         dashboard_startup(repo,mode=="--old-dashboard-startup",mode=="--old-dashboard-lifetime");
     }else if(mode=="--startup")dashboard_startup(repo);
+    else if(mode=="--references")dashboard_references(repo);
     else if(mode.empty()||mode=="--browser")dashboard(repo,mode=="--browser");
-    else if(mode=="--all"){dashboard_startup(repo);dashboard(repo,false);}
+    else if(mode=="--all"){dashboard_startup(repo);dashboard(repo,false);dashboard_references(repo);}
     else throw std::runtime_error("Unknown dashboard fixture mode");
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAILED: "<<error.what()<<std::endl;return std::string(error.what())=="RESOURCE-RACE-75"?75:1;}}

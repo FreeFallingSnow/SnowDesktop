@@ -108,6 +108,10 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
         build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
+    add_test(NAME build_dashboard_references COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --references)
+    set_tests_properties(build_dashboard_references PROPERTIES TIMEOUT 60 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     add_test(NAME build_dashboard_startup COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --startup)
     set_tests_properties(build_dashboard_startup PROPERTIES TIMEOUT 60 LABELS "tools;core;integration"
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
