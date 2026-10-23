@@ -331,10 +331,11 @@ function Invoke-FilteredTests {
     try {
         if($selection.Tests.Count){
             Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $executionFilter) -ExpectedTests @($selection.Tests.name)
-        }elseif(@(Get-Field $coverage 'references' @()).Count -ne @($coverage.selected).Count -or -not @($coverage.selected).Count){
+        }elseif($Mode -ne 'plan' -or -not $candidate -or
+            @(Get-Field $coverage 'references' @()).Count -ne @($coverage.selected).Count -or -not @($coverage.selected).Count){
             throw 'Zero executed tests require complete independently validated references.'
         }else{Write-Host '=== All selected tests fulfilled by original evidence; no CTest execution or JUnit created ==='}
-        if(@(Get-Field $coverage 'references' @()).Count){Assert-CompiledTestReferences $repositoryRoot $coverage}
+        if($Mode -in 'plan','verify' -and @(Get-Field $coverage 'references' @()).Count){Assert-CompiledTestReferences $repositoryRoot $coverage}
         $testCode=0
     }finally{
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$previousModuleRoot,'Process')

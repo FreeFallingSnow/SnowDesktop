@@ -79,7 +79,7 @@ scripts\build.bat run unsubscribe -Task my-task -RunId <runId>
 
 Run 状态与编译后选择账本通过同一 AtomicPublication 发布：仅共享占用32/33/1175在1秒内按20毫秒间隔重试文件替换，持续占用明确失败且保留原文件，不重放Run/调度或生产过程。build_run_publication使用真实非删除共享读取句柄验证释放后成功、持续占用有界失败和旧单次发布控制。
 
-编译后意图保存为 Run 的不可变 `.test-intent.json`，绑定真实候选、原请求哈希和每项输入；它不是已结束基线或执行凭据。父执行器已持有槽位租约，核对不重复申请。`coverage.selected` 保留完整需求，`executedSelection`/`completed`/JUnit/重试仅含本次执行，`references` 保存独立凭据。全部引用时状态为 `fulfilled`，不创建空 JUnit 或伪造通过用例；最终发布再次核对原报告/凭据。引用不会注册为新的执行来源。原生回归为 `build_automatic_selection` 和 `build_automatic_selection_control`。
+编译后意图保存为 Run 的不可变 `.test-intent.json`，绑定真实候选、原请求哈希和每项输入；它不是已结束基线或执行凭据。父执行器已持有槽位租约，核对不重复申请。`coverage.selected` 保留完整需求，`executedSelection`/`completed`/JUnit/重试仅含本次执行，`references` 保存独立凭据。全部引用时状态为 `fulfilled`，不创建空 JUnit 或伪造通过用例，最终结果的 `binaries`/`runtimeFiles` 为空且不发布新的测试运行包；最终发布再次核对原报告/凭据。引用不会注册为新的执行来源。原生回归为 `build_automatic_selection` 和 `build_automatic_selection_control`。
 
 `start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求先在同目录唯一临时文件中完整写入并刷新，关闭后再以不可覆盖的改名发布为 `.build/collaboration/runs/<id>.request.json`，后续不改写；发布前终止创建者不会留下可被最终文件名发现的半成品请求。发布完成仍须通过 Run 状态判断执行是否已开始。记录、日志、资源采样和带代际标记的取消请求分别保存。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6；两者均保留运行。退出观察者不取消执行，只有显式 `cancel` 才请求终止本次私有 Job 内的进程树。取消请求和已完成取消分开报告。
 

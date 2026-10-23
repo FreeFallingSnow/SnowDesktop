@@ -164,7 +164,7 @@ function Complete-CandidateBatchCoverage($Context) {
     }else{
         if($coverage.report -or -not $references.Count){throw 'Reference-only coverage must not create an execution report.'}
         $final=[pscustomobject]@{schemaVersion=1;candidate=$Context.snapshot;runId=$Context.runId;sourceDigest=(Get-CandidateExecutionInputIdentity $Context.source).digest;
-            report=$null;reportSha256=$null;exitCode=0;reuseAllowed=$false}
+            report=$null;reportSha256=$null;binaries=@();runtimeFiles=@();exitCode=0;reuseAllowed=$false}
     }
     $attempts=@()
     if($coverage.status -eq 'passed-after-retry'){

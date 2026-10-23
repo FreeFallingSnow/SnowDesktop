@@ -612,7 +612,9 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
             const auto retry=Json::parse(read(c.stateRoot/wide(result.at("batchId").str()+".retry.json")));
             require(retry.at("tests").fields.size()==executions,"Retry ledger manufactured execution attempts for references");
             if(!executions)require(coverage.at("report").kind==Json::Kind::Null&&coverage.at("status").str()=="fulfilled"&&
-                receipt.at("report").kind==Json::Kind::Null,"Reference-only selection fabricated a JUnit or passing execution");
+                receipt.at("report").kind==Json::Kind::Null&&receipt.at("binaries").items.empty()&&
+                receipt.at("runtimeFiles").items.empty()&&result.at("artifact").kind==Json::Kind::Null,
+                "Reference-only selection fabricated a JUnit, passing execution or runtime artifact");
             else{
                 const auto xml=read(fs::path(wide(coverage.at("report").str())));
                 if(references)require(xml.find("name=\"candidate_rule\"")==std::string::npos&&xml.find("name=\"candidate_unreviewed\"")!=std::string::npos,
@@ -629,7 +631,7 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
             c.stateRoot/L"runs"/wide(originRun+".test-intent.json"),fs::path(wide(reviewed.at("coverage").at("report").str()))})originals.emplace_back(path,read(path));
         write(c.root/L"src/unrelated-note.txt","Unrelated to the reviewed native file-reading test.\n");
         const auto mixed=baseline();covered(mixed,1,1);
-        const auto projected=run({production_python().wstring(),L"-c",L"import importlib.util,json,sys;from pathlib import Path;s=importlib.util.spec_from_file_location('dashboard',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m.Store(Path(sys.argv[2]),False).batch(sys.argv[3])))",
+        const auto projected=run({production_python().wstring(),L"-B",L"-c",L"import importlib.util,json,sys;from pathlib import Path;s=importlib.util.spec_from_file_location('dashboard',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m.Store(Path(sys.argv[2]),False).batch(sys.argv[3])))",
             (repo/L"tools/build-dashboard/server.py").wstring(),c.stateRoot.wstring(),wide(mixed.at("batchId").str())},c.root,15);
         require(projected.code==0,"Actual mixed batch could not be projected by production Store: "+projected.err);
         const auto projectedCoverage=Json::parse(projected.out).at("coverage");
