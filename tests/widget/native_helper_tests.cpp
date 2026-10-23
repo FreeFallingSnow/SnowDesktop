@@ -142,6 +142,100 @@ void ProbeManagedHelper(const std::filesystem::path& executable)
             "the same managed helper emitting CP936 bytes fails specifically on UTF-8 validation");
     }
 }
+void ProbeDemoPackage(const std::filesystem::path& package)
+{
+    // Exercise the actual authoring package without changing live user data.
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto root = temporary.path / L"真实演示组件 package";
+    std::filesystem::copy(package, root, std::filesystem::copy_options::recursive);
+    PackageManifest manifest;
+    Require(WidgetPackageValidator{}.ValidateDirectory(root, &manifest).Ok(), "actual demo copy validates with its declared EXE hashes");
+    Require(manifest.id == "4821cc55-f1dc-4322-9a1e-c697ebd4ace6", "probe uses the existing native EXE demo identity");
+    const auto fingerprint = PackagePermissionScopeFingerprint(manifest);
+    const auto processFrom = [](const NativeTaskMessage& message) {
+        JsonValue frame;
+        Require(!message.final && ParseJson(message.json, frame), "actual demo emits an event frame");
+        const auto* value = frame.Find("value");
+        Require(value && value->Find("pid") && value->Find("sequence") &&
+            value->Find("percent") && value->Find("percent")->number == 73 &&
+            value->Find("simulated") && value->Find("simulated")->boolean,
+            "actual demo sends the simulated reading and process identity");
+        return std::pair<DWORD, double>{static_cast<DWORD>(value->Find("pid")->number), value->Find("sequence")->number};
+    };
+    struct Process
+    {
+        HANDLE value = nullptr;
+        explicit Process(DWORD id) : value(OpenProcess(SYNCHRONIZE, FALSE, id))
+        { Require(value != nullptr, "actual demo process is observable"); }
+        ~Process() { if (value) CloseHandle(value); }
+    };
+    {
+        Runner runner;
+        Require(runner.executor.Start(41, root, fingerprint, {"battery","watch","{}",5000,true}), "actual demo resident task starts");
+        DWORD pid = 0;
+        double sequence = -1;
+        unsigned events = 0;
+        while (events < 3)
+            for (const auto& message : runner.Wait(false))
+            {
+                const auto [observedPid, observedSequence] = processFrom(message);
+                Require((pid == 0 || pid == observedPid) && observedSequence > sequence,
+                    "three actual demo updates keep the same process and advance sequence");
+                pid = observedPid;
+                sequence = observedSequence;
+                ++events;
+            }
+        std::cout << "actual demo resident pid=" << pid << " updates=" << events << " lastSequence=" << sequence << '\n';
+        Process process(pid);
+        Require(WaitForSingleObject(process.value, 0) == WAIT_TIMEOUT, "actual helper stays resident after multiple readings");
+        runner.executor.Cancel(41);
+        const auto messages = runner.Wait();
+        Require(messages.back().final && messages.back().error == "canceled", "actual demo cancellation completes");
+        Require(WaitForSingleObject(process.value, 5000) == WAIT_OBJECT_0, "actual demo process exits after cancellation");
+    }
+    {
+        Runner runner;
+        Require(runner.executor.Start(42, root, fingerprint, {"battery","watch","{}",5000,true}), "actual demo mutation probe starts");
+        const auto messages = runner.Wait(false);
+        Process process(processFrom(messages.front()).first);
+        Write(root / L"native-validation-marker.txt", "isolated package change");
+        const auto stopped = runner.Wait();
+        Require(stopped.back().error == "nativeContentChanged" &&
+            stopped.back().diagnostic.find("packageChangeDetected") != std::string::npos &&
+            stopped.back().diagnostic.find("native-validation-marker.txt") != std::string::npos,
+            "actual demo package change reports its cause and relative path");
+        Require(WaitForSingleObject(process.value, 5000) == WAIT_OBJECT_0, "package change retires the actual demo process");
+    }
+    std::filesystem::remove(root / L"native-validation-marker.txt");
+    PackageManifest restored;
+    Require(WidgetPackageValidator{}.ValidateDirectory(root, &restored).Ok() &&
+        PackagePermissionScopeFingerprint(restored) == fingerprint,
+        "the isolated package is restored to exactly its reviewed content before further launches");
+    for (const auto& operation : {"read", "gbk", "bad-json"})
+    {
+        Runner runner;
+        Require(runner.executor.Start(43, root, fingerprint, {"protocol",operation,"{}",5000}), "actual package protocol probe starts");
+        const auto messages = runner.Wait();
+        if (std::string_view(operation) == "read")
+        {
+            JsonValue frame;
+            Require(messages.back().ok && ParseJson(messages.back().json, frame), "actual package UTF-8 probe succeeds");
+            const auto* value = frame.Find("value");
+            Require(value && value->Find("argc") && value->Find("argc")->number == 1 &&
+                value->Find("arg") && value->Find("arg")->string == "--snowdesktop-native-v1" &&
+                value->Find("label") && value->Find("label")->string == "鼠标 · 2.4G",
+                "actual package probe receives fixed argv and preserves Chinese UTF-8");
+        }
+        else
+        {
+            const auto reason = std::string_view(operation) == "gbk" ? "invalidUtf8" : "invalidJson";
+            Require(messages.back().error == "nativeProtocolError" &&
+                messages.back().diagnostic.find(reason) != std::string::npos,
+                "actual package malformed output is diagnosed correctly");
+        }
+    }
+    std::cout << "actual native EXE demo: stable PID, increasing updates, cancel exit and package-change exit passed\n";
+}
 void Tests()
 {
     snowdesktop::test::TemporaryDirectory temporary;
@@ -366,6 +460,13 @@ int main(int argc, char** argv)
             Require(count < 32768, "managed test helper path fits");
             ProbeManagedHelper(managed);
             std::cout << ".NET Framework fixed-argument / UTF-8 / CP936 probes passed\n";
+        }
+        wchar_t demo[32768]{};
+        const DWORD demoCount = GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_DEMO_PACKAGE", demo, 32768);
+        if (demoCount)
+        {
+            Require(demoCount < 32768, "actual demo package path fits");
+            ProbeDemoPackage(demo);
         }
         std::cout << "native helper integration tests passed\n";
         return 0;
