@@ -1,5 +1,6 @@
 #include "shell/start_menu_position.h"
 #include "shell/start_menu_protocol.h"
+#include "shell/start_menu_window.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include <filesystem>
 #include <iostream>
@@ -15,6 +16,60 @@ int RunDockStartMenuTests()
     const auto equals = [](const std::optional<RECT>& value, RECT expected) {
         return value && EqualRect(&*value, &expected);
     };
+
+    // Exercise the production traversal against a private hidden parent;
+    // never enumerate or open the user's actual Start menu for this test.
+    WNDCLASSW coreClass{};
+    coreClass.lpfnWndProc = DefWindowProcW;
+    coreClass.hInstance = GetModuleHandleW(nullptr);
+    coreClass.lpszClassName = kCoreWindowClass;
+    const ATOM coreAtom = RegisterClassW(&coreClass);
+    check(coreAtom != 0, "register isolated CoreWindow discovery fixture");
+    const HWND parent = CreateWindowW(L"STATIC", L"Start discovery fixture", WS_POPUP,
+        0, 0, 1, 1, nullptr, nullptr, coreClass.hInstance, nullptr);
+    HWND first = nullptr, second = nullptr;
+    if (coreAtom && parent)
+    {
+        first = CreateWindowW(kCoreWindowClass, L"cached", WS_CHILD,
+            0, 0, 1, 1, parent, nullptr, coreClass.hInstance, nullptr);
+        second = CreateWindowW(kCoreWindowClass, L"current", WS_CHILD,
+            0, 0, 1, 1, parent, nullptr, coreClass.hInstance, nullptr);
+    }
+    check(parent && first && second, "create multiple hidden lookup fixtures");
+    if (first && second)
+    {
+        const auto next = [parent](HWND after) {
+            return FindWindowExW(parent, after, kCoreWindowClass, nullptr);
+        };
+        const HWND initial = next(nullptr);
+        const HWND wanted = next(initial);
+        WindowDiscovery discovery;
+        check(wanted && FindVisibleStartWindow(discovery, next,
+            [wanted](HWND window, WindowDiscovery&) { return window == wanted; }) == wanted &&
+            discovery.candidates == 2 && !discovery.scanLimited,
+            "class lookup continues past a rejected cached/unrelated CoreWindow");
+        check(!IsStartWindow(first) && !IsStartWindow(second),
+            "a matching class in another process is insufficient to acquire the Start bridge");
+        check(!FindVisibleStartWindow(discovery, next,
+            [](HWND window, WindowDiscovery&) { return IsStartWindow(window); }) &&
+            discovery.candidates == 2 && !discovery.scanLimited,
+            "unrelated same-class windows cannot be selected as the Start host");
+        unsigned inspections = 0;
+        check(!FindVisibleStartWindow(discovery,
+            [first, second](HWND after) { return after == first ? second : first; },
+            [&inspections](HWND, WindowDiscovery&) { ++inspections; return false; }) &&
+            discovery.scanLimited && inspections == 2,
+            "reordered/recycled HWNDs terminate discovery without a worker hang");
+        std::uintptr_t sequence = 0;
+        check(!FindVisibleStartWindow(discovery,
+            [&sequence](HWND) { return reinterpret_cast<HWND>(++sequence); },
+            [](HWND, WindowDiscovery&) { return false; }) &&
+            discovery.scanLimited && sequence == 128,
+            "continuous window churn cannot extend the lookup deadline indefinitely");
+    }
+    if (parent) DestroyWindow(parent);
+    if (coreAtom) UnregisterClassW(kCoreWindowClass, coreClass.hInstance);
+
     Placement p{{0, 0, 1920, 1080}, {0, 0, 1920, 1080}, {500, 980, 1400, 1060}, Edge::Bottom, 8};
     check(equals(Position(p, {600, 700}), {660, 272, 1260, 972}),
         "bottom menu centers on the screen and clears the fully expanded island Dock");

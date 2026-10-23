@@ -1,5 +1,6 @@
 #include "native_start_menu.h"
 #include "start_menu_protocol.h"
+#include "start_menu_window.h"
 #include "dock/dock_settings.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
@@ -23,45 +24,18 @@ bool IsVisible(HWND window) noexcept
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
 
-bool IsStartWindow(HWND window) noexcept
+void ReportFallback(DWORD error, const start_menu::Request* request, HWND window,
+    const start_menu::WindowDiscovery& discovery)
 {
-    wchar_t type[96]{};
-    GetClassNameW(window, type, static_cast<int>(std::size(type)));
-    if (wcscmp(type, L"Windows.UI.Core.CoreWindow") != 0) return false;
-    DWORD process = 0;
-    GetWindowThreadProcessId(window, &process);
-    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process);
-    if (!handle) return false;
-    wchar_t path[32768]{};
-    DWORD length = static_cast<DWORD>(std::size(path));
-    const bool queried = QueryFullProcessImageNameW(handle, 0, path, &length) != FALSE;
-    CloseHandle(handle);
-    if (!queried) return false;
-    const wchar_t* filename = wcsrchr(path, L'\\');
-    // Windows 10 1903+ and Windows 11 share this host. Earlier ShellExperienceHost
-    // versions also host unrelated panels; leave those on the native path.
-    return filename && _wcsicmp(filename + 1, L"StartMenuExperienceHost.exe") == 0;
-}
-
-HWND FindVisibleStartWindow()
-{
-    HWND result = nullptr;
-    EnumWindows([](HWND window, LPARAM data) -> BOOL {
-        if (!IsVisible(window) || !IsStartWindow(window)) return TRUE;
-        *reinterpret_cast<HWND*>(data) = window;
-        return FALSE;
-    }, reinterpret_cast<LPARAM>(&result));
-    return result;
-}
-
-void ReportFallback(DWORD error, const start_menu::Request* request, HWND window)
-{
-    wchar_t text[768]{};
-    swprintf_s(text, L"[DockStartMenu] native fallback; error=%lu window=%p status=%ld stage=%ld ticks=%ld receiverError=%ld root=%.95ls frame=%.95ls size=%ld,%ld",
+    wchar_t text[1024]{};
+    swprintf_s(text, L"[DockStartMenu] native fallback; error=%lu window=%p status=%ld stage=%ld ticks=%ld receiverError=%ld root=%.95ls frame=%.95ls size=%ld,%ld candidates=%u hosts=%u hidden=%u lastHost=%p processError=%lu cloakError=%08lx cloak=%lu scanLimited=%d",
         error, window, request ? request->status : -1, request ? request->stage : -1,
         request ? request->ticks : 0, request ? request->error : 0,
         request ? request->rootClass : L"", request ? request->frameClass : L"",
-        request ? request->measuredSize.cx : 0, request ? request->measuredSize.cy : 0);
+        request ? request->measuredSize.cx : 0, request ? request->measuredSize.cy : 0,
+        discovery.candidates, discovery.hosts, discovery.hidden, discovery.lastHost,
+        discovery.processError, static_cast<unsigned long>(discovery.cloakError),
+        discovery.cloak, discovery.scanLimited ? 1 : 0);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, text, DiagnosticLogLevel::Warning);
 }
 }
@@ -97,12 +71,14 @@ struct NativeStartMenu::Impl
         HMODULE module = nullptr;
         HWND window = nullptr;
         bool invoked = false, protection = false;
+        bool bridgeTimedOut = false, reportedPlacement = false;
+        WindowDiscovery discovery;
         DWORD failure = ERROR_SUCCESS;
         try
         {
             // A pre-existing native menu belongs to its own input session.
             // This button press only toggles it closed, without relocating it.
-            window = FindVisibleStartWindow();
+            window = FindVisibleStartWindow(discovery);
             if (window)
             {
                 NativeStartMenu::Toggle();
@@ -142,17 +118,30 @@ struct NativeStartMenu::Impl
                             const auto attach = [&]() -> bool {
                                 DWORD target = 0;
                                 const DWORD thread = GetWindowThreadProcessId(window, &target);
-                                if (!thread || !IsVisible(window) || !IsStartWindow(window)) return false;
+                                if (!thread || !IsVisible(window) || !IsStartWindow(window))
+                                { failure = ERROR_INVALID_WINDOW_HANDLE; return false; }
                                 request->target = target;
                                 MemoryBarrier();
                                 HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, hookProc, module, thread);
-                                if (!hook) return false;
+                                if (!hook)
+                                {
+                                    failure = GetLastError();
+                                    if (!failure) failure = ERROR_NOT_SUPPORTED;
+                                    return false;
+                                }
                                 DWORD_PTR ignored = 0;
+                                SetLastError(ERROR_SUCCESS);
                                 const bool delivered = SendMessageTimeoutW(window, RegisterWindowMessageW(kMessage),
                                     process, static_cast<LPARAM>(token), SMTO_ABORTIFHUNG | SMTO_BLOCK,
                                     300, &ignored) != 0;
+                                const DWORD sendError = delivered ? ERROR_SUCCESS : GetLastError();
+                                bridgeTimedOut = !delivered && (!sendError || sendError == ERROR_TIMEOUT);
                                 UnhookWindowsHookEx(hook);
-                                return delivered && request->status != Pending && request->status != Unsupported;
+                                if (!delivered) failure = sendError ? sendError : ERROR_TIMEOUT;
+                                else if (request->status == Pending) failure = ERROR_NOT_SUPPORTED;
+                                else if (request->status == Unsupported)
+                                    failure = request->error ? static_cast<DWORD>(request->error) : ERROR_NOT_SUPPORTED;
+                                return !failure;
                             };
                             // A hidden CoreWindow can belong to a cached or different
                             // Start surface. Bind only the menu shown by this press.
@@ -175,11 +164,11 @@ struct NativeStartMenu::Impl
                                     }
                                     if (!attached)
                                     {
-                                        window = FindVisibleStartWindow();
+                                        window = FindVisibleStartWindow(discovery);
                                         if (window)
                                         {
                                             attached = attach();
-                                            if (!attached) { failure = ERROR_NOT_SUPPORTED; break; }
+                                            if (!attached) break;
                                         }
                                     }
                                     if (attached && !IsWindow(window))
@@ -187,10 +176,21 @@ struct NativeStartMenu::Impl
                                     if (attached)
                                     {
                                         failure = PulsePlacement(window);
-                                        if (failure) break;
+                                        if (failure)
+                                        { bridgeTimedOut = failure == ERROR_TIMEOUT; break; }
                                         PublishHitBounds(ReadBounds(*request));
                                     }
                                     const LONG status = request->status;
+                                    if (status == Positioned && !reportedPlacement)
+                                    {
+                                        const RECT placed = ReadBounds(*request);
+                                        wchar_t text[512]{};
+                                        swprintf_s(text, L"[DockStartMenu] positioned; window=%p root=%.95ls frame=%.95ls bounds=%ld,%ld,%ld,%ld",
+                                            window, request->rootClass, request->frameClass,
+                                            placed.left, placed.top, placed.right, placed.bottom);
+                                        WriteDiagnosticLogEntry(text);
+                                        reportedPlacement = true;
+                                    }
                                     if (status == Unsupported)
                                     { failure = static_cast<DWORD>(request->error); break; }
                                     if (status == Closed) break;
@@ -220,9 +220,11 @@ struct NativeStartMenu::Impl
         // Preserve the failing phase before cleanup changes the receiver status.
         if (failure)
         {
-            ReportFallback(failure, request, window);
+            ReportFallback(failure, request, window, discovery);
             // Do not repeatedly enter an unresponsive Shell bridge in this run.
-            if (failure == ERROR_TIMEOUT) positioningDisabled.store(true);
+            // A discovery/layout deadline is not evidence of a hung GUI
+            // thread. Allow a later invocation after Shell startup/restart.
+            if (bridgeTimedOut) positioningDisabled.store(true);
         }
         PublishHitBounds(RECT{});
         if (request)
