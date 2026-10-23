@@ -10,6 +10,8 @@
 #include <optional>
 #include <array>
 
+struct IDCompositionSurface;
+
 namespace snowdesktop
 {
 struct StatusBarItem
@@ -65,11 +67,23 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
         if (PtInRect(&items[index].bounds, point)) return index;
     return {};
 }
+// updateBounds limits drawing to intersecting items and retains their existing
+// geometry. Only use it with a tray viewport from a successful full draw.
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
     bool mergedDock = false, bool timeNotificationRightAligned = false, StatusBarTrayScroll* trayScroll = nullptr,
-    bool dockQuickSearch = true);
+    bool dockQuickSearch = true, const RECT* updateBounds = nullptr);
+// A hover-only update reuses the last successful full layout and tray viewport.
+// Empty/noninteractive targets (including Show Desktop) have no painted hover.
+std::array<RECT, 2> StatusBarHoverDamage(const std::vector<StatusBarItem>&,
+    std::optional<std::size_t> before, std::optional<std::size_t> after, UINT width, UINT height);
+// The surface must already have a complete frame. Updates are closed with
+// EndDraw but committed by the caller, together with its other visual changes.
+HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
+    const std::array<RECT, 2>& damage, UINT width, UINT height, float scale,
+    const PersonalizationSettings&, const StatusBarPalette&, std::optional<std::size_t> hovered,
+    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll&);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});

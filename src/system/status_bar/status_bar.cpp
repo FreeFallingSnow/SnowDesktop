@@ -12,6 +12,7 @@
 #include "system/tray/tray_focus.h"
 #include "system/tray/tray_order.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "status_bar_layout.h"
 #include "status_bar_glyphs.h"
 #include "status_bar_presentation.h"
@@ -171,6 +172,7 @@ struct StatusBar::Impl
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
+        bool partialHoverUpdates = true;
         RECT adjacentDockBounds{};
         bool dockQuickSearch = false;
         PersonalizationSettings appearance;
@@ -566,6 +568,7 @@ struct StatusBar::Impl
         }
         void BuildItems(bool trayOnly)
         {
+            performance::Scope sampleScope("status_bar", "snapshot");
             auto& snapshot = dataSnapshot;
             if (!trayOnly || !snapshotReady)
             {
@@ -632,6 +635,7 @@ struct StatusBar::Impl
                 SyncTooltip();
                 return;
             }
+            performance::Scope paintScope("status_bar", "content.paint");
             RECT client{};
             GetClientRect(hwnd, &client);
             if (IsRectEmpty(&client)) return;
@@ -732,6 +736,44 @@ struct StatusBar::Impl
                 else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
             }
             else PaintError(result);
+        }
+        void PaintHover(std::optional<std::size_t> previous)
+        {
+            if (closing || painting || failed || fullscreen || !IsWindowVisible(hwnd) ||
+                !owner.composition || !owner.text) return;
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            if (!partialHoverUpdates || paintDirty || backgroundDirty || appearanceDirty || !surface ||
+                client.right != static_cast<LONG>(width) || client.bottom != static_cast<LONG>(height) || dropIndicator)
+            { paintDirty = true; Paint(); return; }
+            const auto damage = StatusBarHoverDamage(items, previous, interaction.hovered, width, height);
+            if (std::all_of(damage.begin(), damage.end(), [](const RECT& region) { return IsRectEmpty(&region); }))
+            { SyncTooltip(); return; }
+            performance::Scope hoverScope("status_bar", "hover.paint");
+            if (performance::Enabled())
+            {
+                std::uint64_t pixels = 0;
+                for (const auto& region : damage)
+                    pixels += static_cast<std::uint64_t>(region.right - region.left) * (region.bottom - region.top);
+                performance::Value("status_bar", "hover.update_pixels", {}, static_cast<double>(pixels));
+            }
+            const bool hc = HighContrast();
+            const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
+                SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+            painting = true;
+            const auto result = DrawStatusBarHoverUpdate(surface.Get(), owner.text.Get(), items, damage,
+                width, height, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), appearance, palette,
+                interaction.hovered, keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
+                interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll);
+            painting = false;
+            // A backend rejecting incremental draws retains the existing full
+            // frame path. Do not retry an unsupported update on every move.
+            if (result == E_INVALIDARG)
+            { partialHoverUpdates = false; paintDirty = true; Paint(); return; }
+            if (FAILED(result)) { PaintError(result); return; }
+            const auto commit = owner.composition->Commit();
+            if (FAILED(commit)) PaintError(commit);
+            else SyncTooltip();
         }
         void PaintError(HRESULT result)
         {
@@ -1170,7 +1212,8 @@ struct StatusBar::Impl
                     if (item.icon) hoveredKey = item.icon->key;
                     break;
                 }
-                if (hover != self->interaction.hovered) { self->interaction.hovered = hover; self->paintDirty = true; }
+                const auto previousHover = self->interaction.hovered;
+                self->interaction.hovered = hover;
                 if (hoveredKey != self->hoveredTray && self->owner.tray)
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
@@ -1182,6 +1225,7 @@ struct StatusBar::Impl
                 // A snapshot can change inside Paint. Reconcile then clears the
                 // old tooltip after this event, never reinstating stale text.
                 if (self->paintDirty) self->Paint();
+                else if (hover != previousHover) self->PaintHover(previousHover);
                 else self->SyncTooltip();
                 break;
             }
@@ -1236,8 +1280,15 @@ struct StatusBar::Impl
                 break;
             }
             case WM_MOUSELEAVE:
+            {
                 if (!self->pressedTray.empty()) return 0;
-                [[fallthrough]];
+                const auto previousHover = self->interaction.hovered;
+                self->EndDragFeedback();
+                self->trayDragging = false;
+                self->ClearHover(); self->interaction.CancelPointer();
+                self->PaintHover(previousHover);
+                break;
+            }
             case WM_CANCELMODE:
             case WM_CAPTURECHANGED:
                 self->EndDragFeedback();
@@ -1372,6 +1423,7 @@ void StatusBar::ReleaseGraphicsResources()
         window->backdrop.Reset();
         if (window->target) (void)window->target->SetRoot(nullptr);
         window->surface.Reset(); window->backgroundSurface.Reset();
+        window->partialHoverUpdates = true;
         window->contentVisual.Reset(); window->visual.Reset(); window->mergedOpacity.Reset(); window->target.Reset();
         window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;
     }

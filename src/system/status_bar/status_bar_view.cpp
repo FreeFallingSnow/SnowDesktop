@@ -10,6 +10,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include <dwrite.h>
+#include <dcomp.h>
 #include <shellapi.h>
 #include <wrl/client.h>
 #include <cmath>
@@ -359,9 +360,10 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
-    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll, bool dockQuickSearch)
+    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll, bool dockQuickSearch, const RECT* updateBounds)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
+    if (updateBounds && !trayScroll) return E_INVALIDARG;
     const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock);
     const bool hc = palette.highContrast;
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -397,156 +399,161 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
     {
         format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        const float padding = 12.f * scale;
-        // Keep the whole control group stable while the percentage changes.
-        // Measure with the actual font and DPI instead of reserving a digit count.
-        float percentageWidth = 0;
-        if (std::any_of(items.begin(), items.end(), [](const auto& item) { return !item.batteryPercentageText.empty(); }))
-        {
-            ComPtr<IDWriteTextLayout> percentageLayout;
-            DWRITE_TEXT_METRICS percentageMetrics{};
-            if (FAILED(text->CreateTextLayout(L"100%", 4, format.Get(), 2000.f,
-                    static_cast<float>(h), &percentageLayout)) ||
-                FAILED(percentageLayout->GetMetrics(&percentageMetrics))) return E_FAIL;
-            percentageWidth = percentageMetrics.widthIncludingTrailingWhitespace + 4.f * scale;
-        }
-        const auto extentOf = [&](const StatusBarItem& item) {
-            if (item.key == "controlCenter")
-                return item.glyph.empty() ? (item.controlGlyphs[2].empty() ? 56.f : 84.f) * scale +
-                    (item.batteryPercentageText.empty() ? 0.f : percentageWidth) : 28.f * scale;
-            if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
-            if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
-            auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-            if (item.key == "memory") reserved = L"RAM 100%";
-            if (item.key == "cpu") reserved = L"CPU 100%";
-            if (item.key == "gpu") reserved = L"GPU 100%";
-            // Reserve equal digit advances for the date/time too.
-            if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
-            ComPtr<IDWriteTextLayout> layout;
-            DWRITE_TEXT_METRICS metrics{};
-            if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
-                    format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
-            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
-        };
-        std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex;
-        std::vector<std::size_t> leftIndices, rightIndices, trayIndices;
-        std::vector<LONG> widths(items.size()), rightWidths;
-        LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0;
-        for (std::size_t i = 0; i < items.size(); ++i)
-        {
-            auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
-            if (item.action == StatusBarAction::ShowDesktop) { showDesktopIndex = i; continue; }
-            // Keep the stored standalone preference. Suppress only the duplicate
-            // merged entry, including its spacing, pointer and keyboard target.
-            if (mergedDock && dockQuickSearch && item.key == "quickSearch") continue;
-            widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
-            if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
-            else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
-            else if (item.left) leftIndices.push_back(i);
-            else if (item.icon) { trayIndices.push_back(i); trayWidth += widths[i]; }
-            else
-            {
-                if (item.key == "controlCenter")
-                { controlWidth = widths[i]; controlRightIndex = rightWidths.size(); }
-                rightIndices.push_back(i); rightWidths.push_back(widths[i]);
-            }
-        }
-        const LONG viewportWidth = static_cast<LONG>(w), viewportHeight = static_cast<LONG>(h);
-        const RECT showDesktopBounds = showDesktopIndex ? StatusBarShowDesktopTarget(viewportWidth, viewportHeight, scale) : RECT{};
-        const LONG trailingInset = showDesktopBounds.right - showDesktopBounds.left;
-        const LONG edgePadding = static_cast<LONG>(padding);
-        // Keep the date itself centered. The symmetric reservation protects
-        // its trailing notification button without shifting the date left.
-        if (!mergedDock && !timeNotificationRightAligned &&
-            clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
-            clockWidth = 0;
-        LONG leftLimit = 0, trayMinimum = edgePadding;
-        if (mergedDock || timeNotificationRightAligned)
-        {
-            const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
-                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock, trailingInset);
-            if (clockIndex) items[*clockIndex].bounds = layout.clock;
-            if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
-            for (std::size_t i = 0; i < rightIndices.size(); ++i)
-                items[rightIndices[i]].bounds = layout.right[i];
-            if (mergedDock) leftLimit = layout.center.left - edgePadding;
-            else
-            {
-                leftLimit = viewportWidth - edgePadding;
-                const auto reserve = [&](RECT bounds) {
-                    if (!IsRectEmpty(&bounds)) leftLimit = std::min(leftLimit, bounds.left - edgePadding);
-                };
-                reserve(layout.clock); reserve(layout.notifications);
-                for (const auto& bounds : layout.right) reserve(bounds);
-            }
-            if (mergedDock) trayMinimum = layout.center.right + edgePadding;
-        }
-        else
-        {
-            const LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
-            const auto bounds = StatusBarHorizontalLayout(viewportWidth, viewportHeight,
-                edgePadding, std::span<const LONG>{}, centerWidth, rightWidths, trailingInset);
-            RECT dateAndNotification = bounds[0];
-            if (!IsRectEmpty(&dateAndNotification))
-            {
-                if (clockWidth && clockIndex)
-                {
-                    const LONG dateLeft = dateAndNotification.left + notificationWidth;
-                    items[*clockIndex].bounds = {dateLeft, 0, dateLeft + clockWidth, viewportHeight};
-                    dateAndNotification.left = dateLeft + clockWidth;
-                }
-                if (notificationIndex) items[*notificationIndex].bounds = dateAndNotification;
-            }
-            leftLimit = IsRectEmpty(&bounds[0]) ? viewportWidth - edgePadding :
-                (clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
-            trayMinimum = IsRectEmpty(&bounds[0]) ? edgePadding : bounds[0].right + edgePadding;
-            for (std::size_t i = 0; i < rightIndices.size(); ++i)
-            {
-                items[rightIndices[i]].bounds = bounds[i + 1];
-                if (!IsRectEmpty(&bounds[i + 1])) leftLimit = std::min(leftLimit, bounds[i + 1].left - edgePadding);
-            }
-        }
-        if (!mergedDock && timeNotificationRightAligned && trayWidth > 0)
-            leftLimit -= std::min(trayWidth, static_cast<LONG>(std::ceil(56 * scale))) + edgePadding;
-        LONG leftCursor = edgePadding;
-        for (const auto i : leftIndices)
-            if (leftCursor + widths[i] <= leftLimit)
-            { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
-        // Without a central clock/notification group the pinned tray can use
-        // the center too, but must still leave the left controls their space.
-        if (!mergedDock && (timeNotificationRightAligned || (!clockWidth && !notificationWidth)))
-            trayMinimum = leftCursor + edgePadding;
-        LONG trayEnd = viewportWidth - edgePadding;
-        for (const auto i : rightIndices)
-            if (!IsRectEmpty(&items[i].bounds)) trayEnd = std::min(trayEnd, items[i].bounds.left);
-        if (mergedDock || timeNotificationRightAligned)
-        {
-            if (clockIndex && !IsRectEmpty(&items[*clockIndex].bounds)) trayEnd = std::min(trayEnd, items[*clockIndex].bounds.left);
-            if (notificationIndex && !IsRectEmpty(&items[*notificationIndex].bounds)) trayEnd = std::min(trayEnd, items[*notificationIndex].bounds.left);
-        }
-        const LONG visibleWidth = std::min(trayWidth, std::max(0L, trayEnd - trayMinimum));
-        RECT trayViewport{trayEnd - visibleWidth, 0, trayEnd, viewportHeight};
-        if (mergedDock) trayViewport = StatusBarCompactTarget(trayViewport, scale, false);
         StatusBarTrayScroll localScroll;
         auto& scrolling = trayScroll ? *trayScroll : localScroll;
-        scrolling.Arrange(trayViewport, trayWidth);
-        LONG trayCursor = trayViewport.left - scrolling.offset;
-        for (const auto i : trayIndices)
+        if (!updateBounds)
         {
-            auto& item = items[i];
-            if (!IsRectEmpty(&trayViewport))
+            const float padding = 12.f * scale;
+            // Keep the whole control group stable while the percentage changes.
+            // Measure with the actual font and DPI instead of reserving a digit count.
+            float percentageWidth = 0;
+            if (std::any_of(items.begin(), items.end(), [](const auto& item) { return !item.batteryPercentageText.empty(); }))
             {
-                item.contentBounds = {trayCursor, trayViewport.top, trayCursor + widths[i], trayViewport.bottom};
-                IntersectRect(&item.bounds, &item.contentBounds, &trayViewport);
+                ComPtr<IDWriteTextLayout> percentageLayout;
+                DWRITE_TEXT_METRICS percentageMetrics{};
+                if (FAILED(text->CreateTextLayout(L"100%", 4, format.Get(), 2000.f,
+                        static_cast<float>(h), &percentageLayout)) ||
+                    FAILED(percentageLayout->GetMetrics(&percentageMetrics))) return E_FAIL;
+                percentageWidth = percentageMetrics.widthIncludingTrailingWhitespace + 4.f * scale;
             }
-            trayCursor += widths[i];
+            const auto extentOf = [&](const StatusBarItem& item) {
+                if (item.key == "controlCenter")
+                    return item.glyph.empty() ? (item.controlGlyphs[2].empty() ? 56.f : 84.f) * scale +
+                        (item.batteryPercentageText.empty() ? 0.f : percentageWidth) : 28.f * scale;
+                if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
+                if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
+                auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
+                if (item.key == "memory") reserved = L"RAM 100%";
+                if (item.key == "cpu") reserved = L"CPU 100%";
+                if (item.key == "gpu") reserved = L"GPU 100%";
+                // Reserve equal digit advances for the date/time too.
+                if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
+                ComPtr<IDWriteTextLayout> layout;
+                DWRITE_TEXT_METRICS metrics{};
+                if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
+                        format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
+                const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
+                return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
+            };
+            std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex;
+            std::vector<std::size_t> leftIndices, rightIndices, trayIndices;
+            std::vector<LONG> widths(items.size()), rightWidths;
+            LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0;
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
+                if (item.action == StatusBarAction::ShowDesktop) { showDesktopIndex = i; continue; }
+                // Keep the stored standalone preference. Suppress only the duplicate
+                // merged entry, including its spacing, pointer and keyboard target.
+                if (mergedDock && dockQuickSearch && item.key == "quickSearch") continue;
+                widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
+                if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
+                else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
+                else if (item.left) leftIndices.push_back(i);
+                else if (item.icon) { trayIndices.push_back(i); trayWidth += widths[i]; }
+                else
+                {
+                    if (item.key == "controlCenter")
+                    { controlWidth = widths[i]; controlRightIndex = rightWidths.size(); }
+                    rightIndices.push_back(i); rightWidths.push_back(widths[i]);
+                }
+            }
+            const LONG viewportWidth = static_cast<LONG>(w), viewportHeight = static_cast<LONG>(h);
+            const RECT showDesktopBounds = showDesktopIndex ? StatusBarShowDesktopTarget(viewportWidth, viewportHeight, scale) : RECT{};
+            const LONG trailingInset = showDesktopBounds.right - showDesktopBounds.left;
+            const LONG edgePadding = static_cast<LONG>(padding);
+            // Keep the date itself centered. The symmetric reservation protects
+            // its trailing notification button without shifting the date left.
+            if (!mergedDock && !timeNotificationRightAligned &&
+                clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
+                clockWidth = 0;
+            LONG leftLimit = 0, trayMinimum = edgePadding;
+            if (mergedDock || timeNotificationRightAligned)
+            {
+                const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
+                    edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock, trailingInset);
+                if (clockIndex) items[*clockIndex].bounds = layout.clock;
+                if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
+                for (std::size_t i = 0; i < rightIndices.size(); ++i)
+                    items[rightIndices[i]].bounds = layout.right[i];
+                if (mergedDock) leftLimit = layout.center.left - edgePadding;
+                else
+                {
+                    leftLimit = viewportWidth - edgePadding;
+                    const auto reserve = [&](RECT bounds) {
+                        if (!IsRectEmpty(&bounds)) leftLimit = std::min(leftLimit, bounds.left - edgePadding);
+                    };
+                    reserve(layout.clock); reserve(layout.notifications);
+                    for (const auto& bounds : layout.right) reserve(bounds);
+                }
+                if (mergedDock) trayMinimum = layout.center.right + edgePadding;
+            }
+            else
+            {
+                const LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
+                const auto bounds = StatusBarHorizontalLayout(viewportWidth, viewportHeight,
+                    edgePadding, std::span<const LONG>{}, centerWidth, rightWidths, trailingInset);
+                RECT dateAndNotification = bounds[0];
+                if (!IsRectEmpty(&dateAndNotification))
+                {
+                    if (clockWidth && clockIndex)
+                    {
+                        const LONG dateLeft = dateAndNotification.left + notificationWidth;
+                        items[*clockIndex].bounds = {dateLeft, 0, dateLeft + clockWidth, viewportHeight};
+                        dateAndNotification.left = dateLeft + clockWidth;
+                    }
+                    if (notificationIndex) items[*notificationIndex].bounds = dateAndNotification;
+                }
+                leftLimit = IsRectEmpty(&bounds[0]) ? viewportWidth - edgePadding :
+                    (clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
+                trayMinimum = IsRectEmpty(&bounds[0]) ? edgePadding : bounds[0].right + edgePadding;
+                for (std::size_t i = 0; i < rightIndices.size(); ++i)
+                {
+                    items[rightIndices[i]].bounds = bounds[i + 1];
+                    if (!IsRectEmpty(&bounds[i + 1])) leftLimit = std::min(leftLimit, bounds[i + 1].left - edgePadding);
+                }
+            }
+            if (!mergedDock && timeNotificationRightAligned && trayWidth > 0)
+                leftLimit -= std::min(trayWidth, static_cast<LONG>(std::ceil(56 * scale))) + edgePadding;
+            LONG leftCursor = edgePadding;
+            for (const auto i : leftIndices)
+                if (leftCursor + widths[i] <= leftLimit)
+                { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
+            // Without a central clock/notification group the pinned tray can use
+            // the center too, but must still leave the left controls their space.
+            if (!mergedDock && (timeNotificationRightAligned || (!clockWidth && !notificationWidth)))
+                trayMinimum = leftCursor + edgePadding;
+            LONG trayEnd = viewportWidth - edgePadding;
+            for (const auto i : rightIndices)
+                if (!IsRectEmpty(&items[i].bounds)) trayEnd = std::min(trayEnd, items[i].bounds.left);
+            if (mergedDock || timeNotificationRightAligned)
+            {
+                if (clockIndex && !IsRectEmpty(&items[*clockIndex].bounds)) trayEnd = std::min(trayEnd, items[*clockIndex].bounds.left);
+                if (notificationIndex && !IsRectEmpty(&items[*notificationIndex].bounds)) trayEnd = std::min(trayEnd, items[*notificationIndex].bounds.left);
+            }
+            const LONG visibleWidth = std::min(trayWidth, std::max(0L, trayEnd - trayMinimum));
+            RECT trayViewport{trayEnd - visibleWidth, 0, trayEnd, viewportHeight};
+            if (mergedDock) trayViewport = StatusBarCompactTarget(trayViewport, scale, false);
+            scrolling.Arrange(trayViewport, trayWidth);
+            LONG trayCursor = trayViewport.left - scrolling.offset;
+            for (const auto i : trayIndices)
+            {
+                auto& item = items[i];
+                if (!IsRectEmpty(&trayViewport))
+                {
+                    item.contentBounds = {trayCursor, trayViewport.top, trayCursor + widths[i], trayViewport.bottom};
+                    IntersectRect(&item.bounds, &item.contentBounds, &trayViewport);
+                }
+                trayCursor += widths[i];
+            }
+            if (mergedDock)
+                for (auto& item : items)
+                    item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock" && twoLineClock);
+            // Keep the edge target full-height, including a tall merged Dock strip.
+            if (showDesktopIndex) items[*showDesktopIndex].bounds = showDesktopBounds;
         }
-        if (mergedDock)
-            for (auto& item : items)
-                item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock" && twoLineClock);
-        // Keep the edge target full-height, including a tall merged Dock strip.
-        if (showDesktopIndex) items[*showDesktopIndex].bounds = showDesktopBounds;
+        const RECT trayViewport = scrolling.viewport;
+        const LONG visibleWidth = trayViewport.right - trayViewport.left;
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         context->CreateSolidColorBrush(hc ? palette.highlight :
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
@@ -579,6 +586,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
 
                 continue;
             }
+            RECT intersection{};
+            if (updateBounds && !IntersectRect(&intersection, &item.bounds, updateBounds)) continue;
             if (item.icon && !trayLayer)
             {
                 const auto clip = D2D1::RectF(static_cast<float>(trayViewport.left), static_cast<float>(trayViewport.top),
@@ -714,6 +723,59 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 context->DrawRoundedRectangle(inset, brush.Get(), 1.f);
         }
         if (trayLayer) context->PopLayer();
+    }
+    return S_OK;
+}
+std::array<RECT, 2> StatusBarHoverDamage(const std::vector<StatusBarItem>& items,
+    std::optional<std::size_t> before, std::optional<std::size_t> after, UINT width, UINT height)
+{
+    std::array<RECT, 2> damage{};
+    if (before == after) return damage;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    const auto bounds = [&](std::optional<std::size_t> index) {
+        RECT result{};
+        if (index && *index < items.size() && items[*index].action != StatusBarAction::None &&
+            items[*index].action != StatusBarAction::ShowDesktop)
+            IntersectRect(&result, &items[*index].bounds, &client);
+        return result;
+    };
+    damage = {bounds(before), bounds(after)};
+    RECT intersection{};
+    if (IntersectRect(&intersection, &damage[0], &damage[1]))
+    { UnionRect(&damage[0], &damage[0], &damage[1]); damage[1] = {}; }
+    return damage;
+}
+HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface* surface, IDWriteFactory* text,
+    std::vector<StatusBarItem>& items, const std::array<RECT, 2>& damage,
+    UINT width, UINT height, float scale, const PersonalizationSettings& appearance,
+    const StatusBarPalette& palette, std::optional<std::size_t> hovered,
+    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll& trayScroll)
+{
+    if (!surface) return E_INVALIDARG;
+    for (const RECT& region : damage)
+    {
+        if (IsRectEmpty(&region)) continue;
+        POINT offset{};
+        ComPtr<ID2D1DeviceContext> context;
+        const auto begin = surface->BeginDraw(&region, IID_PPV_ARGS(&context), &offset);
+        if (FAILED(begin)) return begin;
+        context->SetDpi(96, 96);
+        // DComp's offset locates the update rectangle, not the whole surface.
+        // Keep drawing coordinates in the retained full-bar layout.
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(offset.x - region.left), static_cast<float>(offset.y - region.top)));
+        context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+        context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(region.left), static_cast<float>(region.top),
+            static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+        context->Clear(D2D1::ColorF(0, 0.f));
+        const auto result = DrawStatusBarContent(context.Get(), text, items, width, height, scale,
+            appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region);
+        context->PopAxisAlignedClip();
+        context.Reset();
+        const auto ended = surface->EndDraw();
+        if (FAILED(result)) return result;
+        if (FAILED(ended)) return ended;
     }
     return S_OK;
 }
