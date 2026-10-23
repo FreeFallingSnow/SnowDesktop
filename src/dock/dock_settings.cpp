@@ -699,7 +699,10 @@ public:
         const bool retryAppearance = appearanceEnabled &&
             state_->status == snowdesktop::taskbar_hook::kStatusFailed;
         if (alreadyInjected && !retryAppearance)
+        {
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
             return true;
+        }
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
         if ((!alreadyInjected || retryAppearance) &&
@@ -912,7 +915,8 @@ private:
             std::lock_guard lock(mutex_);
             if (!state_ || state_->explorerProcessId != expectedExplorerProcessId) return false;
             snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, ERROR_SUCCESS);
-            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar,
+                state_->enabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) ? 1u : 0u);
             injectedExplorerProcessId_ = expectedExplorerProcessId;
             return true;
         }
@@ -974,7 +978,8 @@ private:
         if (connected)
         {
             injectedExplorerProcessId_ = expectedExplorerProcessId;
-            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar,
+                state_->enabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) ? 1u : 0u);
         }
         return connected;
     }

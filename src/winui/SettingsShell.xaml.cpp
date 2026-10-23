@@ -3368,7 +3368,7 @@ void SettingsShell::ApplyModuleRestrictions()
         const auto element = weak.get(); if (!element) continue;
         const auto control = element.try_as<muxc::Control>(); if (!control) continue;
         bool disable = false;
-        if (!runtimeModulePolicy_.Allows(Module::Taskbar) && (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide" || id == "dock.suppressSystemTaskbar"))
+        if (!runtimeModulePolicy_.Allows(Module::Taskbar) && (id == "taskbar.displayMode" || id == "desktopStyle.taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide" || id == "dock.suppressSystemTaskbar"))
         {
             if (const auto combo = control.try_as<muxc::ComboBox>(); combo && combo.Items().Size() > 2)
                 if (const auto item = combo.Items().GetAt(2).try_as<muxc::ComboBoxItem>()) restrictControl(item);

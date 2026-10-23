@@ -923,7 +923,8 @@ struct DesktopStylePagePresenter::Impl
         {
             choice->control.SelectedIndex(choice->read(general, dock));
             if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 3)
-                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(general.dockEnabled || dock.suppressSystemTaskbar);
+                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(general.runtimeModules.Allows(runtime_modules::Module::Taskbar) &&
+                    (general.dockEnabled || dock.suppressSystemTaskbar));
             choice->row.SetEnabled(hasSnapshot && (!choice->enabled || choice->enabled(general, dock)));
         }
         apply.IsEnabled(hasSnapshot);

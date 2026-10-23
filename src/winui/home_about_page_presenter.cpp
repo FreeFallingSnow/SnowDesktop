@@ -366,7 +366,7 @@ struct HomeAboutPagePresenter::Impl
                  profileSection.root, copyrightSection.root})
             aboutRoot.Children().Append(section);
         muxc::StackPanel creditGroups;
-        creditGroups.Spacing(8);
+        creditGroups.Spacing(24);
         for (const auto* section : {&thirdPartySection, &dataSection,
                  &fontSection, &referenceSection})
         {

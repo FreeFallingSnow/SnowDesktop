@@ -504,7 +504,8 @@ void Service::ClearGeometries()
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
     std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
-    if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return false;
+    // Leaving an existing hover is cleanup, including after policy revocation.
+    if (!runtime_modules::Allowed(runtime_modules::Module::Tray) && action != Activation::Leave) return false;
     Icon icon;
     RECT geometry{};
     {
