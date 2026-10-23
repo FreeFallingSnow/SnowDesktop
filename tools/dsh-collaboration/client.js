@@ -128,6 +128,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    const evidence=record?.tests||[],fact=value=>words['fact_'+value]?t('fact_'+value):value||t('unrecorded'),number=value=>typeof value==='number'&&Number.isFinite(value)?value:t('unrecorded');
    return h('div',{'data-test-evidence':scope},fold(t('testEvidence')+' · '+evidence.length+' / '+(record?.totalCount??t('unrecorded')),h(React.Fragment,null,...evidence.map(item=>{
     const build=item.dependencies||{},inputs=item.runtimeInputs||{},modules=item.runtimeModules||{};
+    if(item.status==='referenced')return h('div',{key:item.id,'data-evidence-id':item.id},fold(item.test+' · '+t('referenceNotExecuted'),h('p',null,t('referenceNotExecuted')),item.id));
     return h('div',{key:item.id,'data-evidence-id':item.id},fold(item.test+' · '+label(item.status)+' · '+precise(item.seconds),h(React.Fragment,null,
      detail(t('result'),label(item.status)),detail(t('inputIdentity'),fact(item.identityStatus)),
      detail(t('buildDependencies'),fact(build.status)+' · '+fact(build.sourceClosure)+' · '+t('sourceReports')+' '+number(build.sourceReports)),

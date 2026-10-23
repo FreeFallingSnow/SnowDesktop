@@ -103,6 +103,7 @@ function appendTestEvidence(target,evidence,scope){
  const number=value=>typeof value==="number"&&Number.isFinite(value)?value:"未记录";
  for(const item of items){
   const row=element("details",null,"test-observation"),build=item.dependencies||{},inputs=item.runtimeInputs||{},modules=item.runtimeModules||{};row.dataset.evidenceId=item.id;
+  if(item.status==="referenced"){retainFold(row,JSON.stringify(["test-observation",item.id]));row.append(element("summary",item.test+" · 引用原结果（本次未执行）"));detail(row,"引用凭据","原 Run 和核对时间见本批引用记录");list.append(row);continue;}
   retainFold(row,JSON.stringify(["test-observation",item.id]));row.append(element("summary",item.test+" · "+label(item.status)+" · "+preciseTime(item.seconds)));
   detail(row,"测试执行",label(item.status),tone(item.status));detail(row,"输入身份",state(item.identityStatus),item.identityStatus==="invalidated"?"bad":"");
   detail(row,"编译依赖",state(build.status)+" · "+state(build.sourceClosure)+" · 编译器报告 "+number(build.sourceReports));

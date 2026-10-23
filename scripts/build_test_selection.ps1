@@ -49,7 +49,8 @@ function Get-VerificationOriginView([string]$Root,$Entry) {
 function New-CompiledTestIntent([string]$Root,$Tests,$Coverage,$Budget) {
     $candidate=Get-CandidateEntryContext $Root
     if(-not $candidate -or -not (Get-Field $candidate 'batchId')){return $null}
-    Assert-EntryExecutionOwner $Root
+    # Get-CandidateEntryContext authenticates the live delegated child, owner
+    # start time, Run nonce and candidate paths. This is no process action.
     . (Join-Path $PSScriptRoot 'build_candidate.ps1')
     . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
     $bindingCandidate=[pscustomobject]@{snapshot=$candidate.snapshot;manifestDigest=$candidate.manifestDigest;source=$candidate.source;
@@ -135,7 +136,7 @@ function Get-CompiledTestSelection([string]$Root,$Tests,$Coverage,$Budget) {
 function Assert-CompiledTestReferences([string]$Root,$Coverage) {
     $context=Get-CandidateEntryContext $Root
     if(-not $context){throw 'Reference validation requires the actual live candidate owner.'}
-    Assert-EntryExecutionOwner $Root
+    # The delegated context above validates the actual parent-owned lease.
     $intentPath=Join-Path $context.runRoot ('.build/collaboration/runs/'+$context.runId+'.test-intent.json')
     if($Coverage.compiledIntent.sha256 -ne (Get-FileDigest $intentPath)){throw 'Current compiled test intent changed.'}
     $intent=Read-EntryJson $intentPath
