@@ -277,6 +277,7 @@ const post=(key,importance)=>command('event-post','synthetic-peer',['-Target','*
 const dispose=()=>{while(disposers.length){const disposer=disposers.pop();if(typeof disposer==='function')disposer();}};
 let result;
 try{
+ await command('task-open','synthetic-peer',['-TaskName','Isolated cold-session sender']);
  apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:mode!=='disabled'});
  await hooks.get('tools/pre-execute')({agent:released,name:'read'},()=>null);hooks.get('agent/disposed')({agent:released});
  const registered=notices.length,currentBefore=JSON.stringify(bridge.state().current);
