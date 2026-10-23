@@ -1,5 +1,7 @@
 # SnowDesktop DSH 协作插件
 
+0.2.10 将标准 `write` / `edit` 的编辑许可校验接入 `tools/execute`。宿主的 `fs/*-intent` 单决策槽继续由文件观察策略提供版本保护；插件不接管该槽。运行中的旧插件仍需正常重载，实际 Agent 的许可验收与隔离 SDK 检查分别记录。
+
 0.2.9 在验证页区分本次执行与正常管线引用：引用项显示原 Run、核对时间和请求凭据，不增加本次执行、通过或重试次数。宿主无需更改，旧看板缺少这些可选字段时沿用原显示。
 
 0.2.8 在验证页增加“引用既有结果”，与原测试执行分开显示请求任务、核对时间、原 Run、测试及摘要。
@@ -14,7 +16,7 @@
 
 此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。运行接口按本机 DSH `0.2.1-rc.2` 随包的插件、工具、文件写入与 Typert API 编写；其他版本须重新核对接口。
 
-插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `fs/write-intent` / `fs/edit-intent` 在受支持文件写入前校验当前批次、编辑轮次和路径归属。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
+插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
 悬浮窗注册到 DSH 的 `shell.overlay`，使用宿主 React、语言和主题。拖动标题栏可自由移动；拖动边缘或角落可调整宽高。聚焦标题栏或右下角后，可用方向键微调（Shift 加大步幅）。位置、大小、收起和查看偏好在当前客户端保存，窗口缩小时保持标题栏可见，兼容旧版位置偏好。没有“位置”轮换按钮。导航用蓝色，执行、等待和结果使用宿主语义色；容器继承宿主深浅主题，强调色按宿主实际 `color-scheme` 选择，手动主题切换不依赖系统外观偏好。只保存查看偏好；不加载 iframe，不在浏览器访问其他 localhost 服务，不提供执行或确认按钮。Host 读取前核对本仓库服务回执中的实例 nonce，拒绝模拟服务、错误监听者和重定向。
 
@@ -43,7 +45,11 @@
 {"action":"install_bundle","target":"D:\\Code\\Other\\SnowDesktop\\tools\\dsh-collaboration"}
 ```
 
-核对返回的 application 和 warnings，再用 cordis_inspect_query 检查服务 snowCollaboration.snapshot、工具 snow_collaboration、fs/write-intent 监听以及 Client shell.overlay 注册。只有 applied 表示本轮已生效；restart-required、failed 或 overridden 需要按实际返回处理。更换已安装包后可能需要重启，不依据相同 slot ID 声称加载了新版。不得通过手工编辑 profile、安装目录或拼接包管理器命令代替安装接口。
+核对返回的 application 和 warnings，再用 cordis_inspect_query 检查服务 snowCollaboration.snapshot、工具 snow_collaboration、tools/execute 监听以及 Client shell.overlay 注册。只有 applied 表示本轮已生效；restart-required、failed 或 overridden 需要按实际返回处理。更换已安装包后可能需要重启，不依据相同 slot ID 声称加载了新版。不得通过手工编辑 profile、安装目录或拼接包管理器命令代替安装接口。
+
+本机 DSH 桌面端也可通过自带插件管理页安装或替换本地目录（0.2.9 已按此方式实际替换旧插件并启用）：在左侧导航打开“插件”，通过插件管理器把协作插件安装或替换为代码来源 `D:\Code\Other\SnowDesktop\tools\dsh-collaboration` 的本地目录并立即启用；该方式同样不要求手改宿主、profile 或安装目录。安装后核对插件详情页版本与目标包版本一致（当前为 `0.2.10`）、“来源信息 → 代码来源”指向该本地目录、“包含的组件”显示“共 1 个 · 1 运行中”，且启用开关处于开启状态。
+
+更新本地目录中的源码后，管理页版本与悬浮窗实际版本必须分别核对：管理页的“当前版本”只代表插件包版本，悬浮窗页脚显示当前客户端实际加载的版本。0.2.9 首次替换并启用后，管理页已显示 0.2.9，悬浮窗仍显示 0.2.2，直到 DSH 重新运行后才显示 0.2.9；因此不能仅凭管理页版本认定加载成功，须以悬浮窗页脚（面板 `data-version`）或等价运行回执确认实际加载，遇到 restart-required 或失败提示时按提示处理。
 
 当前 Codex 连接没有 DSH 的 plugin_manager/cordis_inspect 接口；仓库内语法和原生桥接回归不能替代 DSH 安装、真实 UI 和宿主事件验收。
 
@@ -59,7 +65,7 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 新建和已有存活 Agent 在进入本仓库时补接任务；调查登记不占编辑权。工具读取之前也核对是否已登记。首次写入前必须通过 begin 和 claim；未登记、未 claim、已就绪、已冻结及已结束的轮次都不能通过写入校验。插件保存自己实际取得的批次和修订，外部重开不能使旧许可自动变成新许可；插件重载后也必须显式重新 begin，不能从状态文件静默接收编辑权。任务 ID 从 Agent 身份生成，避免直接以任意用户文本作路径或 shell 参数。结构化参数通过 PowerShell argv 传递，不经过 shell 拼接。
 
-`fs/write-intent` / `fs/edit-intent` 覆盖使用 DSH 文件系统接口的新建、覆盖、编辑及字符串替换写入。普通外部编辑器、直接文件系统调用和任意 shell 脚本没有接入这些事件，插件不能据此声称拥有操作系统级写保护。现有 AGENTS.md 与构建入口仍约束这些动作。点时校验不替代路径授权、当前修订与实际执行边界。
+`tools/execute` 校验标准 `write` / `edit` 工具的新建、覆盖及字符串替换写入，包括相对路径和经过链接解析的目标。其他自定义工具、普通外部编辑器、直接文件系统调用和任意 shell 脚本未接入本校验，插件不能据此声称拥有操作系统级写保护。现有 AGENTS.md 与构建入口仍约束这些动作。点时校验不替代路径授权、当前修订与实际执行边界。
 
 有意义的进展由 Agent 调用 progress 汇报；60 秒心跳只根据实际工具完成事件补充最近活动，不把心跳报成模型已向用户说明。事件只读显示与 adapter 确认分别记录；只有 Agent 显式调用 acknowledge 才写 agent 确认。注入的事件是项目数据，不增加用户授权。插件不提供给其他聊天发消息、撤销他人登记、恢复他人批次或发布的工具。
 
