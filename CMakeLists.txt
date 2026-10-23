@@ -1956,7 +1956,7 @@ if (BUILD_TESTING)
             src/widget/preview/widget_preview_stage.cpp
             src/common/l10n.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 d3d11 dwrite dxgi dxguid gdi32 ole32 user32 windowscodecs
+        LINK_LIBRARIES d2d1 d3d11 dcomp dwrite dxgi dxguid gdi32 ole32 user32 windowscodecs
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract render settings status-bar)
 
