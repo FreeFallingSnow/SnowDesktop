@@ -43,32 +43,44 @@ bool IsStartWindow(HWND window) noexcept
     return filename && _wcsicmp(filename + 1, L"StartMenuExperienceHost.exe") == 0;
 }
 
-HWND FindStartWindow()
+HWND FindVisibleStartWindow()
 {
     HWND result = nullptr;
     EnumWindows([](HWND window, LPARAM data) -> BOOL {
-        if (!IsStartWindow(window)) return TRUE;
+        if (!IsVisible(window) || !IsStartWindow(window)) return TRUE;
         *reinterpret_cast<HWND*>(data) = window;
         return FALSE;
     }, reinterpret_cast<LPARAM>(&result));
     return result;
 }
 
-void ReportFallback(DWORD error)
+void ReportFallback(DWORD error, const start_menu::Request* request, HWND window)
 {
-    const std::wstring text = L"[DockStartMenu] native fallback; error=" + std::to_wstring(error);
-    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, text.c_str(), DiagnosticLogLevel::Warning);
+    wchar_t text[768]{};
+    swprintf_s(text, L"[DockStartMenu] native fallback; error=%lu window=%p status=%ld stage=%ld ticks=%ld receiverError=%ld root=%.95ls frame=%.95ls size=%ld,%ld",
+        error, window, request ? request->status : -1, request ? request->stage : -1,
+        request ? request->ticks : 0, request ? request->error : 0,
+        request ? request->rootClass : L"", request ? request->frameClass : L"",
+        request ? request->measuredSize.cx : 0, request ? request->measuredSize.cy : 0);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, text, DiagnosticLogLevel::Warning);
 }
 }
 
 struct NativeStartMenu::Impl
 {
-    std::atomic_bool active{false}, dismiss{false};
+    std::atomic_bool active{false}, dismiss{false}, positioningDisabled{false};
     std::atomic<HMONITOR> monitor{nullptr};
-    std::atomic<HWND> menu{nullptr};
     std::jthread worker;
     std::mutex waitMutex;
     std::condition_variable_any wake;
+    mutable std::mutex boundsMutex;
+    RECT bounds{};
+
+    void PublishHitBounds(const RECT& value)
+    {
+        std::lock_guard lock(boundsMutex);
+        bounds = value;
+    }
 
     bool Pause(std::stop_token stop, int ms)
     {
@@ -90,8 +102,8 @@ struct NativeStartMenu::Impl
         {
             // A pre-existing native menu belongs to its own input session.
             // This button press only toggles it closed, without relocating it.
-            window = FindStartWindow();
-            if (window && IsVisible(window))
+            window = FindVisibleStartWindow();
+            if (window)
             {
                 NativeStartMenu::Toggle();
                 invoked = true;
@@ -130,7 +142,7 @@ struct NativeStartMenu::Impl
                             const auto attach = [&]() -> bool {
                                 DWORD target = 0;
                                 const DWORD thread = GetWindowThreadProcessId(window, &target);
-                                if (!thread || !IsStartWindow(window)) return false;
+                                if (!thread || !IsVisible(window) || !IsStartWindow(window)) return false;
                                 request->target = target;
                                 MemoryBarrier();
                                 HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, hookProc, module, thread);
@@ -142,9 +154,10 @@ struct NativeStartMenu::Impl
                                 UnhookWindowsHookEx(hook);
                                 return delivered && request->status != Pending && request->status != Unsupported;
                             };
-                            bool attached = window && attach();
-                            if (window && !attached) failure = ERROR_NOT_SUPPORTED;
-                            else if (!stop.stop_requested())
+                            // A hidden CoreWindow can belong to a cached or different
+                            // Start surface. Bind only the menu shown by this press.
+                            bool attached = false;
+                            if (!stop.stop_requested())
                             {
                                 invoked = NativeStartMenu::Toggle();
                                 if (!invoked) failure = ERROR_ACCESS_DENIED;
@@ -162,16 +175,21 @@ struct NativeStartMenu::Impl
                                     }
                                     if (!attached)
                                     {
-                                        window = FindStartWindow();
+                                        window = FindVisibleStartWindow();
                                         if (window)
                                         {
                                             attached = attach();
                                             if (!attached) { failure = ERROR_NOT_SUPPORTED; break; }
                                         }
                                     }
-                                    menu.store(window, std::memory_order_release);
                                     if (attached && !IsWindow(window))
                                     { failure = ERROR_INVALID_WINDOW_HANDLE; break; }
+                                    if (attached)
+                                    {
+                                        failure = PulsePlacement(window);
+                                        if (failure) break;
+                                        PublishHitBounds(ReadBounds(*request));
+                                    }
                                     const LONG status = request->status;
                                     if (status == Unsupported)
                                     { failure = static_cast<DWORD>(request->error); break; }
@@ -199,6 +217,14 @@ struct NativeStartMenu::Impl
         }
         catch (...) { failure = ERROR_UNHANDLED_EXCEPTION; }
 
+        // Preserve the failing phase before cleanup changes the receiver status.
+        if (failure)
+        {
+            ReportFallback(failure, request, window);
+            // Do not repeatedly enter an unresponsive Shell bridge in this run.
+            if (failure == ERROR_TIMEOUT) positioningDisabled.store(true);
+        }
+        PublishHitBounds(RECT{});
         if (request)
         {
             InterlockedExchange(&request->active, FALSE);
@@ -217,12 +243,10 @@ struct NativeStartMenu::Impl
             GetWindowThreadProcessId(window, &startProcess);
             if (foregroundProcess == startProcess) NativeStartMenu::Toggle();
         }
-        if (failure) ReportFallback(failure);
         if (!invoked && !stop.stop_requested()) NativeStartMenu::Toggle();
         if (request) UnmapViewOfFile(request);
         if (mapping) CloseHandle(mapping);
         if (module) FreeLibrary(module);
-        menu.store(nullptr, std::memory_order_release);
         active.store(false, std::memory_order_release);
     }
 };
@@ -237,7 +261,8 @@ NativeStartMenu::~NativeStartMenu()
 
 bool NativeStartMenu::Open(HWND owner, HMONITOR monitor, const start_menu::Placement& placement)
 {
-    if (Active() || !owner || !monitor || !start_menu::Position(placement, SIZE{1, 1})) return false;
+    if (Active() || impl_->positioningDisabled.load() || !owner || !monitor ||
+        !start_menu::Position(placement, SIZE{1, 1})) return false;
     if (impl_->worker.joinable()) impl_->worker.join();
     impl_->monitor.store(monitor);
     impl_->dismiss.store(false);
@@ -261,15 +286,11 @@ bool NativeStartMenu::Active() const noexcept { return impl_->active.load(std::m
 HMONITOR NativeStartMenu::Monitor() const noexcept { return Active() ? impl_->monitor.load() : nullptr; }
 bool NativeStartMenu::ContainsPoint(POINT screen) const noexcept
 {
-    const HWND window = impl_->menu.load(std::memory_order_acquire);
-    if (!Active() || !window) return false;
-    // Use the real hit window, not the potentially fullscreen transparent host.
-    const HWND hit = GetAncestor(WindowFromPoint(screen), GA_ROOT);
-    if (hit == window) return true;
-    DWORD hitProcess = 0, menuProcess = 0;
-    GetWindowThreadProcessId(hit, &hitProcess);
-    GetWindowThreadProcessId(window, &menuProcess);
-    return hitProcess && hitProcess == menuProcess;
+    if (!Active()) return false;
+    // Desktop input handling reads a local copy of the validated visible frame.
+    // It does not interrogate an external fullscreen window during dismissal.
+    std::lock_guard lock(impl_->boundsMutex);
+    return PtInRect(&impl_->bounds, screen) != FALSE;
 }
 bool NativeStartMenu::Toggle() noexcept
 {

@@ -49,6 +49,7 @@ struct Session
 
     void Restore() noexcept
     {
+        PublishBounds(*request, RECT{});
         try
         {
             if (frame && group && frame.RenderTransform() == group)
@@ -117,6 +118,7 @@ struct Session
 
     bool Apply()
     {
+        InterlockedExchange(&request->stage, ReadingRoot);
         RECT bounds{};
         if (!GetWindowRect(window, &bounds)) return Fail(ERROR_INVALID_WINDOW_HANDLE);
         xaml::FrameworkElement root{nullptr};
@@ -126,9 +128,11 @@ struct Session
             if (current) root = current.Content().try_as<xaml::FrameworkElement>();
         }
         catch (...) {} // Compact native hosts need no XAML projection.
+        if (root) wcsncpy_s(request->rootClass, winrt::get_class_name(root).c_str(), _TRUNCATE);
         const bool retained = frame && root == visualRoot &&
             (frame == root || media::VisualTreeHelper::GetParent(frame));
         auto candidate = retained ? frame : (root ? FindFrame(root) : nullptr);
+        if (candidate) wcsncpy_s(request->frameClass, winrt::get_class_name(candidate).c_str(), _TRUNCATE);
         if (!candidate)
         {
             // Windows 10's compact Start host can expose its actual menu as
@@ -137,13 +141,17 @@ struct Session
             if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONULL), &info))
                 return Fail(ERROR_INVALID_MONITOR_HANDLE);
             const SIZE size{bounds.right - bounds.left, bounds.bottom - bounds.top};
+            request->measuredSize = size;
             if (size.cx < 200 || size.cy < 200 ||
                 size.cx >= info.rcMonitor.right - info.rcMonitor.left - 32 ||
                 size.cy >= info.rcMonitor.bottom - info.rcMonitor.top - 32)
                 return GetTickCount64() - started < 750 ? true : Fail(ERROR_NOT_SUPPORTED);
             const auto target = Position(placement, size);
             if (!target) return Fail(ERROR_INSUFFICIENT_BUFFER);
+            InterlockedExchange(&request->stage, MovingHost);
             if (!MoveWindowTo(*target)) return Fail(ERROR_INVALID_WINDOW_HANDLE);
+            PublishBounds(*request, *target);
+            InterlockedExchange(&request->stage, PlacementApplied);
             InterlockedExchange(&request->status, Positioned);
             return true;
         }
@@ -153,7 +161,11 @@ struct Session
             if (group && frame.RenderTransform() == group) frame.RenderTransform(original);
             frame = nullptr; group = nullptr; translation = nullptr; original = nullptr;
         }
-        if (candidate.ActualWidth() <= 0 || candidate.ActualHeight() <= 0) return true;
+        if (candidate.ActualWidth() <= 0 || candidate.ActualHeight() <= 0)
+        {
+            InterlockedExchange(&request->stage, WaitingForLayout);
+            return true;
+        }
 
         // Rehost on the invoking monitor before measuring XAML, so its DPI and
         // responsive layout settle on that monitor. The following ticks verify
@@ -163,6 +175,7 @@ struct Session
             return Fail(ERROR_INVALID_MONITOR_HANDLE);
         if (!EqualRect(&info.rcMonitor, &placement.screen))
         {
+            InterlockedExchange(&request->stage, MovingHost);
             if (!MoveWindowTo(placement.screen)) return Fail(ERROR_NOT_SUPPORTED);
             return true;
         }
@@ -192,6 +205,7 @@ struct Session
         const auto rect = measure();
         const SIZE size{static_cast<LONG>(std::ceil(rect.Width * scale)),
             static_cast<LONG>(std::ceil(rect.Height * scale))};
+        request->measuredSize = size;
         const auto target = Position(placement, size);
         if (!target) return Fail(ERROR_INSUFFICIENT_BUFFER);
         RECT client{};
@@ -200,12 +214,15 @@ struct Session
         if (target->left < client.left || target->top < client.top ||
             target->right > client.right || target->bottom > client.bottom)
             return Fail(ERROR_NOT_SUPPORTED);
+        InterlockedExchange(&request->stage, MovingFrame);
         translation.X(translation.X() + (target->left - origin.x) / scale - rect.X);
         translation.Y(translation.Y() + (target->top - origin.y) / scale - rect.Y);
         const auto placed = measure();
         if (std::abs(origin.x + placed.X * scale - target->left) > 3 ||
             std::abs(origin.y + placed.Y * scale - target->top) > 3)
             return GetTickCount64() - started < 1500 ? true : Fail(ERROR_NOT_SUPPORTED);
+        PublishBounds(*request, *target);
+        InterlockedExchange(&request->stage, PlacementApplied);
         InterlockedExchange(&request->status, Positioned);
         return true;
     }
@@ -213,6 +230,7 @@ struct Session
     bool Tick()
     {
         if (moving) return true;
+        InterlockedIncrement(&request->ticks);
         const ULONGLONG now = GetTickCount64();
         const auto beat = static_cast<ULONGLONG>(InterlockedCompareExchange64(&request->heartbeat, 0, 0));
         if (!request->active || beat > now || now - beat > 3000 ||
@@ -301,11 +319,14 @@ void Receive(HWND window, DWORD owner, std::uint64_t token) noexcept
         session->placement = request.placement;
         if (!SetWindowSubclass(window, Subclass, kSubclass, reinterpret_cast<DWORD_PTR>(session.get())))
         { session->Fail(ERROR_NOT_SUPPORTED); return; }
-        if (!SetTimer(window, kTimer, 50, nullptr))
+        // The host drives placement with bounded messages. This slower local
+        // timer is retained for cleanup if the owner disappears unexpectedly.
+        if (!SetTimer(window, kTimer, 250, nullptr))
         {
             RemoveWindowSubclass(window, Subclass, kSubclass);
             session->Fail(ERROR_NOT_ENOUGH_MEMORY); return;
         }
+        InterlockedExchange(&request.stage, Attached);
         InterlockedExchange(&request.status, Prepared);
         session.release();
     }

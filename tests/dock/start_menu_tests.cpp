@@ -3,6 +3,7 @@
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include <filesystem>
 #include <iostream>
+#include <thread>
 
 int RunDockStartMenuTests()
 {
@@ -95,16 +96,22 @@ int RunDockStartMenuTests()
         CWPSTRUCT invocation{static_cast<LPARAM>(token), process, message, window};
         receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
         check(request->status == Prepared, "production receiver acknowledges only a validated owner/window request");
-        SendMessageW(window, message, 0, 0);
+        check(PulsePlacement(window) == ERROR_SUCCESS,
+            "production worker pulse advances a CoreWindow-style receiver without pumping WM_TIMER");
         RECT placed{}; GetWindowRect(window, &placed);
         const auto expected = Position(request->placement, {240, 260});
         check(request->status == Positioned && equals(expected, placed),
             "compact adapter positions the actual HWND through the production subclass");
+        const RECT hitBounds = ReadBounds(*request);
+        check(request->stage == PlacementApplied && request->ticks > 0 && EqualRect(&hitBounds, &placed),
+            "receiver publishes the actual menu rectangle for local desktop hit testing");
         InterlockedExchange(&request->active, FALSE);
         SendMessageW(window, message, 0, 0);
         RECT restored{}; GetWindowRect(window, &restored);
         check(request->status == Closed && EqualRect(&restored, &original),
             "ending the invocation restores the exact original native window geometry");
+        const RECT closedBounds = ReadBounds(*request);
+        check(IsRectEmpty(&closedBounds), "closed receiver clears the fullscreen-host hit region");
 
         request->active = TRUE; request->status = Pending; request->target = process + 1;
         receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
@@ -118,6 +125,39 @@ int RunDockStartMenuTests()
         GetWindowRect(window, &restored);
         check(request->status == Closed && EqualRect(&restored, &original),
             "an expired owner heartbeat restores geometry even without a graceful host close");
+
+        request->active = TRUE; request->status = Pending; request->version = 1;
+        receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
+        check(request->status == Pending, "a previous protocol cannot acquire the new placement receiver");
+        request->version = 2;
+        InterlockedExchange64(&request->heartbeat, static_cast<LONG64>(GetTickCount64()));
+        receiver(HC_ACTION, 0, reinterpret_cast<LPARAM>(&invocation));
+        const HANDLE pulseFinished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        check(pulseFinished != nullptr, "create private pulse completion signal");
+        if (pulseFinished)
+        {
+            DWORD pulseError = ERROR_SUCCESS;
+            std::thread stalledPulse([&] {
+                pulseError = PulsePlacement(window);
+                SetEvent(pulseFinished);
+            });
+            // Intentionally do not dispatch this private window's messages:
+            // the exact production send must time out rather than wait forever.
+            const DWORD completed = WaitForSingleObject(pulseFinished, 1500);
+            check(completed == WAIT_OBJECT_0, "an unresponsive receiver cannot indefinitely block the placement worker");
+            if (completed != WAIT_OBJECT_0)
+            {
+                // Bound the fixture's failure path too, by servicing the send.
+                MSG pending{};
+                PeekMessageW(&pending, nullptr, 0, 0, PM_NOREMOVE);
+            }
+            stalledPulse.join();
+            check(pulseError == ERROR_TIMEOUT && request->status == Prepared,
+                "a stalled receiver reports timeout without claiming successful placement");
+            CloseHandle(pulseFinished);
+        }
+        InterlockedExchange(&request->active, FALSE);
+        PulsePlacement(window);
         UnmapViewOfFile(request);
     }
     if (mapping) CloseHandle(mapping);
