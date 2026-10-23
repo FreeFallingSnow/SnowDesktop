@@ -394,7 +394,9 @@ void artifacts(const fs::path& repo,bool slotReference) {
 }
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"x",true,fixture_parent(repo));prepare(c,repo,control);
-    const auto snapshot=capture(c);const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
+    const auto snapshot=capture(c);
+    const auto pendingSnapshot=control.empty()?capture(c):std::string{};
+    const auto gate=c.stateRoot/L"candidate-gate";write(gate,"hold");
     const auto probe=c.stateRoot/L"candidate-read-probe";fs::create_directories(probe);
     const Env env={{L"CANDIDATE_FIXTURE_GATE",gate.wstring()},{L"CANDIDATE_FIXTURE_PROBE",probe.wstring()}};
     const auto first=submit(c,execution(snapshot),env);
@@ -429,7 +431,6 @@ void scenario(const fs::path& repo,const std::string& control) {
     require(writeAttempt.code==9,"Active candidate source accepted a concurrent writer");
     if(!control.empty())return;
     // A cached wait identity must never authorize changed metadata on admission.
-    const auto pendingSnapshot=capture(c);
     const auto invalidated=submit(c,execution(pendingSnapshot),env);
     candidate_until(c,invalidated,[&]{return view(c,invalidated).at("record").at("waitingFor").str().find("Candidate slot is busy")!=std::string::npos;},15,
         "Metadata-change candidate did not reach its occupied slot");
