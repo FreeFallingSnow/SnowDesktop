@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace snowdesktop::start_menu
 {
@@ -32,13 +34,12 @@ public:
         requested_.compare_exchange_strong(empty, now + 1);
     }
     bool Requested() const noexcept { return requested_.load() != 0; }
-    bool Take(std::uint64_t now, bool visible, bool foreground) noexcept
+    bool Take(bool visible, bool foreground) noexcept
     {
         const auto request = requested_.load();
-        if (!request || sent_ || !visible) return false;
-        // A normal activating click can already be dismissing native Start.
-        // Allow it to settle, but do not abandon a nonactivating Dock/bar click.
-        if (!foreground && now - (request - 1) < 150) return false;
+        // Win is a toggle, so never send it after another surface has taken
+        // foreground. The native HWND can remain visible during dismissal.
+        if (!request || sent_ || !visible || !foreground) return false;
         sent_ = true;
         return true;
     }
@@ -86,13 +87,25 @@ public:
         auto expected = Phase::Idle;
         if (!phase_.compare_exchange_strong(expected, Phase::Running)) return false;
         cancelled_.store(false);
+        continuation_ = {};
         return true;
     }
     void AbortBegin() noexcept { phase_.store(Phase::Idle); }
     void Cancel() noexcept { cancelled_.store(true); }
-    bool Pending() const noexcept { return phase_.load() != Phase::Idle; }
-    void Complete(bool fallback) noexcept
+    // UI only. A replacement surface must wait for native dismissal and Dock
+    // cleanup, otherwise its first focus request competes with Start.
+    bool Defer(std::function<void()> action)
     {
+        if (!Pending()) return false;
+        continuation_ = std::move(action);
+        Cancel();
+        return true;
+    }
+    void DiscardContinuation() noexcept { continuation_ = {}; }
+    bool Pending() const noexcept { return phase_.load() != Phase::Idle; }
+    void Complete(bool fallback, bool dismissed = true) noexcept
+    {
+        dismissed_.store(dismissed);
         phase_.store(fallback ? Phase::Fallback : Phase::Completed);
     }
     template<class ReleaseHold, class NativeFallback>
@@ -107,13 +120,18 @@ public:
             // Re-entrant cancellation during UI cleanup must suppress input.
             if (completed == Phase::Fallback && !cancelled_.load()) nativeFallback();
         }
-        catch (...) { phase_.store(Phase::Idle); throw; }
+        catch (...) { continuation_ = {}; phase_.store(Phase::Idle); throw; }
+        auto next = std::move(continuation_);
+        const bool dismissed = dismissed_.load();
         phase_.store(Phase::Idle);
+        if (dismissed && next) next();
         return true;
     }
 private:
     enum class Phase { Idle, Running, Completed, Fallback, Finishing };
     std::atomic<Phase> phase_{Phase::Idle};
     std::atomic_bool cancelled_{false};
+    std::atomic_bool dismissed_{false};
+    std::function<void()> continuation_; // UI only, including Finish.
 };
 }

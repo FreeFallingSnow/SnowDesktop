@@ -24,15 +24,16 @@ int RunDockStartMenuTests()
 
     CloseRequest close;
     close.Request(1000);
-    check(!close.Take(1000, false, false), "a hidden menu cannot be reopened by a close request");
-    check(!close.Take(1100, true, false), "an activating click has a bounded native dismissal grace");
+    check(!close.Take(false, false), "a hidden menu cannot be reopened by a close request");
+    check(!close.Take(true, false), "an activating click must not receive a second Win toggle");
     close.Request(1100);
-    check(close.Take(1150, true, false),
-        "loss of Start foreground cannot abandon an owned Dock/bar dismissal after the grace");
-    check(!close.Take(1200, true, true), "repeated clicks cannot send a second Win key while native close is pending");
+    check(!close.Take(true, false),
+        "a stale visible native HWND cannot reopen Start after a replacement surface took foreground");
+    check(close.Take(true, true), "a no-activate Dock/bar click closes Start while it still owns foreground");
+    check(!close.Take(true, true), "repeated clicks cannot send a second Win key while native close is pending");
     check(!close.Expired(2499) && close.Expired(2500), "a close that never completes has a bounded deadline");
     close.Reset(); close.Request(100);
-    check(close.Take(100, true, true), "a nonactivating click can immediately close the foreground native menu");
+    check(close.Take(true, true), "a nonactivating click can immediately close the foreground native menu");
     // Production worker/UI handoff, with only the Shell input and Dock window
     // callbacks replaced. Completion cannot permit another open until the old
     // promotion has been released, even if a click arrives before the UI timer.
@@ -86,6 +87,41 @@ int RunDockStartMenuTests()
     check(!lifecycle.Pending() && !lifecycle.Finish(release, fallback),
         "thread creation failure leaves no deferred input or UI hold");
 
+    // This is the production UI handoff used by Dock search and bar menus.
+    // Only native completion and surface-opening callbacks are substituted.
+    unsigned surfaces = 0;
+    held = true;
+    check(lifecycle.Begin(), "start a menu to be replaced by an owned surface");
+    check(lifecycle.Defer([&] {
+        check(!held && !lifecycle.Pending(), "replacement opens only after Dock cleanup and invocation release");
+        ++surfaces;
+    }), "a surface request is deferred during native Start");
+    check(!lifecycle.Finish(release, fallback) && surfaces == 0,
+        "a surface cannot steal foreground while native dismissal is still running");
+    lifecycle.Complete(false);
+    check(lifecycle.Finish(release, fallback) && surfaces == 1 && fallbacks == 1,
+        "native dismissal opens the requested surface once without reopening Start");
+    check(!lifecycle.Finish(release, fallback) && surfaces == 1,
+        "later UI ticks cannot replay a completed surface handoff");
+    held = true;
+    check(lifecycle.Begin(), "start another native session for superseded actions");
+    lifecycle.Defer([&] { ++surfaces; });
+    lifecycle.Defer([&] { surfaces += 10; });
+    lifecycle.Complete(false);
+    check(lifecycle.Finish(release, fallback) && surfaces == 11,
+        "a later bar action replaces the first pending surface rather than opening both");
+    check(lifecycle.Begin(), "start a session whose pending handoff is cancelled by outside input");
+    lifecycle.Defer([&] { ++surfaces; });
+    lifecycle.DiscardContinuation();
+    lifecycle.Complete(false);
+    check(lifecycle.Finish(release, fallback) && surfaces == 11,
+        "an outside click cannot be followed by a delayed popup opening");
+    check(lifecycle.Begin(), "start a native session whose dismissal times out");
+    lifecycle.Defer([&] { ++surfaces; });
+    lifecycle.Complete(false, false);
+    check(lifecycle.Finish(release, fallback) && surfaces == 11,
+        "unconfirmed native dismissal cannot open a competing surface");
+
     // Production native visibility wait: the lease must outlive the visible
     // menu, including a transient hidden observation.
     std::uint64_t now = 0, leaseUntil = 0;
@@ -113,19 +149,19 @@ int RunDockStartMenuTests()
         "cancellation exits the native hold without waiting for another native action");
 
     // Run the production close decision inside the production visibility loop.
-    // Focus may already belong to the Dock, but protection ends on native
-    // disappearance, not on the request. Only Win input/clock are substituted.
+    // A replacement surface can already own foreground while the native HWND
+    // still reports visible. Only Win input/clock are substituted here.
     now = 0; renewals = 0; close.Reset();
     unsigned closeInputs = 0;
     const auto closeResult = WaitForDismissal(false, [&] {
         if (now == 200) close.Request(now);
         const bool visible = now < 500;
-        if (close.Take(now, visible, false)) ++closeInputs;
+        if (close.Take(visible, false)) ++closeInputs;
         check(now < leaseUntil, "the close request cannot release protection before native Start disappears");
         return visible;
     }, renew, wait, clock);
-    check(closeResult == Dismissal::Closed && now == 550 && closeInputs == 1 && renewals == 2,
-        "a Dock/bar close with different foreground sends once and retains protection until native dismissal");
+    check(closeResult == Dismissal::Closed && now == 550 && closeInputs == 0 && renewals == 2,
+        "a changed foreground cannot receive a late close toggle that reopens Start");
 
     // Exercise the production traversal against a private hidden parent;
     // never enumerate or open the user's actual Start menu for this test.

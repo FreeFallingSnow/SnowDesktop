@@ -19,6 +19,9 @@ public:
     NativeStartMenu& operator=(const NativeStartMenu&) = delete;
     bool Open(HMONITOR monitor);
     void Cancel(bool dismiss = false, CancelReason reason = CancelReason::Requested) noexcept;
+    // UI only. Replaces a pending action; runs it after confirmed dismissal
+    // and UI cleanup. False means no session needs to be dismissed.
+    bool DismissThen(std::function<void()> action);
     // UI thread only: release the Dock before dispatching deferred fallback.
     bool Finish(const std::function<void()>& releaseHold, const std::function<void()>& nativeFallback);
     bool Active() const noexcept;

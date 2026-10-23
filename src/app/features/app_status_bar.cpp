@@ -149,6 +149,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     // replacement action still waiting for a nested menu loop to unwind.
     if (action == Action::Dismiss)
     {
+        if (dockStartMenu_) dockStartMenu_->DismissThen({});
         quickNavigationPostCloseAction_ = {};
         DismissActiveContextMenuForPopupTransition();
         if (systemPanel_) systemPanel_->Hide();
@@ -332,6 +333,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (current()) ContinueStatusBarActivation(action, owner, anchor, generation, hold);
         });
     };
+    // Native Start must finish dismissal before this surface takes focus.
+    // In particular, a delayed Win toggle cannot be sent into the new menu.
+    if (dockStartMenu_ && dockStartMenu_->DismissThen(resume)) return;
     // A bar click can arrive inside the menu's nested message loop. Wait until
     // menu focus restoration has finished before opening another surface.
     if (HasActiveContextMenuSession())

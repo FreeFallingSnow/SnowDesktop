@@ -967,6 +967,10 @@ void DesktopApp::OpenQuickNavigation(
         dragDropController_.IsExternalDragActive())
         return;
 
+    if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source] {
+            OpenQuickNavigation(source);
+        })) return;
+
     POINT requestedOpenPoint = lastMousePoint_;
     POINT requestedAnchorPoint = requestedOpenPoint;
     RECT requestedDockRect{};

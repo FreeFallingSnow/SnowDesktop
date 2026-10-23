@@ -8,11 +8,18 @@ bool DesktopApp::IsDockStartMenuActive(HMONITOR monitor) const
 
 void DesktopApp::ToggleWindowsStartMenu(DockContainer* dock)
 {
+    wchar_t mode[192]{};
+    swprintf_s(mode, L"[DockStartMenu] Dock click; keepHidden=%d alwaysHidden=%d autoHideMirror=%d active=%d",
+        dockSettings_.startMenuKeepTaskbarHidden ? 1 : 0,
+        dockSettings_.suppressSystemTaskbar ? 1 : 0,
+        dockSettings_.systemTaskbarAutoHide ? 1 : 0,
+        dockStartMenu_ && dockStartMenu_->Active() ? 1 : 0);
+    WriteDiagnosticLogEntry(mode);
     if (dockStartMenu_ && dockStartMenu_->Active())
     {
         // The physical down may already have dismissed the native window.
         // Cancel never sends a second Win press unless Start still owns focus.
-        dockStartMenu_->Cancel(true);
+        dockStartMenu_->DismissThen({});
         UpdateDockStartMenu();
         return;
     }

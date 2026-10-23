@@ -20,6 +20,14 @@ bool IsVisible(HWND window) noexcept
     return window && IsWindowVisible(window) &&
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
+
+bool IsStartForeground(HWND window) noexcept
+{
+    DWORD foregroundProcess = 0, startProcess = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+    GetWindowThreadProcessId(window, &startProcess);
+    return foregroundProcess && foregroundProcess == startProcess;
+}
 }
 
 struct NativeStartMenu::Impl
@@ -63,15 +71,9 @@ struct NativeStartMenu::Impl
         WindowDiscovery discovery;
         try
         {
-            // A pre-existing native menu belongs to its original input session.
-            // This click closes it; completion never dispatches another open.
             window = FindVisibleStartWindow(discovery);
-            if (window && !stop.stop_requested())
-            {
-                invoked = NativeStartMenu::Toggle();
-                if (!invoked) failure = ERROR_ACCESS_DENIED;
-            }
-            else if (!stop.stop_requested())
+            const bool closingExisting = window && IsStartForeground(window);
+            if (!stop.stop_requested())
             {
                 // Establish the taskbar cloak before sending Win. Attachment
                 // may still be finishing; only this worker waits for it.
@@ -88,20 +90,20 @@ struct NativeStartMenu::Impl
                     if (!invoked) failure = ERROR_ACCESS_DENIED;
                     else
                     {
-                        WriteDiagnosticLogEntry(L"[DockStartMenu] opened native menu with taskbar protection");
+                        WriteDiagnosticLogEntry(closingExisting ?
+                            L"[DockStartMenu] closing existing native menu with taskbar protection" :
+                            L"[DockStartMenu] opened native menu with taskbar protection");
                         // Only observe the native host's visibility. No Hook,
                         // XAML access, relocation or foreign UI message.
-                        result = WaitForDismissal(false, [&] {
-                            if (!window || !IsWindow(window)) window = FindVisibleStartWindow(discovery);
+                        result = WaitForDismissal(closingExisting, [&] {
+                            if (!window || !IsWindow(window) || !IsVisible(window))
+                                window = FindVisibleStartWindow(discovery);
+                            // Visibility may lag behind native focus loss. A
+                            // stale visible HWND must not cause another Win
+                            // toggle after a replacement surface is activated.
                             const bool visible = IsVisible(window);
-                            DWORD foregroundProcess = 0, startProcess = 0;
-                            if (visible)
-                            {
-                                GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-                                GetWindowThreadProcessId(window, &startProcess);
-                            }
-                            if (close.Take(GetTickCount64(), visible,
-                                    foregroundProcess && foregroundProcess == startProcess))
+                            const bool foreground = visible && IsStartForeground(window);
+                            if (!closingExisting && close.Take(visible, foreground))
                             {
                                 const bool sent = NativeStartMenu::Toggle();
                                 if (!sent) failure = ERROR_ACCESS_DENIED;
@@ -139,7 +141,8 @@ struct NativeStartMenu::Impl
             WriteDiagnosticLogEntry(ended);
         }
         catch (...) {} // The lease also expires if a cleanup boundary fails.
-        invocation.Complete(!invoked && !stop.stop_requested());
+        invocation.Complete(!invoked && !stop.stop_requested(),
+            !stop.stop_requested() && (!invoked || result == Dismissal::Closed));
     }
 };
 
@@ -173,8 +176,18 @@ void NativeStartMenu::Cancel(bool dismiss, CancelReason reason) noexcept
     if (!impl_->worker.get_stop_token().stop_requested())
         impl_->cancelReason.store(dismiss ? CancelReason::Dismissed : reason);
     if (dismiss) impl_->close.Request(GetTickCount64());
-    else impl_->worker.request_stop();
+    else
+    {
+        impl_->invocation.DiscardContinuation();
+        impl_->worker.request_stop();
+    }
     impl_->wake.notify_all();
+}
+bool NativeStartMenu::DismissThen(std::function<void()> action)
+{
+    if (!impl_->invocation.Defer(std::move(action))) return false;
+    Cancel(true);
+    return true;
 }
 bool NativeStartMenu::Finish(const std::function<void()>& releaseHold,
     const std::function<void()>& nativeFallback)
@@ -193,6 +206,7 @@ bool NativeStartMenu::ContainsPoint(POINT screen) const noexcept
 }
 void NativeStartMenu::ObservePointer(bool down, bool pressed, bool ownedSurface) noexcept
 {
+    if (pressed && !ownedSurface) impl_->invocation.DiscardContinuation();
     if (Active() && impl_->pointer.Observe(down, pressed, ownedSurface)) Cancel(true);
 }
 bool NativeStartMenu::Toggle() noexcept
