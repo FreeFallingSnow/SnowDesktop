@@ -39,10 +39,8 @@ inline std::optional<RECT> Position(const Placement& p, SIZE menu) noexcept
     }
     if (!ValidRect(area) || menu.cx > area.right - area.left || menu.cy > area.bottom - area.top)
         return {}; // Never shrink/crop a system menu to manufacture a fit.
-    LONG x = std::clamp(p.screen.left + (p.screen.right - p.screen.left - menu.cx) / 2,
-        area.left, area.right - menu.cx);
-    LONG y = std::clamp(p.screen.top + (p.screen.bottom - p.screen.top - menu.cy) / 2,
-        area.top, area.bottom - menu.cy);
+    LONG x = p.screen.left + (p.screen.right - p.screen.left - menu.cx) / 2;
+    LONG y = p.screen.top + (p.screen.bottom - p.screen.top - menu.cy) / 2;
     switch (p.edge)
     {
     case Edge::Bottom: y = area.bottom - menu.cy; break;
@@ -50,6 +48,8 @@ inline std::optional<RECT> Position(const Placement& p, SIZE menu) noexcept
     case Edge::Left: x = area.left; break;
     case Edge::Right: x = area.right - menu.cx; break;
     }
+    if (x < area.left || y < area.top || x + menu.cx > area.right || y + menu.cy > area.bottom)
+        return {}; // A restricted work area must not change the screen-centered axis.
     return RECT{x, y, x + menu.cx, y + menu.cy};
 }
 }

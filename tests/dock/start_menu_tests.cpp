@@ -33,6 +33,12 @@ int RunDockStartMenuTests()
     check(!Position(p, {2000, 400}), "an overly wide menu is not clipped into the monitor");
     p.work = {1, 1, 1, 1};
     check(!Position(p, {10, 10}), "stale work-area geometry is rejected");
+    p = {{0, 0, 1920, 1080}, {600, 0, 1920, 1080}, {0, 1000, 1920, 1080}, Edge::Bottom, 8};
+    check(!Position(p, {1000, 600}),
+        "asymmetric reserved space falls back instead of shifting the screen-centered menu sideways");
+    p = {{0, 0, 1920, 1080}, {0, 400, 1920, 1080}, {0, 0, 80, 1080}, Edge::Left, 8};
+    check(!Position(p, {600, 500}),
+        "asymmetric reserved space preserves vertical screen centering or falls back");
 
     using namespace snowdesktop::taskbar_hook;
     Snapshot snapshot;
@@ -56,7 +62,9 @@ int RunDockStartMenuTests()
     // The fixture is hidden; no Start menu, Explorer or physical input is used.
     wchar_t executable[32768]{};
     GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
-    const auto dll = std::filesystem::path(executable).parent_path().parent_path() / L"SnowDesktopTaskbarHook.dll";
+    auto dll = std::filesystem::path(executable).parent_path().parent_path() / L"SnowDesktopTaskbarHook.dll";
+    if (!std::filesystem::is_regular_file(dll))
+        dll = dll.parent_path() / L"SnowDesktop.Runtime" / dll.filename();
     const HMODULE module = LoadLibraryW(dll.c_str());
     const auto receiver = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopStartPinHookProc")) : nullptr;
     check(receiver != nullptr, "load the production Start placement receiver");
