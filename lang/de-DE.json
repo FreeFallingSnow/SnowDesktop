@@ -2587,6 +2587,10 @@
   "settings.debug.logs.steam": "Steam und Workshop",
   "settings.debug.logs.data": "Daten und Wiederherstellung",
   "settings.debug.logs.all": "Alle aktivieren",
+  "statusBar.barItems": "Elemente der Leiste",
+  "statusBar.controlCenterContent": "Inhalt des Kontrollzentrums",
+  "statusBar.controlCenterDisplay": "Anzeige des Kontrollzentrums",
+  "statusBar.controlCenterSingleIcon": "Einzelnes Symbol",
   "settings.dock.startMenuKeepTaskbarHidden": "Taskleiste beim Öffnen von Start über das Dock ausgeblendet lassen",
   "settings.dock.startMenuKeepTaskbarHidden.description": "Für dauerhaft oder automatisch ausgeblendete Taskleisten. Das Startmenü wird am Bildschirmrand des Docks zentriert, ohne die Leiste zu verdecken. Nicht unterstützte Layouts verwenden die Windows-Standardposition."
 }

@@ -115,6 +115,14 @@ void TestCodec()
     }
     {
         snowdesktop::StatusBarSettings statusBar;
+        for (const bool show : {false, true}) for (const bool single : {false, true})
+        {
+            auto selected = statusBar;
+            selected.controlCenter = show; selected.controlCenterSingleIcon = single;
+            selected.notifications = !show; selected.clock = !single;
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(selected)) == selected,
+                "bar display choices cross the real settings serialization boundary independently");
+        }
         Check(!statusBar.batteryPercentage, "new profiles keep battery percentage hidden");
         JsonValue legacy;
         Check(ParseJson("{\"enabled\":true}", legacy), "legacy status bar JSON parses");

@@ -496,7 +496,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SUCCEEDED(result) ? L"requested" : L"failed");
         if (FAILED(result))
         {
-            ShellExecuteW(owner, L"open", L"ms-settings:regionlanguage", nullptr, nullptr, SW_SHOWNORMAL);
+            MessageBoxW(owner, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
         statusBarActivationMonitor_ = nullptr;
     }
@@ -738,6 +738,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic, L"\uE45F"}, // data_usage
             {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
             {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
+            {"statusBar.notifications", &Settings::notifications, Action::MenuTime, L"\uF114"}, // alert
             {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuControlCenter, L"\uF4B8"}, // keyboard
             {"statusBar.batteryPercentage", &Settings::batteryPercentage, Action::MenuControlCenter, L"\uF1CD"}, // battery_9_20
             {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
@@ -747,7 +748,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.mediaControls", &Settings::mediaControls, Action::MenuControlCenter, L"\uF605"}, // play
             {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
-        constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230;
+        constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230,
+            controlDisplayBase = 42240;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -805,6 +807,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             }
         };
         const auto addControlChoices = [&](HMENU target) {
+            if (const auto display = submenu(target, "statusBar.controlCenterDisplay"))
+            {
+                const int selected = !currentSettings.controlCenter ? 2 : currentSettings.controlCenterSingleIcon ? 1 : 0;
+                const char* labels[]{"app.interact.shown", "statusBar.controlCenterSingleIcon", "app.interact.hidden"};
+                for (UINT index = 0; index < std::size(labels); ++index)
+                    addChoice(display, controlDisplayBase + index, _LW(labels[index]), static_cast<UINT>(selected) == index);
+            }
             if (const auto panel = submenu(target, "statusBar.inputMethodPanel"))
             {
                 addChoice(panel, inputPanelBase, _LW("statusBar.panelCustom"), !currentSettings.inputMethodSystemPanel);
@@ -820,10 +829,17 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (action != Action::Menu)
         {
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            // Separate bar indicators from controls inside the opened panel.
+            const HMENU barItems = action == Action::MenuControlCenter ? submenu(menu, "statusBar.barItems") : menu;
+            const HMENU panelItems = action == Action::MenuControlCenter ? submenu(menu, "statusBar.controlCenterContent") : menu;
             for (std::size_t index = 0; index < std::size(flags); ++index)
-                if (flags[index].context == action) addFlag(menu, index);
+                if (flags[index].context == action || (action == Action::MenuControlCenter && flags[index].context == Action::MenuTime))
+                {
+                    const bool panelContent = index >= 12;
+                    if (const auto target = panelContent ? panelItems : barItems) addFlag(target, index);
+                }
             if (action == Action::MenuTime) addTimeChoices(menu);
-            if (action == Action::MenuControlCenter) addControlChoices(menu);
+            if (action == Action::MenuControlCenter && barItems) addControlChoices(barItems);
         }
         HMENU settingsMenu = nullptr;
         HMENU independentDock = nullptr;
@@ -869,8 +885,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f);
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
-            const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
-            const std::size_t boundaries[]{0, 3, 7, 9, std::size(flags)};
+            const char* labels[]{"statusBar.barItems", "statusBar.controlCenterContent"};
+            const std::size_t boundaries[]{0, 12, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
                 if (const auto section = submenu(settingsMenu, labels[group]))
                 {
@@ -878,8 +894,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     {
                         addFlag(section, index);
                     }
-                    if (group == 2) addTimeChoices(section, merged ? independentStatus : nullptr);
-                    if (group == 3) addControlChoices(section);
+                    if (group == 0)
+                    {
+                        addTimeChoices(section, merged ? independentStatus : nullptr);
+                        addControlChoices(section);
+                    }
                 }
             if (merged)
             {
@@ -937,6 +956,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 bar.timeNotificationRightAligned = command == timePositionBase + 1;
             else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())
                 bar.controlCenterSystemPanel = command == controlBase + 1;
+            else if (command >= controlDisplayBase && command < controlDisplayBase + 3)
+            {
+                bar.controlCenter = command != controlDisplayBase + 2;
+                bar.controlCenterSingleIcon = command == controlDisplayBase + 1;
+            }
             else changed = false;
             if (changed)
             {

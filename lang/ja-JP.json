@@ -2587,6 +2587,10 @@
   "settings.debug.logs.steam": "Steam とワークショップ",
   "settings.debug.logs.data": "データと復元",
   "settings.debug.logs.all": "すべて有効にする",
+  "statusBar.barItems": "バーの項目",
+  "statusBar.controlCenterContent": "コントロールセンターの内容",
+  "statusBar.controlCenterDisplay": "コントロールセンターの表示",
+  "statusBar.controlCenterSingleIcon": "単一のアイコン",
   "settings.dock.startMenuKeepTaskbarHidden": "Dock からスタートを開くときにタスクバーを非表示のままにする",
   "settings.dock.startMenuKeepTaskbarHidden.description": "常に非表示または自動的に隠すタスクバーが対象です。スタートメニューは Dock がある画面端の中央に、バーと重ならない位置で表示されます。非対応のレイアウトでは Windows の既定の位置を使用します。"
 }

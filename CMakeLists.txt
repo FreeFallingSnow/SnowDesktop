@@ -1947,6 +1947,20 @@ if (BUILD_TESTING)
         LABELS core contract settings)
 
     snowdesktop_add_test(
+        SnowDesktopStatusBarVisibilityTests
+        status_bar_visibility
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES
+            tests/system/status_bar_visibility_tests.cpp
+            src/system/status_bar/status_bar_view.cpp
+            src/widget/preview/widget_preview_stage.cpp
+            src/common/l10n.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 d3d11 dwrite dxgi dxguid gdi32 ole32 user32 windowscodecs
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract render settings status-bar)
+
+    snowdesktop_add_test(
         SnowDesktopThemeWorkflowTests
         theme_workflow
         SOURCES

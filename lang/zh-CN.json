@@ -2587,6 +2587,10 @@
   "settings.debug.logs.steam": "Steam 与创意工坊",
   "settings.debug.logs.data": "数据与恢复",
   "settings.debug.logs.all": "全部开启",
+  "statusBar.barItems": "栏上项目",
+  "statusBar.controlCenterContent": "控制中心内容",
+  "statusBar.controlCenterDisplay": "控制中心显示",
+  "statusBar.controlCenterSingleIcon": "单个图标",
   "settings.dock.startMenuKeepTaskbarHidden": "从 Dock 打开开始菜单时保持任务栏隐藏",
   "settings.dock.startMenuKeepTaskbarHidden.description": "适用于始终隐藏或自动隐藏任务栏。开始菜单在 Dock 所在屏幕边缘居中显示并避让栏体；不支持时使用 Windows 默认位置。"
 }

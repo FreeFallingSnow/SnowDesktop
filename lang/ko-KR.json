@@ -2587,6 +2587,10 @@
   "settings.debug.logs.steam": "Steam 및 창작마당",
   "settings.debug.logs.data": "데이터 및 복구",
   "settings.debug.logs.all": "모두 켜기",
+  "statusBar.barItems": "표시줄 항목",
+  "statusBar.controlCenterContent": "제어 센터 내용",
+  "statusBar.controlCenterDisplay": "제어 센터 표시",
+  "statusBar.controlCenterSingleIcon": "단일 아이콘",
   "settings.dock.startMenuKeepTaskbarHidden": "Dock에서 시작 메뉴를 열 때 작업 표시줄 숨김 유지",
   "settings.dock.startMenuKeepTaskbarHidden.description": "항상 숨기거나 자동으로 숨기는 작업 표시줄에 적용됩니다. 시작 메뉴는 Dock이 있는 화면 가장자리의 중앙에 표시되며 바를 가리지 않습니다. 지원되지 않는 레이아웃은 Windows 기본 위치를 사용합니다."
 }

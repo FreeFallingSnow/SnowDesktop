@@ -2587,6 +2587,10 @@
   "settings.debug.logs.steam": "Steam e Oficina",
   "settings.debug.logs.data": "Dados e recuperação",
   "settings.debug.logs.all": "Ativar tudo",
+  "statusBar.barItems": "Itens da barra",
+  "statusBar.controlCenterContent": "Conteúdo da central de controle",
+  "statusBar.controlCenterDisplay": "Exibição da central de controle",
+  "statusBar.controlCenterSingleIcon": "Ícone único",
   "settings.dock.startMenuKeepTaskbarHidden": "Manter a barra de tarefas oculta ao abrir o Iniciar pelo Dock",
   "settings.dock.startMenuKeepTaskbarHidden.description": "Para barras de tarefas sempre ocultas ou ocultadas automaticamente. O Iniciar aparece centralizado na borda da tela do Dock, sem cobrir a barra. Layouts incompatíveis usam a posição padrão do Windows."
 }
