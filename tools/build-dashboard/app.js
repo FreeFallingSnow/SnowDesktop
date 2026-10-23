@@ -409,19 +409,33 @@ function readWorkspaceHash(){
  if(tabs.includes(params.get("tab")))workView.tab=params.get("tab");
 }
 readWorkspaceHash();if(!tabs.includes(workView.tab))workView.tab="activity";
-if(!["all","active","attention","uncertain","done"].includes(workView.filter))workView.filter="all";
+if(workView.filter==="uncertain")workView.filter="recorded";
+if(!["all","active","attention","recorded","done"].includes(workView.filter))workView.filter="all";
 let workspaceSnapshot=null,workItems=[],displayedRun=null,refreshRequested=false,navigationRevision=0;
 const batchCache=new Map(),phaseNames={investigating:"调查中",editing:"编辑中",waiting:"等待中",awaiting_input:"等待用户",blocked:"有阻塞",validating:"验证中",completed:"已完成",cancelled:"已取消",skipped:"无需构建",passed:"验证通过",failed:"验证失败",building:"构建 / 测试中"};
 const terminalStates=new Set(["passed","failed","invalidated","interrupted","cancelled","skipped","completed","fulfilled"]);
 function workLabel(state){return phaseNames[state]||label(state);}
 function activityTime(item){return Date.parse(item.completedUtc||item.lastProgressUtc||item.buildStartedUtc||item.createdUtc||item.openedUtc||"")||0;}
-function presenceState(task){
+function presenceState(task,batch=null){
  const reported=task.phase||task.display||task.state||"unknown";
  const finished=["completed","cancelled","verified","exempt","withdrawn","batch-ended"].includes(reported);
  const heartbeat=Date.parse(task.lastHeartbeatUtc||"");
- // Presentation grace is three expected 60-second reporting intervals, never an edit/finish decision.
+ // Heartbeat freshness is activity metadata, never the source of an editing/ready/build phase.
  const recent=Number.isFinite(heartbeat)&&Date.now()-heartbeat>=0&&Date.now()-heartbeat<=180000;
- return {reported,recent,uncertain:!finished&&!recent,text:finished?workLabel(reported):recent?workLabel(reported):"待核实"};
+ const member=batch?.tasks?.find(item=>item.id===task.id);
+ if(member){
+  let text;
+  if(member.state==="withdrawn")text="已退出";
+  else if(batch.outcome)text=batch.outcome==="passed"?"本轮通过":batch.outcome==="skipped"?"无需构建":workLabel(batch.outcome);
+  else if(batch.phase!=="editing")text=workLabel(batch.phase);
+  else if(member.state==="editing")text="编辑中";
+  else if(member.check?.status==="running")text="检查中";
+  else if(member.check?.status==="pending")text="等待检查";
+  else if(["failed","interrupted","invalidated"].includes(member.check?.status))text="检查需处理";
+  else text="已就绪";
+  return {reported,recent,uncertain:false,text};
+ }
+ return {reported,recent,uncertain:!finished&&!recent,text:finished||recent?workLabel(reported):"上次："+workLabel(reported)};
 }
 function newest(items){return [...items].sort((a,b)=>activityTime(b)-activityTime(a)||String(a.id).localeCompare(String(b.id)));}
 function saveWorkspace(){
@@ -470,10 +484,11 @@ function makeWorkItems(snapshot){
   group.buildCount=group.batches.filter(batch=>batch.buildStartedUtc||batch.runId||batch.run).length+group.runs.filter(run=>!group.batches.some(batch=>batch.id===run.batchId)).length;
   const liveRun=group.runs.some(run=>run.ownerState==="alive"&&!terminalStates.has(run.status));
   const recentMember=group.members.some(task=>presenceState(task).recent);
-  const unresolved=!terminalStates.has(group.state)&&!liveRun&&!recentMember;
-  group.kind=unresolved?"uncertain":["failed","interrupted","invalidated","blocked","attention","retirement-interrupted"].includes(group.state)||(!terminalStates.has(group.state)&&group.members.some(task=>task.blocker))?"attention":terminalStates.has(group.state)?"done":"active";
-  group.displayState=unresolved?"待核实":group.state==="editing"&&group.batches.length?"等待就绪":workLabel(group.state);
-  group.summary=unresolved?"上次登记："+workLabel(group.state)+" · 无近期心跳":group.runs.find(run=>run.waitingFor)?.waitingFor||(!terminalStates.has(group.state)&&group.members.find(task=>task.blocker)?.blocker)||workLabel(group.state);
+  group.liveBatch=group.batches.find(batch=>batch.id===snapshot.current?.id||snapshot.activeCandidates?.some(candidate=>candidate.id===batch.id))||null;
+  const historicalRegistration=!group.liveBatch&&!terminalStates.has(group.state)&&!liveRun&&!recentMember;
+  group.kind=historicalRegistration?"recorded":["failed","interrupted","invalidated","blocked","attention","retirement-interrupted"].includes(group.state)||(!terminalStates.has(group.state)&&group.members.some(task=>task.blocker))?"attention":terminalStates.has(group.state)?"done":"active";
+  group.displayState=historicalRegistration?"上次："+workLabel(group.state):group.state==="editing"&&group.batches.length?"等待就绪":workLabel(group.state);
+  group.summary=historicalRegistration?"":group.runs.find(run=>run.waitingFor)?.waitingFor||(!terminalStates.has(group.state)&&group.members.find(task=>task.blocker)?.blocker)||workLabel(group.state);
  }
  return [...groups.values()].sort((a,b)=>b.timestamp-a.timestamp||a.key.localeCompare(b.key));
 }
@@ -486,7 +501,7 @@ function renderWorkList(){
   const date=item.timestamp?new Date(item.timestamp).toLocaleDateString():"时间未记录";
   if(date!==previousDate){rows.push(element("div",date,"work-date"));previousDate=date;}
   const button=element("button",null,"work-item"+(item.key===workView.key?" is-selected":""));button.type="button";button.dataset.workKey=item.key;button.dataset.focusKey=item.key;button.setAttribute("aria-current",String(item.key===workView.key));
-  const title=element("span",item.title,"work-item-title"),line=element("span",null,"work-item-meta");line.append(element("span",item.displayState,"work-state "+(item.kind==="attention"?"bad":item.kind==="done"?"good":item.kind==="uncertain"?"uncertain":"")),element("time",item.timestamp?new Date(item.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—"));
+  const title=element("span",item.title,"work-item-title"),line=element("span",null,"work-item-meta");line.append(element("span",item.displayState,"work-state "+(item.kind==="attention"?"bad":item.kind==="done"?"good":item.kind==="recorded"?"uncertain":"")),element("time",item.timestamp?new Date(item.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—"));
   button.append(title,line);button.addEventListener("click",()=>openWork(item.key));rows.push(button);
  }
  $("workList").replaceChildren(...rows);
@@ -507,14 +522,14 @@ function scopeFor(group,snapshot){
   acceptances:(snapshot.acceptances||[]).filter(item=>ids.has(item.task)||batches.has(item.batchId))};
 }
 function renderWorkDetail(group,snapshot,batch){
- text("workTitle",group.title);text("workKind",group.batches.length?"协作批次":"任务");text("workState",group.displayState);$("workState").className="badge "+(group.kind==="attention"?"bad":group.kind==="done"?"good":group.kind==="uncertain"?"uncertain":"");
+ text("workTitle",group.title);text("workKind",group.batches.length?"协作批次":"任务");text("workState",group.displayState);$("workState").className="badge "+(group.kind==="attention"?"bad":group.kind==="done"?"good":group.kind==="recorded"?"uncertain":"");
  text("workMeta",group.members.length+" 项任务 · "+group.buildCount+" 次构建 · "+(group.timestamp?time(group.timestamp):"未记录"));
- text("workSituation",group.kind==="uncertain"?group.summary:batch?.phase==="editing"?batchDescription(batch):group.summary);text("participantTabCount",group.members.length);text("buildTabCount",group.buildCount);
+ const situation=batch?.phase==="editing"?batchDescription(batch):group.summary;text("workSituation",situation);$("workSituation").hidden=!situation;text("participantTabCount",group.members.length);text("buildTabCount",group.buildCount);
  const participants=group.members.map(task=>{
-  const presence=presenceState(task),card=element("article",null,"participant-card"),title=element("div",null,"section-title");title.append(element("strong",task.displayName||task.name||task.id),element("span",presence.text,"badge"+(presence.uncertain?" uncertain":"")));
+  const presence=presenceState(task,group.liveBatch||batch),card=element("article",null,"participant-card"),title=element("div",null,"section-title");title.append(element("strong",task.displayName||task.name||task.id),element("span",presence.text,"badge"+(presence.uncertain?" uncertain":"")));
   card.append(title,element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
   card.append(element("small",(task.adapter?task.adapter.toUpperCase():"来源未记录")+" · 最近进展 "+time(task.lastProgressUtc),"muted"));
-  if(presence.uncertain)card.append(element("p","上次登记："+workLabel(presence.reported)+" · 最后心跳 "+time(task.lastHeartbeatUtc),"participant-role"));
+  if(presence.uncertain)card.append(element("p","最后心跳 "+time(task.lastHeartbeatUtc),"participant-role"));
   const plans=group.batches.flatMap(item=>(item.tasks||[]).filter(member=>member.id===task.id&&member.plan));
   if(plans.length){const files=plans[0].ownedFiles||[];card.append(element("p",files.length?"负责文件："+files.slice(0,3).join("、")+(files.length>3?" 等 "+files.length+" 项":""):"未声明分工","participant-role"));}
   return card;
