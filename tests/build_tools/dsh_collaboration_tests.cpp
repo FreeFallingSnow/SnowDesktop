@@ -70,16 +70,19 @@ if(mode==='open'){
  }finally{fs.unlinkSync(preference);await Promise.all(servers.map(server=>new Promise(resolve=>server.close(resolve))));}
 }else if(mode==='dashboard'){
  const calls=[];let mismatch=false;
- const server=http.createServer((request,response)=>{calls.push(request.url);response.setHeader('Content-Type','application/json');response.end(JSON.stringify(request.url==='/api/health'?{service:'SnowDesktop build dashboard',instance:mismatch?'different':'fixture-identity',fixture:false}:{route:request.url,marker:'read-only-data'}));});
+ const server=http.createServer((request,response)=>{calls.push(request.url);if(/\/logs\/stderr$/.test(request.url)){response.setHeader('Content-Length',8*1024*1024+1);response.end('oversize');return;}if(/\/logs\/product$/.test(request.url)){response.setHeader('Content-Type','text/plain');response.end('中文日志 🧊\nend\n');return;}response.setHeader('Content-Type','application/json');response.end(JSON.stringify(request.url==='/api/health'?{service:'SnowDesktop build dashboard',instance:mismatch?'different':'fixture-identity',fixture:false}:{route:request.url,marker:'read-only-data'}));});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  try{
   const port=server.address().port,directory=path.join(root,'.build/dashboard');fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'server-'+port+'.json'),JSON.stringify({instance:'fixture-identity',fixture:false}));
   const reader=new CollaborationBridge(root,{port}),batch='/api/batches/'+'a'.repeat(32),retry='/api/retries/'+'a'.repeat(32)+'/build_dashboard/2/log';
   const values=[await reader.snapshot(),await reader.read(batch),await reader.read(retry)];
+  const download=await reader.read('/api/runs/'+'a'.repeat(32)+'/logs/product');let oversizeDenied=false;
+  try{await reader.read('/api/runs/'+'a'.repeat(32)+'/logs/stderr');}catch(caught){oversizeDenied=String(caught.message).includes('8 MiB');}
   const before=calls.length,denied=[];
-  for(const route of ['http://127.0.0.1:1/api/status','/api/status?x=1','/api/batches/../state.json','/api/retries/'+'a'.repeat(32)+'/build_run/2/log','/api/retries/'+'a'.repeat(32)+'/build_dashboard/1/log']){try{await reader.read(route);denied.push(false);}catch{denied.push(true);}}
+  for(const route of ['http://127.0.0.1:1/api/status','/api/status?x=1','/api/batches/../state.json','/api/retries/'+'a'.repeat(32)+'/build_run/2/log','/api/retries/'+'a'.repeat(32)+'/build_dashboard/1/log','/api/runs/'+'a'.repeat(32)+'/logs/profile','/api/runs/'+'a'.repeat(32)+'/logs/product?path=private']){try{await reader.read(route);denied.push(false);}catch{denied.push(true);}}
   const noRequests=calls.length===before;mismatch=true;let identityDenied=false;try{await reader.read(batch);}catch{identityDenied=true;}
-  result={values,denied,noRequests,identityDenied,calls};
+  const beforeLogIdentity=calls.length;let identityDownloadDenied=false;try{await reader.read('/api/runs/'+'a'.repeat(32)+'/logs/product');}catch{identityDownloadDenied=true;}
+  result={values,download,oversizeDenied,denied,noRequests,identityDenied,identityDownloadDenied,identityNoLogData:calls.length===beforeLogIdentity+1,calls};
  }finally{await new Promise(resolve=>server.close(resolve));}
 }
 console.log(JSON.stringify(result));
@@ -114,7 +117,9 @@ console.log(JSON.stringify(result));
     const auto dashboard=node("dashboard");
     require(dashboard.at("values").items.size()==3&&dashboard.at("values").items[0].at("route").str()=="/api/status"&&dashboard.at("values").items[1].at("route").str()=="/api/batches/"+std::string(32,'a')&&dashboard.at("values").items[2].at("route").str().find("/build_dashboard/2/log")!=std::string::npos,"Production dashboard reader lost snapshot, history or retry-log routes");
     for(const auto& denied:dashboard.at("denied").items)require(denied.boolean,"Dashboard reader accepted a non-allowlisted destination");
-    require(dashboard.at("denied").items.size()==5&&dashboard.at("noRequests").boolean&&dashboard.at("identityDenied").boolean&&dashboard.at("calls").items.size()==7,"Invalid routes reached HTTP or a mismatching listener served batch data");
+    require(dashboard.at("denied").items.size()==7&&dashboard.at("noRequests").boolean&&dashboard.at("identityDenied").boolean&&dashboard.at("calls").items.size()==12,"Invalid routes reached HTTP or a mismatching listener served batch data");
+    require(dashboard.at("download").at("text").str()=="中文日志 🧊\nend\n"&&dashboard.at("download").at("fileName").str()==std::string(32,'a')+".product.log"&&dashboard.at("oversizeDenied").boolean&&dashboard.at("identityDownloadDenied").boolean&&dashboard.at("identityNoLogData").boolean,
+        "Run log reader lost Unicode, exceeded its budget or bypassed listener identity");
     c.begin("peer");
     c.plan(id,batch,0,"none","","tool","src/a.txt");c.ready(id,batch);
     const auto before=read(c.root/L"src/a.txt");
@@ -387,6 +392,11 @@ const workspaceParticipantsZh=renderBudget(workspaceModel,'zh','participants',{d
 workspaceSnapshot.events=[{sequence:1,sender:'outside-task',target:'*',recipients:['current-editor'],text:'broadcast-for-selected-activity'},
  {sequence:2,sender:'outside-task',target:'*',recipients:['other-project-task'],text:'broadcast-for-another-activity'}];
 const workspaceActivityText=renderBudget(workspaceModel,'en','activity',{detail:true,workKey:'batch:'+logical});
+const logModel={snapshot:workspaceSnapshot,batch:{...workspaceSnapshot.current,log:{lines:['batch-tests-only']},run:{id:priorRun,log:{lines:['merged-product-marker','merged-test-marker']},logs:[
+ {key:'product',downloadUrl:'/api/runs/'+priorRun+'/logs/product',log:{lines:['selected-product-marker']}},
+ {key:'tests',downloadUrl:'/api/runs/'+priorRun+'/logs/tests',log:{lines:['unselected-test-marker']}}]}}};
+const selectedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'product'});
+const mergedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'all'});
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -401,7 +411,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -419,6 +429,8 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     require(clientObserved.at("workspaceActivityText").str().find("broadcast-for-selected-activity")!=std::string::npos&&
         clientObserved.at("workspaceActivityText").str().find("broadcast-for-another-activity")==std::string::npos,
         "Overlay omitted a received broadcast or mixed another activity's messages");
+    require(clientObserved.at("selectedLogText").str().find("selected-product-marker")!=std::string::npos&&clientObserved.at("selectedLogText").str().find("unselected-test-marker")==std::string::npos&&clientObserved.at("selectedLogText").str().find("Download redacted log")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("merged-product-marker")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("batch-tests-only")==std::string::npos,
+        "Overlay log source selection or complete download entry lost its selected Run");
     require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
         clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
         clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&

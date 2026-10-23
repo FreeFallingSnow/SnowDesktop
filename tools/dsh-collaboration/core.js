@@ -114,7 +114,8 @@ export class CollaborationBridge{
  }
  async snapshot(){return this.read('/api/status');}
  async read(route){
-  if(typeof route!=='string'||!(/^(?:\/api\/status|\/api\/batches\/[a-f0-9]{32}|\/api\/retries\/[a-f0-9]{32}\/(?:build_dashboard|build_dashboard_browser)\/[23]\/log)$/.test(route)))throw new Error('Unsupported read-only dashboard route');
+  const runLog=/^\/api\/runs\/([a-f0-9]{32})\/logs\/(product|tests|execution|stdout|stderr)$/;
+  if(typeof route!=='string'||!(/^(?:\/api\/status|\/api\/batches\/[a-f0-9]{32}|\/api\/retries\/[a-f0-9]{32}\/(?:build_dashboard|build_dashboard_browser)\/[23]\/log)$/.test(route)||runLog.test(route)))throw new Error('Unsupported read-only dashboard route');
   const port=dashboardPortAt(this.root,this.port);
   const receiptFile=path.join(this.root,'.build/dashboard/server-'+port+'.json');
   const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8').replace(/^\uFEFF/,''));
@@ -122,7 +123,10 @@ export class CollaborationBridge{
   const read=async route=>{
    const response=await fetch(base+route,{signal:AbortSignal.timeout(3000),redirect:'error'});
    if(!response.ok)throw new Error('Dashboard HTTP '+response.status);
-   const bytes=await response.text();if(bytes.length>8*1024*1024)throw new Error('Dashboard response exceeds budget');return JSON.parse(bytes);
+   const log=runLog.exec(route);
+   if(log&&Number(response.headers.get('content-length'))>8*1024*1024){await response.body?.cancel();throw new Error('Log exceeds the overlay 8 MiB download budget; original retained');}
+   const bytes=await response.text();if(bytes.length>8*1024*1024||(log&&Buffer.byteLength(bytes,'utf8')>8*1024*1024))throw new Error('Dashboard response exceeds budget');
+   return log?{text:bytes,fileName:log[1]+'.'+log[2]+'.log'}:JSON.parse(bytes);
   };
   const health=await read('/api/health');
   if(health.service!=='SnowDesktop build dashboard'||health.instance!==receipt.instance||health.fixture!==false||receipt.fixture!==false)throw new Error('Dashboard listener identity did not match this checkout');

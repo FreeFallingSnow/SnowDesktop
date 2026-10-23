@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.18';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.19';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -29,6 +29,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   artifactSaved:['保存状态','Saved state'],activation:['应用切换','Activation'],heartbeat:['最后心跳','Last heartbeat'],participantCount:['参与者','Participants'],
   check:['基础检查','Basic checks'],logSearch:['搜索日志','Search log'],dataTime:['记录时间','Recorded at'],title:['SnowDesktop 协作','SnowDesktop collaboration']
  });
+ Object.assign(words,{sourceLog:['日志来源','Log source'],allStages:['全部阶段','All stages'],downloadLog:['下载脱敏日志','Download redacted log'],downloadingLog:['下载中','Downloading'],source_product:['产品构建','Product build'],source_tests:['测试构建与执行','Test build and execution'],source_execution:['执行','Execution'],source_stdout:['执行器输出','Executor output'],source_stderr:['执行器诊断','Executor diagnostics']});
  const dictionaries=Object.fromEntries(['zh','en'].map((lang,index)=>[lang,Object.fromEntries(Object.entries(words).map(([key,value])=>[key,value[index]]))]));
  const tabs=['activity','participants','builds','validation','delivery'],storageKey='snow-collaboration-view.v1';
  const endedStates=new Set(['passed','failed','cancelled','invalidated','interrupted','skipped','completed','fulfilled']);
@@ -86,10 +87,10 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  }
  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v)),tone=value=>['passed','verified','eligible','passed-after-retry'].includes(value)?'good':['failed','attention','interrupted','invalidated','start-failed','exhausted-failed','environment-blocked','retirement-interrupted'].includes(value)?'bad':['editing','waiting','pending','awaiting_input','blocked','retrying','checking'].includes(value)?'wait':'info';
  function loadView(){
-  const initial={x:1,y:0,width:640,height:660,collapsed:false,tab:'activity',query:'',state:'all',historyQuery:'',historyState:'all',logQuery:'',errorsOnly:false,follow:true,workKey:'',batchId:null,detail:false,activityQuery:'',activityState:'all',folds:{},scrolls:{}};
+  const initial={x:1,y:0,width:640,height:660,collapsed:false,tab:'activity',query:'',state:'all',historyQuery:'',historyState:'all',logQuery:'',logSource:'all',errorsOnly:false,follow:true,workKey:'',batchId:null,detail:false,activityQuery:'',activityState:'all',folds:{},scrolls:{}};
   try{const raw=localStorage.getItem(storageKey);if(!raw||raw.length>65536)return initial;const saved=JSON.parse(raw);
    if(saved?.schema===1){const [x,y]=[[1,0],[1,1],[0,1],[0,0]][saved.corner]||[1,0];return{...initial,x,y,collapsed:saved.collapsed===true};}
-   if([2,3,4].includes(saved?.schema)){for(const key of ['x','y'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],0,1);for(const key of ['width','height'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],280,2000);initial.collapsed=saved.collapsed===true;const tab=({overview:'activity',tasks:'participants',logs:'builds',messages:'activity',history:'activity'})[saved.tab]||saved.tab;if(tabs.includes(tab))initial.tab=tab;for(const key of ['query','historyQuery','logQuery','activityQuery'])if(typeof saved[key]==='string')initial[key]=saved[key].slice(0,200);for(const key of ['errorsOnly','follow','detail'])if(typeof saved[key]==='boolean')initial[key]=saved[key];if(['active','all','editing','checking','waiting','attention','investigating','awaiting_input','blocked','validating','done'].includes(saved.state))initial.state=saved.state;if(['all','passed','failures','noBuild'].includes(saved.historyState))initial.historyState=saved.historyState;if(/^(batch|task|run):[\w.-]{1,100}$/.test(saved.workKey||''))initial.workKey=saved.workKey;if(/^[a-f0-9]{32}$/.test(saved.batchId||''))initial.batchId=saved.batchId;if(['all','active','attention','recorded','done'].includes(saved.activityState))initial.activityState=saved.activityState;}
+   if([2,3,4].includes(saved?.schema)){for(const key of ['x','y'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],0,1);for(const key of ['width','height'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],280,2000);initial.collapsed=saved.collapsed===true;const tab=({overview:'activity',tasks:'participants',logs:'builds',messages:'activity',history:'activity'})[saved.tab]||saved.tab;if(tabs.includes(tab))initial.tab=tab;for(const key of ['query','historyQuery','logQuery','logSource','activityQuery'])if(typeof saved[key]==='string')initial[key]=saved[key].slice(0,200);for(const key of ['errorsOnly','follow','detail'])if(typeof saved[key]==='boolean')initial[key]=saved[key];if(['active','all','editing','checking','waiting','attention','investigating','awaiting_input','blocked','validating','done'].includes(saved.state))initial.state=saved.state;if(['all','passed','failures','noBuild'].includes(saved.historyState))initial.historyState=saved.historyState;if(/^(batch|task|run):[\w.-]{1,100}$/.test(saved.workKey||''))initial.workKey=saved.workKey;if(/^[a-f0-9]{32}$/.test(saved.batchId||''))initial.batchId=saved.batchId;if(['all','active','attention','recorded','done'].includes(saved.activityState))initial.activityState=saved.activityState;}
    for(const name of ['folds','scrolls'])if(saved?.[name]&&typeof saved[name]==='object'&&!Array.isArray(saved[name]))for(const [key,value] of Object.entries(saved[name]).slice(-100))if(key.length<=400&&(name==='folds'?typeof value==='boolean':Number.isFinite(value)&&value>=0))initial[name][key]=value;
   }catch{}return initial;
  }
@@ -124,6 +125,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  function Panel({remote,t}){
   const [model,setModel]=React.useState(null),[error,setError]=React.useState(''),[view,setView]=React.useState(loadView),[selected,setSelected]=React.useState(()=>loadView().batchId),[placement,setPlacement]=React.useState({right:12,top:72,width:640,height:660}),[previews,setPreviews]=React.useState({}),[testQuery,setTestQuery]=React.useState(''),[messageQuery,setMessageQuery]=React.useState(''),[urgentOnly,setUrgentOnly]=React.useState(false);
   const panel=React.useRef(null),motion=React.useRef(null),alive=React.useRef(true),logBox=React.useRef(null),batchCache=React.useRef(new Map()),bodyBox=React.useRef(null),scrollPositions=React.useRef({});
+  const [downloadState,setDownloadState]=React.useState({busy:false,error:''});
   const update=next=>setView(current=>{const scrolls=Object.fromEntries(Object.entries({...current.scrolls,...scrollPositions.current}).slice(-40));const value={...current,...next,scrolls};try{localStorage.setItem(storageKey,JSON.stringify({schema:4,...value}));}catch{}return value;});
   React.useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   React.useEffect(()=>{let current=true,timer;
@@ -226,7 +228,19 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     detail(t('jobLimits'),(typeof resource.cpuLimitBasisPoints==='number'?(resource.cpuLimitBasisPoints/100).toFixed(2)+'%':t('unrecorded'))+' / '+(typeof resource.committedMemoryLimitBytes==='number'?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+' MiB':t('unrecorded'))),
     observation?detail(t('queueObservation'),known(observation.occupiedCpuSlots)+' '+t('cpuSlots')+' / '+known(observation.occupiedMemoryMiB)+' MiB '+t('reserved')+' · '+(words[observation.reason]?t(observation.reason):observation.reason)+(observation.observedUtc?' · '+date(observation.observedUtc):'')):null];
   };
-  const runRecords=batch?(batch.run?[batch.run]:[]):snapshot?.runs||[],displayedRun=batch?batch.run:snapshot?.runs?.[0],currentLog=batch?.log?.lines?.length?batch.log:displayedRun?.log||batch?.log;
+  const runRecords=batch?(batch.run?[batch.run]:[]):snapshot?.runs||[],displayedRun=batch?batch.run:snapshot?.runs?.[0];
+  const logSources=displayedRun?.logs||[],selectedLog=logSources.find(item=>item.key===view.logSource),currentLog=selectedLog?.log||(displayedRun?.log?.lines?.length?displayedRun.log:batch?.log||displayedRun?.log);
+  const downloadLog=async()=>{
+   if(!selectedLog?.downloadUrl||downloadState.busy)return;
+   setDownloadState({busy:true,error:''});let url;
+   try{
+    const data=await decode(remote.read(selectedLog.downloadUrl));if(!alive.current)return;
+    if(typeof data.text!=='string'||data.fileName!==displayedRun.id+'.'+selectedLog.key+'.log')throw new Error('Log response identity mismatch');
+    const blob=new Blob([data.text],{type:'text/plain;charset=utf-8'});if(blob.size>8*1024*1024)throw new Error('Log exceeds the overlay 8 MiB download budget; original retained');
+    url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=data.fileName;document.body.append(link);link.click();link.remove();setDownloadState({busy:false,error:''});
+   }catch(reason){if(alive.current)setDownloadState({busy:false,error:String(reason.message||reason)});}
+   finally{if(url)setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  };
   const testEvidenceView=(record,scope)=>{
    const evidence=record?.tests||[],fact=value=>words['fact_'+value]?t('fact_'+value):value||t('unrecorded'),number=value=>typeof value==='number'&&Number.isFinite(value)?value:t('unrecorded');
    return h('div',{'data-test-evidence':scope},fold(t('testEvidence')+' · '+evidence.length+' / '+(record?.totalCount??t('unrecorded')),h(React.Fragment,null,...evidence.map(item=>{
@@ -299,7 +313,8 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   };
   const logsView=()=>{
    const lines=currentLog?.lines||[],query=view.logQuery.trim().toLocaleLowerCase(),filtered=lines.filter(line=>(!query||line.toLocaleLowerCase().includes(query))&&(!view.errorsOnly||/error|warning|failed|fatal|exception|错误|失败|警告/i.test(line)));
-   return h('div',{className:'sc-log-pane'},h('div',{className:'sc-toolbar'},h('input',{type:'search',placeholder:t('logSearch'),'aria-label':t('logSearch'),value:view.logQuery,maxLength:200,onChange:event=>update({logQuery:event.target.value})}),button(t(view.follow?'pause':'follow'),()=>update({follow:!view.follow}))),
+   return h('div',{className:'sc-log-pane'},h('div',{className:'sc-toolbar'},logSources.length?h('select',{'aria-label':t('sourceLog'),value:selectedLog?.key||'all',onChange:event=>{update({logSource:event.target.value});setDownloadState(value=>({...value,error:''}));}},h('option',{value:'all'},t('allStages')),...logSources.map(item=>h('option',{key:item.key,value:item.key},t('source_'+item.key)))):null,h('input',{type:'search',placeholder:t('logSearch'),'aria-label':t('logSearch'),value:view.logQuery,maxLength:200,onChange:event=>update({logQuery:event.target.value})}),button(t(view.follow?'pause':'follow'),()=>update({follow:!view.follow})),selectedLog?.downloadUrl?button(t(downloadState.busy?'downloadingLog':'downloadLog'),()=>{void downloadLog();},{disabled:downloadState.busy}):null),
+    downloadState.error?h('p',{className:'sc-callout bad'},downloadState.error):null,
     h('div',{className:'sc-toolbar'},h('label',null,h('input',{type:'checkbox',checked:view.errorsOnly,onChange:event=>update({errorsOnly:event.target.checked})}),t('errorsOnly')),h('small',null,filtered.length+' / '+lines.length)),
     h('small',null,t('bytes')+' '+(currentLog?.bytesRead??'—')+' / '+(currentLog?.bytesTotal??'—')),
     currentLog?.prefixOmitted?h('small',null,t('tailOnly')):null,
