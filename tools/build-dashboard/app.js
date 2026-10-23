@@ -30,7 +30,7 @@ function historyBatch(){const id=location.hash.slice(1);return /^[a-f0-9]{32}$/.
 let selected = historyBatch(), paused = view.paused, inflight = false, logView = null;
 function selectBatch(id){
  navigationRevision++;
- workView.batch=id||null;selected=id;
+ workView.batch=id||null;workView.detail=true;selected=id;
  if(id){const group=workItems.find(item=>item.batches.some(batch=>batch.id===id));if(group)workView.key=group.key;}
  setWorkTab("builds",false);saveWorkspace();poll();
 }
@@ -408,14 +408,15 @@ function retainFocus(){
 async function request(url){const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error("HTTP "+response.status);return response.json();}
 // Navigation is a client-side projection of existing records; it never writes coordination state.
 const workspaceKey="SnowDesktop.collaboration-workspace.v1",tabs=["activity","participants","builds","validation","delivery"];
-const workView={key:null,batch:null,tab:"activity",query:"",filter:"all"};
-try{const raw=localStorage.getItem(workspaceKey);if(raw&&raw.length<4096){const saved=JSON.parse(raw);for(const key of ["key","batch","tab","query","filter"])if(typeof saved[key]==="string"&&saved[key].length<220)workView[key]=saved[key];}}catch(_){}
+const workView={key:null,batch:null,tab:"activity",query:"",filter:"all",detail:false};
+try{const raw=localStorage.getItem(workspaceKey);if(raw&&raw.length<4096){const saved=JSON.parse(raw);for(const key of ["key","batch","tab","query","filter"])if(typeof saved[key]==="string"&&saved[key].length<220)workView[key]=saved[key];if(typeof saved.detail==="boolean")workView.detail=saved.detail;}}catch(_){}
 function readWorkspaceHash(){
- const hash=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(hash)){workView.batch=hash;workView.key="batch:"+hash;return;}
+ const hash=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(hash)){workView.batch=hash;workView.key="batch:"+hash;workView.detail=true;return;}
  if(!hash)return;const params=new URLSearchParams(hash);
  if(/^(batch|task|run):[\w.-]{1,100}$/.test(params.get("work")||""))workView.key=params.get("work");
  workView.batch=/^[a-f0-9]{32}$/.test(params.get("batch")||"")?params.get("batch"):null;
  if(tabs.includes(params.get("tab")))workView.tab=params.get("tab");
+ workView.detail=params.get("view")!=="list";
 }
 readWorkspaceHash();if(!tabs.includes(workView.tab))workView.tab="activity";
 if(workView.filter==="uncertain")workView.filter="recorded";
@@ -449,12 +450,14 @@ function presenceState(task,batch=null){
 function newest(items){return [...items].sort((a,b)=>activityTime(b)-activityTime(a)||String(a.id).localeCompare(String(b.id)));}
 function saveWorkspace(){
  try{localStorage.setItem(workspaceKey,JSON.stringify(workView));}catch(_){}
- const params=new URLSearchParams();if(workView.key)params.set("work",workView.key);if(workView.batch)params.set("batch",workView.batch);params.set("tab",workView.tab);
+ const params=new URLSearchParams();if(workView.key)params.set("work",workView.key);if(workView.batch)params.set("batch",workView.batch);params.set("tab",workView.tab);params.set("view",workView.detail?"detail":"list");
  history.replaceState(null,"",location.pathname+location.search+"#"+params);
 }
 function setWorkTab(tab,save=true){
  if(paused&&logView&&!$("pane-builds").hidden)remember("logs",logView,$("log").scrollTop,50);
+ if(save)workView.detail=true;
  workView.tab=tabs.includes(tab)?tab:"activity";
+ $("workDetail").classList.toggle("mobile-open",workView.detail);
  for(const name of tabs){$("pane-"+name).hidden=name!==workView.tab;$("tab-"+name).setAttribute("aria-selected",String(name===workView.tab));$("tab-"+name).tabIndex=name===workView.tab?0:-1;}
  if(workView.tab==="builds")$("log").scrollTop=paused&&logView?view.logs[logView]||0:$("log").scrollHeight;
  if(save)saveWorkspace();
@@ -521,7 +524,7 @@ function renderWorkList(){
 }
 function openWork(key){
  navigationRevision++;
- workView.key=key;workView.batch=null;selected=null;$("workDetail").classList.add("mobile-open");saveWorkspace();poll();
+ workView.key=key;workView.batch=null;workView.detail=true;selected=null;$("workDetail").classList.add("mobile-open");saveWorkspace();poll();
 }
 function scopeFor(group,snapshot){
  const ids=new Set(group.members.map(task=>task.id)),batches=new Set(group.batches.map(batch=>batch.id));
@@ -616,5 +619,5 @@ document.querySelectorAll("[data-work-tab]").forEach(button=>{
  button.addEventListener("keydown",event=>{const index=tabs.indexOf(button.dataset.workTab);let next;if(event.key==="ArrowRight")next=(index+1)%tabs.length;else if(event.key==="ArrowLeft")next=(index+tabs.length-1)%tabs.length;else if(event.key==="Home")next=0;else if(event.key==="End")next=tabs.length-1;else return;event.preventDefault();setWorkTab(tabs[next]);$("tab-"+tabs[next]).focus();});
 });
 $("validationBuild").addEventListener("click",()=>setWorkTab("builds"));
-$("backToList").addEventListener("click",()=>$("workDetail").classList.remove("mobile-open"));
+$("backToList").addEventListener("click",()=>{workView.detail=false;$("workDetail").classList.remove("mobile-open");saveWorkspace();});
 poll();setInterval(poll,2500);
