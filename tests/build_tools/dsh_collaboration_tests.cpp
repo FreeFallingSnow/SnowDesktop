@@ -98,6 +98,7 @@ console.log(JSON.stringify(result));
     require(opened.at("current").kind==Json::Kind::Null&&!opened.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="original\n",
             "Investigation blocked a batch or an unregistered write mutated source");
     const std::string unicode="协作消息 🧊 '\"; $(literal) ` |";
+    c.call({"task-open","unicode-sender","-TaskName","Unicode event fixture"});
     c.call({"event-post","unicode-sender","-Target",opened.at("id").str(),"-EventKey","fixture-unicode","-Text",unicode});
     const auto roundTrip=node("unicode");
     require(roundTrip.at("values").items.size()==2,"PowerShell 7 and 5.1 Unicode bridge coverage was incomplete");
