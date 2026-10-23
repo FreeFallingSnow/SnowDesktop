@@ -24,6 +24,9 @@ struct Policy
 };
 inline std::atomic<std::uint32_t> policyMask{31};
 inline std::atomic<std::uint64_t> policyRevision{0};
+inline std::array<std::atomic<std::uint64_t>, kCount> moduleRevision{};
+inline std::uint64_t Revision(Module module) noexcept
+{ return moduleRevision[static_cast<std::size_t>(module)].load(std::memory_order_acquire); }
 inline std::array<std::atomic<std::uint32_t>, kCount> lastError{};
 inline bool Allowed(Module module) noexcept
 {
@@ -38,7 +41,11 @@ inline void Apply(const Policy& policy) noexcept
     if (previous != mask)
     {
         for (std::size_t i = 0; i < kCount; ++i)
-            if ((previous ^ mask) & (1u << i)) lastError[i].store(0, std::memory_order_release);
+            if ((previous ^ mask) & (1u << i))
+            {
+                moduleRevision[i].fetch_add(1, std::memory_order_release);
+                lastError[i].store(0, std::memory_order_release);
+            }
         policyRevision.fetch_add(1, std::memory_order_release);
     }
 }

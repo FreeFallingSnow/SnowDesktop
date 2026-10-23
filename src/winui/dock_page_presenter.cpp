@@ -538,6 +538,7 @@ struct DockPagePresenter::Impl
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
+    runtime_modules::Policy modulePolicy;
     bool taskbarInputReady = false;
     bool spaceReservedByStatusBar = false;
     int windowsSystemThemeValue = 0;
@@ -887,7 +888,7 @@ struct DockPagePresenter::Impl
         taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
             if (updatingControls) return;
             const int mode = taskbarMode.SelectedIndex();
-            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn())) return;
+            if (mode < 0 || (mode == 2 && (!dockEnabledToggle.IsOn() || !modulePolicy.Allows(runtime_modules::Module::Taskbar)))) return;
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -2029,6 +2030,8 @@ struct DockPagePresenter::Impl
     void PatchGeneral(const GeneralSettings& settings)
     {
         dockEnabledToggle.IsOn(settings.dockEnabled);
+        modulePolicy = settings.runtimeModules;
+        RefreshTaskbarRuntimeStatus();
     }
 
     void PatchContinuous(
@@ -2173,6 +2176,8 @@ struct DockPagePresenter::Impl
         if (closed)
             return;
         const bool dockEnabled = dockEnabledToggle.IsOn();
+        const bool taskbarAllowed = modulePolicy.Allows(runtime_modules::Module::Taskbar);
+        const bool startMenuAllowed = taskbarAllowed && modulePolicy.Allows(runtime_modules::Module::StartMenu);
         // Match the legacy BeginDisabled(!dockEnabled_) scope. Border and Grid
         // are FrameworkElements, not Controls, so disable each SettingRow's
         // ContentControl host to remove its descendants from keyboard/Tab
@@ -2189,15 +2194,15 @@ struct DockPagePresenter::Impl
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeDistanceScale.row.SetEnabled(dockEnabled && layoutCombo.SelectedIndex() == 0);
         mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
-        suppressTaskbarRow.SetEnabled(dockEnabled);
+        suppressTaskbarRow.SetEnabled(dockEnabled && taskbarAllowed);
         taskbarSuppressRow.SetEnabled(true);
         if (taskbarMode.Items().Size() == 3)
-            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(dockEnabled || taskbarSuppressToggle.IsOn());
+            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(taskbarAllowed && (dockEnabled || taskbarSuppressToggle.IsOn()));
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
-        startMenuKeepTaskbarHiddenRow.SetEnabled(dockEnabled && showWindowsButtonToggle.IsOn() &&
+        startMenuKeepTaskbarHiddenRow.SetEnabled(startMenuAllowed && dockEnabled && showWindowsButtonToggle.IsOn() &&
             taskbarMode.SelectedIndex() > 0);
         showQuickSearchButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
@@ -2234,12 +2239,13 @@ struct DockPagePresenter::Impl
         const int selectedTheme = taskbarThemes->NativeSelection();
         const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
-        const bool taskbarCustom = taskbarThemes->CustomSelected() && selectedTheme ==
+        const bool taskbarCustom = taskbarAllowed && taskbarThemes->CustomSelected() && selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
         taskbarContentThemeRow.root.Visibility(!taskbarThemes->HasSavedSelection() && (taskbarStyled || IsClassicSystemTaskbar())
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
+        taskbarThemeRow.SetEnabled(taskbarAllowed);
+        taskbarContentThemeRow.SetEnabled(taskbarAllowed && (taskbarStyled || IsClassicSystemTaskbar()));
         presenter_controls::UpdateSettingsSubrows(taskbarBaseRows, 0);
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
@@ -2261,7 +2267,8 @@ struct DockPagePresenter::Impl
 
         for (DynamicRuleControl* control : dynamicRules)
         {
-            const bool enabled = control->enabled.IsOn();
+            const bool enabled = taskbarAllowed && control->enabled.IsOn();
+            control->enabledRow.SetEnabled(taskbarAllowed);
             const bool native = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Native);
             const bool custom = control->savedThemes->CustomSelected() && control->savedThemes->NativeSelection() ==
@@ -2314,13 +2321,13 @@ struct DockPagePresenter::Impl
             suppressionStatus.Message(L(failed ? "settings.dock.suppressTaskbar.failed" : "app.settings.taskbar_connecting",
                 failed ? L"The taskbar could not be hidden. Turn this option off to restore it, then try again." : L"Connecting to the Explorer taskbar..."));
             suppressionStatus.Severity(failed ? muxc::InfoBarSeverity::Error : muxc::InfoBarSeverity::Informational);
-            suppressionStatus.IsOpen(dockEnabledToggle.IsOn() && suppressTaskbarToggle.IsOn() && (failed || pending));
+            suppressionStatus.IsOpen(modulePolicy.Allows(runtime_modules::Module::Taskbar) && dockEnabledToggle.IsOn() && suppressTaskbarToggle.IsOn() && (failed || pending));
         }
         if (!taskbarRuntimeStatus) return;
         std::wstring text;
         muxc::InfoBarSeverity severity =
             muxc::InfoBarSeverity::Informational;
-        if (taskbarHookRequired)
+        if (modulePolicy.Allows(runtime_modules::Module::Taskbar) && taskbarHookRequired)
         {
             switch (GetSystemTaskbarBackdropRuntimeState())
             {

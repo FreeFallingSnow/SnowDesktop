@@ -327,7 +327,7 @@ struct BackupDataPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(24.0);
+        root.Spacing(8.0);
 
         infoBar = muxc::InfoBar{};
         infoBar.IsClosable(true);

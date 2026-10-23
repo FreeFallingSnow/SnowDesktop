@@ -52,6 +52,9 @@ inline HRESULT Invoke(const std::wstring& hookPath, Action action,
     struct ViewScope { void* value; ~ViewScope() { UnmapViewOfFile(value); } } viewScope{state};
     *state = request;
     MemoryBarrier();
+    // Recheck at submission: a settings change can arrive while preparing the request.
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu))
+        return HRESULT_FROM_WIN32(ERROR_ACCESS_DISABLED_BY_POLICY);
     const HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
     if (!hook) return HRESULT_FROM_WIN32(GetLastError());
     struct HookScope { HHOOK value; ~HookScope() { UnhookWindowsHookEx(value); } } hookScope{hook};

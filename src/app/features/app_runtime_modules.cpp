@@ -18,6 +18,8 @@ void DesktopApp::ApplyRuntimeModulePolicy()
     if (!modules::Allowed(modules::Module::Tray))
     {
         if (dockTrayPopup_) CloseCollectionPopup(false);
+        if (statusBar_) statusBar_->CancelTrayMenuSession();
+        if (systemPanel_) systemPanel_->HideTray();
         dockTrayService_.reset();
     }
     // Refresh also executes the reverse operations when a module was disabled.

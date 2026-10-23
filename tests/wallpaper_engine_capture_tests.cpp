@@ -267,6 +267,21 @@ int main(int argc, char** argv)
     const auto cancelledElapsed = std::chrono::steady_clock::now() -
         waitStarted;
     cancelThread.join();
+    namespace modules = snowdesktop::runtime_modules;
+    std::thread disableModule([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        modules::Policy policy;
+        policy.allowed[static_cast<std::size_t>(modules::Module::WallpaperPreview)] = false;
+        modules::Apply(policy);
+    });
+    const auto disabledWaitStarted = std::chrono::steady_clock::now();
+    const auto disabledWait = WaitForHandleOrCancellation(waitEvent, 2000);
+    disableModule.join();
+    const auto disabledWaitElapsed = std::chrono::steady_clock::now() - disabledWaitStarted;
+    modules::Apply({});
+    Check(disabledWait == CancellableWaitResult::Cancelled &&
+            disabledWaitElapsed < std::chrono::milliseconds(750),
+        "disabling the preview module interrupts a pending injection wait without a caller cancellation flag");
     CloseHandle(waitEvent);
     Check(cancelledResult == CancellableWaitResult::Cancelled &&
             cancelledElapsed < std::chrono::milliseconds(750),

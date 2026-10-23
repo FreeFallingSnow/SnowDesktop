@@ -25,6 +25,7 @@ std::shared_ptr<snowdesktop::tray::Service> DesktopApp::EnsureDockTrayService()
 {
     if (!dockTrayService_ && statusBar_) dockTrayService_ = statusBar_->Tray();
     if (!dockTrayService_) dockTrayService_ = std::make_shared<snowdesktop::tray::Service>();
+    if (statusBar_) statusBar_->SetSharedTray(dockTrayService_);
     return dockTrayService_;
 }
 

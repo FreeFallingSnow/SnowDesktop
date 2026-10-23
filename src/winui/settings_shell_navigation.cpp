@@ -150,7 +150,9 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
     std::uint64_t revision,
     std::uint64_t generation)
 {
-    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
+        ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
+        : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute))
         return false;
 
@@ -199,7 +201,9 @@ std::optional<SettingsRoute> SettingsShellNavigationState::PeekBack() const
 
 bool SettingsShellNavigationState::Navigate(const SettingsRoute& route)
 {
-    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
+        ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
+        : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute) || Route() == canonicalRoute)
         return false;
     Push(canonicalRoute);

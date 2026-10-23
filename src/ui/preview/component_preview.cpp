@@ -1063,6 +1063,7 @@ void Window::StartWallpaperEngineBackdropCapture(
     }
 
     auto state = std::make_shared<WallpaperEngineCaptureState>();
+    state->policyRevision = runtime_modules::Revision(runtime_modules::Module::WallpaperPreview);
     state->generation = ++wallpaperEngineCaptureGeneration_;
     state->requestedBounds = monitorBounds;
     wallpaperEngineCaptureState_ = state;
@@ -1099,7 +1100,9 @@ void Window::FinishWallpaperEngineBackdropCapture(
     bool apply = false;
     {
         std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
-        apply = runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) && wallpaperEngineCaptureState_->completed &&
+        apply = runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) &&
+            wallpaperEngineCaptureState_->policyRevision == runtime_modules::Revision(runtime_modules::Module::WallpaperPreview) &&
+            wallpaperEngineCaptureState_->completed &&
             !wallpaperEngineCaptureState_->cancelled.load(
                 std::memory_order_relaxed) &&
             !wallpaperEngineCaptureState_->wallpaper.pixels.empty();

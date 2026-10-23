@@ -64,21 +64,24 @@ inline Snapshot Inspect()
             if (wallpaper) result.modules[4].residencyKnown = false;
             continue;
         }
-        bool taskbarImage = false, windowImage = false, wallpaperImage = false;
+        bool taskbarImage = false, windowImage = false, wallpaperImage = false, entryImage = false;
         MODULEENTRY32W module{sizeof(module)};
         if (Module32FirstW(modules, &module)) do
         {
-            taskbarImage |= _wcsicmp(module.szModule, L"SnowDesktopTaskbarHook.dll") == 0 ||
-                _wcsicmp(module.szModule, L"SnowDesktopHookEntry.dll") == 0;
+            entryImage |= _wcsicmp(module.szModule, L"SnowDesktopHookEntry.dll") == 0 ||
+                _wcsicmp(module.szModule, L"SnowDesktopHookEntry32.dll") == 0;
+            taskbarImage |= _wcsicmp(module.szModule, L"SnowDesktopTaskbarHook.dll") == 0;
             windowImage |= _wcsicmp(module.szModule, L"SnowDesktopDockMinimizeHook.dll") == 0 ||
                 _wcsicmp(module.szModule, L"SnowDesktopDockMinimizeHook32.dll") == 0;
             wallpaperImage |= _wcsnicmp(module.szModule, L"SnowDesktopWallpaperHook", 24) == 0;
         } while (Module32NextW(modules, &module));
         CloseHandle(modules);
         const auto append = [&](std::size_t i) { result.modules[i].targets.push_back({process.th32ProcessID, process.szExeFile, explorer}); };
-        if (taskbarImage && explorer) { append(0); append(1); append(3); }
-        if (taskbarImage && start) append(3);
-        if (windowImage) append(2);
+        if ((taskbarImage || entryImage) && explorer) { append(0); append(1); append(3); }
+        if ((taskbarImage || entryImage) && start) append(3);
+        // The stable entry can outlive its payload after controlled cleanup.
+        // In application processes it is also part of the window module residency.
+        if (windowImage || (entryImage && !explorer && !start)) append(2);
         if (wallpaperImage) append(4);
     } while (Process32NextW(processes, &process));
     CloseHandle(processes);

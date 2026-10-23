@@ -247,6 +247,7 @@ struct AnimationPerformancePagePresenter::Impl
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
     mux::DispatcherTimer scaleIdle{nullptr};
     bool dockEnabled = false, scaleDirty = false, updating = false;
+    bool windowModuleAllowed = true;
     bool active = false, closed = false, hasSnapshot = false;
     std::uint64_t generation = 0, generalRevision = 0, dockRevision = 0;
 
@@ -361,7 +362,7 @@ struct AnimationPerformancePagePresenter::Impl
         popup.row.SetEnabled(enabled);
         speed.row.SetEnabled(enabled);
         for (auto* choice : {&hover, &launch, &window})
-            choice->row.SetEnabled(enabled && dockEnabled);
+            choice->row.SetEnabled(enabled && dockEnabled && (choice != &window || windowModuleAllowed));
         scaleRow.SetEnabled(enabled && dockEnabled && hover.combo.SelectedIndex() == 2);
         dockNotice.Visibility(dockEnabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     }
@@ -420,6 +421,7 @@ struct AnimationPerformancePagePresenter::Impl
         {
             const auto& general = snapshot.values.general;
             dockEnabled = general.dockEnabled;
+            windowModuleAllowed = general.runtimeModules.Allows(runtime_modules::Module::WindowMinimize);
             mode.combo.SelectedIndex(animation::NormalizeMode(general.animationMode));
             popup.combo.SelectedIndex(animation::NormalizePopupEffect(general.popupAnimationEffect));
             speed.combo.SelectedIndex(animation::NormalizeSpeed(general.animationSpeed));

@@ -201,6 +201,7 @@ struct Service::Impl
     }
     void Reregister(const std::shared_ptr<Connection>& current)
     {
+        if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return;
         DWORD_PTR armed = 0;
         // Prepare the collector before asking existing applications to ADD
         // again. This bounded handshake runs on the service worker, never the
@@ -252,7 +253,7 @@ struct Service::Impl
         while (!token.stop_requested())
         {
             if (!runtime_modules::Allowed(runtime_modules::Module::Tray))
-            { runtime_modules::SetActive(runtime_modules::Module::Tray, 0); WaitForSingleObject(stop, 100); registrationRetry.Reset(); continue; }
+            { WaitForSingleObject(stop, 100); registrationRetry.Reset(); continue; }
             DWORD currentExplorer = 0;
             GetWindowThreadProcessId(GetShellWindow(), &currentExplorer);
             if (currentExplorer != retryExplorer)
@@ -278,8 +279,8 @@ struct Service::Impl
                 connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
             runtime_modules::SetError(runtime_modules::Module::Tray, error);
-            runtime_modules::SetActive(runtime_modules::Module::Tray, current ? 1u : 0u);
             if (!current) { registrationRetry.Failed(error, GetTickCount64()); continue; }
+            runtime_modules::Activity collecting(runtime_modules::Module::Tray);
             registrationRetry.Reset();
             if (!symbolsRequested)
             {
@@ -309,7 +310,7 @@ struct Service::Impl
             std::uint64_t supplementedEpoch = 0;
             unsigned supplementAttempts = 0;
             HANDLE handles[]{stop, current->explorer, current->signal};
-            while (!token.stop_requested())
+            while (!token.stop_requested() && runtime_modules::Allowed(runtime_modules::Module::Tray))
             {
                 if (symbols.valid() && symbols.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
                 {
@@ -459,7 +460,7 @@ struct Service::Impl
                     if (focus.Current() && !FocusIconExists()) { CancelFocus(); menuPlacement.Cancel(); }
                 }
                 if (!runtime_modules::Allowed(runtime_modules::Module::Tray) || !Read(state.ready) || !IsWindow(current->window)) break;
-                const DWORD result = WaitForMultipleObjects(3, handles, FALSE, 1000);
+                const DWORD result = WaitForMultipleObjects(3, handles, FALSE, 250);
                 if (result == WAIT_OBJECT_0 || result == WAIT_OBJECT_0 + 1) break;
             }
             {
@@ -467,7 +468,6 @@ struct Service::Impl
                 CancelFocus(); menuPlacement.Cancel(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; Changed();
             }
             current.reset();
-            runtime_modules::SetActive(runtime_modules::Module::Tray, 0);
         }
     }
 };

@@ -52,8 +52,8 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     }
     if (protectTaskbar)
     {
-        // Protection must also cover applications omitted from the Dock model,
-        // and remain armed when Dock display or minimize animation is disabled.
+        // Protection also covers applications omitted from the Dock model,
+        // including screens without a Dock and configurations without animations.
         EnumWindows([](HWND window, LPARAM value) -> BOOL {
             DWORD process = 0;
             GetWindowThreadProcessId(window, &process);

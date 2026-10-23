@@ -381,7 +381,9 @@ int main()
         SettingsShellNavigationState modules;
         const auto route = SettingsRoute::ForPage(SettingsPage::RuntimeModules);
         Check(route.IsValid() && SettingsPageKey(route.page) == "runtime-modules", "module route is stable and appended");
-        Check(!modules.IsRouteAvailable(route) && !modules.Navigate(route), "advanced module route is inaccessible by default");
+        Check(!modules.IsRouteAvailable(route) && modules.Navigate(route) &&
+            modules.Route() == SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"),
+            "direct hidden module route resolves to the About visibility control");
         (void)modules.SetVisibility({false, false, true});
         Check(modules.Navigate(route), "showing advanced settings enables the module destination");
         const auto hidden = modules.SetVisibility({false, false, false});

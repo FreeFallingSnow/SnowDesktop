@@ -112,6 +112,7 @@ public:
     RECT MergedSizingWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     HRESULT ShowInputMethod(RECT anchor, bool context, bool layoutPanel = false);
     std::shared_ptr<tray::Service> Tray() const;
+    void SetSharedTray(std::shared_ptr<tray::Service> service);
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
     bool DropTrayIcon(std::string_view key, POINT screen);

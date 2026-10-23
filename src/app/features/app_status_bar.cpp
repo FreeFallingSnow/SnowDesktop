@@ -120,6 +120,7 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
+    if (action == Action::Tray && !snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray)) return;
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
@@ -1004,13 +1005,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     {
         ensureSystemPanel();
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
-            statusBar_->Tray(), systemDataProvider_, statusBar_->MergedStripBounds(monitor).has_value());
+            action == Action::Tray ? EnsureDockTrayService() : statusBar_->Tray(),
+            systemDataProvider_, statusBar_->MergedStripBounds(monitor).has_value());
     }
 }
 
 void DesktopApp::SyncStatusBar()
 {
-    if (generalSettings_.dockEnabled || generalSettings_.statusBar.enabled) EnsureDockTrayService();
+    const bool dockTrayRequired = generalSettings_.dockEnabled &&
+        std::any_of(dockSettings_.trayApplications.begin(), dockSettings_.trayApplications.end(),
+            [](const auto& rule) { return rule.enabled; });
+    const bool barTrayRequired = generalSettings_.statusBar.enabled && generalSettings_.statusBar.tray;
+    if (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray) &&
+        (dockTrayRequired || barTrayRequired)) EnsureDockTrayService();
     else dockTrayService_.reset();
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);

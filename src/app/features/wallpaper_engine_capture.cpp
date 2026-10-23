@@ -21,6 +21,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -48,6 +49,23 @@ bool CanInjectCaptureHook(DWORD processId, std::wstring& error)
     return false;
 }
 
+namespace
+{
+thread_local std::optional<std::uint64_t> capturePolicyRevision;
+bool CaptureCancelled(const std::atomic_bool* cancelled)
+{
+    return !runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) ||
+        (capturePolicyRevision && *capturePolicyRevision != runtime_modules::Revision(runtime_modules::Module::WallpaperPreview)) ||
+        (cancelled && cancelled->load(std::memory_order_relaxed));
+}
+struct CapturePolicyScope
+{
+    std::optional<std::uint64_t> previous = capturePolicyRevision;
+    CapturePolicyScope() { capturePolicyRevision = runtime_modules::Revision(runtime_modules::Module::WallpaperPreview); }
+    ~CapturePolicyScope() { capturePolicyRevision = previous; }
+};
+}
+
 CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
 {
@@ -56,17 +74,14 @@ CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     const ULONGLONG deadline = GetTickCount64() + timeoutMs;
     for (;;)
     {
-        if (cancelled &&
-            cancelled->load(std::memory_order_relaxed))
+        if (CaptureCancelled(cancelled))
             return CancellableWaitResult::Cancelled;
         const ULONGLONG now = GetTickCount64();
         if (now >= deadline)
             return CancellableWaitResult::TimedOut;
         const DWORD remaining = static_cast<DWORD>(
             std::min<ULONGLONG>(deadline - now, MAXDWORD));
-        const DWORD slice = cancelled
-            ? std::min<DWORD>(remaining, 20)
-            : remaining;
+        const DWORD slice = std::min<DWORD>(remaining, 20);
         const DWORD result = WaitForSingleObject(handle, slice);
         if (result == WAIT_OBJECT_0)
             return CancellableWaitResult::Signaled;
@@ -120,7 +135,7 @@ std::wstring FormatHresult(const wchar_t* stage, HRESULT result)
 
 bool IsCancelled(const std::atomic_bool* cancelled)
 {
-    return !runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) || (cancelled && cancelled->load(std::memory_order_relaxed));
+    return CaptureCancelled(cancelled);
 }
 
 std::int64_t IntersectionArea(const RECT& left, const RECT& right)
@@ -1063,6 +1078,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
 {
     Result result;
+    CapturePolicyScope policyScope;
     if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview)) return result;
     runtime_modules::Activity activity(runtime_modules::Module::WallpaperPreview);
     runtime_modules::SetError(runtime_modules::Module::WallpaperPreview, ERROR_SUCCESS);
@@ -1125,6 +1141,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
             if (session.TryReadBestFrame(monitorBounds,
                     allowCloneRemap, result.backdrop, sessionError))
             {
+                if (IsCancelled(cancelled)) return {};
                 result.error.clear();
                 return result;
             }

@@ -839,6 +839,10 @@ void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,
     if(task!="system.power.sleep"&&task!="host.power.hibernate"&&task!="system.power.restart"&&task!="system.power.shutdown")return;
     impl_->Queue({StatusBarAction::ControlCenter,owner,anchor,appearance,settings,{},std::move(data),std::move(task)});
 }
+void SystemPanel::HideTray()
+{
+    if (impl_->current && impl_->current->action == StatusBarAction::Tray) Hide();
+}
 void SystemPanel::Hide(){impl_->transition.Cancel();impl_->afterClose={};++impl_->closeGeneration;if(impl_->showing)impl_->Animate(false);}
 void SystemPanel::CloseThen(std::function<void()> next, HWND destinationOwner)
 {

@@ -273,7 +273,7 @@ struct HomeAboutPagePresenter::Impl
     {
 
         aboutRoot = muxc::StackPanel{};
-        aboutRoot.Spacing(24.0);
+        aboutRoot.Spacing(8.0);
         InitializeSection(introductionSection, cardStyle, aboutRoot);
         introductionText = MakeBodyText(0.78);
         introductionSection.content.Children().Append(introductionText);
@@ -366,7 +366,7 @@ struct HomeAboutPagePresenter::Impl
                  profileSection.root, copyrightSection.root})
             aboutRoot.Children().Append(section);
         muxc::StackPanel creditGroups;
-        creditGroups.Spacing(24);
+        creditGroups.Spacing(8);
         for (const auto* section : {&thirdPartySection, &dataSection,
                  &fontSection, &referenceSection})
         {

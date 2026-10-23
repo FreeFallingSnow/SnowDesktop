@@ -1435,6 +1435,7 @@ HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context, bool layoutPanel)
         impl_->inputMethod->Show(anchor, context, layoutPanel) : E_UNEXPECTED;
 }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
+void StatusBar::SetSharedTray(std::shared_ptr<tray::Service> service) { impl_->sharedTray = std::move(service); }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
     std::function<bool(std::string_view, POINT)> dropOutside)
 { impl_->trayChanged = std::move(changed); impl_->dropOutside = std::move(dropOutside); }
@@ -1764,8 +1765,20 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         ReleaseGraphicsResources();
     self.composition = composition; self.text = text;
     if (!self.settings.enabled || monitors.empty()) { self.Close(); return; }
-    if (!self.tray) self.tray = self.sharedTray.lock();
-    if (!self.tray) self.tray = std::make_shared<tray::Service>();
+    const auto previousTray = self.tray;
+    if (self.settings.tray)
+    {
+        if (!self.tray) self.tray = self.sharedTray.lock();
+        if (!self.tray) self.tray = std::make_shared<tray::Service>();
+    }
+    else self.tray.reset();
+    const bool trayChanged = self.tray != previousTray;
+    if (trayChanged && previousTray)
+        for (const auto& [id, window] : self.windows)
+        {
+            (void)id;
+            if (window) { window->CancelTrayMenu(); previousTray->UnsubscribeChanges(window->hwnd); }
+        }
     if (self.settings.inputMethod && !self.inputMethod)
         self.inputMethod = std::make_unique<status_bar_input_method::Service>();
     else if (!self.settings.inputMethod) self.inputMethod.reset();
@@ -1797,6 +1810,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     for (const auto& monitor : monitors)
     {
         auto& window = self.windows[monitor.id];
+        const bool createdWindow = !window;
         if (!window)
         {
             window = std::make_unique<Impl::Window>(self);
@@ -1811,10 +1825,10 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 continue;
             }
             liveBars.emplace(window->hwnd, false);
-            self.tray->SubscribeChanges(window->hwnd);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }
+        if (self.tray && (createdWindow || trayChanged)) self.tray->SubscribeChanges(window->hwnd);
         if (self.settings.inputMethod) SetTimer(window->hwnd, kInputMethodTimer, 200, nullptr);
         else KillTimer(window->hwnd, kInputMethodTimer);
         if(window->monitor!=monitor.monitor)

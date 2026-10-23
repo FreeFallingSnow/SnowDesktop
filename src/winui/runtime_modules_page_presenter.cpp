@@ -8,6 +8,15 @@ namespace snowdesktop::winui
 namespace x = winrt::Microsoft::UI::Xaml;
 namespace c = x::Controls;
 namespace m = runtime_modules;
+namespace
+{
+constexpr std::array<std::string_view, m::kCount> kImpactKeys{
+    "modules.taskbar.impact", "modules.tray.impact", "modules.windowMinimize.impact",
+    "modules.startMenu.impact", "modules.wallpaperPreview.impact"};
+constexpr std::array<std::string_view, m::kCount> kConflictKeys{
+    "modules.taskbar.conflict", "modules.tray.conflict", "modules.windowMinimize.conflict",
+    "modules.startMenu.conflict", "modules.wallpaperPreview.conflict"};
+}
 struct RuntimeModulesPagePresenter::Impl
 {
     struct Lifetime { Impl* owner = nullptr; };
@@ -40,7 +49,7 @@ struct RuntimeModulesPagePresenter::Impl
         : localize(std::move(value)), actions(std::move(callbacks)), query(std::move(provider))
     {
         lifetime->owner = this;
-        root.Spacing(16);
+        root.Spacing(8);
         introduction.TextWrapping(x::TextWrapping::Wrap);
         root.Children().Append(introduction);
         for (std::size_t i = 0; i < cards.size(); ++i)
@@ -109,7 +118,7 @@ struct RuntimeModulesPagePresenter::Impl
             auto& card = cards[i];
             card.name.Text(L(Key(i, "name")));
             card.purpose.Text(L(Key(i, "purpose")));
-            card.impact.Text(L(Key(i, "impact")));
+            card.impact.Text(L(kImpactKeys[i]));
             card.expander.Header(winrt::box_value(L("modules.compatibilityDetails")));
             card.button.Content(winrt::box_value(L(policy.allowed[i] ? "modules.disable" : "modules.allow")));
             x::Automation::AutomationProperties::SetName(card.button, L(Key(i, "name")) + L" · " + L(policy.allowed[i] ? "modules.disable" : "modules.allow"));
@@ -138,7 +147,7 @@ struct RuntimeModulesPagePresenter::Impl
                     status.active ? "modules.active" : status.error == ERROR_IO_PENDING ? "modules.loading" :
                     status.error == ERROR_NOT_SUPPORTED ? "modules.unsupported" : status.error ? "modules.failed" : "modules.idle";
                 card.state.Text(self.L(state));
-                std::wstring details = self.L(self.Key(i, "conflict"));
+                std::wstring details = self.L(kConflictKeys[i]);
                 details += L"\n\n" + self.L(status.targets.empty() ?
                     (status.residencyKnown ? "modules.noResident" : "modules.unknownResident") : "modules.resident");
                 for (const auto& target : status.targets)
