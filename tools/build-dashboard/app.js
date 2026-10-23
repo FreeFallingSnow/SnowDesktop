@@ -28,7 +28,12 @@ function remember(name,key,value,limit){delete view[name][key];view[name][key]=v
 function retainFold(node,key){node.dataset.foldKey=key;node.open=view.folds[key]===true;node.addEventListener("toggle",()=>remember("folds",key,node.open,250));}
 function historyBatch(){const id=location.hash.slice(1);return /^[a-f0-9]{32}$/.test(id)?id:null;}
 let selected = historyBatch(), paused = view.paused, inflight = false, logView = null;
-function selectBatch(id){selected=id;history.replaceState(null,"",location.pathname+location.search+(id?"#"+id:""));poll();}
+function selectBatch(id){
+ navigationRevision++;
+ workView.batch=id||null;selected=id;
+ if(id){const group=workItems.find(item=>item.batches.some(batch=>batch.id===id));if(group)workView.key=group.key;}
+ setWorkTab("builds",false);saveWorkspace();poll();
+}
 const previewRequests=new Map();
 async function showPreview(url,output){
  if(!previewRequests.has(url))previewRequests.set(url,request(url).then(value=>value.lines.join("\n")));
@@ -63,9 +68,9 @@ function render(snapshot,batch){
  text("waitCount",(snapshot.waits||[]).length+" 条 · "+(view.waits.open?"点击收起":"点击展开"));
  $("waits").replaceChildren(...(snapshot.waits||[]).map(wait=>{const box=element("article",null,"task-row");detail(box,wait.participant+" / "+label(wait.condition),label(wait.status),tone(wait.status));detail(box,"票据",wait.id);detail(box,"原因",wait.reason);detail(box,"恢复入口",wait.next);detail(box,"截止",time(wait.deadlineUtc));return box;}));
  $("waits").scrollTop=view.waits.top;
- $("fixture").hidden=!snapshot.fixture;text("updated","更新时间 "+time(snapshot.updatedUtc));
+ $("fixture").hidden=!snapshot.fixture;
  $("history").replaceChildren(...snapshot.history.map(item=>{const row=element("div",null,"history-row"),btn=element("button",item.batchId+" / 第 "+(item.attempt||1)+" 次");btn.type="button";btn.addEventListener("click",()=>{selectBatch(item.batchId);});row.append(btn,element("span",label(item.outcome),"badge "+tone(item.outcome)),element("time",time(item.completedUtc)));return row;}));
- if(!batch){text("headline","暂无活动批次");text("description","开始修改前调用 begin。历史结果可在下方查看。只读查询不会创建编辑登记。");text("batch","—");text("stamp","—");text("taskCount",0);text("readyCount","暂无登记");text("stage","未知");text("stageNote","尚无本批日志");text("testCount","未知");text("coverage","没有冻结计划");text("freshness","未冻结");text("inputNote","尚无输入记录");text("owner","—");text("logHint","暂无日志");text("log","尚无本批日志。");$("tasks").replaceChildren();$("evidence").replaceChildren();appendRecordedChecks($("evidence"),snapshot,null);renderStandaloneRun(snapshot);return;}
+ if(!batch){text("headline","尚无构建记录");text("description","");text("batch","—");text("stamp","—");text("taskCount",0);text("readyCount","暂无登记");text("stage","未知");text("stageNote","尚无本批日志");text("testCount","未知");text("coverage","没有冻结计划");text("freshness","未冻结");text("inputNote","尚无输入记录");text("owner","—");text("logHint","暂无日志");text("log","尚无本批日志。");$("tasks").replaceChildren();$("evidence").replaceChildren();appendRecordedChecks($("evidence"),snapshot,null);renderStandaloneRun(snapshot);return;}
  text("headline",(batch.historical?"历史 · ":"")+(batch.outcome==="cancelled"&&!batch.buildStartedUtc?"登记已撤回 · 未开始构建":label(batch.phase)));
  text("description",batchDescription(batch));
  text("batch",batch.id);text("stamp","第 "+batch.attempt+" 次 · 逻辑批次 "+batch.logicalBatchId.slice(0,8)+" · "+time(batch.completedUtc||batch.createdUtc));
@@ -175,14 +180,14 @@ function taskSituation(task,batch){
  return "已加入本批验证";
 }
 function batchDescription(batch){
- if(batch.historical)return batch.outcome==="cancelled"&&!batch.buildStartedUtc?"编辑登记已撤回，没有启动构建。":"结果对应本记录的输入和产物。";
+ if(batch.historical)return batch.outcome==="cancelled"&&!batch.buildStartedUtc?"登记已撤回，未构建":"";
  if(batch.planError)return batch.planError;
  if(batch.phase==="editing"){
   const editing=batch.tasks.filter(x=>x.state==="editing").length,checking=batch.tasks.filter(x=>x.display==="checking").length;
-  return editing?"等待 "+editing+" 项任务结束编辑"+(checking?"，另有 "+checking+" 项检查未完成":"")+"。":checking?"等待 "+checking+" 项只读检查完成。":"编辑已结束，等待执行条件满足。";
+  return editing?"等待 "+editing+" 项任务结束编辑"+(checking?"，"+checking+" 项检查待完成":"")+"。":checking?"等待 "+checking+" 项检查完成":"已就绪，等待执行";
  }
- if(batch.phase==="interrupted")return "执行者已退出，运行需要核实与恢复。";
- return batch.buildStartedUtc?"执行开始于 "+time(batch.buildStartedUtc)+"。":"正在核对执行记录。";
+ if(batch.phase==="interrupted")return "执行者已退出，待恢复";
+ return batch.buildStartedUtc?"执行开始于 "+time(batch.buildStartedUtc)+"。":"等待执行";
 }
 function filterTasks(){
  if(latestSnapshot)renderPresence(latestSnapshot);
@@ -223,6 +228,7 @@ function renderAttention(batch){
   box.append(element("strong",item.title),element("p",item.reason));
   const button=element("button",item.taskId?"查看任务":"查看详情");button.type="button";button.dataset.focusKey=JSON.stringify(["attention",item.title,item.taskId,item.target]);
   button.addEventListener("click",()=>{
+   setWorkTab(item.taskId?"participants":"builds");
    if(item.taskId){
     view.filters.task="";view.filters.state="all";$("taskSearch").value="";$("taskFilter").value="all";saveView();filterTasks();
     const row=Array.from($("tasks").children).find(x=>x.dataset.taskId===item.taskId);
@@ -231,7 +237,7 @@ function renderAttention(batch){
    $(item.target).scrollIntoView({block:"start"});
   });box.append(button);return box;
  });
- if(!nodes.length)nodes.push(element("p",batch?"没有待处理记录。":"暂无活动批次。","empty"));
+ if(!nodes.length)nodes.push(element("p",batch?"没有待处理记录。":"尚无构建记录。","empty"));
  $("attention").replaceChildren(...nodes);text("attentionCount",items.length?items.length+" 项":"—");
 }
 function preciseTime(value){return typeof value!=="number"||!Number.isFinite(value)?"未记录":value<1?Math.round(value*1000)+" 毫秒":value<60?value.toFixed(2)+" 秒":duration(value);}
@@ -365,11 +371,14 @@ function filterHistory(){
  $("historyEmpty").hidden=visible>0;
 }
 function filterLog(){
- const lines=latestBatch?.log.lines||[],query=$("logSearch").value.trim().toLocaleLowerCase(),errorsOnly=$("errorsOnly").checked;
+ const batchLog=latestBatch?.log,runLog=displayedRun?.log;
+ const source=batchLog?.lines?.length?batchLog:runLog||batchLog;
+ const lines=source?.lines||[],query=$("logSearch").value.trim().toLocaleLowerCase(),errorsOnly=$("errorsOnly").checked;
  const matches=lines.filter(line=>(!query||line.toLocaleLowerCase().includes(query))&&(!errorsOnly||/error|warning|failed|fatal|exception|错误|失败|警告/i.test(line)));
  const position=$("log").scrollTop;
- text("log",matches.length?matches.join("\n"):query||errorsOnly?"没有匹配的日志行。":"尚无本批日志。");
- text("logMatches",lines.length?"当前尾部 "+matches.length+" / "+lines.length+" 行":"");
+ text("log",matches.length?matches.join("\n"):query||errorsOnly?"没有匹配的日志行。":displayedRun?"本轮日志接口暂无内容":"暂无日志");
+ text("logHint",source?.bytesTotal!=null?(source===runLog?"Run 日志":"批次日志")+" · 已读取 "+source.bytesRead+" / "+source.bytesTotal+" 字节"+(source.prefixOmitted?" · 仅尾部":""):"等待日志记录");
+ text("logMatches",lines.length?"尾部 "+matches.length+" / "+lines.length+" 行":"");
  $("log").scrollTop=paused?position:$("log").scrollHeight;
 }
 function renderWorkbench(snapshot,batch){
@@ -388,12 +397,177 @@ function retainFocus(){
  };
 }
 async function request(url){const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error("HTTP "+response.status);return response.json();}
-async function poll(){if(inflight)return;inflight=true;const requested=selected;try{const data=await request("/api/status");let batch=data.current;if(requested)batch=await request("/api/batches/"+requested);if(requested!==selected)return;const restoreFocus=retainFocus();render(data,batch);renderWorkbench(data,batch);restoreFocus();text("connection","已连接");$("signal").classList.add("online");}catch(error){text("connection","读取失败 · "+error.message);$("signal").classList.remove("online");text("description","连接中断，当前显示上次读取的数据。");}finally{inflight=false;if(requested!==selected)poll();}}
+// Navigation is a client-side projection of existing records; it never writes coordination state.
+const workspaceKey="SnowDesktop.collaboration-workspace.v1",tabs=["activity","participants","builds","validation","delivery"];
+const workView={key:null,batch:null,tab:"activity",query:"",filter:"all"};
+try{const raw=localStorage.getItem(workspaceKey);if(raw&&raw.length<4096){const saved=JSON.parse(raw);for(const key of ["key","batch","tab","query","filter"])if(typeof saved[key]==="string"&&saved[key].length<220)workView[key]=saved[key];}}catch(_){}
+function readWorkspaceHash(){
+ const hash=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(hash)){workView.batch=hash;workView.key="batch:"+hash;return;}
+ if(!hash)return;const params=new URLSearchParams(hash);
+ if(/^(batch|task|run):[\w.-]{1,100}$/.test(params.get("work")||""))workView.key=params.get("work");
+ workView.batch=/^[a-f0-9]{32}$/.test(params.get("batch")||"")?params.get("batch"):null;
+ if(tabs.includes(params.get("tab")))workView.tab=params.get("tab");
+}
+readWorkspaceHash();if(!tabs.includes(workView.tab))workView.tab="activity";
+if(!["all","active","attention","uncertain","done"].includes(workView.filter))workView.filter="all";
+let workspaceSnapshot=null,workItems=[],displayedRun=null,refreshRequested=false,navigationRevision=0;
+const batchCache=new Map(),phaseNames={investigating:"调查中",editing:"编辑中",waiting:"等待中",awaiting_input:"等待用户",blocked:"有阻塞",validating:"验证中",completed:"已完成",cancelled:"已取消",skipped:"无需构建",passed:"验证通过",failed:"验证失败",building:"构建 / 测试中"};
+const terminalStates=new Set(["passed","failed","invalidated","interrupted","cancelled","skipped","completed","fulfilled"]);
+function workLabel(state){return phaseNames[state]||label(state);}
+function activityTime(item){return Date.parse(item.completedUtc||item.lastProgressUtc||item.buildStartedUtc||item.createdUtc||item.openedUtc||"")||0;}
+function presenceState(task){
+ const reported=task.phase||task.display||task.state||"unknown";
+ const finished=["completed","cancelled","verified","exempt","withdrawn","batch-ended"].includes(reported);
+ const heartbeat=Date.parse(task.lastHeartbeatUtc||"");
+ // Presentation grace is three expected 60-second reporting intervals, never an edit/finish decision.
+ const recent=Number.isFinite(heartbeat)&&Date.now()-heartbeat>=0&&Date.now()-heartbeat<=180000;
+ return {reported,recent,uncertain:!finished&&!recent,text:finished?workLabel(reported):recent?workLabel(reported):"待核实"};
+}
+function newest(items){return [...items].sort((a,b)=>activityTime(b)-activityTime(a)||String(a.id).localeCompare(String(b.id)));}
+function saveWorkspace(){
+ try{localStorage.setItem(workspaceKey,JSON.stringify(workView));}catch(_){}
+ const params=new URLSearchParams();if(workView.key)params.set("work",workView.key);if(workView.batch)params.set("batch",workView.batch);params.set("tab",workView.tab);
+ history.replaceState(null,"",location.pathname+location.search+"#"+params);
+}
+function setWorkTab(tab,save=true){
+ workView.tab=tabs.includes(tab)?tab:"activity";
+ for(const name of tabs){$("pane-"+name).hidden=name!==workView.tab;$("tab-"+name).setAttribute("aria-selected",String(name===workView.tab));$("tab-"+name).tabIndex=name===workView.tab?0:-1;}
+ if(save)saveWorkspace();
+}
+function makeWorkItems(snapshot){
+ const ledger=snapshot.taskPresence||[],byId=new Map(ledger.map(task=>[task.id,task])),byName=new Map();
+ for(const task of ledger){const name=task.displayName;if(name)byName.set(name,byName.has(name)?null:task);}
+ const resolve=value=>byId.get(value)||byName.get(value)||{id:"origin:"+value,displayName:value};
+ const records=new Map();
+ for(const entry of snapshot.history||[])records.set(entry.batchId,{...entry,id:entry.batchId,phase:entry.outcome,tasks:(entry.participants||[]).map(name=>resolve(name))});
+ for(const entry of snapshot.activeCandidates||[])records.set(entry.id,{...entry,createdUtc:entry.capturedUtc,phase:entry.status,tasks:(entry.tasks||[]).map(name=>resolve(name))});
+ for(const run of snapshot.runs||[]){if(run.batchId&&!records.has(run.batchId))records.set(run.batchId,{id:run.batchId,phase:run.status,createdUtc:run.createdUtc,completedUtc:run.completedUtc,tasks:[resolve(run.task)]});}
+ if(snapshot.current)records.set(snapshot.current.id,snapshot.current);
+ for(const [id,record] of records){const cached=batchCache.get(id);if(cached&&id!==snapshot.current?.id)records.set(id,cached);}
+ // Keep an explicitly opened older record visible if it rolls out of the API's recent window.
+ if(workView.batch&&!records.has(workView.batch)&&batchCache.has(workView.batch))records.set(workView.batch,batchCache.get(workView.batch));
+ const groups=new Map(),linked=new Set();
+ for(const entry of records.values()){
+  const key="batch:"+(entry.logicalBatchId||entry.id);if(!groups.has(key))groups.set(key,{key,batches:[],members:new Map(),runs:[]});
+  const group=groups.get(key);group.batches.push(entry);
+  for(const member of entry.tasks||[]){const task=byId.get(member.id)||member;group.members.set(task.id,task);linked.add(task.id);}
+ }
+ for(const run of snapshot.runs||[]){
+  let group=[...groups.values()].find(item=>item.batches.some(batch=>batch.id===run.batchId));
+  if(!group){const key="run:"+run.id;group={key,batches:[],members:new Map(),runs:[]};if(run.task){const task=resolve(run.task);group.members.set(task.id,task);linked.add(task.id);}groups.set(key,group);}
+  group.runs.push(run);
+ }
+ for(const task of ledger)if(!linked.has(task.id))groups.set("task:"+task.id,{key:"task:"+task.id,batches:[],members:new Map([[task.id,task]]),runs:[]});
+ for(const group of groups.values()){
+  group.batches=newest(group.batches);group.members=[...group.members.values()];
+  for(const batch of group.batches)if(batch.run&&!group.runs.some(run=>run.id===batch.run.id))group.runs.push(batch.run);
+  group.runs=newest(group.runs);const latest=group.batches[0]||group.runs[0];
+  group.state=latest?.phase||latest?.status||group.members[0]?.phase||"unknown";
+  group.title=group.members[0]?.displayName||group.members[0]?.name||group.runs[0]?.task||"协作事项";
+  if(group.members.length>1)group.title+=" 等 "+group.members.length+" 项协作";
+  group.timestamp=latest?activityTime(latest):Math.max(0,...group.members.map(activityTime));
+  if(!terminalStates.has(group.state))group.timestamp=Math.max(group.timestamp,...group.members.map(activityTime));
+  group.buildCount=group.batches.filter(batch=>batch.buildStartedUtc||batch.runId||batch.run).length+group.runs.filter(run=>!group.batches.some(batch=>batch.id===run.batchId)).length;
+  const liveRun=group.runs.some(run=>run.ownerState==="alive"&&!terminalStates.has(run.status));
+  const recentMember=group.members.some(task=>presenceState(task).recent);
+  const unresolved=!terminalStates.has(group.state)&&!liveRun&&!recentMember;
+  group.kind=unresolved?"uncertain":["failed","interrupted","invalidated","blocked","attention","retirement-interrupted"].includes(group.state)||(!terminalStates.has(group.state)&&group.members.some(task=>task.blocker))?"attention":terminalStates.has(group.state)?"done":"active";
+  group.displayState=unresolved?"待核实":group.state==="editing"&&group.batches.length?"等待就绪":workLabel(group.state);
+  group.summary=unresolved?"上次登记："+workLabel(group.state)+" · 无近期心跳":group.runs.find(run=>run.waitingFor)?.waitingFor||(!terminalStates.has(group.state)&&group.members.find(task=>task.blocker)?.blocker)||workLabel(group.state);
+ }
+ return [...groups.values()].sort((a,b)=>b.timestamp-a.timestamp||a.key.localeCompare(b.key));
+}
+function renderWorkList(){
+ const query=workView.query.trim().toLocaleLowerCase();
+ const items=workItems.filter(item=>(workView.filter==="all"||item.kind===workView.filter)&&[item.title,...item.members.flatMap(task=>[task.id,task.displayName,task.progress,task.blocker])].join(" ").toLocaleLowerCase().includes(query));
+ const top=$("workList").scrollTop;
+ const rows=[];let previousDate="";
+ for(const item of items){
+  const date=item.timestamp?new Date(item.timestamp).toLocaleDateString():"时间未记录";
+  if(date!==previousDate){rows.push(element("div",date,"work-date"));previousDate=date;}
+  const button=element("button",null,"work-item"+(item.key===workView.key?" is-selected":""));button.type="button";button.dataset.workKey=item.key;button.dataset.focusKey=item.key;button.setAttribute("aria-current",String(item.key===workView.key));
+  const title=element("span",item.title,"work-item-title"),line=element("span",null,"work-item-meta");line.append(element("span",item.displayState,"work-state "+(item.kind==="attention"?"bad":item.kind==="done"?"good":item.kind==="uncertain"?"uncertain":"")),element("time",item.timestamp?new Date(item.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"—"));
+  button.append(title,line);button.addEventListener("click",()=>openWork(item.key));rows.push(button);
+ }
+ $("workList").replaceChildren(...rows);
+ $("workList").scrollTop=top;text("workCount",items.length===workItems.length?items.length+" 项":items.length+" / "+workItems.length);$("workEmpty").hidden=items.length>0;
+}
+function openWork(key){
+ navigationRevision++;
+ workView.key=key;workView.batch=null;selected=null;$("workDetail").classList.add("mobile-open");saveWorkspace();poll();
+}
+function scopeFor(group,snapshot){
+ const ids=new Set(group.members.map(task=>task.id)),batches=new Set(group.batches.map(batch=>batch.id));
+ return {...snapshot,current:group.batches.find(batch=>batch.id===snapshot.current?.id)||null,
+  history:(snapshot.history||[]).filter(item=>batches.has(item.batchId)),runs:group.runs,
+  activeCandidates:(snapshot.activeCandidates||[]).filter(item=>batches.has(item.id)),
+  taskPresence:(snapshot.taskPresence||[]).filter(task=>ids.has(task.id)),taskPresenceTotal:group.members.length,
+  waits:(snapshot.waits||[]).filter(wait=>ids.has(wait.participant)||batches.has(wait.batchId)),
+  events:(snapshot.events||[]).filter(event=>ids.has(event.sender)||ids.has(event.target)),
+  acceptances:(snapshot.acceptances||[]).filter(item=>ids.has(item.task)||batches.has(item.batchId))};
+}
+function renderWorkDetail(group,snapshot,batch){
+ text("workTitle",group.title);text("workKind",group.batches.length?"协作批次":"任务");text("workState",group.displayState);$("workState").className="badge "+(group.kind==="attention"?"bad":group.kind==="done"?"good":group.kind==="uncertain"?"uncertain":"");
+ text("workMeta",group.members.length+" 项任务 · "+group.buildCount+" 次构建 · "+(group.timestamp?time(group.timestamp):"未记录"));
+ text("workSituation",group.kind==="uncertain"?group.summary:batch?.phase==="editing"?batchDescription(batch):group.summary);text("participantTabCount",group.members.length);text("buildTabCount",group.buildCount);
+ const participants=group.members.map(task=>{
+  const presence=presenceState(task),card=element("article",null,"participant-card"),title=element("div",null,"section-title");title.append(element("strong",task.displayName||task.name||task.id),element("span",presence.text,"badge"+(presence.uncertain?" uncertain":"")));
+  card.append(title,element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
+  card.append(element("small",(task.adapter?task.adapter.toUpperCase():"来源未记录")+" · 最近进展 "+time(task.lastProgressUtc),"muted"));
+  if(presence.uncertain)card.append(element("p","上次登记："+workLabel(presence.reported)+" · 最后心跳 "+time(task.lastHeartbeatUtc),"participant-role"));
+  const plans=group.batches.flatMap(item=>(item.tasks||[]).filter(member=>member.id===task.id&&member.plan));
+  if(plans.length){const files=plans[0].ownedFiles||[];card.append(element("p",files.length?"负责文件："+files.slice(0,3).join("、")+(files.length>3?" 等 "+files.length+" 项":""):"未声明分工","participant-role"));}
+  return card;
+ });$("participantCards").replaceChildren(...participants);
+ const attempts=group.batches.map(item=>{
+  const button=element("button",null,"attempt-item"+(item.id===batch?.id?" is-selected":""));button.type="button";button.dataset.batchId=item.id;button.dataset.focusKey="attempt:"+item.id;button.setAttribute("aria-pressed",String(item.id===batch?.id));
+  button.append(element("strong","第 "+(item.attempt||1)+" 轮"),element("span",workLabel(item.phase||item.outcome),"work-state "+tone(item.phase||item.outcome)),element("small",time(item.completedUtc||item.buildStartedUtc||item.createdUtc)));
+  button.addEventListener("click",()=>selectBatch(item.id));return button;
+ });$("attemptList").replaceChildren(...attempts);if(!attempts.length)$("attemptList").append(element("p",group.runs.length?"独立执行":"尚未构建","empty"));
+ text("validationTitle",batch?"第 "+batch.attempt+" 轮验证":"验证记录");
+ const timeline=[];
+ for(const item of group.batches){timeline.push({at:item.createdUtc,title:"第 "+(item.attempt||1)+" 轮登记",body:(item.tasks||[]).map(task=>task.name||task.displayName||task.id).join("、"),batch:item.id});if(item.buildStartedUtc)timeline.push({at:item.buildStartedUtc,title:"第 "+(item.attempt||1)+" 轮开始执行",body:"配置、构建与日志见本轮记录",batch:item.id});if(item.completedUtc)timeline.push({at:item.completedUtc,title:"第 "+(item.attempt||1)+" 轮 · "+workLabel(item.outcome||item.phase),body:item.error||"结果已保存",batch:item.id});}
+ for(const task of group.members)if(task.lastProgressUtc)timeline.push({at:task.lastProgressUtc,title:(task.displayName||task.name||task.id)+" · 进展",body:task.progress||"未记录正文",tab:"participants"});
+ for(const event of snapshot.events||[])if(event.importance==="urgent")timeline.push({at:event.createdUtc,title:"待处理消息",body:event.text});
+ timeline.sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0));
+ $("workTimeline").replaceChildren(...timeline.slice(0,50).map(item=>{
+  const row=element("article",null,"timeline-item"),copy=element("p",item.body,"timeline-copy"),foldKey=JSON.stringify(["activity-copy",item.at,item.title]);
+  copy.classList.toggle("is-expanded",view.folds[foldKey]===true);row.append(element("time",time(item.at)),element("strong",item.title),copy);
+  if((item.body||"").length>140){const expand=element("button",view.folds[foldKey]?"收起":"展开");expand.type="button";expand.addEventListener("click",()=>{const open=!copy.classList.contains("is-expanded");copy.classList.toggle("is-expanded",open);expand.textContent=open?"收起":"展开";remember("folds",foldKey,open,250);});row.append(expand);}
+  if(item.batch||item.tab){const button=element("button",item.batch?"查看构建":"查看分工");button.type="button";button.addEventListener("click",()=>item.batch?selectBatch(item.batch):setWorkTab(item.tab));row.append(button);}return row;
+ }));
+ if(!timeline.length)$("workTimeline").append(element("p","暂无活动记录","empty"));
+ const delivery=[];
+ for(const run of group.runs)if(run.artifact){const card=element("article",null,"delivery-record"),artifact=run.artifact;card.append(element("h2",artifact.productRuntime?"产品运行文件":"测试产物"),element("p",time(run.completedUtc||run.createdUtc)+" · "+workLabel(run.status)));detail(card,"文件数",artifact.files);detail(card,"位置",artifact.runtime);detail(card,"保存状态",artifact.publicationComplete===true?"已完成":"未确认");detail(card,"应用切换","未记录");delivery.push(card);}
+ if(!delivery.length)delivery.push(element("p","暂无产物","empty"));$("deliveryRecords").replaceChildren(...delivery);
+ setWorkTab(workView.tab,false);
+}
+async function poll(){
+ if(inflight){refreshRequested=true;return;}inflight=true;const revision=navigationRevision;
+ try{
+  const data=await request("/api/status");if(revision!==navigationRevision){refreshRequested=true;return;}workspaceSnapshot=data;if(data.current)batchCache.set(data.current.id,data.current);
+  if(workView.batch&&!batchCache.has(workView.batch)){const record=await request("/api/batches/"+workView.batch);batchCache.set(record.id,record);}
+  workItems=makeWorkItems(data);let group=workItems.find(item=>item.key===workView.key||item.batches.some(batch=>batch.id===workView.batch));
+  if(!group){group=workItems.find(item=>item.batches.some(batch=>batch.id===data.current?.id))||workItems[0];if(group)workView.key=group.key;workView.batch=null;}
+  if(revision!==navigationRevision){refreshRequested=true;return;}
+  if(!group){text("workTitle","暂无任务记录");text("workSituation","任务后会出现在这里。");renderWorkList();return;}
+  workView.key=group.key;const bid=workView.batch||group.batches[0]?.id;let batch=null;
+  if(bid){batch=bid===data.current?.id?data.current:await request("/api/batches/"+bid);if(revision!==navigationRevision){refreshRequested=true;return;}if(!batch)throw new Error("批次记录暂不可用");batchCache.set(bid,batch);}
+  // Group only explicit logicalBatchId/participant associations; never infer a conversation from a title.
+  workItems=makeWorkItems(data);group=workItems.find(item=>item.batches.some(entry=>entry.id===bid))||workItems.find(item=>item.key===workView.key)||group;
+  workView.key=group.key;selected=bid||null;const scope=scopeFor(group,data);displayedRun=batch?batch.run||null:group.runs[0]||null;
+  scope.runs=batch?(batch.run?[batch.run]:[]):group.runs;
+  const restoreFocus=retainFocus();render(scope,batch);renderWorkbench(scope,batch);renderWorkList();renderWorkDetail(group,scope,batch);restoreFocus();
+  if(!batch&&displayedRun?.evidence)appendTestEvidence($("evidence"),displayedRun.evidence,"standalone-"+displayedRun.id);
+  text("connection","已连接");$("signal").classList.add("online");saveWorkspace();
+ }catch(error){text("connection","读取失败 · "+error.message);$("signal").classList.remove("online");text("workSituation","读取失败，保留上次显示的内容。"+error.message);}
+ finally{inflight=false;if(refreshRequested){refreshRequested=false;poll();}}
+}
 text("pause",paused?"恢复跟随":"暂停跟随");
 $("log").addEventListener("scroll",()=>{if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);});
 $("pause").addEventListener("click",()=>{paused=!paused;view.paused=paused;saveView();text("pause",paused?"恢复跟随":"暂停跟随");if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);if(!paused)$("log").scrollTop=$("log").scrollHeight;});
 $("current").addEventListener("click",()=>selectBatch(null));
-window.addEventListener("hashchange",()=>{selected=historyBatch();poll();});
+window.addEventListener("hashchange",()=>{navigationRevision++;readWorkspaceHash();poll();});
 $("waitPanel").open=view.waits.open;
 $("waitPanel").addEventListener("toggle",()=>{view.waits.open=$("waitPanel").open;saveView();text("waitCount",$("waits").children.length+" 条 · "+(view.waits.open?"点击收起":"点击展开"));if(view.waits.open)$("waits").scrollTop=view.waits.top;});
 $("waits").addEventListener("scroll",()=>{if(view.waits.open){view.waits.top=$("waits").scrollTop;saveView();}});
@@ -406,4 +580,13 @@ $("taskSearch").addEventListener("input",()=>{view.filters.task=$("taskSearch").
 $("taskFilter").addEventListener("change",()=>{view.filters.state=$("taskFilter").value;saveView();filterTasks();});
 $("historyFilter").addEventListener("change",()=>{view.filters.history=$("historyFilter").value;saveView();filterHistory();});
 $("logSearch").addEventListener("input",filterLog);$("errorsOnly").addEventListener("change",filterLog);
+$("workSearch").value=workView.query;$("workFilter").value=workView.filter;
+$("workSearch").addEventListener("input",()=>{workView.query=$("workSearch").value;saveWorkspace();renderWorkList();});
+$("workFilter").addEventListener("change",()=>{workView.filter=$("workFilter").value;saveWorkspace();renderWorkList();});
+document.querySelectorAll("[data-work-tab]").forEach(button=>{
+ button.addEventListener("click",()=>setWorkTab(button.dataset.workTab));
+ button.addEventListener("keydown",event=>{const index=tabs.indexOf(button.dataset.workTab);let next;if(event.key==="ArrowRight")next=(index+1)%tabs.length;else if(event.key==="ArrowLeft")next=(index+tabs.length-1)%tabs.length;else if(event.key==="Home")next=0;else if(event.key==="End")next=tabs.length-1;else return;event.preventDefault();setWorkTab(tabs[next]);$("tab-"+tabs[next]).focus();});
+});
+$("validationBuild").addEventListener("click",()=>setWorkTab("builds"));
+$("backToList").addEventListener("click",()=>$("workDetail").classList.remove("mobile-open"));
 poll();setInterval(poll,2500);

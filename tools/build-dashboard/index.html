@@ -1,17 +1,52 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SnowDesktop · 构建状态</title><link rel="icon" href="/app-icon.png" type="image/png"><link rel="stylesheet" href="/style.css"></head>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SnowDesktop · 任务协作</title><link rel="icon" href="/app-icon.png" type="image/png"><link rel="stylesheet" href="/style.css"></head>
 <body><div class="shell">
-<header><div class="brand"><img class="app-icon" src="/app-icon.png" alt="SnowDesktop"><strong>SnowDesktop</strong><span class="brand-label">协作构建</span></div><nav aria-label="页面导航"><a href="#taskPanel">任务</a><a href="#execution">执行与验证</a><a href="#logs">日志</a><a href="#historyPanel">历史</a></nav><div class="connection"><span id="signal" class="dot"></span><span id="connection">连接中</span><small>本机只读</small></div></header>
 <aside id="fixture" hidden>模拟数据，此页面不代表真实构建结果</aside>
-<main><section class="status-bar" aria-label="批次状态"><div><h1 id="headline">读取协作状态</h1><p id="description">正在读取任务与执行记录。</p></div><div class="batch"><code id="batch">—</code><span id="stamp">—</span></div></section>
-<div class="status-facts"><div><span>任务</span><strong id="taskCount">—</strong><small id="readyCount">读取中</small></div><div><span>阶段</span><strong id="stage">—</strong><small id="stageNote">—</small></div><div><span>测试执行</span><strong id="testCount">—</strong><small id="coverage">—</small></div><div><span>输入</span><strong id="freshness">—</strong><small id="inputNote">—</small></div></div>
-<div class="work-grid"><section id="taskPanel" class="panel tasks"><div class="section-title"><h2>任务</h2><span id="visibleTasks">—</span></div><div class="toolbar"><label class="search"><span class="sr-only">搜索任务、文件或测试</span><input id="taskSearch" type="search" placeholder="搜索任务、文件或测试" maxlength="200"></label><label><span class="sr-only">任务状态</span><select id="taskFilter"><option value="all">全部状态</option><option value="editing">编辑中</option><option value="checking">检查中</option><option value="waiting">已就绪</option><option value="attention">需处理</option><option value="done">已结束</option></select></label></div><div class="task-head" aria-hidden="true"><span>任务与状态</span><span>当前情况</span><span>验证计划</span></div><div id="tasks" class="task-list"></div><p id="taskEmpty" class="empty" hidden>没有匹配的任务。</p></section>
-<aside class="panel attention"><div class="section-title"><h2>待处理</h2><span id="attentionCount">—</span></div><div id="attention"></div></aside></div>
-<section class="panel"><div class="section-title"><h2>调查与进展</h2><span id="presenceCount">—</span></div><div id="taskPresence" class="presence-list" tabindex="0" role="region" aria-label="调查与进展列表"></div></section>
-<section class="panel"><div class="section-title"><h2>协作消息</h2><span id="eventCount">—</span></div><div id="collaborationEvents" class="presence-list" tabindex="0" role="region" aria-label="协作消息列表"></div></section>
-<section id="execution" class="panel"><div class="section-title"><h2>执行与验证</h2><span id="owner">—</span></div><div id="runTelemetry"></div><div id="runFacts" class="run-facts"></div><div id="testSummary" class="test-summary"></div><div id="testResults"></div><div id="evidence"></div></section>
-<section class="panel local-waits"><details id="waitPanel" open><summary class="section-title"><h2>等待票据</h2><span id="waitCount">—</span></summary><div id="waits" tabindex="0" role="region" aria-label="本地等待列表"></div><p class="muted">票据记录等待条件；条件满足后，修改文件仍需取得编辑授权。</p></details></section>
-<section id="logs" class="panel logs"><div class="section-title"><h2>日志</h2><div><span id="logHint">等待日志</span><button id="pause" type="button">暂停跟随</button></div></div><div class="toolbar"><label class="search"><span class="sr-only">搜索日志</span><input id="logSearch" type="search" placeholder="搜索当前日志" maxlength="200"></label><label class="check-label"><input id="errorsOnly" type="checkbox">只看错误与警告</label><span id="logMatches" class="muted"></span></div><pre id="log" tabindex="0" aria-label="构建日志">尚无本批日志。</pre></section>
-<section id="historyPanel" class="panel history"><div class="section-title"><h2>历史记录</h2><div class="toolbar"><label><span class="sr-only">历史结果</span><select id="historyFilter"><option value="all">全部结果</option><option value="passed">通过</option><option value="failed">失败或中断</option><option value="skipped">未构建</option></select></label><button id="current" type="button">返回当前批次</button></div></div><div id="history"></div><p id="historyEmpty" class="empty" hidden>没有匹配的历史记录。</p><p class="muted">历史结果对应当时的输入和产物。</p></section></main>
-<footer><span id="updated">—</span><details><summary>数据说明</summary><p>任务与 Run 来自协调记录。阶段区间由执行入口和 MSBuild 事件采集；累计任务时间可能重叠，不能相加作为总耗时。编译数表示已发起的源文件编译，缺失数据保持未知。页面关闭不影响执行。</p></details></footer>
+<main class="workspace">
+ <aside class="work-sidebar" aria-label="任务协作列表">
+  <div class="sidebar-heading"><h1><img class="app-icon" src="/app-icon.png" alt="SnowDesktop">活动</h1><div class="connection"><span id="signal" class="dot"></span><span id="connection">连接中</span></div></div>
+  <div class="work-filters"><label><span class="sr-only">搜索活动</span><input id="workSearch" type="search" placeholder="搜索活动、参与者" maxlength="200"></label><label><span class="sr-only">协作状态</span><select id="workFilter"><option value="all">全部状态</option><option value="active">进行中</option><option value="attention">需处理</option><option value="uncertain">待核实</option><option value="done">已结束</option></select></label></div>
+  <p class="list-order">最近活动在前 <span id="workCount"></span></p>
+  <div id="workList" class="work-list" aria-label="按时间排序的协作事项"></div>
+  <p id="workEmpty" class="empty" hidden>没有匹配的协作事项。</p>
+ </aside>
+ <article class="work-detail" id="workDetail">
+  <button id="backToList" class="back-button" type="button">← 任务列表</button>
+  <div class="work-heading"><div><p class="eyebrow" id="workKind">协作事项</p><h1 id="workTitle">正在读取任务</h1><p id="workMeta" class="muted"></p></div><span id="workState" class="badge"></span></div>
+  <p id="workSituation" class="work-situation"></p>
+  <div class="work-tabs" role="tablist" aria-label="协作详情">
+   <button type="button" id="tab-activity" role="tab" aria-controls="pane-activity" aria-selected="true" data-work-tab="activity">动态</button>
+   <button type="button" id="tab-participants" role="tab" aria-controls="pane-participants" aria-selected="false" data-work-tab="participants">参与对话 <span id="participantTabCount"></span></button>
+   <button type="button" id="tab-builds" role="tab" aria-controls="pane-builds" aria-selected="false" data-work-tab="builds">构建 <span id="buildTabCount"></span></button>
+   <button type="button" id="tab-validation" role="tab" aria-controls="pane-validation" aria-selected="false" data-work-tab="validation">验证</button>
+   <button type="button" id="tab-delivery" role="tab" aria-controls="pane-delivery" aria-selected="false" data-work-tab="delivery">产物</button>
+  </div>
+  <section id="pane-activity" role="tabpanel" aria-labelledby="tab-activity" class="work-pane">
+   <div id="workTimeline" class="timeline"></div>
+   <details class="panel"><summary>待处理 <span id="attentionCount"></span></summary><div id="attention"></div></details>
+   <details class="panel"><summary>协作消息 <span id="eventCount"></span></summary><div id="collaborationEvents" class="presence-list" tabindex="0" role="region" aria-label="本事项协作消息"></div></details>
+   <section class="panel local-waits"><details id="waitPanel"><summary class="section-title"><h2>等待详情</h2><span id="waitCount"></span></summary><div id="waits" tabindex="0" role="region" aria-label="本事项等待列表"></div></details></section>
+  </section>
+  <section id="pane-participants" role="tabpanel" aria-labelledby="tab-participants" class="work-pane" hidden>
+   <div id="participantCards" class="participant-cards"></div>
+   <details class="panel"><summary>登记与能力 <span id="presenceCount"></span></summary><div id="taskPresence" class="presence-list" tabindex="0" role="region" aria-label="调查与进展列表"></div></details>
+   <details id="taskPanel" class="panel tasks"><summary>文件与计划 <span id="visibleTasks"></span></summary><div class="toolbar"><label class="search"><span class="sr-only">搜索文件或测试</span><input id="taskSearch" type="search" placeholder="搜索文件或测试" maxlength="200"></label><label><span class="sr-only">登记状态</span><select id="taskFilter"><option value="all">全部状态</option><option value="editing">编辑中</option><option value="checking">检查中</option><option value="waiting">已就绪</option><option value="attention">需处理</option><option value="done">已结束</option></select></label></div><div id="tasks" class="task-list"></div><p id="taskEmpty" class="empty" hidden></p></details>
+  </section>
+  <section id="pane-builds" role="tabpanel" aria-labelledby="tab-builds" class="work-pane" hidden>
+   <div class="section-title"><h2>构建记录</h2><button id="current" type="button">最新轮次</button></div>
+   <div id="attemptList" class="attempt-list" aria-label="选择构建轮次"></div>
+   <div class="selected-attempt"><strong id="headline">尚未构建</strong><p id="description"></p></div>
+   <details class="panel"><summary>轮次与输入</summary><div class="batch"><code id="batch"></code><span id="stamp"></span></div><div class="status-facts"><div><span>参与登记</span><strong id="taskCount"></strong><small id="readyCount"></small></div><div><span>阶段</span><strong id="stage"></strong><small id="stageNote"></small></div><div><span>测试执行</span><strong id="testCount"></strong><small id="coverage"></small></div><div><span>输入</span><strong id="freshness"></strong><small id="inputNote"></small></div></div></details>
+   <section id="logs" class="panel logs"><div class="section-title"><h2>日志</h2><div><span id="logHint"></span><button id="pause" type="button">暂停跟随</button></div></div><div class="toolbar"><label class="search"><span class="sr-only">搜索日志</span><input id="logSearch" type="search" placeholder="搜索日志" maxlength="200"></label><label class="check-label"><input id="errorsOnly" type="checkbox">只看错误与警告</label><span id="logMatches" class="muted"></span></div><pre id="log" tabindex="0" aria-label="构建日志"></pre></section>
+   <details id="execution" class="panel"><summary>阶段与资源 <span id="owner"></span></summary><div id="runFacts" class="run-facts"></div><div id="runTelemetry"></div></details>
+   <details id="historyPanel" class="panel history"><summary>已结束轮次</summary><label><span class="sr-only">轮次结果筛选</span><select id="historyFilter"><option value="all">全部结果</option><option value="passed">通过</option><option value="failed">失败或中断</option><option value="skipped">未构建</option></select></label><div id="history"></div><p id="historyEmpty" class="empty" hidden></p></details>
+  </section>
+  <section id="pane-validation" role="tabpanel" aria-labelledby="tab-validation" class="work-pane" hidden>
+   <div class="section-title"><h2 id="validationTitle">本轮验证</h2><button id="validationBuild" type="button">切换轮次</button></div>
+   <div id="testSummary" class="test-summary"></div><div id="testResults"></div><div id="evidence"></div>
+  </section>
+  <section id="pane-delivery" role="tabpanel" aria-labelledby="tab-delivery" class="work-pane" hidden><div id="deliveryRecords"></div></section>
+ </article>
+</main>
 </div><script src="/app.js"></script></body></html>
