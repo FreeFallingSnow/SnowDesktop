@@ -88,6 +88,63 @@ return history
         "module.require must not be mistaken for the forbidden global require");
 }
 
+void TestFunctionParametersShadowHostLibraries()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    const auto report = LintWidgetSource(manifest, "modules/view.lua", R"lua(
+local M = {}
+function M.build(state, view, io)
+    if state then do state.formData() end end
+    for i = 1, 2 do state.formData() end
+    return function() return view.custom({}), io.open() end
+end
+function M.other(ctx) return ctx.state.formData() end
+return M
+)lua");
+    Check(report.Ok() && report.issues.empty(),
+        "module parameters and qualified object members are not host API calls, including nested closures/blocks");
+    const auto unbound = LintWidgetSource(manifest, "main.lua", R"lua(
+local function build(state) return state.formData() end
+state.formData()
+)lua");
+    Check(unbound.ErrorCount() == 1 && HasIssue(unbound, "api.unknown"),
+        "a parameter binding must not hide an actual unknown host call outside its function");
+    const auto propertyNames = LintWidgetSource(manifest, "main.lua", R"lua(
+local function build(text, type)
+    view.unknown({})
+    return view.text({ key = "label", text = "Literal" })
+end
+)lua");
+    Check(HasIssue(propertyNames, "api.unknown") && HasIssue(propertyNames, "l10n.hardcoded"),
+        "parameters named after properties must not hide genuine host APIs or localization checks");
+}
+
+void TestUnknownSettingTypes()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    const auto report = LintWidgetSource(manifest, "main.lua", R"lua(
+return widget.define({
+    settings = { fields = {
+        { key = "note", type = "textArea" },
+        { key = "tags", type = "multiSelect" },
+    } },
+})
+)lua");
+    Check(report.Ok() && HasIssue(report, "settings.unknown-type") && report.WarningCount() == 1 &&
+        report.issues.front().message.find("textArea") != std::string::npos &&
+        report.issues.front().message.find("multiSelect") != std::string::npos &&
+        report.issues.front().message.find("fileHandle") != std::string::npos,
+        "unsupported setting types get a warning with valid alternatives while retaining runtime forward compatibility");
+    const auto controls = LintWidgetSource(manifest, "main.lua", R"lua(
+local custom = { settings = { { key = "own", type = "textArea" } } }
+return view.textArea({ key = "editor", value = "" })
+)lua");
+    Check(!HasIssue(controls, "settings.unknown-type"),
+        "view nodes and unrelated module tables must not be treated as declarative settings fields");
+}
+
 void TestViewKeysAndLiteralText()
 {
     PackageManifest manifest;
@@ -287,6 +344,8 @@ int main() try
     TestCleanLocalizedSource();
     TestApiPermissionAndSandboxFailures();
     TestQualifiedModuleRequire();
+    TestFunctionParametersShadowHostLibraries();
+    TestUnknownSettingTypes();
     TestViewKeysAndLiteralText();
     TestSyntaxFailure();
     TestImmediateDrawingQualityWarnings();

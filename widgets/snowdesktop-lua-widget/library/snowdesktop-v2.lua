@@ -742,6 +742,7 @@
 ---@field ok? boolean
 ---@field value? SnowAudioPlayValue|SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowNativeTaskValue|SnowLocationTaskValue|SnowStateValue
 ---@field error? string
+---@field diagnostic? SnowNativeTaskDiagnostic Host-generated metadata on some failed native tasks; feature task.native.diagnostics. Never raw helper output.
 ---@field playbackId? string Opaque VM-owned audio playback identity for audio.state.
 ---@field status? 'loading'|'playing'|'paused'|'ended'|'stopped'|'error' Audio playback state.
 ---@field positionMs? integer Audio position in milliseconds.
@@ -2095,6 +2096,11 @@ function data.subscribe(topic, options) end
 ---@field timeoutMs? integer 1000-60000, including validation, handshake and request; defaults to 15000.
 
 ---@alias SnowNativeTaskValue SnowStateValue
+
+---@class SnowNativeTaskDiagnostic
+---@field reason string Stable host reason such as invalidUtf8, invalidJson, helperHashMismatch, packageChangeDetected or packageIdentityChanged.
+---@field phase 'validation'|'hello'|'response'|'watch'
+---@field relativePath? string First reported package-relative change path, at most 1024 UTF-8 bytes; may be absent for overflow or directory identity changes.
 
 ---@class SnowNativeWatchArguments
 ---@field helper string ID declared in widget.json nativeHelpers.

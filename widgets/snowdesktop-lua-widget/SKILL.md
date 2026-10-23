@@ -323,6 +323,11 @@ queries, write storage or rebuild invariant data on every frame.
   user authorization before execution. Lua remains sandboxed; use only the fixed
   helper protocol described under "Native EXE helpers" in `references/api-v2.md`.
   A supporting host must be published before a component requires this feature.
+- Native protocol output must use explicit UTF-8 bytes and flush each frame.
+  Keep logs, configuration and caches outside the package (for example in
+  LocalAppData or the system temporary directory); any package write can stop a
+  watch and invalidate authorization. Read the language examples and optional
+  `task.complete.diagnostic` metadata in `references/api-v2.md`.
 - Never include component DLLs or undeclared executables. Do not use shell
   commands or scripts as native helpers.
 - Never include absolute paths, parent traversal, symlinks, junctions, reparse

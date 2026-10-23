@@ -267,6 +267,8 @@ void TestV2Contract()
                 v2Libraries.end(),
         "the executable sandbox catalog must not expose removed libraries");
 
+    Check(snowdesktop::widget_api::SupportsFeature("task.native.diagnostics"),
+        "native diagnostic metadata is discoverable without changing the API version");
     Check(snowdesktop::widget_api::SupportsFeature(
                 "animation.frame") &&
             snowdesktop::widget_api::SupportsFeature(

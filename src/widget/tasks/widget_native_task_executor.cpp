@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <cstddef>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -68,6 +69,28 @@ struct DirectoryWatch
             !(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
             info.dwVolumeSerialNumber == identity.dwVolumeSerialNumber &&
             info.nFileIndexHigh == identity.nFileIndexHigh && info.nFileIndexLow == identity.nFileIndexLow;
+    }
+    std::string ChangedPath()
+    {
+        DWORD bytes = 0;
+        const bool complete = GetOverlappedResult(directory.value, &overlap, &bytes, FALSE) != FALSE;
+        if (complete || GetLastError() != ERROR_IO_INCOMPLETE) armed = false;
+        if (!complete || bytes < offsetof(FILE_NOTIFY_INFORMATION, FileName)) return {};
+        const auto* change = reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(buffer.data());
+        if (change->FileNameLength == 0 || change->FileNameLength % sizeof(wchar_t) != 0 ||
+            change->FileNameLength > bytes - offsetof(FILE_NOTIFY_INFORMATION, FileName)) return {};
+        const int count = static_cast<int>(change->FileNameLength / sizeof(wchar_t));
+        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            change->FileName, count, nullptr, 0, nullptr, nullptr);
+        if (size <= 0 || size > 1024) return {};
+        std::string path(static_cast<std::size_t>(size), '\0');
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, change->FileName,
+            count, path.data(), size, nullptr, nullptr);
+        std::replace(path.begin(), path.end(), '\\', '/');
+        if (path.front() == '/' || path.find(':') != std::string::npos ||
+            path == ".." || path.starts_with("../") || path.find("/../") != std::string::npos)
+            return {};
+        return path;
     }
 };
 bool Identifier(std::string_view value)
@@ -164,9 +187,33 @@ bool StringField(const JsonValue& value, const char* key, std::string_view expec
     const auto* field = value.Find(key);
     return field && field->IsString() && field->string == expected;
 }
-bool Frame(const std::string& line, JsonValue& output)
+std::string Diagnostic(std::string_view reason, std::string_view phase,
+    std::string_view path = {})
 {
-    if (line.empty() || line.size() > MaximumMessage || Wide(line).empty() || !ParseJson(line, output)) return false;
+    // Reason/phase are host constants. The optional path is a bounded relative
+    // notification name, never helper data or an absolute user directory.
+    std::string output = "{\"reason\":\"" + std::string(reason) +
+        "\",\"phase\":\"" + std::string(phase) + "\"";
+    if (!path.empty())
+    {
+        output += ",\"relativePath\":\"";
+        for (const unsigned char c : path)
+        {
+            if (c == '"' || c == '\\') { output += '\\'; output += static_cast<char>(c); }
+            else if (c < 0x20) output += '?';
+            else output += static_cast<char>(c);
+        }
+        output += '"';
+    }
+    return output + '}';
+}
+bool Frame(const std::string& line, JsonValue& output, std::string& reason)
+{
+    reason = "invalidEnvelope";
+    if (line.empty()) { reason = "emptyFrame"; return false; }
+    if (line.size() > MaximumMessage) { reason = "frameTooLarge"; return false; }
+    if (Wide(line).empty()) { reason = "invalidUtf8"; return false; }
+    if (!ParseJson(line, output)) { reason = "invalidJson"; return false; }
     const auto* version = output.Find("version");
     if (!output.IsObject() || !version || !version->IsNumber() || version->number != 1) return false;
     std::size_t nodes = 0;
@@ -177,7 +224,8 @@ bool Frame(const std::string& line, JsonValue& output)
             if (key.find('\0') != std::string::npos || !self(self, item, depth + 1)) return false;
         return true;
     };
-    return bounded(bounded, output, 0);
+    if (!bounded(bounded, output, 0)) { reason = "jsonLimit"; return false; }
+    return true;
 }
 }
 
@@ -268,9 +316,17 @@ struct WidgetNativeTaskExecutor::State
         if (options.streaming && !directoryWatch.Begin(root))
         { result.error = "nativeContentChanged"; return result; }
         PackageManifest manifest;
-        if (!WidgetPackageValidator{}.ValidateDirectory(root, &manifest).Ok() ||
-            manifest.nativeContentFingerprint.empty() || PackagePermissionScopeFingerprint(manifest) != fingerprint)
-        { result.error = "nativeContentChanged"; return result; }
+        const auto validation = WidgetPackageValidator{}.ValidateDirectory(root, &manifest);
+        if (!validation.Ok() || manifest.nativeContentFingerprint.empty() ||
+            PackagePermissionScopeFingerprint(manifest) != fingerprint)
+        {
+            result.error = "nativeContentChanged";
+            const bool hashMismatch = std::any_of(validation.issues.begin(), validation.issues.end(),
+                [](const auto& issue) { return issue.code == "package.nativeHash"; });
+            result.diagnostic = Diagnostic(hashMismatch ? "helperHashMismatch" :
+                (validation.Ok() ? "authorizationContentChanged" : "packageValidationFailed"), "validation");
+            return result;
+        }
         const auto helper = std::find_if(manifest.nativeHelpers.begin(), manifest.nativeHelpers.end(),
             [&](const auto& value) { return value.id == options.helper; });
         if (helper == manifest.nativeHelpers.end()) { result.error = "unknownHelper"; return result; }
@@ -384,9 +440,18 @@ struct WidgetNativeTaskExecutor::State
             const auto now = GetTickCount64();
             if (options.streaming)
             {
-                if (WaitForSingleObject(directoryWatch.changed.value, 0) == WAIT_OBJECT_0 ||
-                    (now >= nextIdentityCheck && !directoryWatch.SameDirectory(root)))
-                { result.error = "nativeContentChanged"; return result; }
+                if (WaitForSingleObject(directoryWatch.changed.value, 0) == WAIT_OBJECT_0)
+                {
+                    result.error = "nativeContentChanged";
+                    result.diagnostic = Diagnostic("packageChangeDetected", "watch", directoryWatch.ChangedPath());
+                    return result;
+                }
+                if (now >= nextIdentityCheck && !directoryWatch.SameDirectory(root))
+                {
+                    result.error = "nativeContentChanged";
+                    result.diagnostic = Diagnostic("packageIdentityChanged", "watch");
+                    return result;
+                }
                 if (now >= nextIdentityCheck) nextIdentityCheck = now + 1000;
                 if (now - windowStarted >= 1000)
                 { windowStarted = now; totalBytes = diagnostics = events = 0; }
@@ -422,12 +487,16 @@ struct WidgetNativeTaskExecutor::State
                     std::string line = pending.substr(0, end);
                     pending.erase(0, end + 1);
                     if (!line.empty() && line.back() == '\r') line.pop_back();
-                    if (line.size() > MaximumMessage) { result.error = "nativeOutputLimit"; return result; }
+                    if (line.size() > MaximumMessage)
+                    { result.error = "nativeOutputLimit"; result.diagnostic = Diagnostic("frameTooLarge", hello ? "response" : "hello"); return result; }
                     JsonValue frame;
-                    if (!Frame(line, frame)) return result;
+                    std::string reason;
+                    if (!Frame(line, frame, reason))
+                    { result.diagnostic = Diagnostic(reason, hello ? "response" : "hello"); return result; }
                     if (!hello)
                     {
-                        if (!StringField(frame, "kind", "hello") || !StringField(frame, "protocol", "snowdesktop-native")) return result;
+                        if (!StringField(frame, "kind", "hello") || !StringField(frame, "protocol", "snowdesktop-native"))
+                        { result.diagnostic = Diagnostic("unexpectedHello", "hello"); return result; }
                         hello = true;
                         const std::string request = "{\"version\":1,\"kind\":\"request\",\"id\":\"1\",\"operation\":\"" +
                             options.operation + "\",\"payload\":" + options.payload +
@@ -436,7 +505,8 @@ struct WidgetNativeTaskExecutor::State
                     }
                     else
                     {
-                        if (!StringField(frame, "id", "1")) return result;
+                        if (!StringField(frame, "id", "1"))
+                        { result.diagnostic = Diagnostic("unexpectedId", "response"); return result; }
                         if (StringField(frame, "kind", "event") && frame.Find("value"))
                         {
                             if (++events > (options.streaming ? 32u : 16u) ||
@@ -453,7 +523,7 @@ struct WidgetNativeTaskExecutor::State
                         { result.ok = true; result.error.clear(); result.json = std::move(line); finished = true; }
                         else if (StringField(frame, "kind", "error"))
                         { result.error = "nativeHelperError"; result.json = std::move(line); finished = true; }
-                        else return result;
+                        else { result.diagnostic = Diagnostic("unexpectedKind", "response"); return result; }
                     }
                 }
                 if (pending.size() > MaximumMessage) { result.error = "nativeOutputLimit"; return result; }
@@ -503,7 +573,7 @@ bool WidgetNativeTaskExecutor::Start(std::uint64_t id, std::filesystem::path roo
             try { result = State::Run(id, root, fingerprint, options, operation->cancel.value, state); }
             catch (...) { /* All OS resources are scoped before reporting failure. */ }
             if (WaitForSingleObject(operation->cancel.value, 0) == WAIT_OBJECT_0)
-            { result.ok = false; result.error = "canceled"; result.json.clear(); }
+            { result.ok = false; result.error = "canceled"; result.json.clear(); result.diagnostic.clear(); }
             state->Post(std::move(result));
         });
     }

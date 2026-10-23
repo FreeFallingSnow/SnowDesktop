@@ -51,6 +51,11 @@ int Helper()
     }
     if (operation == "bad")
         std::cout << R"({"version":9,"kind":"result","id":"1","value":false})" << std::endl;
+    else if (operation == "bad-json")
+        std::cout << "debug text containing a private token" << std::endl;
+    else if (operation == "gbk")
+        std::cout << "{\"version\":1,\"kind\":\"result\",\"id\":\"1\",\"value\":\"" <<
+            "\xD6\xD0" << "\"}" << std::endl;
     else if (operation == "large")
         std::cout << std::string(20000, 'x') << std::endl;
     else
@@ -102,6 +107,41 @@ struct Runner
         }
     }
 };
+
+void ProbeManagedHelper(const std::filesystem::path& executable)
+{
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto root = temporary.path / L"托管 helper 参数与编码";
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(executable, root / L"helper.exe");
+    const auto hash = WidgetPackageManager::Sha256File(root / L"helper.exe");
+    Write(root / L"main.lua", "return widget.define({model={}})");
+    Write(root / L"widget.json", std::string(R"({"schemaVersion":2,"apiVersion":2,"id":"4776c7c1-36a3-4c1e-86cc-9ab8193d9a76","slug":"managed-test","version":"1.0.0","name":"Managed test","entry":"main.lua","permissions":["native.execute"],"requiredFeatures":["task.native.request"],"nativeHelpers":{"battery":{"path":"helper.exe","sha256":")") + hash +
+        R"(","purposeKey":"p","operationsKey":"p","reasonKey":"p","deniedKey":"p"}},"locales":{"en-US":{"p":"Managed test fixture"}}})");
+    PackageManifest manifest;
+    Require(WidgetPackageValidator{}.ValidateDirectory(root, &manifest).Ok(), "managed fixture validates");
+    const auto fingerprint = PackagePermissionScopeFingerprint(manifest);
+    {
+        Runner runner;
+        Require(runner.executor.Start(31, root, fingerprint, {"battery","read","{}",5000}), "managed helper starts through production executor");
+        const auto messages = runner.Wait();
+        JsonValue frame;
+        Require(messages.back().ok && ParseJson(messages.back().json, frame), "managed UTF-8 result arrives");
+        const auto* value = frame.Find("value");
+        Require(value && value->Find("argc") && value->Find("argc")->number == 1 &&
+            value->Find("arg") && value->Find("arg")->string == "--snowdesktop-native-v1" &&
+            value->Find("label") && value->Find("label")->string == "鼠标 · 2.4G",
+            ".NET Framework receives the fixed argument in a Unicode/spaced path and delivers explicit UTF-8 unchanged");
+    }
+    {
+        Runner runner;
+        Require(runner.executor.Start(32, root, fingerprint, {"battery","gbk","{}",5000}), "managed GBK negative control starts");
+        const auto messages = runner.Wait();
+        Require(messages.back().error == "nativeProtocolError" &&
+            messages.back().diagnostic.find("invalidUtf8") != std::string::npos,
+            "the same managed helper emitting CP936 bytes fails specifically on UTF-8 validation");
+    }
+}
 void Tests()
 {
     snowdesktop::test::TemporaryDirectory temporary;
@@ -167,6 +207,20 @@ void Tests()
         Require(final.final && !final.ok, "malformed, excessive, failed and timed-out helpers cannot succeed");
         if (std::string(name) == "hang") Require(final.error == "nativeTimeout", "non-responsive helper times out");
     }
+    for (const auto& operation : {"bad-json", "gbk"})
+    {
+        Runner runner;
+        Require(runner.executor.Start(21, root, fingerprint, {"battery",operation,"{}",3000}), "protocol diagnostic fixture starts");
+        const auto messages = runner.Wait();
+        const auto& final = messages.back();
+        JsonValue diagnostic;
+        Require(final.error == "nativeProtocolError" && ParseJson(final.diagnostic, diagnostic) &&
+            diagnostic.Find("reason") && diagnostic.Find("phase") &&
+            diagnostic.Find("phase")->string == "response" &&
+            diagnostic.Find("reason")->string == (std::string(operation) == "gbk" ? "invalidUtf8" : "invalidJson") &&
+            final.diagnostic.find("private token") == std::string::npos,
+            "malformed JSON and invalid UTF-8 have distinct metadata without copying private stdout content");
+    }
     {
         Runner runner;
         Require(runner.executor.Start(3, root, fingerprint, {"battery","hang","{}",5000}), "cancel fixture starts");
@@ -228,7 +282,12 @@ void Tests()
         Require(runner.executor.Start(12, root, fingerprint, {"battery","watch","{}",1000,true}), "package-change fixture starts");
         Require(!runner.Wait(false).front().final, "package-change fixture starts streaming");
         Write(root / L"main.lua", "return widget.define({model={watchChanged=true}})");
-        Require(runner.Wait().back().error == "nativeContentChanged", "a changed package immediately retires its resident helper");
+        const auto messages = runner.Wait();
+        JsonValue diagnostic;
+        Require(messages.back().error == "nativeContentChanged" && ParseJson(messages.back().diagnostic, diagnostic) &&
+            diagnostic.Find("reason") && diagnostic.Find("reason")->string == "packageChangeDetected" &&
+            diagnostic.Find("relativePath") && diagnostic.Find("relativePath")->string == "main.lua",
+            "a package write retires the resident helper and identifies its relative path");
         Write(root / L"main.lua", "return widget.define({model={}})");
     }
     for (const auto& operation : {"watch-silent", "watch-crash", "watch-burst"})
@@ -284,11 +343,32 @@ void Tests()
         "same-version package update returns to pending consent");
     Write(root / L"helper.exe", "changed executable");
     Require(!validator.ValidateDirectory(root).Ok(), "tampered EXE hash is rejected");
+    {
+        Runner runner;
+        Require(runner.executor.Start(22, root, fingerprint, {"battery","read","{}",3000}), "changed image validation queues");
+        const auto messages = runner.Wait();
+        Require(messages.back().error == "nativeContentChanged" &&
+            messages.back().diagnostic.find("helperHashMismatch") != std::string::npos,
+            "a stale helper hash is diagnosed before launch without relaxing authorization");
+    }
 }
 }
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::string(argv[1]) == "--snowdesktop-native-v1") return Helper();
-    try { Tests(); std::cout << "native helper integration tests passed\n"; return 0; }
+    try
+    {
+        Tests();
+        wchar_t managed[32768]{};
+        const DWORD count = GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_TEST_HELPER", managed, 32768);
+        if (count)
+        {
+            Require(count < 32768, "managed test helper path fits");
+            ProbeManagedHelper(managed);
+            std::cout << ".NET Framework fixed-argument / UTF-8 / CP936 probes passed\n";
+        }
+        std::cout << "native helper integration tests passed\n";
+        return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

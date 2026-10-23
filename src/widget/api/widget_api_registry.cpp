@@ -31,6 +31,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "audio.playback.formats.extended",
     "task.native.request",
     "task.native.watch",
+    "task.native.diagnostics",
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",

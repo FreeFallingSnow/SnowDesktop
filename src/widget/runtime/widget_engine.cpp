@@ -1,4 +1,4 @@
-﻿#include "ui/render/app_font.h"
+#include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"
 #include "common/background_work.h"
@@ -12694,6 +12694,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             {
                 if (message.ok && !snapshot->cancelRequested)
                     nativeTaskCompletions_.insert_or_assign(message.id, std::move(message.json));
+                else if (!snapshot->cancelRequested && !message.diagnostic.empty())
+                    nativeTaskCompletions_.insert_or_assign(message.id, std::move(message.diagnostic));
                 (void)taskBroker_->Complete(message.id, message.ok, std::move(message.error));
                 continue;
             }
@@ -14914,10 +14916,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             });
         const auto nativeCompletion = nativeTaskCompletions_.find(completion.id);
         JsonValue nativeFrame;
+        const bool nativeTask = completion.name == "native.request" || completion.name == "native.watch";
+        const bool nativeFrameParsed = nativeTask && nativeCompletion != nativeTaskCompletions_.end() &&
+            ParseJson(nativeCompletion->second, nativeFrame);
+        const bool nativeDiagnostic = nativeTask && !completion.ok && nativeFrameParsed;
         if ((completion.name == "native.request" || completion.name == "native.watch") && completion.ok)
         {
-            if (nativeCompletion == nativeTaskCompletions_.end() ||
-                !ParseJson(nativeCompletion->second, nativeFrame) || !nativeFrame.Find("value") ||
+            if (!nativeFrameParsed || !nativeFrame.Find("value") ||
                 widget == widgets_.end() || !widget->permissions.contains("native.execute"))
             { completion.ok = false; completion.error = "taskResultUnavailable"; }
         }
@@ -15266,7 +15271,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, &filesystemPickerNames, filesystemDataTask,
-                filesystemTaskResult, &nativeFrame](lua_State* eventState) {
+                filesystemTaskResult, &nativeFrame, nativeDiagnostic](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -15275,6 +15280,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "task");
                 lua_pushboolean(eventState, completion.ok ? 1 : 0);
                 lua_setfield(eventState, -2, "ok");
+                if (nativeDiagnostic && nativeFrame.Find("reason"))
+                {
+                    PushSystemControlJson(eventState, nativeFrame);
+                    lua_setfield(eventState, -2, "diagnostic");
+                }
                 if (completion.ok)
                 {
                     if (completion.name == "native.request" || completion.name == "native.watch")

@@ -263,6 +263,38 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `widget.openDialog(options)`、`widget.closeDialog()`。dialog 默认允许 Escape 关闭、
   不允许点击遮罩关闭；可用 `dismissOnEscape` 与 `dismissOnOutside` 显式调整。它不使用
   阻塞式系统模态循环。
+- `widget.openPanel()` 不返回值（Lua 中为 `nil`），不提供“窗口已显示”的布尔确认。
+  `pcall(widget.openPanel)` 的首个返回值只表示 Lua 调用未抛错。打开 panel 需声明
+  `widget.panel`，返回声明式树还需 `view.surface.panel`；二者不要求额外敏感权限。
+  panel 使用已加载实例的宿主回调，不要求 popover 的 `anchorKey`。
+  真实宿主的打开/关闭事件为 `{kind="panel", action="opened"|"closed"}`。
+  普通 desktop preview、lint 和 quality 不会验证桌面弹窗是否出现。
+  `panel` 回调无需自行维护 `opened` 门控；若门控未置为 true 并返回 nil，将没有声明式内容。
+
+最小 panel 定义（在 manifest 中声明上述两个 feature、`view.tree.core`、`l10n.basic`，
+并翻译 `panel.open/title/content`；仅从按钮/菜单的用户 action 打开）：
+
+```lua
+local function panel(_context, _model)
+    return view.column({key="panel.root", width="fill", children={
+        view.text({key="panel.message", text=l10n.tr("panel.content")}),
+    }})
+end
+return widget.define({
+    view=function()
+        return view.button({key="open", label=l10n.tr("panel.open"),
+            action={id="openPanel"}})
+    end,
+    event=function(_context, _model, event)
+        if event.kind == "action" and event.id == "openPanel" then
+            widget.openPanel({title=l10n.tr("panel.title"), width=520, height=360})
+        elseif event.kind == "panel" then
+            widget.log("info", "panel lifecycle: " .. tostring(event.action))
+        end
+    end,
+    panel=panel,
+})
+```
 - `widget.openPopover(options)`、`widget.closePopover()`：`anchorKey` 必填且必须属于当前
   desktop surface 中已启用、可见命中的元素。调用只在直接可信桌面手势中成功并返回 true；
   支持 `auto/top/bottom/left/right/topStart/topEnd/bottomStart/bottomEnd`，auto 会按当前
@@ -3002,6 +3034,41 @@ CPU、内存、网络、媒体和音频波形等状态应通过 `data.subscribe`
 显示文本；宿主保存值而不是翻译，切换语言不会使现有设置失效。对应 feature 为
 `settings.select.localizedOptions`。
 
+#### 设置字段类型总表
+
+`widget.define({settings=...})` 的字段类型限于下表。`view.textArea`、
+`control.textArea` 是面板/桌面输入控件，**不是设置字段类型**。未知类型在运行期仍保留
+既有文本回退；作者工具对可静态识别的 literal `widget.define` 设置表给出
+`settings.unknown-type` 警告并列出允许类型，quality 会拒绝未解决的警告。
+动态构造的 schema 不能仅凭静态 lint 无警告判定有效。
+
+| type | storage／值通道 | 额外 feature | 约束 |
+| --- | --- | --- | --- |
+| `text` | 普通字符串 | 基础设置能力 | `minLength/maxLength/required` |
+| `password` | 宿主 secret reference | `settings.secretReference` | `required`；无明文 default/preset |
+| `bool` | 普通布尔的字符串编码 | 基础设置能力 | `required` 表示必须为 true |
+| `int` | 普通十进制整数字符串 | 基础设置能力 | `min/max`，整数输入 |
+| `float` | 普通数字字符串 | 基础设置能力 | `min/max/step` |
+| `range` | 类型化 number | `settings.range` | `min/max/step` |
+| `color` | 普通颜色数值字符串 | 基础设置能力 | `0..0xFFFFFF` |
+| `select` | 稳定选项字符串 | 本地化标签需 `settings.select.localizedOptions` | `options/required` |
+| `multiSelect` | 类型化字符串数组 | `settings.multiSelect` | `options/required` |
+| `url` | 普通字符串 | `settings.url` | URL 格式、长度、`required` |
+| `date` | 普通 `YYYY-MM-DD` 字符串 | `settings.date` | 日期格式、长度、`required` |
+| `time` | 普通 `HH:MM` 字符串 | `settings.time` | 时刻格式、长度、`required` |
+| `duration` | 指定单位的整数字符串 | `settings.duration` | `unit/min/max/step` |
+| `appSearch` | 显示名与搜索字符串 | `settings.appSearch` | `searchKey` |
+| `appReference` | 宿主 binding 的 opaque 引用 | `settings.appReference`、`slots.model` | binding、`required` |
+| `desktopItemReference` | 宿主 binding 的 opaque 引用 | `settings.desktopItemReference`、`slots.model` | binding、`required` |
+| `fileReference` | 宿主 binding 的 opaque 引用 | `settings.fileReference`、`slots.model` | binding、`required` |
+| `folderReference` | 宿主 binding 的 opaque 引用 | `settings.folderReference`、`slots.model` | binding、`required` |
+| `fileHandle` | 宿主文件 handle | `settings.fileHandle` | `access/extensions/required` |
+| `folderHandle` | 宿主目录 handle | `settings.folderHandle` | `access/required` |
+
+声明 `required/minLength/maxLength` 还需 `settings.validation` 和本地化
+`validationMessage`；长度限制仅用于 `text/url/date/time`。各类型的边界、选择器与持久化
+细节见下文，表中的“基础设置能力”不表示新增 feature。
+
 API v2 还提供以下普通值设置控件：
 
 - `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
@@ -3537,6 +3604,46 @@ flush every frame. stderr is drained separately, capped at 16 KiB and not expose
 to Lua or automatically logged. The child inherits only the three standard pipe
 handles, not other host handles. The EXE must not request elevation.
 
+The helper's language entry point must inspect its real process arguments; a
+wrapper or a second process must forward them explicitly. The host still sends
+hello first. If the fixed argument is present but hello is absent, exit instead
+of falling back to human-readable stdout. Direct manual/debug launches may use a
+separate mode. Do not change the protocol contract to work around a missing
+argument without checking the entry point and any wrapper/relaunch logic.
+
+#### Explicit UTF-8 output
+
+**Every stdout frame must be UTF-8 bytes. Do not rely on the system code page,
+console settings or the process which launches the helper.** Console output code
+page settings alone do not configure the encoding of a redirected pipe. A Python
+parent's `PYTHONIOENCODING` does not configure a managed child's `Console.Out`.
+Use one writer, append one LF, and flush every complete JSON frame. Diagnostics
+belong on stderr or in a file outside the package; never mix them into stdout.
+
+For .NET Framework 4, write encoded bytes to the standard output stream:
+
+```csharp
+Stream output = Console.OpenStandardOutput();
+byte[] bytes = new UTF8Encoding(false).GetBytes(jsonLine + "\n");
+output.Write(bytes, 0, bytes.Length);
+output.Flush();
+```
+
+For Python 3, bypass text-stream defaults:
+
+```python
+sys.stdout.buffer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+sys.stdout.buffer.flush()
+```
+
+For Windows C/C++, pass an already UTF-8 encoded buffer to `WriteFile` on
+`GetStdHandle(STD_OUTPUT_HANDLE)` and handle partial writes. Do not assume
+`SetConsoleOutputCP` converts pipe bytes. Node can use
+`process.stdout.write(Buffer.from(JSON.stringify(frame) + "\n", "utf8"))`;
+Go can use `json.NewEncoder(os.Stdout).Encode(frame)` and check the returned error.
+If either uses additional buffering, flush it after each frame. Encoding does not
+make invalid JSON, mixed logging, interleaved writers or missing LF framing valid.
+
 Protocol v1 exchange (each object occupies one line):
 
 ```json
@@ -3573,6 +3680,34 @@ Helper error frames currently yield `nativeHelperError` without exposing stderr.
 Other stable errors include `nativeLaunchFailed`, `unknownHelper`,
 `nativeContentChanged`, `nativeProtocolError`, `nativeOutputLimit`, `nativeExited`,
 `nativeTimeout`, `previewUnavailable`, `permissionRevoked`, and `canceled`.
+
+#### Optional native diagnostics (`task.native.diagnostics`)
+
+Supporting hosts add `task.complete.diagnostic` to some failed native tasks:
+`{reason, phase, relativePath?}`. Existing `error` codes and successful values are
+unchanged. Detect `widget.hasFeature("task.native.diagnostics")`; API version
+remains 2. Required users must wait for the supporting host to be published;
+early builds including Steam internal-dev Build 26106929 lack this feature.
+Components can otherwise keep it optional and fall back to the original error.
+
+| reason | Meaning |
+| --- | --- |
+| `emptyFrame` / `invalidUtf8` / `invalidJson` | Empty line, invalid UTF-8 bytes or invalid JSON |
+| `invalidEnvelope` / `jsonLimit` | Wrong version/object envelope or JSON complexity limit |
+| `unexpectedHello` / `unexpectedId` / `unexpectedKind` | Wrong handshake, request ID or message kind |
+| `frameTooLarge` | A completed frame exceeded the size budget |
+| `helperHashMismatch` | Package validation rejected a helper image/hash |
+| `packageValidationFailed` | Package validation failed for another reason |
+| `authorizationContentChanged` | Valid package contents no longer match the reviewed authorization |
+| `packageChangeDetected` | A directory change notification occurred during a watch; it may be the helper's own log/cache write |
+| `packageIdentityChanged` | The watched package directory no longer has the original identity |
+
+`phase` is `validation`, `hello`, `response` or `watch`. `relativePath`, when
+available, is the first notification path relative to the package (at most 1024
+UTF-8 bytes). It is a hint, not a complete change list or proof of which process
+wrote the file. Overflow/identity changes can omit it. No raw stdout/stderr,
+payload snippets, tokens or absolute user paths are copied into diagnostics.
+Not every failure has metadata; always handle `error` without it.
 
 After a final frame, the host sends `{"version":1,"kind":"stop"}`, allows a brief
 cooperative exit, then cleans up the request's Job Object. Cancellation, timeout,
@@ -3625,6 +3760,18 @@ Launch-time image/directory pins are released after process startup so a residen
 helper does not retain the host's package-replacement locks. The running Windows
 image still follows normal OS file-sharing rules.
 
+**Do not write logs, configuration, caches or temporary files anywhere inside
+the component package, including the EXE's directory.** Any such write can end
+the watch with `nativeContentChanged` and invalidate authorization. Use a
+component-specific directory under `%LOCALAPPDATA%` or the system temporary
+directory instead, and avoid recording credentials. For example, managed helpers
+can combine `Environment.SpecialFolder.LocalApplicationData`, their own directory
+name and a log basename. This rule applies even with development overrides.
+
+After rebuilding an EXE, update its declared SHA-256, finish editing the package,
+then synchronize and reauthorize. Development mode does not remove the independent
+acknowledgment or 10-second wait; package ID alone is never an execution grant.
+
 On every exit path, including cancellation, the host first sends `stop` and allows
 a brief cooperative exit, then terminates any remaining managed processes through
 the Job Object. Revoking authorization cannot roll back completed operations.
@@ -3640,4 +3787,5 @@ local watchId, err = task.start("native.watch", {
 Components requiring resident mode must declare `task.native.watch`; an older
 host which only supports `task.native.request` must reject that required feature.
 Publish the supporting host before distributing such a component. The Lua API
-version remains 2 and the distributed authoring Skill revision is 18.
+version remains 2. Resident mode was introduced in authoring Skill revision 18;
+revision 19 adds protocol diagnostics and the integration guidance above.

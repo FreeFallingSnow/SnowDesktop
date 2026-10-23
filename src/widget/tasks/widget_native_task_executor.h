@@ -24,6 +24,8 @@ struct NativeTaskMessage
     std::uint64_t id = 0;
     bool final = false, ok = false;
     std::string error, json;
+    // Host-generated metadata only; never copies helper stdout/stderr contents.
+    std::string diagnostic;
 };
 
 // Only manages external PE executables. No third-party DLL or code is loaded

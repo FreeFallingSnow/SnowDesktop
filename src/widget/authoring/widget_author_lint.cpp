@@ -2,6 +2,7 @@
 
 #include "widget/api/widget_api_registry.h"
 #include "widget/api/widget_view_contract.h"
+#include "widget/settings/widget_settings_model.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -175,6 +176,56 @@ std::vector<Token> Tokenize(std::string_view source)
 bool IsSymbol(const Token& token, std::string_view symbol) noexcept
 {
     return token.kind == TokenKind::Symbol && token.text == symbol;
+}
+
+// Function parameters shadow host globals throughout the function, including
+// nested closures. Track Lua blocks so an inner if/do/end cannot end that scope.
+std::vector<Token> MaskFunctionParameters(const std::vector<Token>& source)
+{
+    auto tokens = source;
+    struct Block { std::vector<std::string> parameters; };
+    std::vector<Block> blocks;
+    std::unordered_map<std::string, unsigned> bindings;
+    const auto closeBlock = [&] {
+        if (blocks.empty()) return;
+        for (const auto& name : blocks.back().parameters)
+            if (--bindings[name] == 0) bindings.erase(name);
+        blocks.pop_back();
+    };
+    for (std::size_t index = 0; index < source.size(); ++index)
+    {
+        if (source[index].kind != TokenKind::Identifier) continue;
+        const auto& name = source[index].text;
+        if (name == "function")
+        {
+            Block block;
+            std::size_t cursor = index + 1;
+            while (cursor < source.size() && !IsSymbol(source[cursor], "(")) ++cursor;
+            for (++cursor; cursor < source.size() && !IsSymbol(source[cursor], ")"); ++cursor)
+                if (source[cursor].kind == TokenKind::Identifier)
+                {
+                    block.parameters.push_back(source[cursor].text);
+                    ++bindings[source[cursor].text];
+                }
+            blocks.push_back(std::move(block));
+        }
+        else if (name == "if" || name == "do" || name == "repeat") blocks.push_back({});
+        else if (name == "end" || name == "until") closeBlock();
+        else if (index + 1 < source.size())
+        {
+            const bool root = index == 0 ||
+                (!IsSymbol(source[index - 1], ".") && !IsSymbol(source[index - 1], ":"));
+            const bool access = IsSymbol(source[index + 1], ".") ||
+                IsSymbol(source[index + 1], ":") || IsSymbol(source[index + 1], "(");
+            // Do not mask property names such as view.text merely because a
+            // parameter is named text. Intermediate obj.view.text roots are
+            // also object members, never the global view library.
+            if ((root && access && bindings.contains(name)) ||
+                (!root && IsSymbol(source[index + 1], ".")))
+                tokens[index].kind = TokenKind::Symbol;
+        }
+    }
+    return tokens;
 }
 
 struct TokenRange
@@ -432,6 +483,7 @@ void LintApiCalls(LintReport& report,
         const bool memberAccess = index > 0 &&
             (IsSymbol(tokens[index - 1], ".") ||
                 IsSymbol(tokens[index - 1], ":"));
+        if (memberAccess || (index > 0 && tokens[index - 1].text == "function")) continue;
         if (!memberAccess &&
                 tokens[index].kind == TokenKind::Identifier &&
                 tokens[index].text == "require" &&
@@ -513,6 +565,50 @@ void LintApiCalls(LintReport& report,
                 CheckPermission(report, declared, path,
                     tokens[index + 4].line, capability,
                     CapabilityPermission(qualified, capability));
+            }
+        }
+    }
+}
+
+void LintSettingTypes(LintReport& report, const std::filesystem::path& path,
+    const std::vector<Token>& tokens)
+{
+    using namespace snowdesktop::widget_runtime;
+    for (std::size_t index = 0; index + 4 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind != TokenKind::Identifier || tokens[index].text != "widget" ||
+            !IsSymbol(tokens[index + 1], ".") || tokens[index + 2].text != "define" ||
+            !IsSymbol(tokens[index + 3], "(") || !IsSymbol(tokens[index + 4], "{")) continue;
+        std::size_t depth = 1;
+        for (std::size_t cursor = index + 5; cursor + 2 < tokens.size() && depth; ++cursor)
+        {
+            if (IsSymbol(tokens[cursor], "{")) { ++depth; continue; }
+            if (IsSymbol(tokens[cursor], "}")) { --depth; continue; }
+            if (depth != 1 || tokens[cursor].text != "settings" ||
+                !(IsSymbol(tokens[cursor - 1], "{") || IsSymbol(tokens[cursor - 1], ",") ||
+                    IsSymbol(tokens[cursor - 1], ";")) ||
+                !IsSymbol(tokens[cursor + 1], "=") || !IsSymbol(tokens[cursor + 2], "{")) continue;
+            struct Table { bool field = false; std::string type; std::size_t line = 1; };
+            std::vector<Table> tables(1);
+            for (std::size_t field = cursor + 3; field < tokens.size() && !tables.empty(); ++field)
+            {
+                if (IsSymbol(tokens[field], "{")) { tables.push_back({}); continue; }
+                if (IsSymbol(tokens[field], "}"))
+                {
+                    const auto& table = tables.back();
+                    if (table.field && !table.type.empty() &&
+                        WidgetSettingKindFromType(table.type) == WidgetSettingKind::Unknown)
+                        AddIssue(report, LintSeverity::Warning, "settings.unknown-type", path, table.line,
+                            "unknown setting field type '" + table.type + "'; expected one of: " +
+                            WidgetSettingTypeList() + "; view/control node names are not setting field types");
+                    tables.pop_back();
+                    continue;
+                }
+                if (field + 2 >= tokens.size() || tokens[field].kind != TokenKind::Identifier ||
+                    !IsSymbol(tokens[field + 1], "=")) continue;
+                if (tokens[field].text == "key") tables.back().field = true;
+                if (tokens[field].text == "type" && tokens[field + 2].kind == TokenKind::String)
+                { tables.back().type = tokens[field + 2].text; tables.back().line = tokens[field + 2].line; }
             }
         }
     }
@@ -922,9 +1018,10 @@ LintReport LintWidgetSource(
     LintReport report;
     report.fileCount = 1;
     if (!LintLuaSyntax(report, relativePath, source)) return report;
-    const auto tokens = Tokenize(source);
+    const auto tokens = MaskFunctionParameters(Tokenize(source));
     const auto backgroundLayerRanges = BackgroundLayerRanges(tokens);
     LintApiCalls(report, manifest, relativePath, tokens);
+    LintSettingTypes(report, relativePath, tokens);
     LintBackgroundLayerFeature(report, manifest, relativePath, tokens,
         backgroundLayerRanges);
     LintReferencePixelFeature(report, manifest, relativePath, tokens);
