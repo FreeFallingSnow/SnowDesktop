@@ -188,8 +188,9 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
         switch (item.action)
         {
         case Action::InputMethod: action = Action::InputMethodMenu; break;
-        case Action::InputMethodPanel: case Action::SystemInputMethodPanel: action = Action::MenuControlCenter; break;
-        case Action::Calendar: case Action::SystemCalendar: case Action::Notifications: action = Action::MenuTime; break;
+        case Action::InputMethodPanel: case Action::SystemInputMethodPanel: action = Action::MenuInputMethod; break;
+        case Action::Calendar: case Action::SystemCalendar: action = Action::MenuTime; break;
+        case Action::Notifications: action = Action::MenuNotifications; break;
         case Action::Tray: action = Action::MenuTray; break;
         case Action::Network: action = Action::MenuNetwork; break;
         case Action::Audio: action = Action::MenuAudio; break;

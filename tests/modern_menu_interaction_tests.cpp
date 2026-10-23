@@ -530,8 +530,9 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     Expect(probe.invoked.size() == 9 && probe.invoked[7].action == StatusBarAction::InputMethodPanel &&
-        probe.invoked[8].action == StatusBarAction::MenuControlCenter,
-        "the separate layout button opens the picker, with visibility and panel options in its control-center context menu");
+        probe.invoked[8].action == StatusBarAction::MenuInputMethod &&
+        IsStatusBarContextMenuAction(probe.invoked[8].action),
+        "the layout button opens the picker normally and routes right-click to its own input-method settings");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
     // A real no-activate bar used to keep desktop/Dock selection because tray
     // and blank presses bypass action activation. Record only the host effect;
@@ -571,7 +572,9 @@ void CheckStatusBarKeyboardMessages()
     // item's identity, making its own quick settings impossible to select.
     const std::pair<StatusBarAction, StatusBarAction> contexts[]{
         {StatusBarAction::Calendar, StatusBarAction::MenuTime},
-        {StatusBarAction::Notifications, StatusBarAction::MenuTime},
+        {StatusBarAction::Notifications, StatusBarAction::MenuNotifications},
+        {StatusBarAction::SystemCalendar, StatusBarAction::MenuTime},
+        {StatusBarAction::SystemInputMethodPanel, StatusBarAction::MenuInputMethod},
         {StatusBarAction::Network, StatusBarAction::MenuNetwork},
         {StatusBarAction::Audio, StatusBarAction::MenuAudio},
         {StatusBarAction::Power, StatusBarAction::MenuPower},
@@ -580,6 +583,7 @@ void CheckStatusBarKeyboardMessages()
         {StatusBarAction::Gpu, StatusBarAction::MenuGpu},
         {StatusBarAction::Traffic, StatusBarAction::MenuTraffic},
         {StatusBarAction::ControlCenter, StatusBarAction::MenuControlCenter},
+        {StatusBarAction::SystemControlCenter, StatusBarAction::MenuControlCenter},
         {StatusBarAction::QuickSearch, StatusBarAction::MenuQuickSearch},
         {StatusBarAction::TaskView, StatusBarAction::MenuTaskView},
         {StatusBarAction::Tray, StatusBarAction::MenuTray}};
@@ -591,7 +595,7 @@ void CheckStatusBarKeyboardMessages()
         SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
         SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
         Expect(probe.invoked.size() == count + 2 && probe.invoked[count].action == context &&
-            probe.invoked[count + 1].action == context,
+            probe.invoked[count + 1].action == context && IsStatusBarContextMenuAction(context),
             "pointer and keyboard context menus preserve the same clicked information/button identity");
         SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
         Expect(probe.invoked.back().action == normal, "quick context settings do not replace normal activation");

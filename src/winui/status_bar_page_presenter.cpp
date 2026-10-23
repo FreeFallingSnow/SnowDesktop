@@ -192,7 +192,7 @@ struct StatusBarPagePresenter::Impl
         std::function<void(SettingsRoute)> navigateCallback)
         : localize(std::move(callback)), navigate(std::move(navigateCallback))
     {
-        root.Spacing(24);
+        root.Spacing(16);
         appearanceRoot.Spacing(8);
         basic = Card(style);
         ToggleRow(basic, "statusBar.enabled", "statusBar.enable", &StatusBarSettings::enabled);

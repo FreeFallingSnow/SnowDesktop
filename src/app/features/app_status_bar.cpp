@@ -738,8 +738,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic, L"\uE45F"}, // data_usage
             {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
             {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
-            {"statusBar.notifications", &Settings::notifications, Action::MenuTime, L"\uF114"}, // alert
-            {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuControlCenter, L"\uF4B8"}, // keyboard
+            {"statusBar.notifications", &Settings::notifications, Action::MenuNotifications, L"\uF114"}, // alert
+            {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuInputMethod, L"\uF4B8"}, // keyboard
             {"statusBar.batteryPercentage", &Settings::batteryPercentage, Action::MenuControlCenter, L"\uF1CD"}, // battery_9_20
             {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
             {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter, L"\uF8A1"}, // weather_sunny
@@ -792,6 +792,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), glyph, MenuIconFont::FluentRegular);
             return child;
         };
+        const auto addTimePositionChoices = [&](HMENU target) {
+            if (const auto position = submenu(target, "statusBar.timeNotificationPosition"))
+            {
+                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);
+                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned);
+            }
+        };
         const auto addTimeChoices = [&](HMENU target, HMENU independentTarget = nullptr) {
             if (const auto panel = submenu(target, "statusBar.clockPanel"))
             {
@@ -799,11 +806,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 addChoice(panel, clockBase + 1, _LW(snowdesktop::StatusBarSupportsSystemQuickSettings() ?
                     "statusBar.panelSystemCalendar" : "statusBar.panelSystemDateTime"), currentSettings.clockSystemPanel);
             }
-            if (!merged || independentTarget)
-            if (const auto position = submenu(independentTarget ? independentTarget : target, "statusBar.timeNotificationPosition"))
+            if (!merged || independentTarget) addTimePositionChoices(independentTarget ? independentTarget : target);
+        };
+        const auto addInputChoices = [&](HMENU target) {
+            if (const auto panel = submenu(target, "statusBar.inputMethodPanel"))
             {
-                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);
-                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned);
+                addChoice(panel, inputPanelBase, _LW("statusBar.panelCustom"), !currentSettings.inputMethodSystemPanel);
+                addChoice(panel, inputPanelBase + 1, _LW("statusBar.panelSystemInput"), currentSettings.inputMethodSystemPanel);
             }
         };
         const auto addControlChoices = [&](HMENU target) {
@@ -813,11 +822,6 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 const char* labels[]{"app.interact.shown", "statusBar.controlCenterSingleIcon", "app.interact.hidden"};
                 for (UINT index = 0; index < std::size(labels); ++index)
                     addChoice(display, controlDisplayBase + index, _LW(labels[index]), static_cast<UINT>(selected) == index);
-            }
-            if (const auto panel = submenu(target, "statusBar.inputMethodPanel"))
-            {
-                addChoice(panel, inputPanelBase, _LW("statusBar.panelCustom"), !currentSettings.inputMethodSystemPanel);
-                addChoice(panel, inputPanelBase + 1, _LW("statusBar.panelSystemInput"), currentSettings.inputMethodSystemPanel);
             }
             if (snowdesktop::StatusBarSupportsSystemQuickSettings())
                 if (const auto panel = submenu(target, "statusBar.controlCenterPanel"))
@@ -829,17 +833,17 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (action != Action::Menu)
         {
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            // Separate bar indicators from controls inside the opened panel.
-            const HMENU barItems = action == Action::MenuControlCenter ? submenu(menu, "statusBar.barItems") : menu;
-            const HMENU panelItems = action == Action::MenuControlCenter ? submenu(menu, "statusBar.controlCenterContent") : menu;
+            // Keep quick settings scoped to the clicked control. The general
+            // bar settings remain available through the settings submenu below.
+            if (action == Action::MenuControlCenter) addControlChoices(menu);
             for (std::size_t index = 0; index < std::size(flags); ++index)
-                if (flags[index].context == action || (action == Action::MenuControlCenter && flags[index].context == Action::MenuTime))
-                {
-                    const bool panelContent = index >= 12;
-                    if (const auto target = panelContent ? panelItems : barItems) addFlag(target, index);
-                }
+                if (flags[index].context == action && index < 12) addFlag(menu, index);
             if (action == Action::MenuTime) addTimeChoices(menu);
-            if (action == Action::MenuControlCenter && barItems) addControlChoices(barItems);
+            if (action == Action::MenuNotifications && !merged) addTimePositionChoices(menu);
+            if (action == Action::MenuInputMethod) addInputChoices(menu);
+            if (action == Action::MenuControlCenter)
+                if (const auto contents = submenu(menu, "statusBar.controlCenterContent"))
+                    for (std::size_t index = 12; index < std::size(flags); ++index) addFlag(contents, index);
         }
         HMENU settingsMenu = nullptr;
         HMENU independentDock = nullptr;
@@ -897,6 +901,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     if (group == 0)
                     {
                         addTimeChoices(section, merged ? independentStatus : nullptr);
+                        addInputChoices(section);
                         addControlChoices(section);
                     }
                 }
