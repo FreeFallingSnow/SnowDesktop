@@ -396,6 +396,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/desktop_passthrough_indicator.cpp
     src/app/render/app_text_render.cpp
     src/app/features/app_taskbar_integration.cpp
+    src/app/dock/app_dock_start_menu.cpp
+    src/shell/native_start_menu.cpp
     src/app/features/app_steam_workshop.cpp
     src/app/lifecycle/app_timer_dispatch.cpp
     src/app/tray/app_tray.cpp
@@ -833,6 +835,7 @@ if (MSVC)
         "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h")
 
     add_library(SnowDesktopTaskbarHook SHARED
+        src/shell/start_menu_hook.cpp
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/tray_collector.cpp
         src/taskbar_hook/tray_protocol.h
@@ -3182,6 +3185,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/dock/start_menu_tests.cpp
             tests/desktop/explorer_icon_visibility_tests.cpp
             tests/dock/dock_window_pin_tests.cpp
             tests/dock/fullscreen_focus_tests.cpp

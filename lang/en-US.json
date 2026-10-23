@@ -2586,5 +2586,7 @@
   "settings.debug.logs.settings": "Settings window",
   "settings.debug.logs.steam": "Steam and Workshop",
   "settings.debug.logs.data": "Data and recovery",
-  "settings.debug.logs.all": "Enable all"
+  "settings.debug.logs.all": "Enable all",
+  "settings.dock.startMenuKeepTaskbarHidden": "Keep the taskbar hidden when opening Start from the Dock",
+  "settings.dock.startMenuKeepTaskbarHidden.description": "For hidden or auto-hidden taskbars. Start opens centered along the Dock’s screen edge without covering the bar. Unsupported layouts use Windows defaults."
 }

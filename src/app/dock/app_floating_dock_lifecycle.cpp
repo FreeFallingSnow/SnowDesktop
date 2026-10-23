@@ -222,7 +222,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             continue;
         }
         PersistentDockHost& host = *ownedHost;
-        if (FullscreenBlocksDockReveal(DockRevealSource::Gesture, host.monitor))
+        if (!IsDockStartMenuActive(host.monitor) &&
+            FullscreenBlocksDockReveal(DockRevealSource::Gesture, host.monitor))
         {
             host.edgeHoverRequested = false;
             if (host.passivelyRevealed)
@@ -313,6 +314,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 MONITOR_DEFAULTTONEAREST) == host.monitor;
         }
         const bool associatedSurfaceActive =
+            IsDockStartMenuActive(host.monitor) ||
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
             previewAssociated ||
@@ -630,7 +632,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             const bool separateReveal = !merged && statusBar_->HasTemporaryReveal(host.monitor);
             if (!heldMerged && !separateReveal) continue;
             barSession = barSession || heldMerged;
-            const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
+            const bool ownSurface = (IsDockStartMenuActive(host.monitor) && dockStartMenu_->ContainsPoint(cursor)) ||
+                (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
                 (statusBar_ && statusBar_->ContainsTrayMenuPoint(host.monitor, cursor)) ||
                 (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
                 (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
@@ -654,7 +657,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // The bar and its owned surface are one interaction session with the
         // merged Dock. Its own dismissal logic releases this hold; the global
         // pointer sampler must not tear the owner down between down and up.
-        if (floatingDockVisible_ && !barSession && !onBar && !onRevealedDockSurface &&
+        if (floatingDockVisible_ && !(dockStartMenu_ && dockStartMenu_->ContainsPoint(cursor)) &&
+            !barSession && !onBar && !onRevealedDockSurface &&
             !IsPointOnPromotedDock(desktopPoint) &&
             snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(

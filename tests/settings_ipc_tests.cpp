@@ -171,6 +171,14 @@ void TestCodec()
         companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
+    Check(!dockSpace.startMenuKeepTaskbarHidden, "native Start behavior remains the default");
+    for (const bool enabled : {false, true})
+    {
+        DockSettings start = dockSpace;
+        start.startMenuKeepTaskbarHidden = enabled;
+        Check(Unpack<DockSettings>(Pack(start)) == start,
+            "Dock Start placement preference survives settings-process IPC");
+    }
     dockSpace.edgeDistanceScale = 5.f;
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;

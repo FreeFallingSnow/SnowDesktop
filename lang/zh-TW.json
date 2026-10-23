@@ -2586,5 +2586,7 @@
   "settings.debug.logs.settings": "設定視窗",
   "settings.debug.logs.steam": "Steam 與工作坊",
   "settings.debug.logs.data": "資料與復原",
-  "settings.debug.logs.all": "全部開啟"
+  "settings.debug.logs.all": "全部開啟",
+  "settings.dock.startMenuKeepTaskbarHidden": "從 Dock 開啟開始功能表時保持工作列隱藏",
+  "settings.dock.startMenuKeepTaskbarHidden.description": "適用於一律隱藏或自動隱藏工作列。開始功能表在 Dock 所在螢幕邊緣置中顯示並避開列體；不支援時使用 Windows 預設位置。"
 }

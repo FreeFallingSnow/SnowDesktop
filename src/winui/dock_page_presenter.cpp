@@ -448,6 +448,7 @@ struct DockPagePresenter::Impl
         iconStatus.IsOpen(!message.empty());
     }
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
+    muxc::ToggleSwitch startMenuKeepTaskbarHiddenToggle{nullptr};
     muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
@@ -492,6 +493,7 @@ struct DockPagePresenter::Impl
     SettingRow singleClickLaunchItemsRow;
     SettingRow fullscreenPolicyRow;
     SettingRow showWindowsButtonRow;
+    SettingRow startMenuKeepTaskbarHiddenRow;
     SettingRow showQuickSearchButtonRow;
     SettingRow suppressTaskbarRow;
     SettingRow taskbarSuppressRow;
@@ -554,6 +556,7 @@ struct DockPagePresenter::Impl
     winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token fullscreenPolicyToken{};
     winrt::event_token showWindowsButtonToken{};
+    winrt::event_token startMenuKeepTaskbarHiddenToken{};
     winrt::event_token showQuickSearchButtonToken{};
     winrt::event_token suppressTaskbarToken{};
     winrt::event_token taskbarSuppressToken{};
@@ -687,6 +690,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
         showWindowsButtonToggle = muxc::ToggleSwitch{};
+        startMenuKeepTaskbarHiddenToggle = muxc::ToggleSwitch{};
         showQuickSearchButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
         taskbarSuppressToggle = muxc::ToggleSwitch{};
@@ -752,6 +756,8 @@ struct DockPagePresenter::Impl
         iconStatus.IsOpen(false); iconStatus.Severity(muxc::InfoBarSeverity::Error);
         presenter_controls::BindInfoBarVisibility(iconStatus);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
+        startMenuKeepTaskbarHiddenRow.Initialize(startMenuKeepTaskbarHiddenToggle);
+        startMenuKeepTaskbarHiddenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showQuickSearchButtonRow.Initialize(showQuickSearchButtonToggle);
         showQuickSearchButtonRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
@@ -838,6 +844,7 @@ struct DockPagePresenter::Impl
         presenter_controls::BindInfoBarVisibility(suppressionStatus);
         behaviorCard.content.Children().Append(suppressionStatus);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(startMenuKeepTaskbarHiddenRow.root);
         itemsCard.content.Children().Append(startIconRow.root);
         itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
         itemsCard.content.Children().Append(searchIconRow.root);
@@ -1478,11 +1485,18 @@ struct DockPagePresenter::Impl
             });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
             [this](const auto&, const auto&) {
+                UpdateDependentStates();
                 const bool value = showWindowsButtonToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.showWindowsButton = value;
                     });
+            });
+        startMenuKeepTaskbarHiddenToken = startMenuKeepTaskbarHiddenToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = startMenuKeepTaskbarHiddenToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.startMenuKeepTaskbarHidden = value; });
             });
         showQuickSearchButtonToken = showQuickSearchButtonToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -2104,6 +2118,7 @@ struct DockPagePresenter::Impl
         homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
+        startMenuKeepTaskbarHiddenToggle.IsOn(settings.startMenuKeepTaskbarHidden);
         showQuickSearchButtonToggle.IsOn(settings.showQuickSearchButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
@@ -2182,6 +2197,8 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
+        startMenuKeepTaskbarHiddenRow.SetEnabled(dockEnabled && showWindowsButtonToggle.IsOn() &&
+            taskbarMode.SelectedIndex() > 0);
         showQuickSearchButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
@@ -2988,6 +3005,12 @@ struct DockPagePresenter::Impl
         }
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
+        startMenuKeepTaskbarHiddenRow.SetText(
+            L("settings.dock.startMenuKeepTaskbarHidden", L"Keep the taskbar hidden when opening Start from the Dock"),
+            L("settings.dock.startMenuKeepTaskbarHidden.description",
+                L"For hidden or auto-hidden taskbars. Start opens centered beside the Dock without covering it. Unsupported layouts use Windows defaults."));
+        muxa::AutomationProperties::SetName(startMenuKeepTaskbarHiddenToggle,
+            startMenuKeepTaskbarHiddenRow.label.Text());
         showQuickSearchButtonRow.SetText(L(
             "app.dock.show_quick_search_button", L"Show quick search button"));
         singleClickLaunchItemsRow.SetText(
@@ -3304,6 +3327,8 @@ struct DockPagePresenter::Impl
         if (id == "dock.searchIcon") return dockTarget(searchIconChoose);
         if (id == "dock.showWindowsButton")
             return dockTarget(showWindowsButtonToggle);
+        if (id == "dock.startMenuKeepTaskbarHidden")
+            return dockTarget(startMenuKeepTaskbarHiddenToggle);
         if (id == "dock.showQuickSearchButton")
             return dockTarget(showQuickSearchButtonToggle);
         if (id == "dock.showFrequentItems")
@@ -3490,6 +3515,7 @@ struct DockPagePresenter::Impl
             ClearFullscreenExceptionRows();
             trayEditor.reset();
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            startMenuKeepTaskbarHiddenToggle.Toggled(startMenuKeepTaskbarHiddenToken);
             showQuickSearchButtonToggle.Toggled(showQuickSearchButtonToken);
             mergedHeight->Close();
             homeSize.Toggled(homeSizeToken);

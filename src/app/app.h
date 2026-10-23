@@ -25,6 +25,7 @@
 #include "ui/render/scroll_content_clip.h"
 #include "app/render/widget_icon_backdrops.h"
 #include "platform/operation_feedback.h"
+#include "shell/native_start_menu.h"
 #include "ui/render/graphics_device_recovery.h"
 #include "common/background_work.h"
 #include "data/data_cleanup.h"
@@ -1483,7 +1484,9 @@ private:
     void UpdateDockWindowActivationState(
         HWND target, bool restored, bool foreground);
     bool HandleDockClickRelease(POINT point);
-    void ToggleWindowsStartMenu();
+    void ToggleWindowsStartMenu(DockContainer* dock);
+    void UpdateDockStartMenu();
+    bool IsDockStartMenuActive(HMONITOR monitor = nullptr) const;
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex, bool* pending = nullptr);
     void InvalidateDockShellMetadata();
     void PruneDockShellMetadata();
@@ -4045,6 +4048,11 @@ private:
     bool taskbarAppVisibilityAttempted_ = false;
     std::unique_ptr<SearchVisibilityDetector> taskbarSearchVisibility_;
     bool systemTaskbarShellUiActive_ = false;
+    std::unique_ptr<snowdesktop::NativeStartMenu> dockStartMenu_;
+    HMONITOR dockStartMenuHeldMonitor_ = nullptr;
+    DockPosition dockStartMenuPosition_ = DockPosition::Bottom;
+    snowdesktop::start_menu::Placement dockStartMenuPlacement_;
+    bool dockStartMenuWasPromoted_ = false;
     HMONITOR systemTaskbarShellUiMonitor_ = nullptr;
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;

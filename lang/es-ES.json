@@ -2586,5 +2586,7 @@
   "settings.debug.logs.settings": "Ventana de configuración",
   "settings.debug.logs.steam": "Steam y Workshop",
   "settings.debug.logs.data": "Datos y recuperación",
-  "settings.debug.logs.all": "Activar todo"
+  "settings.debug.logs.all": "Activar todo",
+  "settings.dock.startMenuKeepTaskbarHidden": "Mantener oculta la barra de tareas al abrir Inicio desde el Dock",
+  "settings.dock.startMenuKeepTaskbarHidden.description": "Para barras de tareas ocultas de forma permanente o automática. Inicio aparece centrado en el borde de la pantalla del Dock, sin cubrir la barra. Si el diseño no es compatible, se usa la posición predeterminada de Windows."
 }

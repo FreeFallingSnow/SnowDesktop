@@ -1042,7 +1042,7 @@ void DesktopApp::SyncStatusBar()
         });
         statusBar_->SetInteractionSessionProvider([this](HMONITOR monitor) {
             const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
-            return statusBarActivationMonitor_ == monitor ||
+            return IsDockStartMenuActive(monitor) || statusBarActivationMonitor_ == monitor ||
                 (statusBarMenuMonitor_ == monitor && statusBarMenuOwner_ && menu &&
                     GetWindow(menu, GW_OWNER) == statusBarMenuOwner_) ||
                 (statusBarQuickNavigationMonitor_ == monitor &&

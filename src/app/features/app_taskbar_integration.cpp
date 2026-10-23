@@ -80,6 +80,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    if (dockStartMenu_) dockStartMenu_->Cancel();
     if (dockShellHookWindow_)
         DeregisterShellHookWindow(dockShellHookWindow_);
     dockShellHookWindow_ = nullptr;
@@ -607,15 +608,4 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
-}
-
-void DesktopApp::ToggleWindowsStartMenu()
-{
-    INPUT input[2]{};
-    input[0].type = INPUT_KEYBOARD;
-    input[0].ki.wVk = VK_LWIN;
-    input[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-    input[1] = input[0];
-    input[1].ki.dwFlags |= KEYEVENTF_KEYUP;
-    SendInput(static_cast<UINT>(std::size(input)), input, sizeof(INPUT));
 }

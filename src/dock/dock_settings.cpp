@@ -532,6 +532,7 @@ public:
             state_->minimizeSequence = 0;
             state_->minimizeStarted = 0;
             state_->minimizeSource = 0;
+            state_->dockStartMenuUntil = 0;
             InterlockedExchange(&state_->minimizeCancelled, 0);
         }
         state_->enabled = hookEnabled ? TRUE : FALSE;
@@ -802,6 +803,43 @@ public:
         return applied;
     }
 
+    bool StartMenuProtection(bool active)
+    {
+        using namespace snowdesktop::taskbar_hook;
+        std::vector<HWND> taskbars;
+        bool renewal = false;
+        {
+            std::lock_guard lock(mutex_);
+            Snapshot snapshot;
+            if (!ReadSharedSnapshot(state_, snapshot) || snapshot.ownerProcessId != GetCurrentProcessId())
+                return false;
+            if (active && !HasMinimizeProtection(snapshot)) return false;
+            renewal = active && snapshot.dockStartMenuUntil > GetTickCount64();
+            for (LONG i = 0; i < snapshot.targetCount; ++i)
+                if (snapshot.targets[i].protectAutoHideActivation)
+                    taskbars.push_back(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
+            InterlockedIncrement(&state_->generation);
+            state_->dockStartMenuUntil = active ? GetTickCount64() + 3000 : 0;
+            MemoryBarrier();
+            InterlockedIncrement(&state_->generation);
+        }
+        if (renewal && !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [](HWND taskbar) {
+            return IsWindow(taskbar) && GetPropW(taskbar, native::kAttachedProperty) != nullptr;
+        })) return true;
+        bool applied = !taskbars.empty();
+        const UINT message = RegisterWindowMessageW(kApplyMessageName);
+        for (HWND taskbar : taskbars)
+        {
+            DWORD_PTR result = 0;
+            applied &= SendMessageTimeoutW(taskbar, message, 0, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
+                result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
+                GetPropW(taskbar, native::kAttachedProperty) != nullptr;
+        }
+        if (active && !applied) StartMenuProtection(false);
+        return applied;
+    }
+
     SystemTaskbarBackdropRuntimeState RuntimeState()
     {
         std::lock_guard lock(mutex_);
@@ -1002,6 +1040,11 @@ bool IsSystemTaskbarAutoHideEnabled()
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
 {
     return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
+}
+
+bool UpdateSystemTaskbarStartMenuProtection(bool active)
+{
+    return GetTaskbarBackdropController().StartMenuProtection(active);
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
@@ -1221,6 +1264,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
+    ReadBoolField(text, "startMenuKeepTaskbarHidden", settings.startMenuKeepTaskbarHidden);
     ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
@@ -1403,6 +1447,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
+    file << "  \"startMenuKeepTaskbarHidden\": "
+         << (settings.startMenuKeepTaskbarHidden ? "true" : "false") << ",\n";
     file << "  \"showQuickSearchButton\": "
          << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating

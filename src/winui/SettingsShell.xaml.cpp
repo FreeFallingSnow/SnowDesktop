@@ -3076,7 +3076,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.fullscreenPolicy",
                 "dock.fullscreenExceptions",
                 "dock.startIcon", "dock.searchIcon",
-                "dock.showWindowsButton", "dock.showQuickSearchButton", "dock.showFrequentItems",
+                "dock.showWindowsButton", "dock.startMenuKeepTaskbarHidden", "dock.showQuickSearchButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
                 "dock.showOnlyWhenSummoned"});

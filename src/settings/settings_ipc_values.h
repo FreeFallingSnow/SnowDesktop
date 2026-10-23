@@ -40,7 +40,7 @@ SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick)
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.summonOnAppMinimize, v.edgeRevealGesture, v.edgeHoverDelayMs, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
-    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
+    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.startMenuKeepTaskbarHidden, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,

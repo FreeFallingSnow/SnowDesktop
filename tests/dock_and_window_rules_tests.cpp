@@ -115,6 +115,7 @@ namespace identityRules = snowdesktop::dock_app_identity_rules;
 int RunDesktopBackdropCompositorTests();
 int RunExplorerIconVisibilityTests();
 int RunNativeTaskbarTests();
+int RunDockStartMenuTests();
 int RunTrayModelTests();
 int RunDockWindowPinTests();
 int TryRunTrayLiveTests();
@@ -2575,6 +2576,7 @@ int main(int argc, char** argv)
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
+    failures += RunDockStartMenuTests();
     failures += RunTrayModelTests();
     failures += RunDockWindowPinTests();
     CheckSingleLineRenameEditor();

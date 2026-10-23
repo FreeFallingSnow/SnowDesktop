@@ -352,6 +352,22 @@ int RunNativeTaskbarTests()
             native::Attach(secondary, &temporary, false, TestAppBarMessage) &&
             !cloaked() && !secondaryCloaked(),
             "automatic hiding alone attaches offline protection without permanently hiding either screen");
+        temporary.dockStartMenuUntil = GetTickCount64() + 3000;
+        temporary.targets[0].shellPanelVisible = TRUE;
+        temporary.targets[1].shellPanelVisible = TRUE;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(cloaked() && secondaryCloaked() && appBarState == ABS_AUTOHIDE,
+            "Dock Start protection cloaks both real fixture bars while keeping the auto-hide preference");
+        const BOOL startUncloak = FALSE;
+        DwmSetWindowAttribute(secondary, DWMWA_CLOAK, &startUncloak, sizeof(startUncloak));
+        check(secondaryCloaked(), "Shell cannot uncloak a bar during a Dock-origin Start session");
+        temporary.dockStartMenuUntil = 0;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked(), "ending Start restores both bars independently of minimize protection");
+        temporary.targets[0].shellPanelVisible = FALSE;
+        temporary.targets[1].shellPanelVisible = FALSE;
         temporary.minimizeSource = reinterpret_cast<std::uintptr_t>(source);
         const auto arm = [&] {
             ++temporary.minimizeSequence;

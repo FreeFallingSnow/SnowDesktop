@@ -95,6 +95,7 @@ struct DockSettings : DockLayoutSettings
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
+    bool startMenuKeepTaskbarHidden = false;
     bool followComponentAppearance = true;
     bool followComponentCornerRadius = true;
     float cornerRadius = 12.0f;
@@ -190,6 +191,9 @@ std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
+// Worker-only, bounded acknowledgement before sending the Start invocation.
+// Renewal expires independently in Explorer if the host stops responding.
+bool UpdateSystemTaskbarStartMenuProtection(bool active);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

@@ -2586,5 +2586,7 @@
   "settings.debug.logs.settings": "Fenêtre des paramètres",
   "settings.debug.logs.steam": "Steam et Workshop",
   "settings.debug.logs.data": "Données et récupération",
-  "settings.debug.logs.all": "Tout activer"
+  "settings.debug.logs.all": "Tout activer",
+  "settings.dock.startMenuKeepTaskbarHidden": "Garder la barre des tâches masquée à l’ouverture de Démarrer depuis le Dock",
+  "settings.dock.startMenuKeepTaskbarHidden.description": "Pour les barres des tâches masquées en permanence ou automatiquement. Démarrer s’affiche au centre du bord de l’écran du Dock, sans recouvrir la barre. Les dispositions non prises en charge utilisent la position par défaut de Windows."
 }

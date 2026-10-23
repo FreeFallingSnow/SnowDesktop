@@ -689,6 +689,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
+        UpdateDockStartMenu();
         snowdesktop::dock_taskbar_diagnostics::Poll();
         UpdateSystemShowDesktopDockLayerGuard();
         snowdesktop::dock_taskbar_diagnostics::PollNativeAutoHideTrace();

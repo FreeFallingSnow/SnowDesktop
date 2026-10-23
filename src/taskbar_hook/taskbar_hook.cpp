@@ -14,6 +14,7 @@
 #include "taskbar_xaml_readiness.h"
 #include "taskview_visibility.h"
 #include "../shell/shell_start_pin_command.h"
+#include "../shell/start_menu_protocol.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -1954,6 +1955,9 @@ SnowDesktopStartPinHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code == HC_ACTION && lParam)
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == RegisterWindowMessageW(snowdesktop::start_menu::kMessage))
+            snowdesktop::start_menu::Receive(message->hwnd,
+                static_cast<DWORD>(message->wParam), static_cast<std::uint64_t>(message->lParam));
         if (message->message == RegisterWindowMessageW(
                 snowdesktop::shell_start_pin::kMessage))
         {
