@@ -268,6 +268,32 @@ int RunTrayModelTests()
             !input::native_menu::MatchesModeButton(L"Input indicators", L"Input indicator") &&
             !input::native_menu::MatchesModeButton(L"Volume English mode", L"Input indicator"),
             "native input lookup rejects other generic tray buttons and an unavailable OS resource");
+        const auto prefix = L"Input indicator";
+        const auto hint = L"To switch input methods, press Windows key + space.";
+        const auto modeName = L"Input indicator English mode\nRight-click for more options";
+        const auto layoutName = L"Input indicator English (United States)\nUS\n To switch input methods, press Windows key + space.";
+        check(input::native_menu::MatchesInputButton(modeName, prefix, hint, false) &&
+            !input::native_menu::MatchesInputButton(modeName, prefix, hint, true) &&
+            input::native_menu::MatchesInputButton(layoutName, prefix, hint, true) &&
+            !input::native_menu::MatchesInputButton(layoutName, prefix, hint, false),
+            "identical localized button prefixes cannot route the layout picker to the conversion-mode toggle");
+        check(!input::native_menu::MatchesInputButton(layoutName, prefix, L"", true) &&
+            input::native_menu::MatchesInputButton(layoutName, prefix,
+                L"To switch input methods,\r\npress Windows key + space.", true),
+            "layout lookup requires its OS hint and tolerates provider whitespace differences");
+        for (const bool layoutPanel : {false, true})
+        {
+            int invoked = 0, contextOpened = 0;
+            const auto result = input::native_menu::InvokeInputButton(layoutPanel,
+                [&] { ++invoked; return S_OK; }, [&] { ++contextOpened; return E_ACCESSDENIED; });
+            check(invoked == (layoutPanel ? 1 : 0) && contextOpened == (layoutPanel ? 0 : 1) &&
+                result == (layoutPanel ? S_OK : E_ACCESSDENIED),
+                "the system layout picker invokes the language button instead of opening the IME context menu");
+        }
+        int alternate = 0;
+        check(input::native_menu::InvokeInputButton(true, [] { return E_ACCESSDENIED; },
+            [&] { ++alternate; return S_OK; }) == E_ACCESSDENIED && alternate == 0,
+            "a failed system layout request stays a failure instead of opening another destination");
         // Foreground language and IME conversion are distinct. Query failures
         // must not turn a Chinese keyboard into a false Chinese-mode indicator.
         check(input::detail::Label(0x0804, L"ZH", true, IME_CMODE_NATIVE) == L"中" &&

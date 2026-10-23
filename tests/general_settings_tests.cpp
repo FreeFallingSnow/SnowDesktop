@@ -790,6 +790,22 @@ int main(int argc, char** argv)
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        Check(value.statusBar.clock && value.statusBar.notifications && value.statusBar.controlCenter &&
+            !value.statusBar.controlCenterSingleIcon && firstEnable.clock && firstEnable.notifications &&
+            firstEnable.controlCenter && !firstEnable.controlCenterSingleIcon,
+            "new and existing profiles keep the clock, notifications and grouped control center visible");
+        for (const int mode : {0, 1, 2}) for (const bool clock : {false, true})
+        for (const bool notifications : {false, true})
+        {
+            auto selected = firstEnable;
+            selected.controlCenter = mode != 2; selected.controlCenterSingleIcon = mode == 1;
+            selected.clock = clock; selected.notifications = notifications;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(selected), stored) && DecodeStatusBarSettings(stored, restored) &&
+                restored.controlCenter == selected.controlCenter && restored.controlCenterSingleIcon == selected.controlCenterSingleIcon &&
+                restored.clock == clock && restored.notifications == notifications,
+                "independent bar visibility choices survive saving and restarting");
+        }
         Check(value.statusBar.showDesktop && firstEnable.showDesktop,
             "new and existing profiles enable the invisible show-desktop edge by default");
         for (const bool showDesktop : {false, true})

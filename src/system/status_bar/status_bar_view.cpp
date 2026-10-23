@@ -223,19 +223,22 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     {
         add("clock", snapshot.clock, StatusBarAction::Calendar);
     }
-    const auto& notifications = snapshot.notifications;
-    const auto* notificationGlyph = kNotifications;
-    const auto* notificationTip = "statusBar.notifications";
-    if (notifications.quiet.value_or(false))
-    { notificationGlyph = kNotificationsQuiet; notificationTip = "statusBar.notificationsQuiet"; }
-    else if (notifications.unreadCount && *notifications.unreadCount > 0)
-    { notificationGlyph = kNotificationsPending; notificationTip = "statusBar.notificationsPending"; }
-    else if (notifications.totalCount && *notifications.totalCount > 0)
-    { notificationGlyph = kNotificationsPresent; notificationTip = "statusBar.notificationsPresent"; }
-    else if (!notifications.unreadCount && !notifications.totalCount)
-    { notificationGlyph = kUnknown; notificationTip = "statusBar.notificationsUnknown"; }
-    add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
-    items.back().tip = _LW(notificationTip);
+    if (s.notifications)
+    {
+        const auto& notifications = snapshot.notifications;
+        const auto* notificationGlyph = kNotifications;
+        const auto* notificationTip = "statusBar.notifications";
+        if (notifications.quiet.value_or(false))
+        { notificationGlyph = kNotificationsQuiet; notificationTip = "statusBar.notificationsQuiet"; }
+        else if (notifications.unreadCount && *notifications.unreadCount > 0)
+        { notificationGlyph = kNotificationsPending; notificationTip = "statusBar.notificationsPending"; }
+        else if (notifications.totalCount && *notifications.totalCount > 0)
+        { notificationGlyph = kNotificationsPresent; notificationTip = "statusBar.notificationsPresent"; }
+        else if (!notifications.unreadCount && !notifications.totalCount)
+        { notificationGlyph = kUnknown; notificationTip = "statusBar.notificationsUnknown"; }
+        add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
+        items.back().tip = _LW(notificationTip);
+    }
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
@@ -302,29 +305,34 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         items.back().tip = std::wstring(_LW("statusBar.inputMethodPanel"));
         if (!input.description.empty()) items.back().tip += L"  " + input.description;
     }
-    const auto audio = snapshot.audio;
-    const auto power = snapshot.power;
-    const auto [networkGlyph, networkTip] = NetworkVisual(snapshot);
-    add("controlCenter", L"", StatusBarAction::ControlCenter);
-    auto& control = items.back();
-    const auto battery = power && power->available ? ResolveStatusBarBatteryVisual(
-        power->batteryPercent, power->charging, power->acPower, power->saver) : StatusBarBatteryVisual{};
-    const bool hasBattery = power && power->available && std::isfinite(power->batteryPercent) &&
-        power->batteryPercent >= 0 && power->batteryPercent <= 100;
-    control.controlGlyphs = {networkGlyph,
-        audio && audio->available && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
-            audio->volume < .5 ? kSpeakerLow : kSpeaker,
-        hasBattery ? battery.glyph : L""};
-    control.batteryTone = battery.tone;
-    control.batteryPluggedIn = battery.pluggedIn;
-    control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
-    control.controlTips[0] = snapshot.network && snapshot.network->available ?
-        StatusBarNetworkTooltip(snapshot.network->connections, networkTip) : networkTip;
-    control.controlTips[1] = StatusBarVolumeTooltip(snapshot.audioDevice, audio);
-    if (hasBattery)
+    if (s.controlCenter && s.controlCenterSingleIcon)
+        add("controlCenter", L"", StatusBarAction::ControlCenter, kControls);
+    else if (s.controlCenter)
     {
-        control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
-        if (s.batteryPercentage) control.batteryPercentageText = Percent(power->batteryPercent);
+        const auto audio = snapshot.audio;
+        const auto power = snapshot.power;
+        const auto [networkGlyph, networkTip] = NetworkVisual(snapshot);
+        add("controlCenter", L"", StatusBarAction::ControlCenter);
+        auto& control = items.back();
+        const auto battery = power && power->available ? ResolveStatusBarBatteryVisual(
+            power->batteryPercent, power->charging, power->acPower, power->saver) : StatusBarBatteryVisual{};
+        const bool hasBattery = power && power->available && std::isfinite(power->batteryPercent) &&
+            power->batteryPercent >= 0 && power->batteryPercent <= 100;
+        control.controlGlyphs = {networkGlyph,
+            audio && audio->available && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
+                audio->volume < .5 ? kSpeakerLow : kSpeaker,
+            hasBattery ? battery.glyph : L""};
+        control.batteryTone = battery.tone;
+        control.batteryPluggedIn = battery.pluggedIn;
+        control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
+        control.controlTips[0] = snapshot.network && snapshot.network->available ?
+            StatusBarNetworkTooltip(snapshot.network->connections, networkTip) : networkTip;
+        control.controlTips[1] = StatusBarVolumeTooltip(snapshot.audioDevice, audio);
+        if (hasBattery)
+        {
+            control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
+            if (s.batteryPercentage) control.batteryPercentageText = Percent(power->batteryPercent);
+        }
     }
     if (s.showDesktop)
     {
@@ -404,8 +412,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         }
         const auto extentOf = [&](const StatusBarItem& item) {
             if (item.key == "controlCenter")
-                return (item.controlGlyphs[2].empty() ? 56.f : 84.f) * scale +
-                    (item.batteryPercentageText.empty() ? 0.f : percentageWidth);
+                return item.glyph.empty() ? (item.controlGlyphs[2].empty() ? 56.f : 84.f) * scale +
+                    (item.batteryPercentageText.empty() ? 0.f : percentageWidth) : 28.f * scale;
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
@@ -490,10 +498,14 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 }
                 if (notificationIndex) items[*notificationIndex].bounds = dateAndNotification;
             }
-            leftLimit = (clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
+            leftLimit = IsRectEmpty(&bounds[0]) ? viewportWidth - edgePadding :
+                (clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
             trayMinimum = IsRectEmpty(&bounds[0]) ? edgePadding : bounds[0].right + edgePadding;
             for (std::size_t i = 0; i < rightIndices.size(); ++i)
+            {
                 items[rightIndices[i]].bounds = bounds[i + 1];
+                if (!IsRectEmpty(&bounds[i + 1])) leftLimit = std::min(leftLimit, bounds[i + 1].left - edgePadding);
+            }
         }
         if (!mergedDock && timeNotificationRightAligned && trayWidth > 0)
             leftLimit -= std::min(trayWidth, static_cast<LONG>(std::ceil(56 * scale))) + edgePadding;
@@ -614,7 +626,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             else
             {
                 auto textRect = rect;
-                if (item.key == "controlCenter" && iconFormat)
+                if (item.key == "controlCenter" && item.glyph.empty() && iconFormat)
                 {
                     for (std::size_t part = 0; part < item.controlGlyphs.size(); ++part)
                     {

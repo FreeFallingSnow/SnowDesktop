@@ -34,11 +34,11 @@ struct StatusBarPagePresenter::Impl
     bool centralizedAppearance = false;
     muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
     muxc::TextBlock layoutTitle, clickTitle;
-    muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition;
+    muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition, controlDisplay;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
     muxc::Button scaleReset;
-    SettingRow edgeRow, monitorsRow, scaleRow, clockPanelRow, controlPanelRow, inputPanelRow, timeNotificationPositionRow;
+    SettingRow edgeRow, monitorsRow, scaleRow, clockPanelRow, controlPanelRow, inputPanelRow, timeNotificationPositionRow, controlDisplayRow;
     muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint;
     const bool systemQuickSettings = StatusBarSupportsSystemQuickSettings();
     struct ThemeControl
@@ -256,6 +256,13 @@ struct StatusBarPagePresenter::Impl
         muxc::StackPanel controlCenter; controlCenter.Spacing(2);
         controlCenterSection.Content(controlCenter);
         ToggleRow(leftItems, "statusBar.inputMethod", "statusBar.inputMethod", &StatusBarSettings::inputMethod);
+        ToggleRow(leftItems, "statusBar.clock", "statusBar.clock", &StatusBarSettings::clock);
+        ToggleRow(leftItems, "statusBar.notifications", "statusBar.notifications", &StatusBarSettings::notifications);
+        controlDisplay.Width(200);
+        controlDisplayRow.Initialize(controlDisplay);
+        controlDisplayRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        leftItems.Children().Append(controlDisplayRow.root);
+        ToggleRow(leftItems, "statusBar.batteryPercentage", "statusBar.batteryPercentage", &StatusBarSettings::batteryPercentage);
         inputPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         inputPanelRow.Initialize(inputPanel);
         ToggleRow(controlCenter, "statusBar.audioControls", "statusBar.audioControls", &StatusBarSettings::audioControls);
@@ -264,7 +271,6 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(controlCenter, "statusBar.bluetoothControls", "statusBar.bluetoothControls", &StatusBarSettings::bluetoothControls);
         ToggleRow(controlCenter, "statusBar.mediaControls", "statusBar.mediaControls", &StatusBarSettings::mediaControls);
         ToggleRow(controlCenter, "statusBar.powerControls", "statusBar.powerControls", &StatusBarSettings::powerControls);
-        ToggleRow(controlCenter, "statusBar.batteryPercentage", "statusBar.batteryPercentage", &StatusBarSettings::batteryPercentage);
         timeNotificationPosition.Width(200);
         timeNotificationPositionRow.Initialize(timeNotificationPosition);
         timeNotificationPositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -296,6 +302,15 @@ struct StatusBarPagePresenter::Impl
             SyncBehaviorHint();
         });
         revoke.push_back([control = controlPanel, controlSelection] { control.SelectionChanged(controlSelection); });
+        const auto displaySelection = controlDisplay.SelectionChanged([this](const auto&, const auto&) {
+            const auto selected = controlDisplay.SelectedIndex();
+            if (selected < 0 || selected > 2) return;
+            Emit([selected](auto& settings) {
+                settings.controlCenter = selected != 2;
+                settings.controlCenterSingleIcon = selected == 1;
+            });
+        });
+        revoke.push_back([control = controlDisplay, displaySelection] { control.SelectionChanged(displaySelection); });
         const auto inputSelection = inputPanel.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = inputPanel.SelectedIndex();
             if (selected >= 0 && selected <= 1)
@@ -419,6 +434,7 @@ struct StatusBarPagePresenter::Impl
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
+        controlDisplay.SelectedIndex(!value.controlCenter ? 2 : value.controlCenterSingleIcon ? 1 : 0);
         inputPanel.SelectedIndex(value.inputMethodSystemPanel ? 1 : 0);
         timeNotificationPosition.SelectedIndex(value.timeNotificationRightAligned ? 1 : 0);
         SyncBehaviorHint();
@@ -440,6 +456,7 @@ struct StatusBarPagePresenter::Impl
         clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
         inputPanelRow.SetEnabled(value.enabled && value.inputMethod);
         timeNotificationPositionRow.SetEnabled(value.enabled);
+        controlDisplayRow.SetEnabled(value.enabled);
         for (auto& toggle : toggles)
             toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
                 value.enabled);
@@ -467,9 +484,14 @@ struct StatusBarPagePresenter::Impl
         for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
         layoutTitle.Text(L("statusBar.layout"));
         clickTitle.Text(L("statusBar.clickBehavior"));
-        leftSection.Header(winrt::box_value(L("statusBar.content")));
+        leftSection.Header(winrt::box_value(L("statusBar.barItems")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
-        controlCenterSection.Header(winrt::box_value(L("statusBar.controlCenter")));
+        controlCenterSection.Header(winrt::box_value(L("statusBar.controlCenterContent")));
+        controlDisplayRow.SetText(L("statusBar.controlCenterDisplay"));
+        mux::Automation::AutomationProperties::SetName(controlDisplay, controlDisplayRow.label.Text());
+        controlDisplay.Items().Clear();
+        for (const auto key : {"app.interact.shown", "statusBar.controlCenterSingleIcon", "app.interact.hidden"})
+            controlDisplay.Items().Append(winrt::box_value(L(key)));
         timeNotificationPositionRow.SetText(L("statusBar.timeNotificationPosition"));
         mux::Automation::AutomationProperties::SetName(timeNotificationPosition, timeNotificationPositionRow.label.Text());
         timeNotificationPosition.Items().Clear();
@@ -672,6 +694,7 @@ void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::
     target("statusBar.clockPanel", impl_->clockPanelRow.root);
     target("statusBar.inputMethodPanel", impl_->inputPanelRow.root);
     target("statusBar.timeNotificationPosition", impl_->timeNotificationPositionRow.root);
+    target("statusBar.controlCenterDisplay", impl_->controlDisplayRow.root);
     if (impl_->systemQuickSettings) target("statusBar.controlCenterPanel", impl_->controlPanelRow.root);
     target("statusBar.theme", impl_->defaultTheme.row.root);
     for (auto& rule : impl_->rules) target(rule->focus, rule->enabledRow.root);

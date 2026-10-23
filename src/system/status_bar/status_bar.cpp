@@ -308,7 +308,7 @@ struct StatusBar::Impl
             // Compact hover targets must not pull the tooltip into the taller
             // merged strip. Place owned surfaces beyond its outer edge.
             if (mergedDockHeight) { anchor.top = 0; anchor.bottom = static_cast<LONG>(height); }
-            if (item.key == "controlCenter" && tooltipControlPart)
+            if (item.key == "controlCenter" && item.glyph.empty() && tooltipControlPart)
             {
                 const auto part = *tooltipControlPart;
                 key += "/" + std::to_string(part); body = item.controlTips[part];
@@ -1161,7 +1161,7 @@ struct StatusBar::Impl
                 for (const auto& item : self->items) if (PtInRect(&item.bounds, point))
                 {
                     hover = static_cast<std::size_t>(&item - self->items.data());
-                    if (item.key == "controlCenter")
+                    if (item.key == "controlCenter" && item.glyph.empty())
                     {
                         const auto part = StatusBarControlPart((point.x - item.bounds.left) /
                             (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale)), !item.controlGlyphs[2].empty());
@@ -1205,7 +1205,7 @@ struct StatusBar::Impl
                 }
                 if (message == WM_MOUSEHWHEEL) break;
                 for (const auto& item : self->items)
-                    if (item.key == "controlCenter" && PtInRect(&item.bounds, point))
+                    if (item.key == "controlCenter" && item.glyph.empty() && PtInRect(&item.bounds, point))
                     {
                         const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale));
                         if (StatusBarControlPart(x, !item.controlGlyphs[2].empty()) != 1) return 0;

@@ -400,7 +400,8 @@ struct Service::Impl
     detail::DisplayCache display;
     std::shared_ptr<NativeState> native;
     std::wstring nativeModeName = native_menu::ModeButtonName();
-    struct ContextRequest { ULONGLONG deadline; Snapshot target; };
+    std::wstring nativeLayoutName = native_menu::LayoutButtonName();
+    struct ContextRequest { ULONGLONG deadline; Snapshot target; bool layoutPanel = false; };
     std::optional<ContextRequest> contextRequest;
     // Declared last so shutdown joins before its state/mutex are destroyed.
     std::jthread worker{[this](std::stop_token stop) {
@@ -417,13 +418,14 @@ struct Service::Impl
                 HRESULT hr = apartment;
                 if (SUCCEEDED(hr))
                 {
-                    try { hr = native_menu::ShowContextMenu(nativeModeName, request->deadline, stop,
+                    try { hr = native_menu::ShowInputButton(request->layoutPanel ? nativeLayoutName : nativeModeName,
+                        request->layoutPanel, request->deadline, stop,
                         request->target.foreground, request->target.thread, request->target.layout); }
                     catch (...) { hr = E_UNEXPECTED; }
                 }
                 wchar_t message[128]{};
-                swprintf_s(message, L"StatusBar input method native context provider hr=0x%08lX",
-                    static_cast<unsigned long>(hr));
+                swprintf_s(message, L"StatusBar input method native %ls provider hr=0x%08lX",
+                    request->layoutPanel ? L"layout" : L"context", static_cast<unsigned long>(hr));
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(hr) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
             }
             Snapshot next;
@@ -447,13 +449,14 @@ Snapshot Service::Current() const
 HRESULT Service::Show(RECT anchor, bool context, bool layoutPanel)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
-    if (context && !impl_->nativeModeName.empty() && native_menu::HasModernTaskbar())
+    if ((layoutPanel || (context && !impl_->nativeModeName.empty())) && native_menu::HasModernTaskbar())
     {
-        // New Windows shell IMEs require the native button's XAML anchor. The
-        // legacy coordinate call queues S_OK but does not open their menu.
+        // Modern Shell owns the language picker and the IME's XAML anchor.
+        // The legacy picker can fail with E_ACCESSDENIED; IME context calls
+        // can queue S_OK without displaying a menu. Invoke the matching button.
         // Keep Win10/classic-shell and mode-toggle behavior on the common ABI.
         std::lock_guard lock(impl_->mutex);
-        impl_->contextRequest = Impl::ContextRequest{GetTickCount64() + 1500, Target()};
+        impl_->contextRequest = Impl::ContextRequest{GetTickCount64() + 1500, Target(), layoutPanel};
         impl_->wake.notify_one();
         return S_OK; // Queued, not a claim that the popup has been displayed.
     }
