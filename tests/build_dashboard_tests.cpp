@@ -360,6 +360,8 @@ void dashboard(const fs::path& repo,bool browser){
             "Investigation hidden or inserted into editing barrier");
     require(presenceView.at("events").items[0].at("adapterReceived").integer()==1&&presenceView.at("events").items[0].at("agentAcknowledged").integer()==0&&presenceView.at("events").items[0].at("recipientCount").integer()==2,
             "Saved event or adapter receipt became agent acknowledgement");
+    require(presenceView.at("events").items[0].at("recipients").items[1].str()=="task-b",
+            "Broadcast projection lost the selected activity recipient");
     require(presenceView.at("current").at("evidence").at("tests").items[0].at("status").str()=="failed"&&!presenceView.at("current").at("evidence").at("tests").items[0].at("reuseAllowed").boolean&&presenceView.at("acceptances").items[0].at("status").str()=="passed"&&presenceView.at("current").at("acceptances").items[0].at("elapsedSeconds").number==120.0,"Per-test evidence and independent manual acceptance were conflated or inferred reusable");
     const auto checkDependencies=[](const Json& snapshot){const auto& row=snapshot.at("current").at("evidence").at("tests").items[0];require(row.has("dependencies")&&row.at("dependencies").at("sourceClosure").str()=="unproven"&&row.at("dependencies").at("sourceReports").integer()==3&&row.at("runtimeInputs").at("status").str()=="stable"&&row.at("runtimeModules").at("imageCount").integer()==23&&!row.at("reuseAllowed").boolean,"Per-test dependency observations were omitted or treated as reusable closure");};
     checkDependencies(presenceView);

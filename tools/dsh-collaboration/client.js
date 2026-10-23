@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.16';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.17';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -80,7 +80,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    taskPresence:(snapshot?.taskPresence||[]).filter(task=>ids.has(task.id)),taskPresenceTotal:group.members.length,runs:group.runs,
    activeCandidates:(snapshot?.activeCandidates||[]).filter(entry=>bids.has(entry.id)),
    waits:(snapshot?.waits||[]).filter(entry=>ids.has(entry.participant)||bids.has(entry.batchId)),
-   events:(snapshot?.events||[]).filter(entry=>ids.has(entry.sender)||ids.has(entry.target)),
+   events:(snapshot?.events||[]).filter(entry=>ids.has(entry.sender)||ids.has(entry.target)||(entry.recipients||[]).some(id=>ids.has(id))),
    acceptances:(snapshot?.acceptances||[]).filter(entry=>ids.has(entry.task)||bids.has(entry.batchId))};
  }
  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v)),tone=value=>['passed','verified','eligible','passed-after-retry'].includes(value)?'good':['failed','attention','interrupted','invalidated','start-failed','exhausted-failed','environment-blocked','retirement-interrupted'].includes(value)?'bad':['editing','waiting','pending','awaiting_input','blocked','retrying','checking'].includes(value)?'wait':'info';

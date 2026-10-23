@@ -529,7 +529,7 @@ function scopeFor(group,snapshot){
   activeCandidates:(snapshot.activeCandidates||[]).filter(item=>batches.has(item.id)),
   taskPresence:(snapshot.taskPresence||[]).filter(task=>ids.has(task.id)),taskPresenceTotal:group.members.length,
   waits:(snapshot.waits||[]).filter(wait=>ids.has(wait.participant)||batches.has(wait.batchId)),
-  events:(snapshot.events||[]).filter(event=>ids.has(event.sender)||ids.has(event.target)),
+  events:(snapshot.events||[]).filter(event=>ids.has(event.sender)||ids.has(event.target)||(event.recipients||[]).some(id=>ids.has(id))),
   acceptances:(snapshot.acceptances||[]).filter(item=>ids.has(item.task)||batches.has(item.batchId))};
 }
 function renderWorkDetail(group,snapshot,batch){

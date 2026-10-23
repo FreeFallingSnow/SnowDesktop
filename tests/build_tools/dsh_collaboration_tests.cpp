@@ -384,6 +384,9 @@ function collectAttribute(node,attribute,result=[]){if(Array.isArray(node))node.
 const workspaceParticipants=collectAttribute(lastRendered,'data-participant'),workspaceActivities=collectAttribute(lastRendered,'data-activity');
 const workspaceBuilds=renderBudget(workspaceModel,'en','builds',{detail:true,workKey:'batch:'+logical});
 const workspaceParticipantsZh=renderBudget(workspaceModel,'zh','participants',{detail:true,workKey:'batch:'+logical});
+workspaceSnapshot.events=[{sequence:1,sender:'outside-task',target:'*',recipients:['current-editor'],text:'broadcast-for-selected-activity'},
+ {sequence:2,sender:'outside-task',target:'*',recipients:['other-project-task'],text:'broadcast-for-another-activity'}];
+const workspaceActivityText=renderBudget(workspaceModel,'en','activity',{detail:true,workKey:'batch:'+logical});
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -398,7 +401,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -411,6 +414,9 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
         "Overlay split repair attempts or presented an old investigation as currently running");
     require(clientObserved.at("workspaceBuilds").str().find("previous-only-log")==std::string::npos&&clientObserved.at("workspaceParticipantsZh").str().find("已就绪")!=std::string::npos,
         "Unstarted overlay attempt borrowed prior Run logs or participant status was untranslated");
+    require(clientObserved.at("workspaceActivityText").str().find("broadcast-for-selected-activity")!=std::string::npos&&
+        clientObserved.at("workspaceActivityText").str().find("broadcast-for-another-activity")==std::string::npos,
+        "Overlay omitted a received broadcast or mixed another activity's messages");
     require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
         clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
         clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&

@@ -902,6 +902,7 @@ class Store:
                 events.append({**{key: redact(str(event.get(key) or "")) for key in ("key", "sender", "target", "kind", "importance", "text")},
                                **{key: event.get(key) for key in ("sequence", "createdUtc", "requirementsRevision")},
                                "delivery": "persisted", "recipientCount": len(recipients),
+                               "recipients": [redact(str(who)) for who in recipients[:200]],
                                "adapterReceived": sum(any(r.get("task") == who and r.get("level") == "adapter" for r in receipts) for who in recipients),
                                "agentAcknowledged": sum(any(r.get("task") == who and r.get("level") == "agent" for r in receipts) for who in recipients)})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
