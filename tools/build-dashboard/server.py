@@ -193,13 +193,17 @@ class LogReader:
         self.targets = set()
         self.skipped_prefix = False
         self.last_modified = None
+        self.file_identity = None
 
     def read(self, path):
         try:
             with shared_open(path) as stream:
+                info = os.fstat(stream.fileno())
+                identity = (info.st_dev, info.st_ino, info.st_ctime_ns if os.name == "nt" else None)
                 size = stream.seek(0, 2)
-                if size < self.offset:
+                if size < self.offset or self.file_identity != identity:
                     self.__init__()
+                self.file_identity = identity
                 # First read of a very long log starts at a bounded tail.
                 if not self.offset and size > 262144:
                     self.offset = size - 262144
