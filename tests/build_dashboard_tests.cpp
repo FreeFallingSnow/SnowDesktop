@@ -333,6 +333,7 @@ void dashboard(const fs::path& repo,bool browser){
     require(Json::parse(http(port).body).at("current").at("tasks").items[0].at("ageSeconds").kind==Json::Kind::Number,
             "PowerShell seven-digit UTC timestamps lost their registration age");
     auto presenceFixture=current();
+    presenceFixture["current"]["runId"]=observedRunId;
     presenceFixture["verificationLedger"]=subscribed.at("verificationLedger");runRequest["mode"]="verify";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());
     presenceFixture["taskLedger"]=Json::object({{"schemaVersion",1},{"sequence",1},
         {"tasks",Json::array({Json::object({{"id","investigator"},{"displayName","Investigate wait"},{"phase","blocked"},{"progress","Located owner"},{"blocker","Awaiting dependency"},{"adapter","dsh"},{"revision",2},{"requirementsRevision",1},{"lastHeartbeatUtc","2026-10-02T10:00:00.1234567Z"},{"capabilities",Json::object({{"idleWake",false}})}})})},
@@ -408,7 +409,7 @@ void dashboard(const fs::path& repo,bool browser){
             require(cdp->evaluate("document.querySelectorAll('#workList button').length===0 && !document.getElementById('workEmpty').hidden").boolean,"Unmatched activity query showed unfiltered records");
             atomic(state/L"state.json",originalPresence);refresh();
             cdp->evaluate("document.getElementById('workSearch').value='';document.getElementById('workSearch').dispatchEvent(new Event('input'));Array.from(document.querySelectorAll('#workList button')).find(x=>x.dataset.workKey==='batch:dddddddddddddddddddddddddddddddd').click()");
-            until([&]{return cdp->evaluate("document.getElementById('attemptList').children.length>0").boolean;});
+            until([&]{return cdp->evaluate("document.getElementById('batch').textContent").str()==bid;});
             cdp->evaluate("document.getElementById('tab-builds').click()");
             cdp->send("Emulation.setDeviceMetricsOverride",Json::object({{"width",1440},{"height",1080},{"deviceScaleFactor",1},{"mobile",false}}));
         }
