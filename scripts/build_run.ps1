@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     # The batch router forwards its literal leading verb without rebuilding argv.
     [ValidateSet('run')][string]$Verb='run',
@@ -693,6 +693,7 @@ try {
                 } catch {$record.status='failed';$record.exitCode=2;$record.error+=' Verification publication: '+$_.Exception.Message}
             }
             Write-RunRecord $record
+            if(Get-Command Publish-CompiledTestHistory -ErrorAction SilentlyContinue){Publish-CompiledTestHistory $root $request $record}
         }
         if($ownerLease){$ownerLease.Dispose()}
     }

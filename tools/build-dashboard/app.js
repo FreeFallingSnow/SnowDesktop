@@ -1,7 +1,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const names = {verified:"完成 · 共享验证通过",exempt:"完成 · 宿主验证豁免","batch-ended":"本批已结束",editing:"编辑中",checking:"轻量检查中",waiting:"已就绪 · 等待",attention:"检查需处理",withdrawn:"已显式退出",building:"构建 / 测试中",passed:"验证通过",failed:"验证失败",invalidated:"输入已改变",interrupted:"运行已中断",cancelled:"已取消",skipped:"豁免宿主验证",none:"无所有者",alive:"执行者存活",exited:"执行者已退出",unknown:"未知",pending:"排队",running:"执行中",notrun:"未运行","not-run":"未运行","not-required":"不要求宿主测试","not-recorded":"尚无记录","retirement-interrupted":"结果已保存 · 待恢复登记",configure:"配置",compile:"编译",link:"链接",test:"测试"};
-Object.assign(names,{eligible:"可恢复操作",completed:"等待结束","timed-out":"等待超时",retrying:"有限重试中","passed-after-retry":"重试后通过 / flaky","exhausted-failed":"重试耗尽","environment-blocked":"环境阻断",window:"编辑窗口",files:"文件归属",peers:"其他编辑者",result:"共同结果"});
+Object.assign(names,{fulfilled:"要求已满足（含证据引用）",referenced:"引用原结果",eligible:"可恢复操作",completed:"等待结束","timed-out":"等待超时",retrying:"有限重试中","passed-after-retry":"重试后通过 / flaky","exhausted-failed":"重试耗尽","environment-blocked":"环境阻断",window:"编辑窗口",files:"文件归属",peers:"其他编辑者",result:"共同结果"});
 // Only view preferences are stored; build state remains read-only server data.
 const viewKey = "SnowDesktop.build-monitor.ui.v1";
 Object.assign(names,{queued:"排队",starting:"启动中",incomplete:"未完成",unavailable:"记录不可用",pipeline:"执行管线",preflight:"占用预检",codegen:"XAML 生成任务","custom-build":"自定义构建任务",arrange:"整理产物","build-targets":"构建目标","test-target-build":"测试目标构建","test-execute":"测试执行","release-pipeline":"Release 管线","debug-pipeline":"Debug 管线","ide-pipeline":"IDE 管线","tests-pipeline":"测试管线",queue:"排队"});
@@ -72,7 +72,7 @@ function render(snapshot,batch){
  text("batch",batch.id);text("stamp","第 "+batch.attempt+" 次 · 逻辑批次 "+batch.logicalBatchId.slice(0,8)+" · "+time(batch.completedUtc||batch.createdUtc));
  text("taskCount",batch.tasks.length);text("readyCount",batch.tasks.filter(x=>x.display==="waiting").length+" 已就绪 / "+batch.tasks.filter(x=>x.state==="editing").length+" 编辑中");
  const log=batch.log;text("stage",batch.phase==="editing"?"等待就绪":batch.outcome?label(batch.outcome):label(log.stage));text("stageNote",log.linkedTargetsObserved!=null?"观察到 "+log.linkedTargetsObserved+" 个链接输出"+(log.prefixOmitted?"（仅日志尾部）":""):"阶段总量未知");
- const counts=batch.coverage.summary; text("testCount",counts?counts.executed+" / "+counts.selected:log.testTotal==null?"未记录":log.testCompleted+" / "+log.testTotal);text("coverage",counts?"已执行 / 已选 · "+label(batch.coverage.status):label(batch.coverage.status));
+ const counts=batch.coverage.summary; text("testCount",counts?(counts.referenced?"执行 "+counts.executed+" · 引用 "+counts.referenced+" / "+counts.selected:counts.executed+" / "+counts.selected):log.testTotal==null?"未记录":log.testCompleted+" / "+log.testTotal);text("coverage",counts?"已执行 / 已选 · "+label(batch.coverage.status):label(batch.coverage.status));
  text("freshness",batch.historical?"历史快照":batch.inputCheck==="stable"?"批次输入稳定":batch.inputCheck==="changed"?"输入已改变":batch.phase!=="editing"&&batch.inputStart?"已冻结输入":"未冻结");text("inputNote","当前源文件未持续重算哈希");
  text("owner",label(batch.ownerState));$("tasks").replaceChildren(...batch.tasks.map(task=>renderTask(task,batch.id,batch)));const evidence=$("evidence");evidence.replaceChildren();
  if(batch.repairOf){const previous=element("button","查看上次失败 "+batch.repairOf);previous.type="button";previous.addEventListener("click",()=>{selectBatch(batch.repairOf);});evidence.append(previous);detail(evidence,"续修说明","原请求保留；原就绪检查与测试结论不沿用，当前输入重新验证。");}
@@ -82,6 +82,7 @@ function render(snapshot,batch){
  if(batch.preflight.status!=="not-observed")detail(evidence,"占用观察 · "+time(batch.preflight.observedUtc),batch.preflight.status+" / "+(batch.preflight.owners.map(x=>x.name+" PID "+x.pid).join(", ")||"未观察到占用者"));
  const source=batch.inputEnd||batch.inputStart;if(source)detail(evidence,"源码输入 SHA-256",source.digest+" / "+source.fileCount+" 文件"+(source.head?" · HEAD "+source.head.slice(0,10):""));
  for(const task of batch.coverage.tasks||[])detail(evidence,"测试覆盖 · "+task.participant,label(task.status)+" / 请求 "+(task.requested||[]).length+" 项"+((task.failed||[]).length?" · 失败："+task.failed.join(", "):""),tone(task.status));
+ for(const item of batch.coverage.references||[]){const row=element("details");retainFold(row,JSON.stringify(["compiled-reference",batch.id,item.test]));row.append(element("summary",item.test+" · "+(item.status==="recorded"?"引用原结果（本次未执行）":"引用凭据不可核对")));if(item.status==="recorded"){detail(row,"原 Run",item.sourceRunId);detail(row,"核对时间",time(item.checkedUtc));for(const receipt of item.receipts||[])detail(row,"请求 / 凭据",receipt.task+" / "+receipt.id);}else detail(row,"原因",item.reason,"bad");evidence.append(row);}
  for(const item of batch.issues||[])detail(evidence,"交接 · "+(item.assignee||"未分配"),item.state+" · "+item.reason,item.state==="open"?"warn":"");
  if(batch.outcome==="failed"&&!batch.issues.length)detail(evidence,"责任待确认","测试覆盖说明哪些请求受影响；缺陷责任尚未分配，请用 issue 记录交接。","warn");
  for(const binary of batch.binaryEvidence.executables||[])detail(evidence,"输出 · "+binary.file,binary.sha256+" · "+binary.sourceAssociation);

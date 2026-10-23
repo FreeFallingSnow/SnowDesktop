@@ -1,4 +1,4 @@
-# Completed references have their own receipts. They never manufacture a new
+﻿# Completed references have their own receipts. They never manufacture a new
 # execution, alter the original evidence, or grant candidate editing authority.
 function Format-VerificationUtcTimestamp([DateTime]$Value) {
     # ConvertFrom-Json may promote UTC strings to DateTime. Use the same
@@ -90,7 +90,7 @@ function Get-VerificationCompatibility($Verification) {
     # configurations; actual invocation, executable bytes, presets and tools
     # are bound separately, along with every effective environment value.
     $implementation=@()
-    foreach($file in @('build_verification.ps1','build_verification_reuse.ps1','build_test_runtime_inputs.ps1','build_test_runtime_modules.ps1','build_verification_token.cs','test_manager.ps1')){
+    foreach($file in @('build_verification.ps1','build_verification_reuse.ps1','build_test_runtime_inputs.ps1','build_test_runtime_modules.ps1','build_verification_token.cs','test_manager.ps1','build_test_selection.ps1')){
         $digest=Get-FileDigest (Join-Path $candidate.source ('scripts/'+$file))
         if($digest -notmatch '^[a-f0-9]{64}$'){return $null}
         $implementation+=@([pscustomobject]@{file=$file;sha256=$digest})
@@ -145,6 +145,82 @@ function Test-VerificationCompatibilityProof($Current,$Origin,$Entry) {
     }
     return $true
 }
+function Find-CompletedVerificationProof([string]$Root,$Verification,[switch]$BatchOrigins,[string]$OnlyRun='') {
+    try {
+    $current=$Verification;$binding=$current.binding.candidate
+    . (Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1')
+    $state=Read-EntryJson (Join-Path $Root '.build/collaboration/state.json')
+    $ledger=Get-Field $state 'verificationLedger'
+    # Candidate-compatible history uses the same ledger, never an execution join.
+    foreach($prior in @(Get-Field $ledger 'entries' @()|Where-Object {($BatchOrigins -or (Get-Field $_ 'kind') -ne 'compiled-test-origin-v1') -and $_.runId -ne (Get-Field $current 'consumerRunId') -and (Get-VerificationCompatibleMatch $_ $current -Any)})){
+        $priorView=Get-VerificationOriginView $Root $prior
+        if(-not $priorView.terminal -or $priorView.status -ne 'passed'){return $null}
+    }
+    foreach($entry in @(Get-Field $ledger 'entries' @()|Where-Object {($BatchOrigins -or (Get-Field $_ 'kind') -ne 'compiled-test-origin-v1') -and $_.runId -ne (Get-Field $current 'consumerRunId') -and (-not $OnlyRun -or $_.runId -eq $OnlyRun) -and (Get-VerificationCompatibleMatch $_ $current)}|Sort-Object createdUtc -Descending)){
+        try {
+            $view=Get-VerificationOriginView $Root $entry
+            if(-not $view.terminal -or $view.status -ne 'passed' -or -not $view.proofPassed){continue}
+            $origin=$view.verification;$crossCandidate=$entry.key -ne $current.key
+            if(($crossCandidate -or (Get-Field $entry 'kind') -eq 'compiled-test-origin-v1') -and -not (Test-VerificationCompatibilityProof $current $origin $entry)){continue}
+            if($view.record.inputStart.digest -ne $origin.source.digest -or $view.record.inputEnd.digest -ne $origin.source.digest){continue}
+            $coveragePath=$view.coveragePath
+            $coverage=Read-EntryJson $coveragePath
+            if(((Get-Field $entry 'kind') -ne 'compiled-test-origin-v1' -and $coverage.runId -ne $entry.runId) -or $coverage.status -ne 'passed' -or @($current.binding.names|Where-Object {$_ -notin @($coverage.selected)}).Count){continue}
+            $files=Compare-TestRuntimeInputs $binding.source $current.tests $coverage.dependencyManifest
+            Set-Field $Verification 'referenceCheck' 'checking-file-and-report-evidence'
+            if(@($files.tests).Count -ne @($current.tests).Count -or @($files.tests|Where-Object status -ne 'stable').Count){continue}
+            $proofs=@();$valid=$true
+            foreach($test in $current.tests){
+                $evidence=@($view.evidence.tests|Where-Object test -eq $test.name)
+                $modules=@($coverage.runtimeModules.tests|Where-Object test -eq $test.name)
+                if($evidence.Count -ne 1 -or $evidence[0].status -ne 'passed' -or $evidence[0].identityStatus -ne 'recorded' -or $modules.Count -ne 1 -or $modules[0].status -ne 'observed'){ $valid=$false;break }
+                if($evidence[0].runId -ne $entry.runId -or $evidence[0].binding.sourceDigest -ne $origin.source.digest -or
+                   $evidence[0].binding.environmentDigest -ne $origin.executionContext.digest -or
+                   $evidence[0].bindingDigest -ne (Get-VerificationTextDigest ($evidence[0].binding|ConvertTo-Json -Compress))){$valid=$false;break}
+                $attempts=@($evidence[0].attempts)
+                $reportRoot=Join-Path $binding.source '.build/Testing'
+                if($attempts.Count -ne 1 -or -not [IO.Path]::GetFullPath($attempts[0].report).StartsWith($reportRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or
+                   -not [IO.Path]::GetFullPath($modules[0].report).StartsWith($reportRoot+'\',[StringComparison]::OrdinalIgnoreCase)){ $valid=$false;break }
+                if($attempts.Count -ne 1 -or $attempts[0].status -ne 'passed' -or $attempts[0].reportSha256 -notmatch '^[a-f0-9]{64}$' -or (Get-FileDigest $attempts[0].report) -ne $attempts[0].reportSha256 -or (Get-FileDigest $modules[0].report) -ne $modules[0].reportSha256){$valid=$false;break}
+                if((Get-Item -LiteralPath $attempts[0].report).Length -gt 64MB){$valid=$false;break}
+                $junit=New-Object Xml.XmlDocument;$junit.XmlResolver=$null
+                $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+                $reader=[Xml.XmlReader]::Create($attempts[0].report,$settings)
+                try{$junit.Load($reader)}finally{$reader.Dispose()}
+                $cases=@($junit.SelectNodes("//testcase[@name='"+$test.name+"']"))
+                if($cases.Count -ne 1 -or $cases[0].SelectSingleNode('failure|error|skipped') -or $cases[0].GetAttribute('status') -in 'notrun','disabled'){$valid=$false;break}
+                $observed=Get-TestRuntimeModuleObservations $binding.source @($test) ([IO.Path]::GetDirectoryName($modules[0].report))
+                if(@($observed.tests).Count -ne 1 -or $observed.tests[0].status -ne 'observed' -or $observed.tests[0].digest -ne $modules[0].digest -or $observed.tests[0].rootExitCode -ne 0){$valid=$false;break}
+                $raw=Read-EntryJson $modules[0].report
+                $system=([Environment]::SystemDirectory).TrimEnd('\')+'\'
+                foreach($image in $raw.images){
+                    if($image.kind -eq 'executable' -and $image.pid -eq $raw.rootPid){continue}
+                    if(-not $image.path.StartsWith($system,[StringComparison]::OrdinalIgnoreCase) -or
+                       ($image.kind -eq 'executable' -and [IO.Path]::GetFileName($image.path) -ine 'conhost.exe') -or
+                       ($image.pid -eq $raw.rootPid -and [IO.Path]::GetFileName($image.path) -notin 'ntdll.dll','kernel32.dll','KernelBase.dll','kernel.appcore.dll','msvcrt.dll')){$valid=$false;break}
+                    if($image.pid -eq $raw.rootPid){
+                        $directories=@([IO.Path]::GetDirectoryName([string]$test.command[4]))+@($test.properties|Where-Object name -eq 'WORKING_DIRECTORY'|ForEach-Object value)
+                        foreach($directory in $directories){
+                            if(-not [IO.Path]::IsPathRooted([string]$directory)){$valid=$false;break}
+                            $override=Join-Path $directory ([IO.Path]::GetFileName($image.path))
+                            if([IO.File]::Exists($override) -and -not $override.StartsWith($system,[StringComparison]::OrdinalIgnoreCase)){$valid=$false;break}
+                        }
+                    }
+                }
+                if(-not $valid){break}
+                $proofs+=@([pscustomobject]@{test=$test.name;evidenceId=$evidence[0].id;reportSha256=$attempts[0].reportSha256;moduleReportSha256=$modules[0].reportSha256;moduleDigest=$modules[0].digest})
+            }
+            if(-not $valid -or $proofs.Count -ne @($current.tests).Count){continue}
+            $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;originKey=$entry.key;scope=$(if($crossCandidate){'candidate-compatible-reviewed-binary'}else{'exact-candidate-reviewed-binary'});
+                currentCandidate=$current.binding.candidate;originCandidate=$origin.binding.candidate;compatibleTests=@(Get-Field (Get-Field $current 'compatibility') 'tests' @()|Select-Object test,key);
+                runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=(Format-VerificationUtcTimestamp ([DateTime]::UtcNow));originKind=(Get-Field $entry 'kind');originCoverage=$coveragePath;lease=$null}
+            Set-Field $Verification 'referenceCheck' 'completed-origin-validated'
+            return $proposal
+        }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));continue} # Corrupt/incomplete history never suppresses execution.
+    }
+    return $null
+    }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message);return $null}
+}
 function Get-CompletedVerificationProposal([string]$Root,$Verification) {
     $binding=Get-Field $Verification.binding 'candidate';$lease=$null
     Set-Field $Verification 'referenceCheck' 'unreviewed-native-context'
@@ -173,76 +249,9 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
         $current=Get-VerificationSnapshot $Root $Verification.baseline ($Verification.binding.names -join ',') (Get-Field $Verification.binding 'resourceBudget')
         if($current.key -ne $Verification.key){return $null}
         Set-Field $Verification 'referenceCheck' 'checking-completed-history'
-        $state=Read-EntryJson (Join-Path $Root '.build/collaboration/state.json')
-        $ledger=Get-Field $state 'verificationLedger'
-        # Candidate-compatible history uses the same ledger, never an execution join.
-        foreach($prior in @(Get-Field $ledger 'entries' @()|Where-Object {Get-VerificationCompatibleMatch $_ $current -Any})){
-            $priorView=Get-RunView $prior.runId
-            if(-not $priorView.terminal -or $priorView.status -ne 'passed'){return $null}
-        }
-        foreach($entry in @(Get-Field $ledger 'entries' @()|Where-Object {Get-VerificationCompatibleMatch $_ $current}|Sort-Object createdUtc -Descending)){
-            try {
-                $view=Get-RunView $entry.runId
-                if(-not $view.terminal -or $view.status -ne 'passed' -or $view.record.exitCode -ne 0 -or $view.request.mode -ne 'verify' -or $view.request.verification.key -ne $entry.key){continue}
-                $origin=$view.request.verification;$crossCandidate=$entry.key -ne $current.key
-                if($crossCandidate -and -not (Test-VerificationCompatibilityProof $current $origin $entry)){continue}
-                if($view.record.inputStart.digest -ne $origin.source.digest -or $view.record.inputEnd.digest -ne $origin.source.digest){continue}
-                $coveragePath=Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.verification.json')
-                $coverage=Read-EntryJson $coveragePath
-                if($coverage.runId -ne $entry.runId -or $coverage.status -ne 'passed' -or @($current.binding.names|Where-Object {$_ -notin @($coverage.selected)}).Count){continue}
-                $files=Compare-TestRuntimeInputs $binding.source $current.tests $coverage.dependencyManifest
-                Set-Field $Verification 'referenceCheck' 'checking-file-and-report-evidence'
-                if(@($files.tests).Count -ne @($current.tests).Count -or @($files.tests|Where-Object status -ne 'stable').Count){continue}
-                $proofs=@();$valid=$true
-                foreach($test in $current.tests){
-                    $evidence=@($view.record.evidence.tests|Where-Object test -eq $test.name)
-                    $modules=@($coverage.runtimeModules.tests|Where-Object test -eq $test.name)
-                    if($evidence.Count -ne 1 -or $evidence[0].status -ne 'passed' -or $evidence[0].identityStatus -ne 'recorded' -or $modules.Count -ne 1 -or $modules[0].status -ne 'observed'){ $valid=$false;break }
-                    if($evidence[0].runId -ne $entry.runId -or $evidence[0].binding.sourceDigest -ne $origin.source.digest -or
-                       $evidence[0].binding.environmentDigest -ne $origin.executionContext.digest -or
-                       $evidence[0].bindingDigest -ne (Get-VerificationTextDigest ($evidence[0].binding|ConvertTo-Json -Compress))){$valid=$false;break}
-                    $attempts=@($evidence[0].attempts)
-                    $reportRoot=Join-Path $binding.source '.build/Testing'
-                    if($attempts.Count -ne 1 -or -not [IO.Path]::GetFullPath($attempts[0].report).StartsWith($reportRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or
-                       -not [IO.Path]::GetFullPath($modules[0].report).StartsWith($reportRoot+'\',[StringComparison]::OrdinalIgnoreCase)){ $valid=$false;break }
-                    if($attempts.Count -ne 1 -or $attempts[0].status -ne 'passed' -or $attempts[0].reportSha256 -notmatch '^[a-f0-9]{64}$' -or (Get-FileDigest $attempts[0].report) -ne $attempts[0].reportSha256 -or (Get-FileDigest $modules[0].report) -ne $modules[0].reportSha256){$valid=$false;break}
-                    if((Get-Item -LiteralPath $attempts[0].report).Length -gt 64MB){$valid=$false;break}
-                    $junit=New-Object Xml.XmlDocument;$junit.XmlResolver=$null
-                    $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
-                    $reader=[Xml.XmlReader]::Create($attempts[0].report,$settings)
-                    try{$junit.Load($reader)}finally{$reader.Dispose()}
-                    $cases=@($junit.SelectNodes("//testcase[@name='"+$test.name+"']"))
-                    if($cases.Count -ne 1 -or $cases[0].SelectSingleNode('failure|error|skipped') -or $cases[0].GetAttribute('status') -in 'notrun','disabled'){$valid=$false;break}
-                    $observed=Get-TestRuntimeModuleObservations $binding.source @($test) ([IO.Path]::GetDirectoryName($modules[0].report))
-                    if(@($observed.tests).Count -ne 1 -or $observed.tests[0].status -ne 'observed' -or $observed.tests[0].digest -ne $modules[0].digest -or $observed.tests[0].rootExitCode -ne 0){$valid=$false;break}
-                    $raw=Read-EntryJson $modules[0].report
-                    $system=([Environment]::SystemDirectory).TrimEnd('\')+'\'
-                    foreach($image in $raw.images){
-                        if($image.kind -eq 'executable' -and $image.pid -eq $raw.rootPid){continue}
-                        if(-not $image.path.StartsWith($system,[StringComparison]::OrdinalIgnoreCase) -or
-                           ($image.kind -eq 'executable' -and [IO.Path]::GetFileName($image.path) -ine 'conhost.exe') -or
-                           ($image.pid -eq $raw.rootPid -and [IO.Path]::GetFileName($image.path) -notin 'ntdll.dll','kernel32.dll','KernelBase.dll','kernel.appcore.dll','msvcrt.dll')){$valid=$false;break}
-                        if($image.pid -eq $raw.rootPid){
-                            $directories=@([IO.Path]::GetDirectoryName([string]$test.command[4]))+@($test.properties|Where-Object name -eq 'WORKING_DIRECTORY'|ForEach-Object value)
-                            foreach($directory in $directories){
-                                if(-not [IO.Path]::IsPathRooted([string]$directory)){$valid=$false;break}
-                                $override=Join-Path $directory ([IO.Path]::GetFileName($image.path))
-                                if([IO.File]::Exists($override) -and -not $override.StartsWith($system,[StringComparison]::OrdinalIgnoreCase)){$valid=$false;break}
-                            }
-                        }
-                    }
-                    if(-not $valid){break}
-                    $proofs+=@([pscustomobject]@{test=$test.name;evidenceId=$evidence[0].id;reportSha256=$attempts[0].reportSha256;moduleReportSha256=$modules[0].reportSha256;moduleDigest=$modules[0].digest})
-                }
-                if(-not $valid -or $proofs.Count -ne @($current.tests).Count){continue}
-                $proposal=[pscustomobject]@{runId=$entry.runId;key=$current.key;originKey=$entry.key;scope=$(if($crossCandidate){'candidate-compatible-reviewed-binary'}else{'exact-candidate-reviewed-binary'});
-                    currentCandidate=$current.binding.candidate;originCandidate=$origin.binding.candidate;compatibleTests=@(Get-Field (Get-Field $current 'compatibility') 'tests' @()|Select-Object test,key);
-                    runSha256=(Get-FileDigest (Join-Path $Root ('.build/collaboration/runs/'+$entry.runId+'.json')));coverageSha256=(Get-FileDigest $coveragePath);review=$current.binding.reviewedReuse;tests=$proofs;checkedUtc=(Format-VerificationUtcTimestamp ([DateTime]::UtcNow));lease=$lease.lease}
-                Set-Field $Verification 'referenceCheck' 'completed-origin-validated'
-                $lease=$null;return $proposal
-            }catch{Set-Field $Verification 'referenceCheck' ('origin-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));continue} # Corrupt/incomplete history never suppresses execution.
-        }
-        return $null
+        $proposal=Find-CompletedVerificationProof $Root $current
+        if($proposal){$proposal.lease=$lease.lease;$lease=$null}
+        return $proposal
     }catch{Set-Field $Verification 'referenceCheck' ('reference-unavailable: '+$_.Exception.Message.Substring(0,[Math]::Min(400,$_.Exception.Message.Length)));return $null}finally{if($lease){$lease.lease.Dispose()}}
 }
 function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[string]$Baseline,$Proposal) {
@@ -259,6 +268,7 @@ function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[st
     $receipt=[pscustomobject]@{schemaVersion=1;kind='completed-verification-reference';id=[Guid]::NewGuid().ToString('N');task=$TaskRecord.id;taskRevision=$TaskRecord.revision;requirementsRevision=$TaskRecord.requirementsRevision;
         baseline=$Baseline;sourceRunId=$Proposal.runId;sourceRunSha256=$Proposal.runSha256;coverageSha256=$Proposal.coverageSha256;key=$Proposal.key;originKey=$Proposal.originKey;
         currentCandidate=$Proposal.currentCandidate;originCandidate=$Proposal.originCandidate;compatibleTests=$Proposal.compatibleTests;
+        originKind=(Get-Field $Proposal 'originKind');originCoverage=(Get-Field $Proposal 'originCoverage');
         checkedUtc=$Proposal.checkedUtc;review=$Proposal.review;tests=$Proposal.tests;execution='referenced';newExecution=$false;reuseAllowed=$true;scope=$Proposal.scope}
     $directory=Join-Path $Root '.build/verification/references';[void][IO.Directory]::CreateDirectory($directory)
     $path=Join-Path $directory ($receipt.id+'.json');$temp=$path+'.tmp'
@@ -270,3 +280,6 @@ function Add-CompletedVerificationReference([string]$Root,$Entry,$TaskRecord,[st
     }finally{if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}}
     Set-Field $Entry 'references' ($references+@($receipt));return $receipt
 }
+
+$selectionModule=Join-Path $PSScriptRoot 'build_test_selection.ps1'
+if([IO.File]::Exists($selectionModule)){. $selectionModule}

@@ -168,6 +168,24 @@ Json seed_dashboard_references(const fs::path& repo,const fs::path& root,const J
     }
     // Keep the original compact seed for dashboard/browser presence checks.
     subscribed["verificationLedger"]["entries"].items[0]["references"]=Json::array({reference,missingReference});save("state.json",subscribed);
+    const auto receiptHash=run({powershell().wstring(),L"-NoProfile",L"-File",(root/L"reference-hashes.ps1").wstring(),referencePath.wstring(),originCoverage.wstring()},root,10);
+    require(receiptHash.code==0,"Cannot capture mixed selection reference receipt identity");
+    const std::string consumer(32,'2');
+    auto mixed=Json::object({{"batchId",consumer},{"mode","selected"},{"status","passed"},{"selected",Json::array({"Alpha","Beta"})},
+        {"completed",Json::array({Json::object({{"name","Beta"},{"status","passed"},{"seconds",0.2}})})},
+        {"references",Json::array({Json::object({{"test","Alpha"},{"newExecution",false},{"sourceRunId",observedRunId},{"originKey",intentKey},
+            {"receipts",Json::array({Json::object({{"id",reference.at("id")},{"task","reference-observer"},{"sha256",Json::parse(receiptHash.out).at("run")}})})}})})}});
+    save(consumer+".json",Json::object({{"batchId",consumer},{"outcome","passed"},{"inputCheck","stable"},{"participants",Json::array({})}}));
+    save(consumer+".coverage.json",mixed);refresh();
+    auto mixedView=Json::parse(http(port,"/api/batches/"+consumer).body).at("coverage");
+    require(mixedView.at("summary").at("executed").integer()==1&&mixedView.at("summary").at("passed").integer()==1&&
+        mixedView.at("summary").at("referenced").integer()==1&&mixedView.at("summary").at("unreported").integer()==0&&
+        mixedView.at("references").items[0].at("status").str()=="recorded","Mixed HTTP coverage counted a reference as a new execution/pass or lost provenance");
+    fs::remove(referencePath);refresh();mixedView=Json::parse(http(port,"/api/batches/"+consumer).body).at("coverage");
+    require(mixedView.at("summary").at("referenced").integer()==0&&mixedView.at("summary").at("unreported").integer()==1&&
+        mixedView.at("references").items[0].at("status").str()=="unavailable","Missing mixed reference receipt still fulfilled coverage");
+    write(referencePath,referenceBytes);
+    require(read(originCoverage)==originBytes&&read(runRoot/wide(observedRunId+".json"))==runBytes,"Mixed coverage projection rewrote original execution evidence");
     return subscribed;
 }
 void dashboard_references(const fs::path& repo){

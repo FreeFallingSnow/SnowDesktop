@@ -1,4 +1,4 @@
-# v4 batches keep immutable execution attempts outside the live editing window.
+﻿# v4 batches keep immutable execution attempts outside the live editing window.
 # Capturing needs the original output lease; queuing/building use a private slot.
 function Read-CandidateBatchBinding([string]$Root,$Request) {
     $path=Join-Path $Root ('.build/collaboration/runs/'+$Request.id+'.candidate-binding.json')
@@ -145,16 +145,27 @@ function Save-CandidateBatchPending([string]$Root,$Request,$Record,$Context) {
 function Complete-CandidateBatchCoverage($Context) {
     $coverage=Read-EntryJson (Join-Path $Context.output ('collaboration/'+$Context.batchId+'.coverage.json'))
     if(-not $coverage -or $coverage.mode -eq 'skipped'){return}
-    if($coverage.batchId -ne $Context.batchId -or $coverage.status -notin 'passed','passed-after-retry' -or -not $coverage.report -or @($coverage.selected).Count -eq 0 -or
-        @($coverage.completed).Count -ne @($coverage.selected).Count -or @($coverage.completed|Where-Object status -notin 'passed','passed-after-retry').Count){throw 'No final passing candidate test coverage is available.'}
-    # Every retry retains its own immutable report binding. Only the actual
-    # final passing attempt is published under the Run's final export name.
-    $suffix=Get-VerificationTextDigest $coverage.report
+    $executed=@(Get-Field $coverage 'executedSelection' @($coverage.selected))
+    $references=@(Get-Field $coverage 'references' @())
+    $union=@($executed)+@($references|ForEach-Object test)
+    if($coverage.batchId -ne $Context.batchId -or $coverage.status -notin 'passed','passed-after-retry','fulfilled' -or @($coverage.selected).Count -eq 0 -or
+        $union.Count -ne @($coverage.selected).Count -or @($union|Sort-Object -Unique).Count -ne $union.Count -or
+        @((Compare-Object @($union|Sort-Object) @($coverage.selected|Sort-Object))).Count -or
+        @($coverage.completed).Count -ne $executed.Count -or @($coverage.completed|Where-Object status -notin 'passed','passed-after-retry').Count){throw 'No final fulfilled candidate test coverage is available.'}
+    if($references.Count){Assert-CompiledTestReferences $Context.source $coverage}
     $directory=Join-Path $Context.runRoot '.build/collaboration/runs'
-    $final=Read-EntryJson (Join-Path $directory ($Context.runId+'.candidate-tests.'+$suffix+'.json'))
-    if(-not $final -or $final.runId -ne $Context.runId -or $final.candidate -ne $Context.snapshot -or
-        $final.report -ne $coverage.report -or $final.reportSha256 -ne (Get-FileDigest $coverage.report) -or
-        (@($final.selected|Sort-Object) -join ',') -cne (@($coverage.selected|Sort-Object) -join ',')){throw 'Final candidate test report binding changed.'}
+    if($executed.Count){
+        if(-not $coverage.report){throw 'Executed tests require their original JUnit report.'}
+        $suffix=Get-VerificationTextDigest $coverage.report
+        $final=Read-EntryJson (Join-Path $directory ($Context.runId+'.candidate-tests.'+$suffix+'.json'))
+        if(-not $final -or $final.runId -ne $Context.runId -or $final.candidate -ne $Context.snapshot -or
+            $final.report -ne $coverage.report -or $final.reportSha256 -ne (Get-FileDigest $coverage.report) -or
+            (@($final.selected|Sort-Object) -join ',') -cne (@($executed|Sort-Object) -join ',')){throw 'Final candidate test report binding changed.'}
+    }else{
+        if($coverage.report -or -not $references.Count){throw 'Reference-only coverage must not create an execution report.'}
+        $final=[pscustomobject]@{schemaVersion=1;candidate=$Context.snapshot;runId=$Context.runId;sourceDigest=(Get-CandidateExecutionInputIdentity $Context.source).digest;
+            report=$null;reportSha256=$null;exitCode=0;reuseAllowed=$false}
+    }
     $attempts=@()
     if($coverage.status -eq 'passed-after-retry'){
         $retry=Read-EntryJson (Join-Path $Context.output ('collaboration/'+$Context.batchId+'.retry.json'))
@@ -166,7 +177,10 @@ function Complete-CandidateBatchCoverage($Context) {
     }elseif($final.exitCode -ne 0){throw 'Final initial test report failed without a passing retry ledger.'}
     Set-Field $final 'initialExitCode' $final.exitCode
     Set-Field $final 'exitCode' 0
-    Set-Field $final 'resultKind' 'batch-aggregate'
+    Set-Field $final 'resultKind' $(if($references.Count){'batch-fulfillment'}else{'batch-aggregate'})
+    Set-Field $final 'selected' @($coverage.selected)
+    Set-Field $final 'executedSelection' $executed
+    Set-Field $final 'references' $references
     Set-Field $final 'aggregateStatus' $coverage.status
     Set-Field $final 'retryAttempts' $attempts
     Write-CandidateJson $final (Join-Path $directory ($Context.runId+'.candidate-tests.json')) -Immutable

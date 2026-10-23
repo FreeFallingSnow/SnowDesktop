@@ -227,6 +227,14 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
     add_test(NAME build_compatible_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --compatible-verification)
     add_test(NAME build_compatible_verification_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --compatible-verification-control)
+    add_test(NAME build_automatic_selection COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --automatic-selection)
+    set_tests_properties(build_automatic_selection PROPERTIES TIMEOUT 300 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    add_test(NAME build_automatic_selection_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --automatic-selection-control)
+    set_tests_properties(build_automatic_selection_control PROPERTIES TIMEOUT 270 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
     set_tests_properties(build_compatible_verification build_compatible_verification_control PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")

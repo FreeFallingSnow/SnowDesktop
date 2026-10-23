@@ -194,6 +194,10 @@ const runEvidenceText=renderBudget(),evidenceModel={snapshot:{runs:[]},batch:{id
 const batchEvidenceText=renderBudget(evidenceModel),batchEvidenceZh=renderBudget(evidenceModel,'zh');
 run.verification={baseline:'f'.repeat(32),names:['Alpha'],referenceCount:2,references:[{id:'1'.repeat(32),task:'reference-observer',status:'recorded',sourceRunId:run.id,baseline:'f'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',tests:[{test:'Alpha'}],reviewPolicy:'reviewed-native-files-v1',sourceRunSha256:'2'.repeat(64),coverageSha256:'3'.repeat(64)},{id:'4'.repeat(32),task:'missing-receipt',status:'unavailable',reason:'Reference receipt is missing'}]};
 const referencesText=renderBudget(),referencesZh=renderBudget(undefined,'zh');
+const mixedModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),coverage:{status:'passed',summary:{selected:2,executed:1,passed:1,failed:0,referenced:1,notRun:0,unreported:0},completed:[{name:'Beta',status:'passed',seconds:0.1}],references:[{test:'Alpha',status:'recorded',sourceRunId:'9'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',receipts:[{task:'reference-owner',id:'8'.repeat(32)}]}]}}};
+const mixedText=renderBudget(mixedModel),mixedZh=renderBudget(mixedModel,'zh');
+mixedModel.batch.coverage.summary={...mixedModel.batch.coverage.summary,selected:1,executed:0,passed:0};mixedModel.batch.coverage.status='fulfilled';mixedModel.batch.coverage.completed=[];
+const referenceOnlyText=renderBudget(mixedModel);
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -208,11 +212,15 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
     const auto clientObserved=Json::parse(client.out);
+    require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
+        clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
+        clientObserved.at("referenceOnlyText").str().find("Executed · 0 / 1")!=std::string::npos,
+        "Overlay conflated mixed/reference-only coverage with newly executed passes or lost translated receipt details");
     const auto budgetText=clientObserved.at("budgetText").str(),missingBudgetText=clientObserved.at("missingBudgetText").str();
     require(budgetText.find("CPU reservation / capacity")!=std::string::npos&&budgetText.find("2 / 6 CPU slots")!=std::string::npos&&budgetText.find("25.00% / 3072 MiB")!=std::string::npos&&budgetText.find("Insufficient CPU capacity")!=std::string::npos,"Overlay lost budget, kernel limit or queue content from the public Run projection");
     require(missingBudgetText.find("Not recorded / Not recorded CPU slots")!=std::string::npos&&missingBudgetText.find("25.00% / 3072 MiB")==std::string::npos,"Overlay inferred or retained missing budget values");

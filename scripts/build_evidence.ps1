@@ -1,4 +1,4 @@
-# Immutable per-test observations are embedded in the owning batch result.
+﻿# Immutable per-test observations are embedded in the owning batch result.
 # This is provenance, not permission to skip a test with unclosed dependencies.
 function New-BatchTestEvidence([string]$Root,$Result) {
     $coverage=Get-Field $Result 'coverage'
@@ -13,6 +13,13 @@ function New-BatchTestEvidence([string]$Root,$Result) {
     $items=@();$reports=@{}
     foreach($name in @(Get-Field $coverage 'selected' @()|Sort-Object -Unique)) {
         $observed=@(Get-Field $coverage 'completed' @()|Where-Object name -eq $name)
+        $references=@(Get-Field $coverage 'references' @()|Where-Object test -CEQ $name)
+        if($references.Count -eq 1 -and -not $observed.Count){
+            $items+=@([pscustomobject]@{id=[Guid]::NewGuid().ToString('N');test=$name;status='referenced';execution='referenced';newExecution=$false;
+                seconds=$null;batchId=$Result.batchId;runId=(Get-Field $Result 'runId');attempts=@();reference=$references[0];reuseAllowed=$false;
+                identityStatus='reference-receipt';inputCheck=(Get-Field $Result 'inputCheck')})
+            continue
+        }
         $binary=@($artifacts|Where-Object test -eq $name)
         $definition=@($definitions|Where-Object name -eq $name)
         $dependency=@(Get-Field $dependencies 'tests' @()|Where-Object test -eq $name)

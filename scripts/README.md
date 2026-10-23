@@ -75,7 +75,9 @@ scripts\build.bat run unsubscribe -Task my-task -RunId <runId>
 
 引用仅限仍匹配的同一候选和完整选择集合：检查期间持有执行器共用的候选槽租约，重核源码、调用、产物、环境、文件端点、实际模块报告及原 JUnit；同一意图存在失败/失效/中断历史时不引用。平台信任边界为同次 Windows 启动、内核/ApiSet、有效用户权限和原生系统 CRT；AppInit、AppCert、IFEO、兼容层或应用旁加载重定向不在支持范围。缺少审阅、插桩、报告或平台依据时执行新补验。
 
-命中返回 `status=referenced,reused=true` 和原 Run ID；`.build/verification/references/<id>.json` 保存任务/需求修订、原 Run/报告身份和本次核对凭据，Run 状态的 `references` 展示引用关联。引用的 `newExecution=false`，不创建新 Run/JUnit，不改原执行时间、请求者或通过记录。`run start ... -Fresh` 强制实际执行，适用于要求重跑或核查缓存的情况。自动选测尚未启用；跨候选引用仅适用上述 v2 审阅范围和相同输出位置。
+命中返回 `status=referenced,reused=true` 和原 Run ID；`.build/verification/references/<id>.json` 保存任务/需求修订、原 Run/报告身份和本次核对凭据，Run 状态的 `references` 展示引用关联。引用的 `newExecution=false`，不创建新 Run/JUnit，不改原执行时间、请求者或通过记录。`run start ... -Fresh` 强制实际执行，适用于要求重跑或核查缓存的情况。普通候选批次在定向目标编译后自动按测试核对 v2 审阅证据：满足条件的条目引用，未知/变化/损坏/失败历史条目实际执行；显式 full 仍实跑全部声明项目。跨候选引用仅适用上述 v2 审阅范围和相同输出位置。
+
+编译后意图保存为 Run 的不可变 `.test-intent.json`，绑定真实候选、原请求哈希和每项输入；它不是已结束基线或执行凭据。父执行器已持有槽位租约，核对不重复申请。`coverage.selected` 保留完整需求，`executedSelection`/`completed`/JUnit/重试仅含本次执行，`references` 保存独立凭据。全部引用时状态为 `fulfilled`，不创建空 JUnit 或伪造通过用例；最终发布再次核对原报告/凭据。引用不会注册为新的执行来源。原生回归为 `build_automatic_selection` 和 `build_automatic_selection_control`。
 
 `start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求先在同目录唯一临时文件中完整写入并刷新，关闭后再以不可覆盖的改名发布为 `.build/collaboration/runs/<id>.request.json`，后续不改写；发布前终止创建者不会留下可被最终文件名发现的半成品请求。发布完成仍须通过 Run 状态判断执行是否已开始。记录、日志、资源采样和带代际标记的取消请求分别保存。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6；两者均保留运行。退出观察者不取消执行，只有显式 `cancel` 才请求终止本次私有 Job 内的进程树。取消请求和已完成取消分开报告。
 

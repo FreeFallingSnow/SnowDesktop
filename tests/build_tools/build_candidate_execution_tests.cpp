@@ -480,12 +480,19 @@ void executor_control(const fs::path& repo,bool checkout) {
     require(result.code==1&&result.err.find(assertion)!=std::string::npos,"Executor "+mutation+" negative control did not reach its business assertion: "+result.out+result.err);
     std::cout<<"PASS executor "<<mutation<<" negative control reached its business assertion\n";
 }
-void completed_verification(const fs::path& repo,bool noReference=false,bool compatible=false,bool exactOnly=false) {
+void completed_verification(const fs::path& repo,bool noReference=false,bool compatible=false,bool exactOnly=false,bool automatic=false,bool oldAutomatic=false) {
     Coordinator c(repo,"completed-verification",true,fixture_parent(repo));prepare(c,repo,"");
     if(noReference){auto source=read(c.scripts/L"build_run.ps1");replace(source,"$referenceProposal=Get-CompletedVerificationProposal $root $verification","$referenceProposal=$null");write(c.scripts/L"build_run.ps1",source,true);}
     if(exactOnly){auto source=read(c.scripts/L"build_verification_reuse.ps1");replace(source,
         "$compatibility=Get-Field $Verification 'compatibility';$index=@(Get-Field $Entry 'compatibleTests' @())",
         "return $false # Controlled former exact-key-only completed history.");write(c.scripts/L"build_verification_reuse.ps1",source,true);}
+    if(automatic){
+        copy(repo,c.root,{"tools/build-dashboard/server.py"});
+        write(c.scripts/L"build_runtime.ps1",read(repo/L"scripts/build_runtime.ps1")+"\nfunction Ensure-BuildDashboard {}\n",true);
+        if(oldAutomatic){auto source=read(c.scripts/L"build_test_selection.ps1");replace(source,
+            "$proposal=Find-CompletedVerificationProof $context.runRoot $snapshot -BatchOrigins",
+            "$proposal=$null # Controlled former pipeline executes every declaration.");write(c.scripts/L"build_test_selection.ps1",source,true);}
+    }
     const auto observer=executable().parent_path()/L"SnowDesktopTestRuntimeObserver.exe";
     require(fs::exists(observer),"Completed verification needs the actual native runtime observer");
     auto cmake=read(c.root/L"CMakeLists.txt");replace(cmake,"VERSION 3.24","VERSION 3.29");
@@ -519,6 +526,10 @@ int main(int argc,char**){)CPP");
         write(c.root/L"src/main.cpp",main);write(c.root/L"src/runtime.txt","7");
         write(c.root/L"CMakeLists.txt",read(c.root/L"CMakeLists.txt")+"\nset_tests_properties(candidate_rule PROPERTIES WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\")\n");
     }
+    if(automatic){write(c.root/L"CMakeLists.txt",read(c.root/L"CMakeLists.txt")+R"CMAKE(
+add_test(NAME candidate_unreviewed COMMAND "${CMAKE_BINARY_DIR}/Release/tests/SnowDesktopCandidateFixtureTests.exe" check)
+set_tests_properties(candidate_unreviewed PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopCandidateFixtureTests>" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" LABELS "core")
+)CMAKE");}
     write(c.scripts/L"check-native-token.ps1",R"PS(
 if(-not ('SnowDesktop.Verification.NativeToken' -as [type])){Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build_verification_token.cs')))}
 $encoding=[Console]::OutputEncoding
@@ -571,9 +582,10 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
         require(rejected,"Former fixed-width UTC formatter escaped the JSON round-trip assertion");
     }
     c.bridge->call(c.scripts/L"review-cache.ps1",{});
+    std::string selectedNames=automatic?"candidate_rule,candidate_unreviewed":"candidate_rule";
     auto baseline=[&]{
         const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});const auto id=opened.at("batchId").str();
-        c.plan("candidate",id,0,"selected","candidate_rule","tool","src/main.cpp,src/value.h");
+        c.plan("candidate",id,0,"selected",selectedNames,"tool","src/main.cpp,src/value.h");
         const auto finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
         const auto result=c.result(id);
         if(finished.code!=0){const auto log=read(fs::path(wide(result.at("logPath").str())));throw std::runtime_error("Real native baseline failed; batch "+id+": "+log.substr(log.size()>4000?log.size()-4000:0));}
@@ -588,6 +600,58 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
     c.bridge->call(c.scripts/L"review-cache.ps1",{"-Binary",utf8(binary.wstring())});
     const auto reviewed=baseline();auto batch=reviewed.at("batchId").str();
     for(const auto& [path,bytes]:cachedLoggers)require(read(path)==bytes,"Repeated candidate build overwrote an identity-bound logger cache entry");
+    if(automatic){
+        auto covered=[&](const Json& result,std::size_t executions,std::size_t references){
+            const auto& coverage=result.at("coverage");
+            require(coverage.at("selected").items.size()==executions+references&&coverage.at("completed").items.size()==executions&&
+                coverage.at("references").items.size()==references,"Automatic mixed selection executed the reviewed test again or lost unknown-test coverage: "+coverage.dump());
+            const auto& receipt=Json::parse(read(c.stateRoot/L"runs"/wide(result.at("runId").str()+".candidate-tests.json")));
+            require(receipt.at("executedSelection").items.size()==executions&&receipt.at("references").items.size()==references,
+                "Final candidate export conflated referenced and newly executed tests");
+            const auto retry=Json::parse(read(c.stateRoot/wide(result.at("batchId").str()+".retry.json")));
+            require(retry.at("tests").fields.size()==executions,"Retry ledger manufactured execution attempts for references");
+            if(!executions)require(coverage.at("report").kind==Json::Kind::Null&&coverage.at("status").str()=="fulfilled"&&
+                receipt.at("report").kind==Json::Kind::Null,"Reference-only selection fabricated a JUnit or passing execution");
+            else{
+                const auto xml=read(fs::path(wide(coverage.at("report").str())));
+                if(references)require(xml.find("name=\"candidate_rule\"")==std::string::npos&&xml.find("name=\"candidate_unreviewed\"")!=std::string::npos,
+                    "Mixed selection JUnit includes referenced work or omits the unknown test");
+            }
+        };
+        covered(reviewed,2,0);
+        const auto originRun=reviewed.at("runId").str();
+        until([&]{const auto snapshot=c.state();for(const auto& entry:snapshot.at("verificationLedger").at("entries").items)
+            if(entry.at("runId").str()==originRun&&entry.at("execution").str()=="executed")return true;return false;},10);
+        std::vector<std::pair<fs::path,std::string>> originals;
+        for(const auto& path:std::vector<fs::path>{c.stateRoot/wide(batch+".json"),c.stateRoot/wide(batch+".coverage.json"),
+            c.stateRoot/L"runs"/wide(originRun+".json"),c.stateRoot/L"runs"/wide(originRun+".request.json"),
+            c.stateRoot/L"runs"/wide(originRun+".test-intent.json"),fs::path(wide(reviewed.at("coverage").at("report").str()))})originals.emplace_back(path,read(path));
+        write(c.root/L"src/unrelated-note.txt","Unrelated to the reviewed native file-reading test.\n");
+        const auto mixed=baseline();covered(mixed,1,1);
+        const auto projected=run({production_python().wstring(),L"-c",L"import importlib.util,json,sys;from pathlib import Path;s=importlib.util.spec_from_file_location('dashboard',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(json.dumps(m.Store(Path(sys.argv[2]),False).batch(sys.argv[3])))",
+            (repo/L"tools/build-dashboard/server.py").wstring(),c.stateRoot.wstring(),wide(mixed.at("batchId").str())},c.root,15);
+        require(projected.code==0,"Actual mixed batch could not be projected by production Store: "+projected.err);
+        const auto projectedCoverage=Json::parse(projected.out).at("coverage");
+        require(projectedCoverage.at("summary").at("referenced").integer()==1&&projectedCoverage.at("summary").at("executed").integer()==1&&
+            projectedCoverage.at("summary").at("passed").integer()==1&&projectedCoverage.at("references").items[0].at("status").str()=="recorded",
+            "Production Store lost real compiled-origin proof or conflated reference/execution counts: "+projectedCoverage.dump());
+        require(mixed.at("coverage").at("references").items[0].at("sourceRunId").str()==originRun&&
+            mixed.at("coverage").at("completed").items[0].at("name").str()=="candidate_unreviewed",
+            "Automatic mixed selection chose an indirect origin or skipped the unknown test");
+        for(const auto& item:mixed.at("evidence").at("tests").items)if(item.at("test").str()=="candidate_rule")
+            require(item.at("status").str()=="referenced"&&!item.at("newExecution").boolean&&item.at("attempts").items.empty(),
+                "Referenced evidence contains a fabricated execution attempt");
+        selectedNames="candidate_rule";const auto allReferences=baseline();covered(allReferences,0,1);
+        require(allReferences.at("coverage").at("references").items[0].at("sourceRunId").str()==originRun,
+            "A reference-only batch created a reference chain");
+        for(const auto& [path,bytes]:originals)require(read(path)==bytes,"Automatic selection rewrote an original result, request, intent, coverage or JUnit");
+        selectedNames="candidate_rule,candidate_unreviewed";write(c.root/L"src/runtime.txt","7\n");
+        const auto changed=baseline();covered(changed,2,0);
+        const auto changedReport=fs::path(wide(changed.at("coverage").at("report").str()));write(changedReport,read(changedReport)+" ");
+        const auto corrupt=baseline();covered(corrupt,2,0);
+        std::cout<<"PASS actual build/test pipeline mixes reviewed references and unknown execution, handles reference-only without JUnit, preserves origins and executes changed/corrupt inputs\n";
+        return;
+    }
     auto verify=[&](bool fresh=false,const std::string& correlation="repeated"){
         std::vector<std::string> args={"-Command","start","-Task","candidate","-Action","tests","-Mode","verify","-PlanBatch",batch,"-Filter","candidate_rule","-Reason","Review identical native execution evidence"};
         if(fresh)args.push_back("-Fresh");
@@ -665,7 +729,9 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     const auto mode=argc>2?std::string(argv[2]):"";
-    if(mode=="--completed-verification"||mode=="--completed-verification-without-reference")completed_verification(repo,mode=="--completed-verification-without-reference");
+    if(mode=="--automatic-selection"||mode=="--automatic-selection-old")completed_verification(repo,false,true,false,true,mode=="--automatic-selection-old");
+    else if(mode=="--automatic-selection-control"){const auto result=run({executable().wstring(),repo.wstring(),L"--automatic-selection-old"},repo,240,{},true);require(result.code!=0&&result.err.find("Automatic mixed selection executed the reviewed test again")!=std::string::npos,"Former all-tests pipeline did not fail the mixed-selection business assertion: "+result.out+result.err);}
+    else if(mode=="--completed-verification"||mode=="--completed-verification-without-reference")completed_verification(repo,mode=="--completed-verification-without-reference");
     else if(mode=="--compatible-verification"||mode=="--compatible-verification-old-key")completed_verification(repo,false,true,mode=="--compatible-verification-old-key");
     else if(mode=="--compatible-verification-control"){
         const auto negative=run({executable().wstring(),repo.wstring(),L"--compatible-verification-old-key"},repo,180,{},true);

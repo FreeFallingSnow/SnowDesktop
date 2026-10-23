@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan", "verify")]
     [string]$Mode = "list",
@@ -313,13 +313,28 @@ function Invoke-FilteredTests {
         if($executed.Tests.Count -ne $selection.Tests.Count -or @(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
         $selection=$executed
     }
+    $executionFilter=$CTestFilterArguments
+    if($Mode -eq 'plan' -and $plan.mode -ne 'full' -and $candidate -and (Get-Command Get-CompiledTestSelection -ErrorAction SilentlyContinue)){
+        $automatic=Get-CompiledTestSelection $repositoryRoot $selection.Tests $coverage $budget
+        Set-Field $coverage 'references' @($automatic.references)
+        Set-Field $coverage 'compiledIntent' $automatic.intent
+        Set-Field $coverage 'executedSelection' @($automatic.tests|ForEach-Object name)
+        $selection=[pscustomobject]@{Tests=@($automatic.tests);Targets=@()}
+        $executionFilter=@('-R',('^('+(($selection.Tests|ForEach-Object {[regex]::Escape($_.name)}) -join '|')+')$'))
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
     $moduleDirectory=Join-Path $repositoryRoot ('.build/Testing/runtime-modules-'+[Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($moduleDirectory)
     $previousModuleRoot=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT','Process')
     [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$moduleDirectory,'Process')
-    $script:lastReportPath='';$script:lastCommandExit=2;$testCode=2
+    $script:lastReportPath=$null;$script:lastCommandExit=2;$testCode=2
     try {
-        Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+        if($selection.Tests.Count){
+            Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $executionFilter) -ExpectedTests @($selection.Tests.name)
+        }elseif(@(Get-Field $coverage 'references' @()).Count -ne @($coverage.selected).Count -or -not @($coverage.selected).Count){
+            throw 'Zero executed tests require complete independently validated references.'
+        }else{Write-Host '=== All selected tests fulfilled by original evidence; no CTest execution or JUnit created ==='}
+        if(@(Get-Field $coverage 'references' @()).Count){Assert-CompiledTestReferences $repositoryRoot $coverage}
         $testCode=0
     }finally{
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$previousModuleRoot,'Process')
@@ -331,7 +346,7 @@ function Invoke-FilteredTests {
             Set-Field $coverage 'runtimeModules' $moduleCheck
             $coverage|ConvertTo-Json -Depth 15|Set-Content -LiteralPath $coveragePath -Encoding UTF8
         }
-        if($candidate){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}
+        if($candidate -and $selection.Tests.Count){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}
     }
 }
 
@@ -511,7 +526,7 @@ if ($Mode -eq "plan") {
             Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation
         }
         else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' -ResourceBudget (Get-EntryResourceBudget $repositoryRoot) }
-        $coverage.status='passed'
+        $coverage.status=if(@(Get-Field $coverage 'references' @()).Count -and -not @($coverage.executedSelection).Count){'fulfilled'}else{'passed'}
     } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
     finally {
         $coverage.report=$script:lastReportPath
@@ -527,6 +542,16 @@ if ($Mode -eq "plan") {
                 $task.status=if($task.failed.Count){'failed'}elseif($actual.Count -eq $task.requested.Count -and @($actual | Where-Object status -ne 'passed').Count -eq 0){'passed'}else{'not-run'}
                 if($task.requiresOutputIsolation -and $task.status -eq 'passed' -and $coverage.postChecks.outputIsolation.status -ne 'passed'){
                     $task.status=if($coverage.postChecks.outputIsolation.status -eq 'failed'){'failed'}else{'not-run'}
+                }
+            }
+        }
+        if(@(Get-Field $coverage 'references' @()).Count){
+            foreach($task in $coverage.tasks){
+                if($task.status -eq 'not-required'){continue}
+                $actual=@($coverage.completed|Where-Object {$task.requested -contains $_.name})
+                $references=@($coverage.references|Where-Object {$task.requested -contains $_.test})
+                if(-not @($actual|Where-Object status -ne 'passed').Count -and $actual.Count+$references.Count -eq $task.requested.Count){
+                    $task.status=if($references.Count){'fulfilled'}else{'passed'}
                 }
             }
         }

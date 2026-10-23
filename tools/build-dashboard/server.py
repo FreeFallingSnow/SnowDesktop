@@ -117,7 +117,7 @@ def age(value, observed=None):
     end = timestamp(observed) if observed else dt.datetime.now(dt.timezone.utc)
     return max(0, int((end - parsed).total_seconds())) if parsed and end else None
 
-def coverage_view(coverage):
+def coverage_view(coverage, references=()):
     selected = coverage.get("selected") or []
     results = {}
     for item in coverage.get("completed") or []:
@@ -130,6 +130,7 @@ def coverage_view(coverage):
     for task in coverage.get("tasks") or []:
         if task.get("status") in ("not-run", "notrun", "environment-blocked"):
             not_run.update(name for name in task.get("requested", []) if name not in results)
+    referenced = {item["test"] for item in references if item.get("status") == "recorded"}
     completed = []
     for name, item in list(results.items())[:300]:
         try:
@@ -141,8 +142,8 @@ def coverage_view(coverage):
         completed.append({"name": redact(name), "status": redact(item.get("status", "unknown")), "seconds": seconds})
     return {"selectedCount": len(selected), "completed": completed,
             "summary": {"selected": len(selected), "executed": passed + failed, "passed": passed, "failed": failed,
-                        "notRun": len(not_run), "skipped": counts["skipped"], "flaky": counts["passed-after-retry"],
-                        "unreported": len(set(selected) - set(results) - not_run)},
+                        "referenced": len(referenced), "notRun": len(not_run), "skipped": counts["skipped"], "flaky": counts["passed-after-retry"],
+                        "unreported": len(set(selected) - set(results) - not_run - referenced)},
             "completedTruncated": len(results) > len(completed)}
 
 def identity(value):
@@ -389,8 +390,25 @@ def verification_references(root, run_id, key, entries, record):
                 raise ValueError("Reference receipt is missing or differs from the ledger")
             if origin is None:
                 origin = []
-                for suffix in (".json", ".verification.json"):
-                    with shared_open(safe_path(safe_path(root, "runs"), run_id + suffix)) as stream:
+                runs = safe_path(root, "runs")
+                coverage_file = safe_path(runs, run_id + ".verification.json")
+                if entries.get("kind") == "compiled-test-origin-v1":
+                    intent_path = safe_path(runs, run_id + ".test-intent.json")
+                    intent = read_json(runs, run_id + ".test-intent.json") or {}
+                    request = read_json(runs, run_id + ".request.json") or {}
+                    with shared_open(intent_path) as stream:
+                        intent_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                    with shared_open(safe_path(runs, run_id + ".request.json")) as stream:
+                        request_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                    if (intent.get("runId") != run_id or intent.get("nonce") != record.get("nonce")
+                            or intent_sha != entries.get("intentSha256") or intent.get("requestSha256") != request_sha
+                            or request.get("action") != "batch" or request.get("batch") != intent.get("batchId")
+                            or not HEX.fullmatch(str(intent.get("batchId", "")))
+                            or not any(test.get("key") == key for test in intent.get("tests", []))):
+                        raise ValueError("Compiled origin intent is unavailable or changed")
+                    coverage_file = safe_path(root, intent["batchId"] + ".coverage.json")
+                for filename in (safe_path(runs, run_id + ".json"), coverage_file):
+                    with shared_open(filename) as stream:
                         data = stream.read(MAX_METADATA_BYTES + 1)
                     if len(data) > MAX_METADATA_BYTES:
                         raise ValueError("Reference origin exceeds the metadata budget")
@@ -410,6 +428,53 @@ def verification_references(root, run_id, key, entries, record):
             row["reason"] = redact(error)
         rows.append(row)
     return {"references": rows, "referenceCount": len(values), "referencesOmitted": max(0, len(values) - len(rows))}
+
+
+def compiled_references(root, coverage):
+    values = coverage.get("references") or []
+    if not isinstance(values, list) or len(values) > 128:
+        raise ValueError("Invalid compiled reference inventory")
+    if not values:
+        return []
+    state = read_json(root, "state.json") or {}
+    entries = (state.get("verificationLedger") or {}).get("entries") or []
+    selected = coverage.get("selected") or []
+    executed = {item.get("name") for item in coverage.get("completed", [])}
+    rows, seen = [], set()
+    for item in values:
+        row = {"test": redact(item.get("test", "")), "status": "unavailable", "newExecution": False}
+        try:
+            name = item.get("test")
+            if (name not in selected or name in seen or name in executed or item.get("newExecution") is not False
+                    or not HEX.fullmatch(str(item.get("sourceRunId", "")))):
+                raise ValueError("Reference selection is inconsistent")
+            seen.add(name)
+            matches = [entry for entry in entries if entry.get("runId") == item["sourceRunId"] and entry.get("key") == item.get("originKey")]
+            if len(matches) != 1:
+                raise ValueError("Reference origin index is unavailable")
+            entry = matches[0]
+            record = read_json(safe_path(root, "runs"), item["sourceRunId"] + ".json") or {}
+            receipts = item.get("receipts") or []
+            if not receipts or len(receipts) > 80:
+                raise ValueError("Reference has no request receipt")
+            for receipt in receipts:
+                if not HEX.fullmatch(str(receipt.get("id", ""))):
+                    raise ValueError("Reference receipt identity is invalid")
+                directory = safe_path(safe_path(root.parent, "verification"), "references")
+                with shared_open(safe_path(directory, receipt["id"] + ".json")) as stream:
+                    receipt_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                saved = [value for value in entry.get("references", []) if value.get("id") == receipt["id"]]
+                if receipt_sha != receipt.get("sha256") or len(saved) != 1:
+                    raise ValueError("Reference receipt changed or is missing")
+                projected = verification_references(root, item["sourceRunId"], entry["key"], dict(entry, references=saved), record)["references"][0]
+                if projected["status"] != "recorded" or name not in [test["test"] for test in projected["tests"]]:
+                    raise ValueError(projected.get("reason") or "Reference test proof is unavailable")
+            row.update({key: projected.get(key) for key in ("sourceRunId", "checkedUtc", "scope", "sourceRunSha256", "coverageSha256")})
+            row.update(status="recorded", reason="", receipts=[{"id": receipt["id"], "task": redact(receipt.get("task", ""))} for receipt in receipts])
+        except (ValueError, OSError, TypeError, KeyError) as error:
+            row["reason"] = redact(error)
+        rows.append(row)
+    return rows
 
 
 class Store:
@@ -638,6 +703,7 @@ class Store:
         coverage = read_json(self.root, batch_id + ".coverage.json") or data.get("coverage") or {}
         if coverage and coverage.get("batchId") != batch_id:
             raise ValueError("Coverage batch mismatch")
+        references = compiled_references(self.root, coverage)
         issues = read_json(self.root, batch_id + ".issues.json") or {}
         tasks = [task_view(x, data.get("completedUtc") if result else None) for x in data.get("participants", [])[:80]]
         if result:
@@ -666,7 +732,8 @@ class Store:
                               "owners": [{k: x.get(k) for k in ("pid", "name", "kind")} for x in (data.get("preflight") or {}).get("owners", [])[:20]],
                               "observedUtc": (data.get("preflight") or {}).get("observedUtc")},
                 "coverage": {"mode": coverage.get("mode"), "status": coverage.get("status", "not-recorded"),
-                             **coverage_view(coverage),
+                             **coverage_view(coverage, references),
+                             "references": references,
                              "selected": coverage.get("selected", [])[:300],
                              "tasks": [{k: x.get(k) for k in ("participant", "requested", "status", "failed", "reason")} for x in coverage.get("tasks", [])[:80]],
                              "error": redact(coverage.get("error", ""))},
