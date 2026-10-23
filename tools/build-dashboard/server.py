@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 HEX = re.compile(r"^[a-f0-9]{32}$")
-SECRET = re.compile(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization)(\s*[:=]\s*)[^\s,;]+")
+SECRET = re.compile(r'''(?i)\b(password|passwd|token|secret|api[_-]?key|authorization|nonce)(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)''')
 ASSETS = {"/app-icon.png": "app-icon.png", "/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png"}
 # Full-test results include coverage and retry evidence that can exceed 256 KiB.

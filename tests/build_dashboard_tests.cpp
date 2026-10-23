@@ -279,26 +279,29 @@ void dashboard(const fs::path& repo,bool browser){
     auto badRuns=Json::parse(http(port).body).at("runs");require(badRuns.items[0].at("status").str()=="unavailable","Mismatched Run nonce was projected as valid");
     atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());refresh();
     {
-        const auto originalLog=read(state/wide(bid+".log"));
+        const auto batchLogPath=state/wide(bid+".log");
+        const bool hadLog=fs::is_regular_file(batchLogPath);
+        const auto originalLog=hadLog?read(batchLogPath):std::string{};
         auto batchRequest=runRequest;batchRequest["action"]="batch";
         atomic(runRoot/wide(observedRunId+".request.json"),batchRequest.dump());
         std::string product="early-product-marker\n";
         for(int i=0;i<5000;++i)product+="Building retained source unit "+std::to_string(i)+std::string(40,'x')+"\n";
-        product+="warning retained-product-tail token=fixture-secret\n";
+        product+="warning retained-product-tail token=fixture-secret\n{\"nonce\":\"fixture-json-secret\",\"apiKey\":\"fixture-api-secret\"}\n";
         write(state/wide(bid+".log.product.log"),product);
         write(state/wide(bid+".log"),"test-stage-marker\n1/1 Test #1 passed\n");
-        refresh();Json logs;for(const auto& item:Json::parse(http(port).body).at("runs").items)if(item.at("id").str()==observedRunId)logs=item;
+        refresh();const auto snapshot=Json::parse(http(port).body);Json logs;for(const auto& item:snapshot.at("runs").items)if(item.at("id").str()==observedRunId)logs=item;
         require(logs.at("log").at("lines").dump().find("retained-product-tail")!=std::string::npos&&logs.at("log").at("lines").dump().find("test-stage-marker")!=std::string::npos,
                 "Background Run omitted product or test pipeline logs");
         auto download=http(port,"/api/runs/"+observedRunId+"/logs/product");
-        require(download.code==200&&download.body.find("early-product-marker")!=std::string::npos&&download.body.find("retained-product-tail")!=std::string::npos&&download.body.find("fixture-secret")==std::string::npos&&download.headers.find("attachment;")!=std::string::npos,
+        require(download.code==200&&download.body.find("early-product-marker")!=std::string::npos&&download.body.find("retained-product-tail")!=std::string::npos&&download.body.find("fixture-secret")==std::string::npos&&download.body.find("fixture-json-secret")==std::string::npos&&download.body.find("fixture-api-secret")==std::string::npos&&download.headers.find("attachment;")!=std::string::npos,
                 "Full product download lost early lines or exposed credentials");
         require(http(port,"/api/runs/"+observedRunId+"/logs/tests").body.find("test-stage-marker")!=std::string::npos&&http(port,"/api/runs/"+std::string(32,'0')+"/logs/product").code==404&&http(port,"/api/runs/"+observedRunId+"/logs/profile").code==404,
                 "Log download crossed the fixed Run/source boundary");
         auto foreign=runRecord;foreign["nonce"]=std::string(32,'0');atomic(runRoot/wide(observedRunId+".json"),foreign.dump());
         require(http(port,"/api/runs/"+observedRunId+"/logs/product").code==503,"Log download bypassed Run/request identity validation");
         atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());
-        write(state/wide(bid+".log"),originalLog);refresh();
+        if(hadLog)write(batchLogPath,originalLog);else fs::remove(batchLogPath);
+        refresh();
     }
     // Observe actual native sharing errors and atomic replacement via HTTP.
     save(largeId+".json",Json::object({{"batchId",largeId},{"outcome","passed"}}));HANDLE locked=CreateFileW((state/wide(largeId+".json")).c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);require(locked!=INVALID_HANDLE_VALUE,"Native sharing fixture unavailable");auto timer=std::chrono::steady_clock::now();auto denied=http(port,"/api/batches/"+largeId);CloseHandle(locked);require(denied.code==503&&std::chrono::steady_clock::now()-timer<std::chrono::seconds(3),"Persistent sharing became passing/unbounded");require(http(port,"/api/batches/"+largeId).code==200,"Reader did not recover fresh file after sharing release");write(state/wide(largeId+".json"),"{invalid");require(http(port,"/api/batches/"+largeId).code==503,"Invalid metadata treated as absent/pass");write(state/wide(largeId+".json"),std::string(8*1024*1024+1,' '));require(http(port,"/api/batches/"+largeId).code==503,"Metadata bound removed");
@@ -370,6 +373,7 @@ void dashboard(const fs::path& repo,bool browser){
         bool rejected=false;try{checkDependencies(Json::parse(http(controlPort).body));}catch(const std::exception& error){rejected=std::string(error.what())=="Per-test dependency observations were omitted or treated as reusable closure";}
         require(rejected,"Removing the server evidence projection escaped its actual HTTP contract assertion");
     }
+    if(browser){runRequest["action"]="batch";atomic(runRoot/wide(observedRunId+".request.json"),runRequest.dump());refresh();}
     std::unique_ptr<Child> edge;std::unique_ptr<Cdp> cdp;
     auto render=[&](const std::string& name,const std::string& expected){refresh();cdp->send("Page.navigate",Json::object({{"url","http://127.0.0.1:"+std::to_string(port)+"/"}}));cdp->connected();cdp->evaluate("document.getElementById('tab-builds').click()");until([&]{return cdp->evaluate("document.getElementById('headline').textContent").str().find(expected)!=std::string::npos;},10);require(cdp->evaluate("document.visibilityState").str()=="visible","Interaction fixture must be foreground");auto data=cdp->evaluate("({fixture:!document.getElementById('fixture').hidden,xss:!!window.dashboardXss,overflow:document.documentElement.scrollWidth>innerWidth,icon:document.querySelector('.app-icon').naturalWidth})");require(data.at("fixture").boolean&&!data.at("xss").boolean&&!data.at("overflow").boolean&&data.at("icon").integer()>0&&cdp->errors.empty(),"Unsafe/incorrect browser fixture: "+data.dump());auto shot=cdp->send("Page.captureScreenshot",Json::object({{"format","png"},{"captureBeyondViewport",true}}));write(root/wide(name+".png"),unbase64(shot.at("data").str()));};
     if(browser){auto path=fs::path(environment(L"ProgramFiles(x86)"))/L"Microsoft/Edge/Application/msedge.exe";require(fs::is_regular_file(path),"Edge unavailable");int debug=free_port();edge=std::make_unique<Child>(std::vector<std::wstring>{path.wstring(),L"--headless=new",L"--disable-gpu",L"--remote-debugging-port="+std::to_wstring(debug),L"--user-data-dir="+(root/L"edge-profile").wstring(),L"about:blank"},root);Json info;until([&]{try{info=Json::parse(http(debug,"/json/version").body);return info.has("webSocketDebuggerUrl");}catch(...){return false;}},15);auto endpoint=info.at("webSocketDebuggerUrl").str();cdp=std::make_unique<Cdp>(debug,endpoint.substr(endpoint.find('/',5)));auto target=cdp->send("Target.createTarget",Json::object({{"url","about:blank"}}),false).at("targetId").str();cdp->sessionId=cdp->send("Target.attachToTarget",Json::object({{"targetId",target},{"flatten",true}}),false).at("sessionId").str();cdp->send("Target.activateTarget",Json::object({{"targetId",target}}),false);cdp->send("Page.enable");cdp->send("Runtime.enable");cdp->send("Emulation.setFocusEmulationEnabled",Json::object({{"enabled",true}}));cdp->send("Emulation.setDeviceMetricsOverride",Json::object({{"width",1440},{"height",1080},{"deviceScaleFactor",1},{"mobile",false}}));render("waiting","编辑中");require(cdp->evaluate("document.getElementById('runTelemetry').textContent.includes('2 · 采集完成') && document.getElementById('runTelemetry').textContent.includes('Job CPU')").boolean,"Browser lost Run compiler coverage or resource projection");require(cdp->evaluate("document.getElementById('workList').textContent.includes('Investigate wait') && document.getElementById('collaborationEvents').textContent.includes('智能体确认 0 / 2')").boolean,"Investigation/message UI lost independent state or receipt meaning");
@@ -403,7 +407,7 @@ void dashboard(const fs::path& repo,bool browser){
             cdp->evaluate("document.getElementById('workSearch').value='no-ledger-match';document.getElementById('workSearch').dispatchEvent(new Event('input'))");
             require(cdp->evaluate("document.querySelectorAll('#workList button').length===0 && !document.getElementById('workEmpty').hidden").boolean,"Unmatched activity query showed unfiltered records");
             atomic(state/L"state.json",originalPresence);refresh();
-            cdp->evaluate("document.getElementById('workSearch').value='';document.getElementById('workSearch').dispatchEvent(new Event('input'));Array.from(document.querySelectorAll('#workList button')).find(x=>x.dataset.workKey.startsWith('batch:')).click()");
+            cdp->evaluate("document.getElementById('workSearch').value='';document.getElementById('workSearch').dispatchEvent(new Event('input'));Array.from(document.querySelectorAll('#workList button')).find(x=>x.dataset.workKey==='batch:dddddddddddddddddddddddddddddddd').click()");
             until([&]{return cdp->evaluate("document.getElementById('attemptList').children.length>0").boolean;});
             cdp->evaluate("document.getElementById('tab-builds').click()");
             cdp->send("Emulation.setDeviceMetricsOverride",Json::object({{"width",1440},{"height",1080},{"deviceScaleFactor",1},{"mobile",false}}));
