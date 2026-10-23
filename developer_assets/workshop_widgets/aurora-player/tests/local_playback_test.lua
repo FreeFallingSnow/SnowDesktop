@@ -26,7 +26,7 @@ local function playlistFixture()
         cancel=function() end,save=function() return true end})
     p:ingest({{handle="a",kind="file",name="Alpha [live].mp3"},
         {handle="b",kind="file",name="Hidden.flac"},{handle="c",kind="file",name="ALPHA piano.flac"},
-        {handle="d",kind="file",name="海边 散步.mp3"},{handle="e",kind="file",name="Alpha studio.mp3"}})
+        {handle="d",kind="file",name="海边 散步.mp3"},{handle="e",kind="file",name="Alpha studio.mp3"}}) -- l10n-allow: Chinese filename fixture verifies Unicode search.
     f.model={player=p,source="local",panelKind="playlist"}
     widget={hasFeature=function() return true end,hasPermission=function() return true end,
         invalidate=function() end,theme=function() return {contentTheme=0} end}
@@ -58,7 +58,7 @@ return {
         f:action("search",{text="  ALPHA  [live] "})
         local indices,active=localPlayback.filtered(f.model)
         assert(active and #indices==1 and indices[1]==1 and #p.tracks==5)
-        f:action("search",{text="海边 散步"})
+        f:action("search",{text="海边 散步"}) -- l10n-allow: Query matches the Chinese filename fixture.
         indices=localPlayback.filtered(f.model);assert(#indices==1 and indices[1]==4)
         f:action("search",{text="["});indices=localPlayback.filtered(f.model)
         assert(#indices==1 and indices[1]==1,"search punctuation must not become a Lua pattern")
@@ -93,7 +93,7 @@ return {
         f:action("drag.move",{y=f.model.listTop+f.model.itemExtent*2.7})
         assert(f.model.drag.to==5 and f.model.drag.boundary==3)
         f:action("drag.end")
-        assert(p.tracks[5].key==moved and p.tracks[1].name=="Hidden.flac" and p.tracks[3].name=="海边 散步.mp3")
+        assert(p.tracks[5].key==moved and p.tracks[1].name=="Hidden.flac" and p.tracks[3].name=="海边 散步.mp3") -- l10n-allow: Assert the Unicode fixture remains in queue order.
         assert(p.index==2 and p.playbackId=="playing" and f.model.suppressClick)
         f:action("track",{value=moved});assert(p.index==2,"a completed drag must not also play the clicked row")
         f:panel();f:action("drag.start",{value=moved,button=1,y=f.model.listTop+70})

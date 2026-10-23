@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "Windows任务栏 系统任务栏 显示任务栏 隐藏任务栏 任务栏显示模式 任务栏桌面投影",
   "settings.search.alias.transformCursor": "组件移动指针 组件缩放指针 移动时鼠标形状 调整大小光标 拖动箭头 组件鼠标指针",
   "settings.search.alias.windowPreviews": "窗口缩略图 任务缩略图 运行应用的窗口预览 鼠标悬停预览 悬停看窗口",
-  "statusBar.content": "内容",
   "widgets.commonInteraction": "通用交互",
   "widgetSettings.content": "组件内容与行为",
   "widgetSettings.packagePermissions": "组件权限",

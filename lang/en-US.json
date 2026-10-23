@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "Windows taskbar system taskbar show taskbar hide taskbar desktop projection in taskbar",
   "settings.search.alias.transformCursor": "move cursor resize cursor component pointer widget cursor pointer when dragging resize arrows",
   "settings.search.alias.windowPreviews": "window previews window thumbnails running app previews hover preview task thumbnails",
-  "statusBar.content": "Content",
   "widgets.commonInteraction": "Common interaction",
   "widgetSettings.content": "Content and behavior",
   "widgetSettings.packagePermissions": "Component permissions",

@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "Windowsのタスクバー システムのタスクバー タスクバーを表示 タスクバーを隠す デスクトップをタスクバーに表示",
   "settings.search.alias.transformCursor": "移動時のカーソル サイズ変更時のカーソル コンポーネントのポインター ウィジェットのカーソル ドラッグ中の矢印",
   "settings.search.alias.windowPreviews": "ウィンドウのプレビュー ウィンドウのサムネイル 実行中のアプリ マウスを重ねてプレビュー",
-  "statusBar.content": "表示内容",
   "widgets.commonInteraction": "共通の操作",
   "widgetSettings.content": "内容と動作",
   "widgetSettings.packagePermissions": "コンポーネントの権限",

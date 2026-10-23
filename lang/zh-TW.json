@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "Windows工作列 系統工作列 顯示工作列 隱藏工作列 工作列顯示模式 工作列桌面投影",
   "settings.search.alias.transformCursor": "元件移動游標 元件縮放游標 移動時滑鼠形狀 調整大小游標 拖曳箭頭 元件滑鼠指標",
   "settings.search.alias.windowPreviews": "視窗縮圖 工作縮圖 執行中應用程式的視窗預覽 滑鼠停留預覽 指向時預覽視窗",
-  "statusBar.content": "內容",
   "widgets.commonInteraction": "共用互動",
   "widgetSettings.content": "元件內容與行為",
   "widgetSettings.packagePermissions": "元件權限",

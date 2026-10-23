@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "barra de tareas de Windows barra del sistema mostrar barra de tareas ocultar barra de tareas proyección del escritorio",
   "settings.search.alias.transformCursor": "cursor al mover cursor al cambiar tamaño puntero de componentes cursor de widgets flechas al arrastrar",
   "settings.search.alias.windowPreviews": "vista previa de ventanas miniaturas de ventanas aplicaciones en ejecución vista previa al pasar el puntero",
-  "statusBar.content": "Contenido",
   "widgets.commonInteraction": "Interacción general",
   "widgetSettings.content": "Contenido y comportamiento",
   "widgetSettings.packagePermissions": "Permisos del componente",

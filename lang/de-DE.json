@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "Windows-Taskleiste Systemtaskleiste Taskleiste anzeigen Taskleiste ausblenden Desktop-Projektion in der Taskleiste",
   "settings.search.alias.transformCursor": "Mauszeiger beim Verschieben Mauszeiger beim Skalieren Komponentenzeiger Größenänderungszeiger Widget-Zeiger Pfeil beim Ziehen",
   "settings.search.alias.windowPreviews": "Fenstervorschau Fensterminiaturen laufende Apps Vorschau beim Zeigen Vorschau im Dock",
-  "statusBar.content": "Inhalt",
   "widgets.commonInteraction": "Allgemeine Interaktion",
   "widgetSettings.content": "Inhalt und Verhalten",
   "widgetSettings.packagePermissions": "Komponentenberechtigungen",

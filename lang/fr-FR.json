@@ -2330,7 +2330,6 @@
   "settings.search.alias.taskbar": "barre des tâches Windows barre système afficher la barre des tâches masquer la barre des tâches projection du bureau",
   "settings.search.alias.transformCursor": "curseur de déplacement curseur de redimensionnement pointeur des composants curseur des widgets flèches pendant le déplacement",
   "settings.search.alias.windowPreviews": "aperçu des fenêtres miniatures des fenêtres applications en cours aperçu au survol",
-  "statusBar.content": "Contenu",
   "widgets.commonInteraction": "Interaction générale",
   "widgetSettings.content": "Contenu et comportement",
   "widgetSettings.packagePermissions": "Autorisations du composant",
