@@ -119,7 +119,7 @@ export function apply(ctx,config){
   if(disposed||polling)return;polling=true;
   try{
    let state=bridge.state();
-   if(await resumePending(state))state=bridge.state();
+   if(config.wakeResidentAgents&&cold&&await resumePending(state))state=bridge.state();
    if(disposed)return;
    const now=Date.now();
    for(const entry of agents.values()){

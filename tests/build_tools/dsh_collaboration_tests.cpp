@@ -317,7 +317,7 @@ console.log(JSON.stringify(result));
         }
     }
     auto residentOnly=read(repo/L"tools/dsh-collaboration/index.js");
-    replace(residentOnly,"if(await resumePending(state))state=bridge.state();","// Former resident-only path leaves cold recipients inactive.");
+    replace(residentOnly,"if(config.wakeResidentAgents&&cold&&await resumePending(state))state=bridge.state();","// Former resident-only path leaves cold recipients inactive.");
     write(c.root/L"cold-old/index.js",residentOnly);write(c.root/L"cold-old/core.js",read(repo/L"tools/dsh-collaboration/core.js"));write(c.root/L"cold-old/package.json","{\"type\":\"module\"}");
     Coordinator former(repo,"dsh-cold-former");
     const auto oldRun=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(c.root/L"cold-old/index.js").wstring(),former.root.wstring(),L"legacy"},c.root,40);
