@@ -2749,6 +2749,8 @@ private:
     bool QueueShellFileOperation(
         snowdesktop::ShellFileOperationRequest request,
         FileOperationCompletion completion);
+    std::optional<DWORD> TryDropShellNamespaceFiles(
+        IDataObject* source, POINT point, DWORD keys, DWORD allowedEffects);
     /** @brief 将路径型 IDropTarget 放置加入独立 Shell STA 队列。 */
     bool QueueShellDrop(
         std::vector<std::wstring> sourcePaths,

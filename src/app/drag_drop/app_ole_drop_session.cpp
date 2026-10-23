@@ -6,6 +6,7 @@
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/delayed_desktop_file_drop.h"
 #include "drag_drop/default_file_drop_action.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "layout/item_location.h"
 #include "widgets/lua_logical_slot.h"
 
@@ -205,6 +206,101 @@ private:
     std::vector<std::wstring> paths_;
 };
 
+}
+
+std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
+    IDataObject* dataObject, POINT point, DWORD keys, DWORD allowedEffects)
+{
+    auto destination = CaptureExternalSlotDestination(point, keys);
+    if (destination && (!destination->luaWidgetId.empty() || destination->fileDropTarget ||
+        destination->preview.pinMaterializedItemsToDock ||
+        (destination->widgetType != DesktopWidgetType::Collection &&
+         destination->widgetType != DesktopWidgetType::FolderMapping))) return std::nullopt;
+    const auto* target = dragSession_.TargetContainer();
+    const bool desktop = (target == GetDesktopGrid() ||
+        (!target && dragSession_.TargetRegion() == HitRegion::None)) &&
+        dragSession_.TargetRegion() != HitRegion::Handoff &&
+        dragSession_.TargetRegion() != HitRegion::Blocked;
+    if (!destination && !desktop) return std::nullopt;
+    auto source = snowdesktop::external_drop_content::ReadShellFileSource(dataObject);
+    if (!source) return std::nullopt;
+    const DWORD effect = snowdesktop::ole_drag_rules::ChooseDropEffect(keys, allowedEffects, DROPEFFECT_COPY);
+    if ((effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE) ||
+        (effect == DROPEFFECT_MOVE && !source->canMove)) return DROPEFFECT_NONE;
+    const bool mapped = destination && destination->preview.targetKind == DropTargetKind::FolderMapping;
+    const std::wstring directory = mapped ? destination->folderPath : UserDesktopDirectory();
+    if (directory.empty()) return DROPEFFECT_NONE;
+    DragSourceList sources;
+    sources.hasExternalFiles = true;
+    for (size_t index = 0; index < source->items.size(); ++index)
+    {
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::ExternalFile;
+        entry.sourceIndex = index;
+        entry.filePath = source->identities[index];
+        entry.displayName = source->names[index];
+        sources.entries.push_back(std::move(entry));
+    }
+    PendingLandingCache landing;
+    const auto existing = SnapshotDesktopKeys();
+    landing.tick = GetTickCount();
+    landing.existingDesktopKeys = existing;
+    if (mapped)
+    {
+        const size_t index = FindWidgetIndexById(destination->widgetId);
+        const DesktopWidget* widget = destination->dockFolderPopup
+            ? dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr
+            : index < widgets_.size() ? &widgets_[index] : nullptr;
+        if (!widget || widget->id != destination->widgetId ||
+            widget->type != destination->widgetType || widget->sourceFolderPath != directory)
+            return DROPEFFECT_NONE;
+        landing.folderPlacements.push_back(BuildPendingFolderPlacement(
+            *widget, destination->preview.insertIndex, &sources));
+    }
+    else
+    {
+        auto preview = destination ? destination->preview :
+            BuildExternalDesktopPreviewList(CellFromPoint(point), sources.entries.size());
+        if (destination)
+        {
+            preview.landings.clear();
+            for (size_t index = 0; index < sources.entries.size(); ++index)
+            {
+                DropLanding entry;
+                entry.kind = DropLandingKind::WidgetIndex;
+                entry.sourceIndex = index;
+                entry.widgetId = destination->widgetId;
+                entry.insertIndex = preview.insertIndex + index;
+                entry.cell = preview.anchorCell;
+                preview.landings.push_back(std::move(entry));
+            }
+        }
+        preview.action = effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy;
+        landing = BuildPendingLandingCache(sources, preview, existing);
+    }
+    auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
+    // Keep Drop on the source STA until Shell has finished. A marshaled pointer
+    // alone cannot extend a synchronous drag producer past DoDragDrop's return.
+    ++shellFileOperationInFlight_;
+    DwmFlush();
+    HRESULT status = E_FAIL;
+    try
+    {
+        status = snowdesktop::ShellFileOperationWorker::ExecuteNamespaceFiles(
+            *source, directory, effect, result);
+    }
+    catch (...) { status = E_OUTOFMEMORY; }
+    --shellFileOperationInFlight_;
+    // Preserve actual successful outputs even when the user cancelled a later
+    // item; never invent paths by diffing a directory shared with other copies.
+    snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(landing), *result);
+    if (effect == DROPEFFECT_MOVE)
+        ReportPerformedDropEffect(dataObject, DROPEFFECT_NONE);
+    if (FAILED(status))
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", directory, static_cast<DWORD>(status)});
+    if (!result->outputs.empty()) RequestShellRefresh();
+    RestoreDesktopWindowLayer();
+    return SUCCEEDED(status) ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : DROPEFFECT_COPY) : DROPEFFECT_NONE;
 }
 
 void DesktopApp::CancelPendingExternalOleDragLeave()
@@ -1151,6 +1247,13 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         dropPaths = localFileUrlPaths;
         forceCopyDrop = true;
         *effect = DROPEFFECT_COPY;
+    }
+
+    if (auto nativeEffect = TryDropShellNamespaceFiles(dataObject, clientPoint, keyState, *effect))
+    {
+        *effect = *nativeEffect;
+        EndDragSession();
+        return S_OK;
     }
 
     if (auto destination = CaptureExternalSlotDestination(clientPoint, keyState))

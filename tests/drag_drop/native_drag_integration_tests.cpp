@@ -1209,6 +1209,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-sequences") native_ole_sequence_cases::RunAsync();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-generated-relations") native_content_dock_cases::RunDockRelations();
         else if (argc == 3 && std::string_view(argv[1]) == "--owned-content") {
+            native_owned_content_cases::RunShellFiles(argv[2]);
             native_owned_content_cases::Run(argv[2]); native_owned_content_rejection_cases::Run(argv[2]);
             native_owned_content_cases::Run(argv[2], false, true);
         }

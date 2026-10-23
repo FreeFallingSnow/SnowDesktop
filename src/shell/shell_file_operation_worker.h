@@ -17,6 +17,7 @@
 
 namespace snowdesktop
 {
+namespace external_drop_content { struct ShellFileSource; }
 
 /** @brief One path-based Shell operation executed by the worker. */
 struct ShellFileOperationStep
@@ -167,6 +168,11 @@ public:
     static bool Execute(const ShellFileOperationRequest& request);
     /** @brief Execute a path-backed IDropTarget handoff on the calling STA. */
     static bool Execute(ShellDropRequest request);
+    // Synchronous OLE Drop boundary: keep a non-async provider alive until the
+    // native Shell operation and its progress/cancellation have completed.
+    static HRESULT ExecuteNamespaceFiles(const external_drop_content::ShellFileSource& source,
+        const std::wstring& destination, DWORD effect,
+        const std::shared_ptr<ShellFileOperationResult>& result);
     static ShellRenameResult Execute(const ShellRenameRequest& request);
 
 private:

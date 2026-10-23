@@ -994,6 +994,51 @@ bool ShellFileOperationWorker::Execute(
     return attempted && allSucceeded;
 }
 
+HRESULT ShellFileOperationWorker::ExecuteNamespaceFiles(
+    const external_drop_content::ShellFileSource& source, const std::wstring& destinationPath,
+    DWORD effect, const std::shared_ptr<ShellFileOperationResult>& result)
+{
+    if (!result || source.items.empty() || source.items.size() != source.identities.size() ||
+        destinationPath.empty() || (effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE) ||
+        (effect == DROPEFFECT_MOVE && !source.canMove)) return E_INVALIDARG;
+    result->outputs.clear();
+    ComPtr<IShellItem> destination;
+    HRESULT status = SHCreateItemFromParsingName(destinationPath.c_str(), nullptr, IID_PPV_ARGS(&destination));
+    if (FAILED(status)) return status;
+    ComPtr<IFileOperation> operation;
+    status = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&operation));
+    if (FAILED(status)) return status;
+    status = operation->SetOperationFlags(FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR |
+        FOF_RENAMEONCOLLISION | FOF_NOERRORUI | FOFX_EARLYFAILURE);
+    if (FAILED(status)) return status;
+    std::vector<ComPtr<DropFileProgress>> sinks;
+    for (size_t index = 0; index < source.items.size(); ++index)
+    {
+        auto sink = Microsoft::WRL::Make<DropFileProgress>();
+        if (!sink) return E_OUTOFMEMORY;
+        sink->source = source.identities[index];
+        sink->sourceItem = source.items[index];
+        sink->result = result;
+        status = effect == DROPEFFECT_MOVE
+            ? operation->MoveItem(source.items[index].Get(), destination.Get(), nullptr, sink.Get())
+            : operation->CopyItem(source.items[index].Get(), destination.Get(), nullptr, sink.Get());
+        if (FAILED(status)) return status;
+        sinks.push_back(std::move(sink));
+    }
+    const HRESULT performed = operation->PerformOperations();
+    BOOL aborted = TRUE;
+    const HRESULT queried = operation->GetAnyOperationsAborted(&aborted);
+    if (FAILED(performed)) return performed;
+    if (FAILED(queried)) return queried;
+    if (aborted) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    for (const auto& sink : sinks)
+    {
+        if (FAILED(sink->failure)) return sink->failure;
+        if (!sink->completed) return E_FAIL;
+    }
+    return S_OK;
+}
+
 bool ShellFileOperationWorker::Execute(
     ShellDropRequest request)
 {

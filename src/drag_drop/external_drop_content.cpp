@@ -1,6 +1,7 @@
 #include "external_drop_content.h"
 
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shldisp.h>
 
 namespace snowdesktop::external_drop_content
@@ -18,6 +19,53 @@ ClipboardFileSource ProbeClipboardFileSource(IDataObject* source)
         if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name))))
             return ClipboardFileSource::ShellObjects;
     return ClipboardFileSource::None;
+}
+
+std::optional<ShellFileSource> ReadShellFileSource(IDataObject* source)
+{
+    if (!source) return std::nullopt;
+    const auto offers = [source](CLIPFORMAT id) {
+        FORMATETC format{id, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return id && source->QueryGetData(&format) == S_OK;
+    };
+    if (offers(CF_HDROP) ||
+        !offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_SHELLIDLIST))) ||
+        (!offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_FILEDESCRIPTORW))) &&
+         !offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor")))))
+        return std::nullopt;
+    Microsoft::WRL::ComPtr<IShellItemArray> array;
+    if (FAILED(SHCreateShellItemArrayFromDataObject(source, IID_PPV_ARGS(&array))))
+        return std::nullopt;
+    DWORD count = 0;
+    if (FAILED(array->GetCount(&count)) || !count || count > 4096)
+        return std::nullopt;
+    ShellFileSource result;
+    for (DWORD index = 0; index < count; ++index)
+    {
+        Microsoft::WRL::ComPtr<IShellItem> item;
+        SFGAOF attributes = 0;
+        if (FAILED(array->GetItemAt(index, &item)) ||
+            FAILED(item->GetAttributes(SFGAO_CANCOPY | SFGAO_CANMOVE | SFGAO_STREAM |
+                SFGAO_FOLDER | SFGAO_STORAGE, &attributes)) ||
+            !(attributes & SFGAO_CANCOPY) ||
+            (!(attributes & SFGAO_STREAM) &&
+             (attributes & (SFGAO_FOLDER | SFGAO_STORAGE)) != (SFGAO_FOLDER | SFGAO_STORAGE)))
+            return std::nullopt;
+        PWSTR identity = nullptr, name = nullptr;
+        const HRESULT identityStatus = item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &identity);
+        const HRESULT nameStatus = item->GetDisplayName(SIGDN_NORMALDISPLAY, &name);
+        if (FAILED(identityStatus) || FAILED(nameStatus) || !identity || !name)
+        {
+            CoTaskMemFree(identity); CoTaskMemFree(name);
+            return std::nullopt;
+        }
+        result.identities.emplace_back(identity);
+        result.names.emplace_back(name);
+        CoTaskMemFree(identity); CoTaskMemFree(name);
+        result.canMove &= (attributes & SFGAO_CANMOVE) != 0;
+        result.items.push_back(std::move(item));
+    }
+    return result;
 }
 
 FileSource ProbeFileSource(IDataObject* source)
