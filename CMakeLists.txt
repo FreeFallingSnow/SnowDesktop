@@ -395,6 +395,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/app_settings_apply.cpp
     src/app/input/desktop_passthrough_indicator.cpp
     src/app/render/app_text_render.cpp
+    src/platform/runtime_module_policy.h
+    src/platform/runtime_module_status.h
+    src/winui/runtime_modules_page_presenter.h
+    src/app/features/app_runtime_modules.cpp
     src/app/features/app_taskbar_integration.cpp
     src/app/dock/app_dock_start_menu.cpp
     src/shell/native_start_menu.cpp
@@ -525,6 +529,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/general_advanced_feature_ipc_values.h
     src/winui/category_creation_acknowledgement.h
     src/settings/category_rule_creation.h
+    src/winui/runtime_modules_page_presenter.cpp
     src/winui/home_about_page_presenter.cpp
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
@@ -835,7 +840,6 @@ if (MSVC)
         "${CPPWINRT_OUTPUT_DIR}/winrt/WindowsUdk.UI.Shell.h")
 
     add_library(SnowDesktopTaskbarHook SHARED
-        src/shell/start_menu_hook.cpp
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/tray_collector.cpp
         src/taskbar_hook/tray_protocol.h

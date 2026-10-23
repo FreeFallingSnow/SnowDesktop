@@ -3,6 +3,7 @@
  * @brief Request one clean Wallpaper Engine GPU frame for component previews.
  */
 #include "wallpaper_engine_capture.h"
+#include "platform/runtime_module_policy.h"
 
 #include "platform/deployment_context.h"
 #include "wallpaper_hook/wallpaper_hook_protocol.h"
@@ -119,7 +120,7 @@ std::wstring FormatHresult(const wchar_t* stage, HRESULT result)
 
 bool IsCancelled(const std::atomic_bool* cancelled)
 {
-    return cancelled && cancelled->load(std::memory_order_relaxed);
+    return !runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) || (cancelled && cancelled->load(std::memory_order_relaxed));
 }
 
 std::int64_t IntersectionArea(const RECT& left, const RECT& right)
@@ -490,6 +491,7 @@ bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
     DWORD waitMs, const std::atomic_bool* cancelled,
     std::wstring& error)
 {
+    if (IsCancelled(cancelled)) return false;
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD |
         PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
         PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, processId);
@@ -510,7 +512,7 @@ bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
     HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
     const auto loadLibrary = reinterpret_cast<LPTHREAD_START_ROUTINE>(
         kernel32 ? GetProcAddress(kernel32, "LoadLibraryW") : nullptr);
-    HANDLE thread = wrotePath && loadLibrary
+    HANDLE thread = !IsCancelled(cancelled) && wrotePath && loadLibrary
         ? CreateRemoteThread(process, nullptr, 0,
             loadLibrary, remotePath, 0, nullptr)
         : nullptr;
@@ -555,6 +557,7 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
     DWORD waitMs, const std::atomic_bool* cancelled,
     std::wstring& error)
 {
+    if (IsCancelled(cancelled)) return false;
     const std::filesystem::path injector =
         snowdesktop::deployment::GetRuntimeFilePath(
             L"SnowDesktopWallpaperInjector32.exe");
@@ -1060,6 +1063,9 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
 {
     Result result;
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview)) return result;
+    runtime_modules::Activity activity(runtime_modules::Module::WallpaperPreview);
+    runtime_modules::SetError(runtime_modules::Module::WallpaperPreview, ERROR_SUCCESS);
     const int monitorWidth = monitorBounds.right - monitorBounds.left;
     const int monitorHeight = monitorBounds.bottom - monitorBounds.top;
     if (monitorWidth <= 0 || monitorHeight <= 0 || timeoutMs == 0)
@@ -1129,6 +1135,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     }
     if (result.error.empty() && !IsCancelled(cancelled))
         result.error = L"Timed out waiting for Wallpaper Engine Present";
+    if (!result.error.empty() && !IsCancelled(cancelled)) runtime_modules::SetError(runtime_modules::Module::WallpaperPreview, ERROR_GEN_FAILURE);
     return result;
 }
 

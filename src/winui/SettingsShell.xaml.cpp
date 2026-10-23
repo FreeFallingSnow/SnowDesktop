@@ -698,6 +698,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     {
     case SettingsPage::QuickNavigation:
         ensureGeneral(); ensurePersonalization(); break;
+    case SettingsPage::RuntimeModules:
+        if (!runtimeModulesPage_) runtimeModulesPage_ = std::make_unique<snowdesktop::winui::RuntimeModulesPagePresenter>(localize, cardStyle(), dockPageActions_, runtimeModulesQuery_);
+        break;
     case SettingsPage::About:
     case SettingsPage::Debug:
         ensureHomeAbout();
@@ -896,6 +899,7 @@ void SettingsShell::Close() noexcept
     if (desktopStylePage_) desktopStylePage_->Close();
     desktopStylePage_.reset();
     animationPage_.reset();
+    runtimeModulesPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
@@ -1007,6 +1011,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     if (desktopStylePage_) desktopStylePage_->Close();
     desktopStylePage_.reset();
     animationPage_.reset();
+    runtimeModulesPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
@@ -1055,6 +1060,8 @@ void SettingsShell::RefreshLocalizedText()
         setNavigationLabel(NavigationItemForPage(page), Localize(snowdesktop::SettingsPageTitleKey(page)));
     setNavigationLabel(WidgetsItem(), Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::Widgets)));
     setNavigationLabel(BackupItem(), Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::BackupAndData)));
+    setNavigationLabel(AdvancedSettingsItem(), Localize("modules.advanced"));
+    setNavigationLabel(RuntimeModulesItem(), Localize("modules.title"));
     setNavigationLabel(AboutItem(), Localize("app.settings.about"));
     setNavigationLabel(DeveloperItem(), Localize("app.settings.widgets_developer_tools"));
     RenderAgentSkillUpdateBadge();
@@ -1620,6 +1627,7 @@ void SettingsShell::SuspendInteraction() noexcept
         if (calendarPage_) calendarPage_->Deactivate();
         if (statusBarPage_) statusBarPage_->Deactivate();
         if (desktopStylePage_) desktopStylePage_->Deactivate();
+        if (runtimeModulesPage_) runtimeModulesPage_->Deactivate();
         if (contextMenuPage_) contextMenuPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
@@ -1663,8 +1671,12 @@ bool SettingsShell::ApplySnapshot(
         return false;
     try
     {
+        RestoreModuleControls();
         const SettingsRoute previousRoute = navigation_.Route();
         const std::uint64_t previousGeneration = navigation_.Generation();
+        runtimeModulePolicy_ = snapshot.values.general.runtimeModules;
+        advancedSettingsVisible_ = snapshot.values.general.showAdvancedSettings;
+        (void)navigation_.SetVisibility({navigation_.Visibility().developerTools, navigation_.Visibility().debug, advancedSettingsVisible_});
         if (!navigation_.ApplyControllerUpdate(
                 snapshot.route, snapshot.revision, snapshot.generation))
         {
@@ -1672,9 +1684,15 @@ bool SettingsShell::ApplySnapshot(
         }
         FontFamily(muxm::FontFamily{snowdesktop::app_fonts::XamlFamily()});
         sessionActive_ = snapshot.sessionActive;
+        advancedSettingsVisible_ = snapshot.values.general.showAdvancedSettings;
+        const auto replacement = navigation_.SetVisibility({navigation_.Visibility().developerTools, navigation_.Visibility().debug, advancedSettingsVisible_});
+        RenderConditionalPages();
+        if (replacement && routeRequested_) routeRequested_(*replacement);
+        if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         desktopStyleDockEnabled_ = snapshot.values.general.dockEnabled;
         if (sessionActive_)
             EnsurePresentersForPage(navigation_.Route().page);
+        if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
         if (calendarPage_) calendarPage_->ApplySnapshot(snapshot);
@@ -1699,6 +1717,7 @@ bool SettingsShell::ApplySnapshot(
             ClearInfo();
         if (routeChanged || generationChanged || !renderedPageRoute_)
             RenderRoute(false, true);
+        ApplyModuleRestrictions();
         RenderControllerStatus(snapshot);
         return true;
     }
@@ -1783,7 +1802,7 @@ void SettingsShell::SetConditionalPagesVisible(
     bool debugVisible)
 {
     const auto replacement = navigation_.SetVisibility(
-        {developerToolsVisible, debugVisible});
+        {developerToolsVisible, debugVisible, advancedSettingsVisible_});
     RenderConditionalPages();
     if (!searchResults_.empty())
     {
@@ -2162,7 +2181,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::WidgetBehavior,
                      SettingsPage::DesktopStyle, SettingsPage::QuickNavigation, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
                      SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
-                     SettingsPage::BackupAndData, SettingsPage::About,
+                     SettingsPage::BackupAndData, SettingsPage::About, SettingsPage::RuntimeModules,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
             {
                 if (NavigationItemForPage(page) == item)
@@ -2359,6 +2378,7 @@ void SettingsShell::RenderNavigationSelection(bool revealCurrent)
     const auto selected = NavigationItemForPage(selectedPage);
     if (revealCurrent)
     {
+        if (selectedPage == SettingsPage::RuntimeModules) AdvancedSettingsItem().IsExpanded(true);
         switch (snowdesktop::SettingsPageCategory(selectedPage))
         {
         case snowdesktop::SettingsCategory::DesktopOrganization: DesktopOrganizationItem().IsExpanded(true); break;
@@ -2441,6 +2461,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/collections-folders.svg", L"\xE713"},
         IconDescriptor{BackupItem(),
             L"ms-appx:///Assets/Settings/Icons/backup.svg", L"\xE74E"},
+        IconDescriptor{AdvancedSettingsItem(), L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
+        IconDescriptor{RuntimeModulesItem(), L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
         IconDescriptor{AboutItem(),
             L"ms-appx:///Assets/Settings/Icons/about.svg", L"\xE946"},
         IconDescriptor{DeveloperItem(),
@@ -2669,6 +2691,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar &&
         pageRoute.page != SettingsPage::AppearanceTheme && pageRoute.page != SettingsPage::Personalization) statusBarPage_->Deactivate();
     if (desktopStylePage_ && pageRoute.page != SettingsPage::DesktopStyle) desktopStylePage_->Deactivate();
+    if (runtimeModulesPage_ && pageRoute.page != SettingsPage::RuntimeModules) runtimeModulesPage_->Deactivate();
     if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
@@ -2714,8 +2737,21 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         if (renderedPageRoute_->page != SettingsPage::WidgetSettings && renderedPageRoute_->page != SettingsPage::LargeIcon)
             pageOffsets_[renderedPageRoute_->page] = PageScrollViewer().VerticalOffset();
     }
+    RestoreModuleControls();
     PageCards().Children().Clear();
     focusTargets_.clear();
+    moduleNotice_ = muxc::InfoBar{};
+    moduleNotice_.IsClosable(false);
+    moduleNotice_.Severity(muxc::InfoBarSeverity::Warning);
+    snowdesktop::winui::presenter_controls::BindInfoBarVisibility(moduleNotice_);
+    moduleNotice_.IsOpen(false);
+    muxc::Button moduleManage;
+    moduleManage.Content(winrt::box_value(Localize("modules.manage")));
+    moduleManage.Click([this](const auto&, const auto&) {
+        RequestRoute(advancedSettingsVisible_ ? SettingsRoute::ForPage(SettingsPage::RuntimeModules) : SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"));
+    });
+    moduleNotice_.ActionButton(moduleManage);
+    PageCards().Children().Append(moduleNotice_);
     const auto addPlaceholder = [this](
                                     std::string focusId,
                                     std::string_view title,
@@ -3172,13 +3208,22 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             backupDataPage_->Activate();
         }
         break;
+    case SettingsPage::RuntimeModules:
+        if (runtimeModulesPage_)
+        {
+            PageCards().Children().Append(runtimeModulesPage_->Content());
+            for (const auto key : snowdesktop::runtime_modules::kKeys)
+            { const auto focus = "runtimeModules." + std::string(key); RegisterFocusTarget(focus, runtimeModulesPage_->FocusTarget(focus)); }
+            runtimeModulesPage_->Activate();
+        }
+        break;
     case SettingsPage::About:
         if (homeAboutPage_)
         {
             PageCards().Children().Append(homeAboutPage_->AboutContent());
             for (const std::string_view focusId : {
                      "about.version", "about.profile", "about.project",
-                     "about.community", "about.thirdparty"})
+                     "about.community", "about.thirdparty", "about.showAdvancedSettings"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     homeAboutPage_->FocusTarget(
@@ -3282,10 +3327,66 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         PageCards().Children().Append(group);
     }
     renderedPageRoute_ = std::move(pageRoute);
+    ApplyModuleRestrictions();
+}
+
+
+void SettingsShell::RestoreModuleControls()
+{
+    for (const auto& [weak, enabled] : moduleRestrictedControls_) if (const auto control = weak.get()) control.IsEnabled(enabled);
+    moduleRestrictedControls_.clear();
+}
+
+void SettingsShell::ApplyModuleRestrictions()
+{
+    if (!moduleNotice_) return;
+    RestoreModuleControls();
+    using Module = snowdesktop::runtime_modules::Module;
+    const auto page = navigation_.Route().page;
+    std::wstring message;
+    const auto mention = [&](Module module, bool affected) {
+        if (runtimeModulePolicy_.Allows(module) || !affected) return;
+        if (!message.empty()) message += L"\n";
+        const auto key = std::string(snowdesktop::runtime_modules::kKeys[static_cast<std::size_t>(module)]);
+        message += Localize("modules." + key + ".name") + L" · " + Localize("modules." + key + ".impact");
+    };
+    mention(Module::Taskbar, page == SettingsPage::Taskbar || page == SettingsPage::DesktopStyle);
+    mention(Module::Tray, page == SettingsPage::Dock || page == SettingsPage::StatusBar);
+    mention(Module::WindowMinimize, page == SettingsPage::Dock || page == SettingsPage::AnimationPerformance || page == SettingsPage::Taskbar);
+    mention(Module::StartMenu, page == SettingsPage::Dock || page == SettingsPage::Taskbar || page == SettingsPage::ContextMenu);
+    mention(Module::WallpaperPreview, page == SettingsPage::Widgets);
+    moduleNotice_.Title(Localize("modules.disabledNotice"));
+    moduleNotice_.Message(message); moduleNotice_.IsOpen(!message.empty());
+    const auto restrictControl = [this](const muxc::Control& control) {
+        for (const auto& [weak, unused] : moduleRestrictedControls_)
+        { (void)unused; if (weak.get() == control) return; }
+        moduleRestrictedControls_.emplace_back(winrt::make_weak(control), control.IsEnabled());
+        control.IsEnabled(false);
+    };
+    for (const auto& [id, weak] : focusTargets_)
+    {
+        const auto element = weak.get(); if (!element) continue;
+        const auto control = element.try_as<muxc::Control>(); if (!control) continue;
+        bool disable = false;
+        if (!runtimeModulePolicy_.Allows(Module::Taskbar) && (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide" || id == "dock.suppressSystemTaskbar"))
+        {
+            if (const auto combo = control.try_as<muxc::ComboBox>(); combo && combo.Items().Size() > 2)
+                if (const auto item = combo.Items().GetAt(2).try_as<muxc::ComboBoxItem>()) restrictControl(item);
+            continue;
+        }
+        if (!runtimeModulePolicy_.Allows(Module::Taskbar) && id.starts_with("taskbar.") &&
+            id != "taskbar.autoHide" && id != "taskbar.alignment" && id != "taskbar.restartExplorer" &&
+            id != "taskbar.systemSettings" && id != "taskbar.systemTheme" && id != "taskbar.systemPanel") disable = true;
+        if (!runtimeModulePolicy_.Allows(Module::WindowMinimize) && (id == "dock.windowEffect" || id == "animation.windowEffect")) disable = true;
+        if (!runtimeModulePolicy_.Allows(Module::Tray) && (id.starts_with("dock.tray") || id == "statusBar.tray")) disable = true;
+        if ((!runtimeModulePolicy_.Allows(Module::StartMenu) || !runtimeModulePolicy_.Allows(Module::Taskbar)) && id == "dock.startMenuKeepTaskbarHidden") disable = true;
+        if (disable) restrictControl(control);
+    }
 }
 
 void SettingsShell::RenderConditionalPages()
 {
+    AdvancedSettingsItem().Visibility(navigation_.Visibility().advancedSettings ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     DeveloperItem().Visibility(
         navigation_.Visibility().developerTools
             ? mux::Visibility::Visible
@@ -3670,6 +3771,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::Widgets:
     case SettingsPage::WidgetSettings: return WidgetsItem();
     case SettingsPage::BackupAndData: return BackupItem();
+    case SettingsPage::RuntimeModules: return RuntimeModulesItem();
     case SettingsPage::About: return AboutItem();
     case SettingsPage::DeveloperTools: return DeveloperItem();
     case SettingsPage::Debug: return DebugItem();

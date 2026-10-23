@@ -68,6 +68,7 @@ constexpr std::string_view SettingsPageTitleKey(SettingsPage page) noexcept
     case SettingsPage::WidgetSettings: return "app.settings.widgets";
     case SettingsPage::LargeIcon: return "largeIcon.settings";
     case SettingsPage::BackupAndData: return "settings.nav.backupData";
+    case SettingsPage::RuntimeModules: return "modules.title";
     case SettingsPage::About: return "app.settings.about";
     case SettingsPage::DeveloperTools: return "app.settings.widgets_developer_tools";
     case SettingsPage::Debug: return "app.settings.debug";

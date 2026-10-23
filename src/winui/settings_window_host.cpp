@@ -399,6 +399,7 @@ struct SettingsWindowHost::Impl
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
     int searchContextMenuStyle = -1;
+    bool searchAdvancedSettings = false;
     std::shared_ptr<CallbackState> callbacks;
     std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
     std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
@@ -1087,6 +1088,7 @@ struct SettingsWindowHost::Impl
         input.developerToolsVisible = options.developerToolsVisible &&
             options.developerToolsVisible();
         input.debugVisible = DebugPageVisible();
+        input.advancedSettingsVisible = snapshot && snapshot->values.general.showAdvancedSettings;
         const bool advancedFeaturesVisible =
             options.advancedFeatureStatus &&
             options.advancedFeatureStatus().cardVisible;
@@ -1132,6 +1134,7 @@ struct SettingsWindowHost::Impl
             SettingsSearchIndexInput input = BuildSearchInput();
             searchIndex.Rebuild(input);
             const auto snapshot = controller ? controller->Snapshot() : nullptr;
+            searchAdvancedSettings = snapshot && snapshot->values.general.showAdvancedSettings;
             searchContextMenuStyle = snapshot ? snapshot->values.personalization.contextMenuStyle : 0;
             if (shell)
             {
@@ -1213,7 +1216,7 @@ struct SettingsWindowHost::Impl
         {
             if (!shell->ApplySnapshot(*snapshot))
                 return;
-            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle)
+            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle || searchAdvancedSettings != snapshot->values.general.showAdvancedSettings)
                 RebuildSearchIndex();
             // Ordinary controller revisions must not touch the Island's window-
             // level backdrop. In particular, continuous Slider/ColorPicker
@@ -2351,6 +2354,17 @@ struct SettingsWindowHost::Impl
                 std::move(request), std::move(completion));
         };
         shell->SetDockPageActions(std::move(dock));
+        if (options.runtimeModulesStatus) shell->SetRuntimeModulesQuery(options.runtimeModulesStatus);
+        else
+        {
+            const auto dispatcher = callbacks->dispatcher;
+            shell->SetRuntimeModulesQuery([dispatcher](auto completed) {
+                std::thread([dispatcher, completed = std::move(completed)]() mutable {
+                    auto result = runtime_modules::Inspect();
+                    dispatcher.TryEnqueue([completed = std::move(completed), result = std::move(result)]() mutable { completed(std::move(result)); });
+                }).detach();
+            });
+        }
 
         HomeAboutPageActions homeAbout;
         homeAbout.probeHotkey = probeHotkey;

@@ -1,4 +1,5 @@
 #include "../src/app/features/wallpaper_engine_capture.h"
+#include "../src/platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
 #include "wallpaper_hook/remote_injection_cleanup.h"
 #include "wallpaper_hook/shared_frame_access.h"
@@ -232,6 +233,14 @@ int main(int argc, char** argv)
         Check(mode == "surface" || mode == "worker" || mode == "retention" ||
             mode == "injection" || mode == "legacy", "known capture test mode");
         return 0;
+    }
+    {
+        namespace modules = snowdesktop::runtime_modules;
+        modules::Policy policy; policy.allowed[static_cast<std::size_t>(modules::Module::WallpaperPreview)] = false;
+        modules::Apply(policy);
+        const auto disabled = snowdesktop::wallpaper_engine_capture::CaptureOneShotForMonitor({0, 0, 100, 100}, 100);
+        Check(disabled.backdrop.Empty() && !disabled.wallpaperEngineDetected && disabled.error.empty(), "disabled preview avoids process discovery, capture and injection while permitting a static fallback");
+        modules::Apply({});
     }
     using snowdesktop::wallpaper_engine_capture::CropFrameToDesktopRegion;
     using snowdesktop::wallpaper_engine_capture::CancellableWaitResult;

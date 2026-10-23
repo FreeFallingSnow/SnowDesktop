@@ -14,6 +14,7 @@
 #include "calendar_page_presenter.h"
 #include "context_menu_page_presenter.h"
 #include "home_about_page_presenter.h"
+#include "runtime_modules_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
 #include "icon_library_page_presenter.h"
@@ -126,6 +127,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::DesktopPageActions actions);
     void SetDockPageActions(
         snowdesktop::winui::DockPageActions actions);
+    void SetRuntimeModulesQuery(snowdesktop::winui::RuntimeModulesQuery query) { runtimeModulesQuery_ = std::move(query); }
     void SetHomeAboutPageActions(
         snowdesktop::winui::HomeAboutPageActions actions);
     void SetPageLayoutPageActions(
@@ -241,6 +243,14 @@ struct SettingsShell : SettingsShellT<SettingsShell>
             completed);
 
 private:
+    snowdesktop::winui::RuntimeModulesQuery runtimeModulesQuery_;
+    std::unique_ptr<snowdesktop::winui::RuntimeModulesPagePresenter> runtimeModulesPage_;
+    bool advancedSettingsVisible_ = false;
+    snowdesktop::runtime_modules::Policy runtimeModulePolicy_;
+    winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleNotice_{nullptr};
+    std::vector<std::pair<winrt::weak_ref<winrt::Microsoft::UI::Xaml::Controls::Control>, bool>> moduleRestrictedControls_;
+    void RestoreModuleControls();
+    void ApplyModuleRestrictions();
     void HookEvents();
     void UnhookEvents() noexcept;
     void NavigateBack();

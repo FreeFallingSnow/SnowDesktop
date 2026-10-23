@@ -1,4 +1,5 @@
 #include "settings_ipc_backends.h"
+#include <thread>
 #include "settings_ipc_values.h"
 #include "settings/icon_library_ipc_paging.h"
 #include "common/l10n.h"
@@ -327,6 +328,13 @@ struct BackendServer::Impl
         channel.Bind<bool, std::wstring>("options.ensureWidget", [this](std::wstring id) {
             return options.ensureWidgetSettingsInstance && options.ensureWidgetSettingsInstance(id);
         });
+        channel.BindDeferredRaw("options.runtimeModulesStatus", [](auto arguments, Channel::Completion reply) {
+            Reader(arguments).Finish();
+            std::thread([reply = std::move(reply)]() mutable {
+                try { reply(Pack(runtime_modules::Inspect()), {}); }
+                catch (...) { reply({}, std::current_exception()); }
+            }).detach();
+        });
         channel.BindDeferredRaw("options.refreshExternalState", [this](auto arguments, Channel::Completion reply) {
             Reader(arguments).Finish();
             auto complete = [reply = std::move(reply)]() { reply({}, {}); };
@@ -520,6 +528,12 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     SettingsWindowHostOptions options;
     options.contextMenu = [&channel](const shell_extensions::Request &request, bool refresh) {
         return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
+    };
+    options.runtimeModulesStatus = [&channel](auto completed) {
+        channel.RequestAsync("options.runtimeModulesStatus", Pack(), [completed = std::move(completed)](Bytes bytes, std::exception_ptr error) {
+            if (error) { completed({}); return; }
+            try { completed(Unpack<runtime_modules::Snapshot>(bytes)); } catch (...) { completed({}); }
+        });
     };
     options.windowTitle = channel.Call<std::wstring>("options.title");
     options.localize = [](std::string_view key) { return std::wstring(Locale::Instance().TrW(std::string(key).c_str())); };

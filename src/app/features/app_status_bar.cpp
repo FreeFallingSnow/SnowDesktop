@@ -1179,7 +1179,9 @@ void DesktopApp::SyncStatusBar()
         }
     }
     statusBar_->SetPresentationEnabled(!desktopStartupPresentationPending_);
-    statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,
+    auto effectiveStatusBar = generalSettings_.statusBar;
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray)) effectiveStatusBar.tray = false;
+    statusBar_->Configure(effectiveStatusBar, personalizationSettings_, monitors,
         dcompDevice_.Get(), dwriteFactory_.Get(), &collectionPopupAppearance_,
         [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
             DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,

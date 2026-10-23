@@ -482,7 +482,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
-        ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+        (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
             IsSystemTaskbarAutoHideEnabled()))
     {
         snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");

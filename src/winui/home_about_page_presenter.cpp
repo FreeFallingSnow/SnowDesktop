@@ -96,6 +96,10 @@ struct HomeAboutPagePresenter::Impl
     muxc::StackPanel debugRoot{nullptr};
     muxc::Expander credits{nullptr};
 
+    Section advancedSection;
+    controls::SettingRow advancedRow;
+    muxc::ToggleSwitch advancedToggle{nullptr};
+    winrt::event_token advancedToken{};
     Section introductionSection;
     Section authorSection;
     Section copyrightSection;
@@ -377,6 +381,12 @@ struct HomeAboutPagePresenter::Impl
         credits.IsExpanded(false);
         credits.Content(creditGroups);
         aboutRoot.Children().Append(credits);
+        InitializeSection(advancedSection, cardStyle, aboutRoot);
+        advancedSection.title.Visibility(mux::Visibility::Collapsed);
+        advancedToggle = muxc::ToggleSwitch{};
+        advancedToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        advancedRow.Initialize(advancedToggle);
+        advancedSection.content.Children().Append(advancedRow.root);
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
@@ -505,6 +515,11 @@ struct HomeAboutPagePresenter::Impl
                 });
         }
 
+        advancedToken = advancedToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeAbout() || !actions.updateGeneral) return;
+            const bool value = advancedToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [value](GeneralSettings& settings) { settings.showAdvancedSettings = value; });
+        });
         checkUpdateToken = checkUpdateButton.Click(
             [this](const auto&, const auto&) {
                 if (packaged)
@@ -747,6 +762,7 @@ struct HomeAboutPagePresenter::Impl
     {
         if (closed)
             return;
+        advancedRow.SetText(L("modules.showAdvanced"), L("modules.showAdvancedDescription"));
         credits.Header(winrt::box_value(L("settings.about.licensesAndCredits", L"Third-party notices and credits")));
 
         SetSectionTitle(introductionSection,
@@ -882,6 +898,9 @@ struct HomeAboutPagePresenter::Impl
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
+            updatingControls = true;
+            advancedToggle.IsOn(snapshot.values.general.showAdvancedSettings);
+            updatingControls = false;
             logModules = snapshot.values.general.diagnosticLogModules;
             snowdesktop::diagnostics::SetLogModules(logModules);
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
@@ -936,6 +955,7 @@ struct HomeAboutPagePresenter::Impl
                     if (entry.target == target) return entry.button;
                 return versionButton;
             };
+            if (focusId == "about.showAdvancedSettings") return advancedToggle;
             if (focusId == "about.profile") return link(HomeAboutLink::Bilibili);
             if (focusId == "about.project") return link(HomeAboutLink::SourceRepository);
             if (focusId == "about.website") return link(HomeAboutLink::OfficialWebsite);
@@ -974,6 +994,7 @@ struct HomeAboutPagePresenter::Impl
         {
             for (LinkEntry& link : links)
                 link.button.Click(link.clickToken);
+            advancedToggle.Toggled(advancedToken);
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
             allLogsToggle.Toggled(allLogsToken);

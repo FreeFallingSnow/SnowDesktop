@@ -1651,6 +1651,22 @@ int main()
     failures += RunSettingsIpcTests();
     TestRoutes();
     TestReadOnlySearchNavigationAndPackageScope();
+    {
+        auto store = std::make_shared<FakeStore>();
+        SettingsController controller(store);
+        Check(controller.Open(SettingsRoute::ForPage(SettingsPage::RuntimeModules)).Succeeded() &&
+            controller.Snapshot()->route == SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"),
+            "direct hidden module route falls back to the About visibility control");
+        auto settings = controller.Snapshot()->values.general;
+        settings.showAdvancedSettings = true;
+        controller.UpdateGeneral(settings, SettingsUpdateMode::PreviewAndCommit);
+        Check(controller.Open(SettingsRoute::ForPage(SettingsPage::RuntimeModules)).Succeeded() && controller.Snapshot()->route.page == SettingsPage::RuntimeModules,
+            "host and settings shell agree on visible module navigation");
+        settings.showAdvancedSettings = false; settings.runtimeModules.allowed[0] = false;
+        controller.UpdateGeneral(settings, SettingsUpdateMode::PreviewAndCommit);
+        Check(controller.Snapshot()->route.page == SettingsPage::About && !controller.Snapshot()->values.general.runtimeModules.allowed[0],
+            "closing advanced navigation preserves explicit module disables");
+    }
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
     TestDesktopStylePresetScope();

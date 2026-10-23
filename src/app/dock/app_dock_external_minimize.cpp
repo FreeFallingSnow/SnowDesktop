@@ -6,14 +6,16 @@
 
 void DesktopApp::UpdateDockExternalMinimizeTargets()
 {
-    const bool protectTaskbar = ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+    const bool protectTaskbar = (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
         IsSystemTaskbarAutoHideEnabled());
-    const bool animate = generalSettings_.dockEnabled && dockWindowTransition_ &&
+    const bool moduleAllowed = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize);
+    const bool animate = moduleAllowed && generalSettings_.dockEnabled && dockWindowTransition_ &&
         snowdesktop::animation::RuntimeAnimationsEnabled() &&
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect;
-    if (!protectTaskbar && !animate)
+    if (!moduleAllowed || (!protectTaskbar && !animate))
     {
         dockExternalMinimize_.reset();
+        snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::WindowMinimize, 0);
         return;
     }
     // The current target already owns its hook. Process-bitness checks, hook
@@ -28,7 +30,11 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
                 snowdesktop::deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHook.dll"),
                 snowdesktop::deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHost32.exe"),
                 snowdesktop::deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHook32.dll")))
+        {
+            snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::WindowMinimize, GetLastError() ? GetLastError() : ERROR_GEN_FAILURE);
             return;
+        }
+        snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::WindowMinimize, ERROR_SUCCESS);
         dockExternalMinimize_ = std::move(monitor);
     }
     std::vector<HWND> windows;
@@ -62,6 +68,7 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     const auto registrations = dockExternalMinimize_->RegistrationStatistics();
     const auto cloakRegistrations = dockExternalMinimize_->CloakStatistics();
     const auto active = dockExternalMinimize_->HookCount();
+    snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::WindowMinimize, static_cast<unsigned>(active));
     const auto activeCloak = dockExternalMinimize_->CloakHookCount();
     static std::uint64_t reportedAttempts = 0, reportedCloakAttempts = 0;
     static std::size_t reportedActive = 0;

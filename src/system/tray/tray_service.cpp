@@ -1,4 +1,5 @@
 #include "tray_service.h"
+#include "platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
 #include "tray_menu_placement.h"
@@ -131,6 +132,7 @@ struct Service::Impl
     }
     std::shared_ptr<Connection> Connect(DWORD& error, const wchar_t*& stage)
     {
+        if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) { error = ERROR_ACCESS_DISABLED_BY_POLICY; return {}; }
         stage = L"findExplorer";
         auto result = std::make_shared<Connection>();
         result->window = FindWindowW(L"Shell_TrayWnd", nullptr);
@@ -249,6 +251,8 @@ struct Service::Impl
         DWORD retryExplorer = 0;
         while (!token.stop_requested())
         {
+            if (!runtime_modules::Allowed(runtime_modules::Module::Tray))
+            { runtime_modules::SetActive(runtime_modules::Module::Tray, 0); WaitForSingleObject(stop, 100); registrationRetry.Reset(); continue; }
             DWORD currentExplorer = 0;
             GetWindowThreadProcessId(GetShellWindow(), &currentExplorer);
             if (currentExplorer != retryExplorer)
@@ -273,6 +277,8 @@ struct Service::Impl
                 snapshot.error = error; snapshot.icons.clear(); Changed();
                 connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
+            runtime_modules::SetError(runtime_modules::Module::Tray, error);
+            runtime_modules::SetActive(runtime_modules::Module::Tray, current ? 1u : 0u);
             if (!current) { registrationRetry.Failed(error, GetTickCount64()); continue; }
             registrationRetry.Reset();
             if (!symbolsRequested)
@@ -452,7 +458,7 @@ struct Service::Impl
                     PruneGeometries();
                     if (focus.Current() && !FocusIconExists()) { CancelFocus(); menuPlacement.Cancel(); }
                 }
-                if (!Read(state.ready) || !IsWindow(current->window)) break;
+                if (!runtime_modules::Allowed(runtime_modules::Module::Tray) || !Read(state.ready) || !IsWindow(current->window)) break;
                 const DWORD result = WaitForMultipleObjects(3, handles, FALSE, 1000);
                 if (result == WAIT_OBJECT_0 || result == WAIT_OBJECT_0 + 1) break;
             }
@@ -461,6 +467,7 @@ struct Service::Impl
                 CancelFocus(); menuPlacement.Cancel(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; Changed();
             }
             current.reset();
+            runtime_modules::SetActive(runtime_modules::Module::Tray, 0);
         }
     }
 };
@@ -497,6 +504,7 @@ void Service::ClearGeometries()
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
     std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
+    if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return false;
     Icon icon;
     RECT geometry{};
     {
@@ -591,6 +599,7 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
 bool Service::ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,
     FocusOrigin focus, std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
+    if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return false;
     if (!expectedIdentity)
     {
         const auto snapshot = Current();

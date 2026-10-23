@@ -214,6 +214,22 @@ void TestCodec()
     const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
+    snowdesktop::runtime_modules::Snapshot moduleStatus;
+    moduleStatus.policyRevision = 7;
+    snowdesktop::runtime_modules::Status resident;
+    resident.module = snowdesktop::runtime_modules::Module::Taskbar;
+    resident.allowed = false; resident.active = 0; resident.residencyKnown = false;
+    resident.targets.push_back({123, L"explorer.exe", true}); moduleStatus.modules.push_back(resident);
+    const auto statusCopy = Unpack<snowdesktop::runtime_modules::Snapshot>(Pack(moduleStatus));
+    Check(statusCopy.policyRevision == 7 && statusCopy.modules.size() == 1 && !statusCopy.modules[0].allowed &&
+        !statusCopy.modules[0].active && !statusCopy.modules[0].residencyKnown && statusCopy.modules[0].targets[0].explorer && statusCopy.modules[0].targets[0].process == 123,
+        "disabled behavior, unknown residency and an Explorer image remain distinct across IPC");
+    GeneralSettings moduleSettings;
+    moduleSettings.showAdvancedSettings = true;
+    moduleSettings.runtimeModules.allowed = {false, true, false, false, true};
+    const auto moduleCopy = Unpack<GeneralSettings>(Pack(moduleSettings));
+    Check(moduleCopy.showAdvancedSettings && moduleCopy.runtimeModules == moduleSettings.runtimeModules,
+        "five independent module policies and About visibility cross the private settings process boundary");
     GeneralSettings extensions;
     for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
     {

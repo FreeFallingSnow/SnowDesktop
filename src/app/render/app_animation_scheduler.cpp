@@ -28,7 +28,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
     motion::SetRuntimePreferences(generalSettings_.animationMode,
         generalSettings_.popupAnimationEffect, generalSettings_.animationSpeed,
         generalSettings_.animationFrameLimit, generalSettings_.animationEnergySaver,
-        generalSettings_.animationOnBattery, dockSettings_.windowEffect,
+        generalSettings_.animationOnBattery, (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize) ? dockSettings_.windowEffect : 0),
         static_cast<int>(dockSettings_.position));
 
     const bool fade = generalSettings_.popupAnimationEffect == motion::Fade;

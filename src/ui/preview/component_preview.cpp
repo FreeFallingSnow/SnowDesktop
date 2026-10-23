@@ -5,6 +5,7 @@
 #include "widget/preview/widget_preview_stage.h"
 #if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
 #include "app/features/wallpaper_engine_capture.h"
+#include "platform/runtime_module_policy.h"
 #endif
 
 #include <dwmapi.h>
@@ -872,6 +873,12 @@ std::wstring Window::ModelIdentity(const Model& model) const
 Window::WallpaperBackdropLoadResult
 Window::LoadDesktopWallpaperBackdrop()
 {
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview))
+    {
+        CancelWallpaperEngineBackdropCapture(true);
+        wallpaperEngineCache_.reset();
+        desktopWallpaperEngineFrame_.reset();
+    }
     const POINT anchor{
         (menuBounds_.left + menuBounds_.right) / 2,
         (menuBounds_.top + menuBounds_.bottom) / 2,
@@ -1018,6 +1025,7 @@ void Window::StartWallpaperEngineBackdropCapture(
 {
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview)) return;
     WallpaperBackdropCaptureHandler captureHandler =
         wallpaperBackdropCaptureHandler_;
 #if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
@@ -1091,7 +1099,7 @@ void Window::FinishWallpaperEngineBackdropCapture(
     bool apply = false;
     {
         std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
-        apply = wallpaperEngineCaptureState_->completed &&
+        apply = runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) && wallpaperEngineCaptureState_->completed &&
             !wallpaperEngineCaptureState_->cancelled.load(
                 std::memory_order_relaxed) &&
             !wallpaperEngineCaptureState_->wallpaper.pixels.empty();

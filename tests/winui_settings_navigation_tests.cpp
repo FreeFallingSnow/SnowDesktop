@@ -377,6 +377,17 @@ int main()
         Check(noWindow.page == SettingsPage::StatusBar && noWindow.focusId == "statusBar.noWindow",
             "the no-window scene has an independent focus destination");
     }
+    {
+        SettingsShellNavigationState modules;
+        const auto route = SettingsRoute::ForPage(SettingsPage::RuntimeModules);
+        Check(route.IsValid() && SettingsPageKey(route.page) == "runtime-modules", "module route is stable and appended");
+        Check(!modules.IsRouteAvailable(route) && !modules.Navigate(route), "advanced module route is inaccessible by default");
+        (void)modules.SetVisibility({false, false, true});
+        Check(modules.Navigate(route), "showing advanced settings enables the module destination");
+        const auto hidden = modules.SetVisibility({false, false, false});
+        Check(hidden && hidden->page == SettingsPage::About && hidden->focusId == "about.showAdvancedSettings" && !modules.CanGoBack(),
+            "hiding advanced settings returns to About and removes hidden history entries");
+    }
     if (failures != 0)
     {
         std::cerr << failures << " WinUI settings navigation check(s) failed\n";

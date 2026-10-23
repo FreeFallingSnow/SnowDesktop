@@ -489,6 +489,8 @@ public:
         const PersonalizationSettings& appearance,
         const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
     {
+        hookEnabled = hookEnabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar);
+        if (!hookEnabled) snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 0);
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
         if (!injectionInFlight_.load(std::memory_order_acquire) &&
@@ -717,6 +719,7 @@ public:
         }
         if (injectionCancelEvent_)
             ResetEvent(injectionCancelEvent_);
+        snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, ERROR_IO_PENDING);
         injectionInFlight_.store(true, std::memory_order_release);
         try
         {
@@ -894,6 +897,7 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
         const std::vector<HWND>& taskbars)
     {
+        if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar)) return false;
         const DWORD resumed = snowdesktop::taskbar_hook::ResumeTaskbarThreads(
             taskbars, expectedExplorerProcessId, GetCurrentProcessId(), injectionCancelEvent_);
         if (resumed == ERROR_SUCCESS)
@@ -905,6 +909,8 @@ private:
             }
             std::lock_guard lock(mutex_);
             if (!state_ || state_->explorerProcessId != expectedExplorerProcessId) return false;
+            snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, ERROR_SUCCESS);
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
             injectedExplorerProcessId_ = expectedExplorerProcessId;
             return true;
         }
@@ -928,6 +934,7 @@ private:
             expectedExplorerProcessId);
 
         snowdesktop::taskbar_hook::ConnectionStage stage{};
+        if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar)) return false;
         const DWORD error = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(taskbar, taskbars,
             expectedExplorerProcessId, GetCurrentProcessId(), selectedHookPath_, explorerProcess,
             injectionCancelEvent_, [this] {
@@ -962,12 +969,17 @@ private:
             state_->explorerProcessId == expectedExplorerProcessId &&
             snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
                 taskbars, expectedExplorerProcessId, GetCurrentProcessId());
-        if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
+        if (connected)
+        {
+            injectedExplorerProcessId_ = expectedExplorerProcessId;
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
+        }
         return connected;
     }
 
     bool Fail(DWORD expectedExplorerProcessId, DWORD error)
     {
+        snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, error);
         std::lock_guard lock(mutex_);
         if (state_ && state_->explorerProcessId == expectedExplorerProcessId)
         {

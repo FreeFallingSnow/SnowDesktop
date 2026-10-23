@@ -44,6 +44,7 @@ enum class SettingsPage : std::uint8_t
     QuickNavigation,
     ThemeManager,
     IconLibrary,
+    RuntimeModules,
 };
 
 /**

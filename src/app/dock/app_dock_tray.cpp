@@ -65,7 +65,7 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
 {
     namespace rules = snowdesktop::dock_tray;
     const auto* rule = rules::FindRule(dockSettings_.trayApplications, executable);
-    if (!generalSettings_.dockEnabled || !rule || !rule->enabled || exitRequested_) return false;
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray) || !generalSettings_.dockEnabled || !rule || !rule->enabled || exitRequested_) return false;
     // Existing task windows retain normal Dock activation/restoration/minimize.
     if (itemIndex < items_.size() && GetDockWindowVisualState(itemIndex) != DockWindowVisualState::Closed)
     { if (dockTrayPopup_) CloseCollectionPopup(false); return false; }

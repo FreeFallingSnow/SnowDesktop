@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings_ipc_codec.h"
+#include "platform/runtime_module_status.h"
 #include "settings_controller.h"
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
@@ -72,7 +73,12 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
     v.controlCenterSingleIcon, v.notifications);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
+SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
+SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets);
+SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
+SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
+    v.showAdvancedSettings, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
     v.forceRestartHotkeyEnabled, v.forceRestartHotkeyModifiers, v.forceRestartHotkeyVirtualKey,
@@ -165,7 +171,7 @@ SD_IPC_FIELDS(WidgetSettingsSearchDescriptor,
     v.visible);
 SD_IPC_FIELDS(SettingsSearchIndexInput,
     v.languageTag, v.staticSettings, v.widgets, v.developerToolsVisible,
-    v.debugVisible);
+    v.debugVisible, v.advancedSettingsVisible);
 SD_IPC_FIELDS(widget_runtime::InteractionValue,
     v.type, v.boolean, v.integer, v.number,
     v.string, v.array, v.object);

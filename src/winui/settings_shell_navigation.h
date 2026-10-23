@@ -15,6 +15,7 @@ struct SettingsShellPageVisibility
 {
     bool developerTools = false;
     bool debug = false;
+    bool advancedSettings = false;
 
     [[nodiscard]] bool Allows(SettingsPage page) const noexcept;
 

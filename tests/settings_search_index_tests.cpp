@@ -403,6 +403,16 @@ int main(int argc, char* argv[])
             contains("contextMenu.hidePageManagement") && contains("contextMenu.hideMoreManagement"),
             "menu search exposes expansion only outside Win10 styles and always exposes page hiding");
     }
+    {
+        SettingsSearchIndexInput modules;
+        StaticSettingSearchDescriptor descriptor;
+        descriptor.page = SettingsPage::RuntimeModules; descriptor.focusId = "runtimeModules.taskbar"; descriptor.label = L"ModuleLoadingProbe";
+        modules.staticSettings.push_back(descriptor);
+        SettingsSearchIndex hidden(modules);
+        Check(hidden.Search(L"ModuleLoadingProbe").empty(), "hidden advanced modules cannot leak through search");
+        modules.advancedSettingsVisible = true; hidden.Rebuild(modules);
+        Check(hidden.Search(L"ModuleLoadingProbe").size() == 1, "module search follows the About visibility preference");
+    }
     TestNavigationAndFocus();
     TestConditionalPagesAndNoLeaks();
     TestWidgetFields();

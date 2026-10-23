@@ -1525,6 +1525,7 @@ private:
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
     void UpdateDockExternalMinimizeTargets();
+    void ApplyRuntimeModulePolicy();
     bool HandleDockExternalMinimize(HWND window, DWORD deadline);
     void PrepareDockWindowMinimize(HWND window, const wchar_t* origin);
     void HandleDockForegroundInteractionChanged();
@@ -4050,8 +4051,6 @@ private:
     bool systemTaskbarShellUiActive_ = false;
     std::unique_ptr<snowdesktop::NativeStartMenu> dockStartMenu_;
     HMONITOR dockStartMenuHeldMonitor_ = nullptr;
-    DockPosition dockStartMenuPosition_ = DockPosition::Bottom;
-    snowdesktop::start_menu::Placement dockStartMenuPlacement_;
     bool dockStartMenuWasPromoted_ = false;
     HMONITOR systemTaskbarShellUiMonitor_ = nullptr;
     bool systemTaskbarTaskViewActive_ = false;

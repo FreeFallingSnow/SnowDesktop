@@ -8,6 +8,7 @@
 #pragma once
 
 #include <windows.h>
+#include "platform/runtime_module_policy.h"
 
 #include <string>
 #include "diagnostics/diagnostic_log_modules.h"
@@ -26,6 +27,8 @@ struct GeneralSettings
     // scheduled task remains the source of truth; this field is deliberately
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
+    bool showAdvancedSettings = false;
+    snowdesktop::runtime_modules::Policy runtimeModules;
     bool softwareDesktopEnabled = true;
     bool softwareDesktopHotkeyEnabled = false;
     UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;

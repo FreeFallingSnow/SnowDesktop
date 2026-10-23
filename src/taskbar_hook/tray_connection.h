@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tray_protocol.h"
+#include "../platform/runtime_module_policy.h"
 #include <string>
 #include "../platform/hook_registration_retry.h"
 
@@ -19,6 +20,7 @@ DWORD AttachCollector(HWND window, SharedState& state, HMODULE& module,
     const wchar_t*& stage, ResolvePath&& path, HookConnectionApi api = {},
     hook_registration::Statistics* statistics = nullptr)
 {
+    if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return ERROR_ACCESS_DISABLED_BY_POLICY;
     const auto epoch = static_cast<WPARAM>(Read(state.epoch));
     DWORD targetProcess = 0;
     const DWORD targetThread = GetWindowThreadProcessId(window, &targetProcess);
@@ -42,6 +44,7 @@ DWORD AttachCollector(HWND window, SharedState& state, HMODULE& module,
     const auto procedure = reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopTrayHookProc"));
     if (!procedure) return ERROR_PROC_NOT_FOUND;
     stage = L"installHook";
+    if (!runtime_modules::Allowed(runtime_modules::Module::Tray)) return ERROR_ACCESS_DISABLED_BY_POLICY;
     const HHOOK hook = api.install(WH_CALLWNDPROC, procedure, module, targetThread);
     const DWORD registrationError = hook ? ERROR_SUCCESS : (GetLastError() ? GetLastError() : ERROR_GEN_FAILURE);
     if (statistics)

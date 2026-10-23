@@ -834,7 +834,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
     SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
-    SettingsPage::IconLibrary,
+    SettingsPage::IconLibrary, SettingsPage::RuntimeModules,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
@@ -1024,6 +1024,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     appearance.appliedFont = [] { return app_fonts::Selection{}; };
     shell->SetPersonalizationPageActions(std::move(appearance));
     DockPageActions dock; dock.themeLibrary = themeLibrary; shell->SetDockPageActions(std::move(dock));
+    const auto modulePreviewPolicy = std::make_shared<runtime_modules::Policy>();
+    shell->SetRuntimeModulesQuery([modulePreviewPolicy](auto completed) {
+        runtime_modules::Snapshot snapshot;
+        for (std::size_t i = 0; i < runtime_modules::kCount; ++i)
+        {
+            runtime_modules::Status status; status.module = static_cast<runtime_modules::Module>(i);
+            status.allowed = modulePreviewPolicy->allowed[i]; status.active = status.allowed && i == 0 ? 1u : 0u;
+            if (i < 2) status.targets.push_back({42, L"explorer.exe", true});
+            snapshot.modules.push_back(std::move(status));
+        }
+        completed(std::move(snapshot));
+    });
     CalendarPageActions calendarActions;
     calendarActions.events = [english](std::uint64_t) -> std::optional<std::vector<calendar::CalendarEvent>> {
         std::vector<calendar::CalendarEvent> result;
@@ -1338,6 +1350,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
+        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules;
+        snapshot.values.general.runtimeModules.allowed.fill(!disabled);
+        *modulePreviewPolicy = snapshot.values.general.runtimeModules;
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
         snapshot.values.general.statusBar.batteryPercentage = expanded;

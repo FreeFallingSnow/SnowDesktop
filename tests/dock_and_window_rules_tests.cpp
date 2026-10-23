@@ -724,9 +724,9 @@ void CheckTaskbarMinimizeProtection()
 
     DockSettings settings;
     settings.suppressSystemTaskbar = false;
-    Check(ShouldProtectAutoHideTaskbar(settings, false, true) &&
+    Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
         !ShouldProtectAutoHideTaskbar(settings, true, false),
-        "native auto-hide protection is independent of Dock enablement");
+        "native auto-hide alone must not enable protection without an active Dock");
     settings.position = DockPosition::Left;
     Check(ShouldProtectAutoHideTaskbar(settings, true, true),
         "a side Dock does not exclude passive taskbar activation on other screens");

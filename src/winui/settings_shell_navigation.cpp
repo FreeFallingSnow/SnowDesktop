@@ -65,6 +65,8 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
 {
     switch (page)
     {
+    case SettingsPage::RuntimeModules:
+        return advancedSettings;
     case SettingsPage::DeveloperTools:
         return developerTools;
     case SettingsPage::Debug:
@@ -233,6 +235,12 @@ std::optional<SettingsRoute> SettingsShellNavigationState::SetVisibility(
         SettingsPage fallbackPage = SettingsPage::General;
         if (active.page == SettingsPage::DeveloperTools)
             fallbackPage = SettingsPage::Widgets;
+        else if (active.page == SettingsPage::RuntimeModules)
+        {
+            history_.assign(1, SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"));
+            historyIndex_ = 0;
+            return Route();
+        }
         else if (active.page == SettingsPage::Debug)
             fallbackPage = SettingsPage::About;
         history_.assign(1, SettingsRoute::ForPage(fallbackPage));

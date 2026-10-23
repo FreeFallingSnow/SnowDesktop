@@ -1,4 +1,6 @@
 #include "settings/general_settings.h"
+#include "taskbar_hook/taskbar_connection.h"
+#include "taskbar_hook/tray_connection.h"
 #include "settings/personalization_initialization.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "theme/personalization.h"
@@ -404,6 +406,50 @@ void TestInitialPersonalization()
 
 int main(int argc, char** argv)
 {
+    {
+        namespace modules = snowdesktop::runtime_modules;
+        const auto modulePath = std::filesystem::temp_directory_path() / (L"SnowDesktopModules-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings original;
+        Check(!original.showAdvancedSettings, "advanced settings are hidden in existing and new profiles");
+        for (const bool value : original.runtimeModules.allowed) Check(value, "module loading is permitted on demand by default");
+        for (std::size_t i = 0; i < modules::kCount; ++i)
+        {
+            original.runtimeModules.allowed[i] = false;
+            original.showAdvancedSettings = i % 2 == 0;
+            Check(SaveGeneralSettings(modulePath.c_str(), original), "persist module permissions");
+            GeneralSettings restored;
+            Check(LoadGeneralSettings(modulePath.c_str(), restored) && restored.runtimeModules == original.runtimeModules && restored.showAdvancedSettings == original.showAdvancedSettings,
+                "hiding advanced settings does not reset individually disabled modules");
+        }
+        { std::ofstream fixture(modulePath); fixture << "{}"; }
+        GeneralSettings legacy;
+        Check(LoadGeneralSettings(modulePath.c_str(), legacy) && !legacy.showAdvancedSettings && legacy.runtimeModules == modules::Policy{}, "old profiles preserve on-demand defaults");
+        for (unsigned mask = 0; mask < 32; ++mask)
+        {
+            modules::Policy policy;
+            for (std::size_t i = 0; i < modules::kCount; ++i) policy.allowed[i] = (mask & (1u << i)) != 0;
+            modules::Apply(policy);
+            for (std::size_t i = 0; i < modules::kCount; ++i)
+                Check(modules::Allowed(static_cast<modules::Module>(i)) == policy.allowed[i], "module permission changes reach worker-thread gates independently");
+            Check(!modules::ProtectAutoHide(false, true, true, policy), "Windows auto-hide cannot start integration when Dock is off");
+            const bool protection = (mask & 1) != 0 && (mask & 4) != 0;
+            Check(modules::ProtectAutoHide(true, true, false, policy) == protection && modules::ProtectAutoHide(true, false, true, policy) == protection,
+                "minimize protection requires both application and taskbar modules, across independent module combinations");
+        }
+        modules::Policy disabled; disabled.allowed.fill(false); modules::Apply(disabled);
+        std::wstring missingImage = L"SnowDesktop-intentionally-missing-module.dll";
+        const auto blocked = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(nullptr, std::span<const HWND>{}, 0, 0, missingImage, nullptr, nullptr,
+            [&] { Check(false, "disabled module must not resolve an isolated replacement"); return std::wstring{}; });
+        Check(blocked == ERROR_ACCESS_DISABLED_BY_POLICY, "taskbar injection is blocked before loading even a missing DLL");
+        const auto trayState = std::make_unique<snowdesktop::tray::SharedState>();
+        HMODULE trayImage = nullptr; const wchar_t* trayStage = L"unchanged";
+        const auto trayBlocked = snowdesktop::tray::AttachCollector(nullptr, *trayState, trayImage, trayStage,
+            [&] { Check(false, "disabled tray module must not resolve or load any DLL"); return missingImage; });
+        Check(trayBlocked == ERROR_ACCESS_DISABLED_BY_POLICY && !trayImage, "disabled tray collection cannot resume a resident instance or register a new hook");
+        modules::Apply({});
+        std::error_code cleanupError; std::filesystem::remove(modulePath, cleanupError);
+    }
+
     TestInitialPersonalization();
     {
         // A reader may permit writes while forbidding delete/replace. The

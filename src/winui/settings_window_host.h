@@ -12,6 +12,7 @@
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"
 #include "home_about_page_model.h"
+#include "runtime_modules_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
 
@@ -50,6 +51,7 @@ struct SettingsWindowHostOptions
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;
     HomeAboutStatusProvider homeAboutStatus;
+    RuntimeModulesQuery runtimeModulesStatus;
     /** Runtime-only ownership warnings for the Windows auto-start setting. */
     std::function<GeneralStartupConflict()> startupConflict;
     /** Font actually active in the desktop host, independent of a settings child restart. */

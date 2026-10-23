@@ -10,7 +10,7 @@ void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
     // Refresh all monitors, then synchronously cloak their taskbars before
     // either the Dock or the application lets Windows minimize the source.
-    if (ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+    if ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
             IsSystemTaskbarAutoHideEnabled()))
     {
         RefreshSystemTaskbarAppearance(false);
@@ -229,10 +229,12 @@ bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 
 bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
-    return (generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
-        AppearanceRequiresTaskbarHook(settings) ||
-        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
-            settings.systemTaskbarAutoHide);
+    namespace modules = snowdesktop::runtime_modules;
+    return modules::Allowed(modules::Module::Taskbar) &&
+        ((generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
+         AppearanceRequiresTaskbarHook(settings) ||
+         (modules::Allowed(modules::Module::WindowMinimize) &&
+          ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled, settings.systemTaskbarAutoHide)));
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -465,10 +467,10 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             (void)RequestWindowsSystemLightThemeEnabled(*light);
     };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
+    const bool protectActivation = (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
     const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
-    const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;
+    const bool hookRequired = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && (appearanceRequired || protectActivation || suppressionRequested);
     if (!hookRequired)
     {
         applyClassicSystemTheme(false, dockSettings_.systemTaskbarAppearance);

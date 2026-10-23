@@ -1221,6 +1221,7 @@ public:
         }
         if (generalCommitted)
         {
+            app_.ApplyRuntimeModulePolicy();
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
@@ -2116,6 +2117,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    ApplyRuntimeModulePolicy();
     snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
     SyncStatusBar();

@@ -37,6 +37,8 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.pageNavigationNextVirtualKey !=
             after.pageNavigationNextVirtualKey;
     return shortcutChanged &&
+        before.showAdvancedSettings == after.showAdvancedSettings &&
+        before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
         before.diagnosticLogModules == after.diagnosticLogModules &&
@@ -70,6 +72,8 @@ inline bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
     const GeneralSettings& after) noexcept
 {
     return before.diagnosticLogModules != after.diagnosticLogModules &&
+        before.showAdvancedSettings == after.showAdvancedSettings &&
+        before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
         before.softwareDesktopHotkeyEnabled == after.softwareDesktopHotkeyEnabled &&

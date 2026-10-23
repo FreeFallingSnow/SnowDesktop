@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings_rules.h"
+#include "platform/runtime_module_policy.h"
 #include "dock_attention_dot.h"
 #include "dock_layout_settings.h"
 #include "dock_fullscreen_policy.h"
@@ -130,10 +131,10 @@ inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
 {
-    // A minimizing application can activate a taskbar on any screen, regardless
-    // of Dock placement or animation. Permanent hiding also owns an auto-hide
-    // override even when the saved Windows preference was disabled.
-    return autoHideEnabled || (dockEnabled && settings.suppressSystemTaskbar);
+    // Protection belongs to an active Dock on any edge. Windows auto-hide
+    // alone must not activate integration. Permanent hiding also needs it
+    // when the original Windows auto-hide preference was disabled.
+    return snowdesktop::runtime_modules::ProtectAutoHide(dockEnabled, autoHideEnabled, settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)

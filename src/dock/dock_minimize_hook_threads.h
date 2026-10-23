@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include "../platform/runtime_module_policy.h"
 #include <span>
 #include <unordered_map>
 #include <algorithm>
@@ -19,6 +20,7 @@ public:
     explicit ThreadHooks(HookApi api = {}) : api_(api) {}
     bool Start(const std::wstring& path)
     {
+        if (!runtime_modules::Allowed(runtime_modules::Module::WindowMinimize)) return false;
         if (module_) return true;
         module_ = LoadLibraryExW(path.c_str(), nullptr,
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
@@ -54,6 +56,7 @@ public:
         if (!procedure_) return;
         for (const DWORD thread : threads)
         {
+            if (!runtime_modules::Allowed(runtime_modules::Module::WindowMinimize)) break;
             if (thread && !hooks_.contains(thread))
             {
                 auto& retry = retries_[thread];

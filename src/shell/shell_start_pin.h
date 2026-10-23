@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shell_start_pin_command.h"
+#include "platform/runtime_module_policy.h"
 #include <optional>
 #include <vector>
 
@@ -9,6 +10,9 @@ namespace snowdesktop::shell_start_pin
 inline HRESULT Invoke(const std::wstring& hookPath, Action action,
     const std::wstring& path, HWND owner, POINT point)
 {
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu))
+        return HRESULT_FROM_WIN32(ERROR_ACCESS_DISABLED_BY_POLICY);
+    snowdesktop::runtime_modules::Activity activity(snowdesktop::runtime_modules::Module::StartMenu);
     Request request;
     request.processId = GetCurrentProcessId();
     LARGE_INTEGER counter{};
