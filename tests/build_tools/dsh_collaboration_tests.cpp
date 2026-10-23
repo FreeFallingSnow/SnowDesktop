@@ -397,6 +397,12 @@ const logModel={snapshot:workspaceSnapshot,batch:{...workspaceSnapshot.current,l
  {key:'tests',downloadUrl:'/api/runs/'+priorRun+'/logs/tests',log:{lines:['unselected-test-marker']}}]}}};
 const selectedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'product'});
 const mergedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'all'});
+const deliveryRun={...logModel.batch.run,batchId:current,status:'failed',artifact:{productRuntime:true,files:2,runtime:'fixture-runtime',publicationComplete:true},activation:{status:'activated',completedUtc:'2026-10-02T10:31:00Z'}};
+const deliveryModel={snapshot:{...workspaceSnapshot,current:{...workspaceSnapshot.current,run:deliveryRun},runs:[deliveryRun]},batch:{...workspaceSnapshot.current,run:deliveryRun}};
+const deliveryText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
+const deliveryZh=renderBudget(deliveryModel,'zh','delivery',{detail:true,workKey:'batch:'+logical});
+deliveryRun.activation={status:'installed'};
+const installedText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -411,7 +417,7 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
@@ -431,6 +437,8 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
         "Overlay omitted a received broadcast or mixed another activity's messages");
     require(clientObserved.at("selectedLogText").str().find("selected-product-marker")!=std::string::npos&&clientObserved.at("selectedLogText").str().find("unselected-test-marker")==std::string::npos&&clientObserved.at("selectedLogText").str().find("Download redacted log")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("merged-product-marker")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("batch-tests-only")==std::string::npos,
         "Overlay log source selection or complete download entry lost its selected Run");
+    require(clientObserved.at("deliveryText").str().find("Activated in this attempt")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Attempt result")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Failed")!=std::string::npos&&clientObserved.at("deliveryZh").str().find("此轮已切换")!=std::string::npos&&clientObserved.at("installedText").str().find("Runtime installed; application was not running")!=std::string::npos,
+        "Overlay erased activation after a later failure or confused installed files with a running application");
     require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
         clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
         clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&

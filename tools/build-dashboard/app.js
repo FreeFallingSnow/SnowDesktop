@@ -425,6 +425,7 @@ let workspaceSnapshot=null,workItems=[],displayedRun=null,refreshRequested=false
 const batchCache=new Map(),phaseNames={investigating:"调查中",editing:"编辑中",waiting:"等待中",awaiting_input:"等待用户",blocked:"有阻塞",validating:"验证中",completed:"已完成",cancelled:"已取消",skipped:"无需构建",passed:"验证通过",failed:"验证失败",building:"构建 / 测试中"};
 const terminalStates=new Set(["passed","failed","invalidated","interrupted","cancelled","skipped","completed","fulfilled"]);
 function workLabel(state){return phaseNames[state]||label(state);}
+function activationLabel(value,product){return ({activated:"此轮已切换",installed:"已更新运行目录 · 应用未运行","already-current":"运行文件已是此构建",superseded:"保留较新构建","restored-after-failure":"切换失败，已恢复原构建",failed:"切换失败",pending:"正在切换","not-product-release":"不适用",unavailable:"回执不可用"})[value?.status]||(value?.status|| (product?"未记录":"不适用"));}
 function activityTime(item){return Date.parse(item.completedUtc||item.lastProgressUtc||item.buildStartedUtc||item.createdUtc||item.openedUtc||"")||0;}
 function presenceState(task,batch=null){
  const reported=task.phase||task.display||task.state||"unknown";
@@ -568,7 +569,7 @@ function renderWorkDetail(group,snapshot,batch){
  }));
  if(!timeline.length)$("workTimeline").append(element("p","暂无活动记录","empty"));
  const delivery=[];
- for(const run of group.runs)if(run.artifact){const card=element("article",null,"delivery-record"),artifact=run.artifact;card.append(element("h2",artifact.productRuntime?"产品运行文件":"测试产物"),element("p",time(run.completedUtc||run.createdUtc)+" · "+workLabel(run.status)));detail(card,"文件数",artifact.files);detail(card,"位置",artifact.runtime);detail(card,"保存状态",artifact.publicationComplete===true?"已完成":"未确认");detail(card,"应用切换","未记录");delivery.push(card);}
+ for(const run of group.runs)if(run.artifact){const card=element("article",null,"delivery-record"),artifact=run.artifact;card.append(element("h2",artifact.productRuntime?"产品运行文件":"测试产物"),element("p",time(run.completedUtc||run.createdUtc)));detail(card,"文件数",artifact.files);detail(card,"位置",artifact.runtime);detail(card,"保存状态",artifact.publicationComplete===true?"已完成":"未确认");detail(card,"此轮切换",activationLabel(run.activation,artifact.productRuntime));if(run.activation?.completedUtc)detail(card,"切换时间",time(run.activation.completedUtc));if(run.activation?.error)card.append(element("p",run.activation.error,"bad"));detail(card,"本轮结果",workLabel(run.status));delivery.push(card);}
  if(!delivery.length)delivery.push(element("p","暂无产物","empty"));$("deliveryRecords").replaceChildren(...delivery);
  setWorkTab(workView.tab,false);
 }

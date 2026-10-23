@@ -154,6 +154,20 @@ def identity(value):
         return None
     return {k: value.get(k) for k in ("algorithm", "digest", "fileCount", "head")}
 
+def activation_view(record, run_id):
+    value, artifact = record.get("activation"), record.get("artifact")
+    if not isinstance(value, dict):
+        return None
+    if (not isinstance(artifact, dict) or value.get("runId") != run_id
+            or not HEX.fullmatch(str(value.get("candidate")))
+            or not re.fullmatch(r"[a-f0-9]{64}", str(value.get("artifactDigest")))
+            or value.get("candidate") != artifact.get("candidate")
+            or value.get("artifactDigest") != artifact.get("manifestDigest")):
+        return {"status": "unavailable", "error": "Activation record does not match this Run artifact."}
+    return {**{key: value.get(key) for key in ("runId", "candidate", "artifactDigest", "completedUtc", "sourceCapturedUtc", "artifactCreatedUtc")},
+            **{key: redact(value.get(key) or "") for key in ("status", "path", "error")},
+            "sha256": value.get("sha256") if re.fullmatch(r"[a-fA-F0-9]{64}", str(value.get("sha256"))) else None}
+
 def task_view(entry, observed=None):
     check = entry.get("check") or {}
     state = entry.get("state", "unknown")
@@ -671,6 +685,7 @@ class Store:
                 "artifact": ({key: record["artifact"].get(key) for key in
                               ("id", "candidate", "manifestDigest", "runtime", "profile", "files", "bytes", "productRuntime", "publicationComplete", "reuseAllowed")}
                              if isinstance(record.get("artifact"), dict) else None),
+                "activation": activation_view(record, run_id),
                 "verification": verification, "evidence": evidence_view(record.get("evidence")),
                 "action": request.get("action"), "mode": request.get("mode"), "configuration": request.get("configuration"),
                 "status": status, "persistedStatus": record.get("status"), "ownerState": process, "ownerPid": (record.get("owner") or {}).get("pid"),

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.19';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.20';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   check:['基础检查','Basic checks'],logSearch:['搜索日志','Search log'],dataTime:['记录时间','Recorded at'],title:['SnowDesktop 协作','SnowDesktop collaboration']
  });
  Object.assign(words,{sourceLog:['日志来源','Log source'],allStages:['全部阶段','All stages'],downloadLog:['下载脱敏日志','Download redacted log'],downloadingLog:['下载中','Downloading'],source_product:['产品构建','Product build'],source_tests:['测试构建与执行','Test build and execution'],source_execution:['执行','Execution'],source_stdout:['执行器输出','Executor output'],source_stderr:['执行器诊断','Executor diagnostics']});
+ Object.assign(words,{activation_activated:['此轮已切换','Activated in this attempt'],activation_installed:['已更新运行目录 · 应用未运行','Runtime installed; application was not running'],'activation_already-current':['运行文件已是此构建','Runtime already matches this build'],activation_superseded:['保留较新构建','Newer build retained'],'activation_restored-after-failure':['切换失败，已恢复原构建','Activation failed; previous build restored'],activation_failed:['切换失败','Activation failed'],activation_pending:['正在切换','Activating'],'activation_not-product-release':['不适用','Not applicable'],activation_unavailable:['回执不可用','Receipt unavailable'],activationTime:['切换时间','Activation time'],attemptResult:['本轮结果','Attempt result'],notApplicable:['不适用','Not applicable']});
  const dictionaries=Object.fromEntries(['zh','en'].map((lang,index)=>[lang,Object.fromEntries(Object.entries(words).map(([key,value])=>[key,value[index]]))]));
  const tabs=['activity','participants','builds','validation','delivery'],storageKey='snow-collaboration-view.v1';
  const endedStates=new Set(['passed','failed','cancelled','invalidated','interrupted','skipped','completed','fulfilled']);
@@ -386,8 +387,9 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    !work?.batches.length&&!runRecords.length?empty(t('noBuildYet')):null,logsView(),fold(t('executionRun'),runsView(),'runs'),fold(t('history'),historyView(),'attempt-history'));
   const deliveryView=()=>{
    const records=(work?.runs||[]).filter(run=>run.artifact);
+   const activation=run=>run.activation?(words['activation_'+run.activation.status]?t('activation_'+run.activation.status):run.activation.status):t(run.artifact.productRuntime?'unrecorded':'notApplicable');
    return h(React.Fragment,null,...records.map(run=>h('article',{className:'sc-row',key:run.id},heading(run.artifact.productRuntime?'productArtifact':'testArtifact'),h('p',{className:'sc-muted'},date(run.completedUtc||run.createdUtc)),
-    detail(t('fileCount'),run.artifact.files),detail(t('artifactLocation'),run.artifact.runtime),detail(t('artifactSaved'),t(run.artifact.publicationComplete?'completed':'unrecorded')),detail(t('activation'),t('unrecorded')))),!records.length?empty():null);
+    detail(t('fileCount'),run.artifact.files),detail(t('artifactLocation'),run.artifact.runtime),detail(t('artifactSaved'),t(run.artifact.publicationComplete?'completed':'unrecorded')),detail(t('activation'),activation(run)),run.activation?.completedUtc?detail(t('activationTime'),date(run.activation.completedUtc)):null,run.activation?.error?h('p',{className:'sc-callout bad'},run.activation.error):null,detail(t('attemptResult'),label(run.status)))),!records.length?empty():null);
   };
   const renderers={activity:activityView,participants:participantsView,builds:buildsView,validation:validationView,delivery:deliveryView};
   const motionProps=kind=>({onPointerDown:event=>startMotion(event,kind),onPointerMove:moveMotion,onPointerUp:finishMotion,onPointerCancel:finishMotion,onLostPointerCapture:finishMotion});
