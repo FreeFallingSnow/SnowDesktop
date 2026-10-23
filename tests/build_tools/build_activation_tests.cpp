@@ -76,6 +76,55 @@ Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
     until([&]{return !owner_alive(launchedOwner);});
     std::cout<<"PASS immediate runtime replacement, graceful exit, retained arguments/data, credential isolation, editing overlap and stale-build rejection\n";
 }
+void closed_activation(const fs::path& repo,bool oldClosed=false) {
+    const auto root=temporary("closed-build-activation"),runtime=root/L"payload",target=root/L".build/Release",state=root/L".build/collaboration";
+    copy(repo,root,{"scripts/build_activate.ps1","scripts/build_candidate.ps1","scripts/build_inputs.ps1","scripts/build_entry.ps1","scripts/build_protocol.ps1"});
+    if(oldClosed){auto script=read(root/L"scripts/build_activate.ps1");replace(script,"$arguments=''","if(-not $process){$result.status='not-running';return $result};$arguments=''");write(root/L"scripts/build_activate.ps1",script,true);}
+    fs::create_directories(runtime);fs::create_directories(state);fs::create_directories(target/L"data");fs::create_directories(target/L"data.debug");
+    fs::copy_file(executable(),target/L"SnowDesktop.exe");fs::copy_file(executable(),runtime/L"SnowDesktop.exe");
+    write(runtime/L"SnowDesktop.exe",read(runtime/L"SnowDesktop.exe")+"new-closed-build");
+    write(target/L"generation.txt","old");write(runtime/L"generation.txt","new");
+    write(target/L"data/layout.json","closed layout");write(target/L"data.debug/profile.json","closed debug profile");
+    write(root/L"activate.ps1",R"PS(param([string]$Captured='2026-10-22T12:00:00Z',[switch]$FailInstall)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_candidate.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_activate.ps1')
+function Start-ActivatedApplication($Executable,$Arguments){
+ [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'unexpected-launch'),'attempted');throw 'Closed application must stay closed.'
+}
+$payload=Join-Path $PSScriptRoot 'payload'
+$files=@('SnowDesktop.exe','generation.txt'|ForEach-Object{[pscustomobject]@{path=$_;sha256=(Get-FileDigest (Join-Path $payload $_))}})
+$artifact=[pscustomobject]@{digest=('a'*64);runtime=$payload;manifest=[pscustomobject]@{productRuntime=$true;configuration='Release';
+ runId=('c'*32);candidate=('b'*32);capturedUtc=$Captured;createdUtc='2026-10-22T13:00:00Z';files=$files}}
+if($FailInstall){[IO.File]::Delete((Join-Path $payload 'generation.txt'))}
+Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
+)PS",true);
+    const auto invoke=[&](const std::vector<std::wstring>& extra={}){
+        std::vector<std::wstring> args{powershell().wstring(),L"-NoProfile",L"-File",(root/L"activate.ps1").wstring()};
+        args.insert(args.end(),extra.begin(),extra.end());const auto result=run(args,root,20);
+        require(result.code==0,"Closed activation command failed: "+result.out+result.err);return Json::parse(result.out);
+    };
+    const auto installed=invoke();
+    require(installed.at("status").str()=="installed"&&installed.at("oldPid").kind==Json::Kind::Null&&installed.at("newPid").kind==Json::Kind::Null&&
+        installed.at("replacedFiles").integer()==2&&read(target/L"generation.txt")=="new"&&read(target/L"SnowDesktop.exe")==read(runtime/L"SnowDesktop.exe"),
+        "Closed application did not receive successful build: "+installed.dump());
+    require(Json::parse(read(state/L"activation-current.json")).at("status").str()=="installed","Closed installation was not retained as the current runtime");
+    require(invoke().at("status").str()=="already-current","Unchanged closed runtime was installed again");
+    require(invoke({L"-Captured",L"2026-10-22T11:00:00Z"}).at("status").str()=="superseded","Older build replaced a newer closed installation");
+    const auto saved=read(target/L"SnowDesktop.exe");write(runtime/L"SnowDesktop.exe",saved+"failed-new-build");write(runtime/L"generation.txt","failed-new");
+    const auto failed=invoke({L"-Captured",L"2026-10-22T14:00:00Z",L"-FailInstall"});
+    require(failed.at("status").str()=="restored-after-failure"&&failed.at("newPid").kind==Json::Kind::Null&&
+        read(target/L"SnowDesktop.exe")==saved&&read(target/L"generation.txt")=="new","Closed installation failure did not restore the previous files");
+    require(!fs::exists(root/L"unexpected-launch")&&read(target/L"data/layout.json")=="closed layout"&&read(target/L"data.debug/profile.json")=="closed debug profile",
+        "Closed installation started the application or modified user data");
+    if(!oldClosed){const auto control=run({executable().wstring(),repo.wstring(),L"--closed-old"},root,30,{},true);
+        require(control.code==1&&control.err.find("Closed application did not receive successful build")!=std::string::npos,
+            "Former closed-state behavior did not fail the delivery assertion: "+control.out+control.err);}
+    std::cout<<"PASS closed runtime installation, no launch, unchanged/stale checks, rollback and old-behavior delivery failure\n";
+}
 void ordering(const fs::path& repo) {
     const auto root=temporary("activation-order"),scripts=root/L"scripts",state=root/L".build/collaboration";
     fs::create_directories(state);fs::create_directories(root/L"output/collaboration");
@@ -133,5 +182,6 @@ $code=Invoke-CandidateBatchPipeline $PSScriptRoot $request $context $record
 }
 int main(int argc,char** argv){
     if(argc==3&&std::string(argv[1])=="--activation-host"){try{return host(fs::path(wide(argv[2])));}catch(...){return 82;}}
-    return test_main(argc,argv,[&](const fs::path& repo){activation(repo);ordering(repo);});
+    if(argc==3&&std::string(argv[2])=="--closed-old"){try{closed_activation(fs::path(wide(argv[1])),true);return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+    return test_main(argc,argv,[&](const fs::path& repo){activation(repo);closed_activation(repo);ordering(repo);});
 }

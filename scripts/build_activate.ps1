@@ -72,24 +72,30 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
             $observed=Get-Process -Id $ownerId -ErrorAction SilentlyContinue
             if($observed -and $observed.Path -eq $executable){$process=$observed;break}
         }
-        if(-not $process){$result.status='not-running';return $result}
-        $result.oldPid=$ownerId
-        $command=(Get-CimInstance Win32_Process -Filter ('ProcessId = '+$ownerId) -ErrorAction Stop).CommandLine
-        $launch=[regex]::Match($command,'^\s*(?:"(?<exe>[^"]+)"|(?<exe>\S+))(?<args>.*)$')
-        if(-not $launch.Success -or [IO.Path]::GetFullPath($launch.Groups['exe'].Value) -ne $executable){throw 'Cannot preserve the running application arguments.'}
-        $arguments=$launch.Groups['args'].Value.Trim()
-        # Internal handoff handles/PIDs describe the previous launch only.
-        $arguments=([regex]::Replace($arguments,'(^|\s)--(?:wait-for-pid|watch-process-handle)=\d+(?=\s|$)',' ')).Trim()
+        $arguments=''
+        if($process){
+            $result.oldPid=$ownerId
+            $command=(Get-CimInstance Win32_Process -Filter ('ProcessId = '+$ownerId) -ErrorAction Stop).CommandLine
+            $launch=[regex]::Match($command,'^\s*(?:"(?<exe>[^"]+)"|(?<exe>\S+))(?<args>.*)$')
+            if(-not $launch.Success -or [IO.Path]::GetFullPath($launch.Groups['exe'].Value) -ne $executable){throw 'Cannot preserve the running application arguments.'}
+            $arguments=$launch.Groups['args'].Value.Trim()
+            # Internal handoff handles/PIDs describe the previous launch only.
+            $arguments=([regex]::Replace($arguments,'(^|\s)--(?:wait-for-pid|watch-process-handle)=\d+(?=\s|$)',' ')).Trim()
+        }elseif(@(Get-Process SnowDesktop -ErrorAction SilentlyContinue|Where-Object Path -eq $executable).Count){
+            throw 'The target application is running without its control window; runtime was retained.'
+        }
         $changes=@($Artifact.manifest.files|Where-Object{
             $target=Resolve-CandidatePath $targetRoot $_.path
             -not [IO.File]::Exists($target) -or (Get-FileDigest $target) -ne $_.sha256
         })
-        if(-not $changes.Count){$result.status='already-current';$result.newPid=$ownerId;$result.sha256=Get-FileDigest $executable;return $result}
+        if(-not $changes.Count){$result.status='already-current';$result.newPid=$result.oldPid;$result.sha256=Get-FileDigest $executable;return $result}
         $backup=Resolve-CandidatePath $Root ('.build/activation-backups/'+$result.runId+'-'+[Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($backup);$result.backup=$backup
         & $CheckCancellation
-        if(-not [SnowDesktop.Build.ActivationControl]::PostMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)){throw 'Graceful application exit request failed.'}
-        if(-not $process.WaitForExit(15000)){throw 'Application did not exit gracefully; runtime was retained.'}
+        if($process){
+            if(-not [SnowDesktop.Build.ActivationControl]::PostMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)){throw 'Graceful application exit request failed.'}
+            if(-not $process.WaitForExit(15000)){throw 'Application did not exit gracefully; runtime was retained.'}
+        }
         $replaced=[Collections.Generic.List[object]]::new()
         try{
             foreach($file in $changes){
@@ -106,10 +112,13 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
                 [IO.File]::Copy((Resolve-CandidatePath $Artifact.runtime $file.path),$target,$false)
                 if((Get-FileDigest $target) -ne $file.sha256){throw 'Installed runtime hash differs from the saved build.'}
             }
-            $started=Start-ActivatedApplication $executable $arguments
-            if($started.WaitForExit(3000)){throw ('New application exited during startup: '+$started.ExitCode)}
-            $result.newPid=$started.Id;$result.sha256=Get-FileDigest $executable
-            $result.replacedFiles=$changes.Count;$result.status='activated'
+            if($process){
+                $started=Start-ActivatedApplication $executable $arguments
+                if($started.WaitForExit(3000)){throw ('New application exited during startup: '+$started.ExitCode)}
+                $result.newPid=$started.Id
+            }
+            $result.sha256=Get-FileDigest $executable
+            $result.replacedFiles=$changes.Count;$result.status=if($process){'activated'}else{'installed'}
         }catch{
             $installError=$_
             for($index=$replaced.Count-1;$index -ge 0;$index--){
@@ -117,8 +126,11 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
                 if([IO.File]::Exists($item.target)){[IO.File]::Move($item.target,$item.backup+'.failed')}
                 if($item.hadOld){[IO.File]::Move($item.backup,$item.target)}
             }
-            $restored=Start-ActivatedApplication $executable $arguments
-            $result.newPid=$restored.Id;$result.status='restored-after-failure'
+            if($process){
+                $restored=Start-ActivatedApplication $executable $arguments
+                $result.newPid=$restored.Id
+            }
+            $result.status='restored-after-failure'
             throw $installError
         }
         return $result
@@ -128,7 +140,7 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         if($lease){
             try{
                 Write-CandidateJson $result (Join-Path $stateRoot ($result.runId+'.activation.json'))
-                if($result.status -in 'activated','already-current'){Write-CandidateJson $result (Join-Path $stateRoot 'activation-current.json')}
+                if($result.status -in 'activated','installed','already-current'){Write-CandidateJson $result (Join-Path $stateRoot 'activation-current.json')}
             }finally{
                 $lease.Dispose()
             }
