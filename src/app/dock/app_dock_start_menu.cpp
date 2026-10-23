@@ -25,34 +25,12 @@ void DesktopApp::ToggleWindowsStartMenu(DockContainer* dock)
     { native(); return; }
     auto* host = FindPersistentDockHost(dock);
     if (!host || !host->active || !host->monitor) { native(); return; }
-    MONITORINFO info{sizeof(info)};
-    if (!GetMonitorInfoW(host->monitor, &info)) { native(); return; }
-    snowdesktop::start_menu::Placement placement;
-    placement.screen = info.rcMonitor;
-    placement.work = info.rcWork;
-    placement.edge = static_cast<snowdesktop::start_menu::Edge>(dockSettings_.position);
-    placement.avoid = dock->GetInteractiveBounds();
-    OffsetRect(&placement.avoid, virtualLeft_, virtualTop_);
-    if (dock->IsMergedWithStatusBar() && statusBar_)
-        if (const auto strip = statusBar_->MergedStripBounds(host->monitor))
-        {
-            RECT combined{};
-            UnionRect(&combined, &placement.avoid, &*strip);
-            placement.avoid = combined;
-        }
-    UINT dpiX = 96, dpiY = 96;
-    if (FAILED(GetDpiForMonitor(host->monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;
-    placement.gap = MulDiv(8, static_cast<int>(dpiX), 96);
-    if (!snowdesktop::start_menu::Position(placement, SIZE{1, 1})) { native(); return; }
-
     // The periodic taskbar controller owns discovery/attachment. Never force
     // synchronous Shell visibility COM calls from the Start button handler.
     if (!dockStartMenu_) dockStartMenu_ = std::make_unique<snowdesktop::NativeStartMenu>();
-    if (!dockStartMenu_->Open(controlHwnd_ ? controlHwnd_ : hwnd_, host->monitor, placement))
+    if (!dockStartMenu_->Open(host->monitor))
     { native(); return; }
     dockStartMenuHeldMonitor_ = host->monitor;
-    dockStartMenuPosition_ = dockSettings_.position;
-    dockStartMenuPlacement_ = placement;
     dockStartMenuWasPromoted_ = host->promoted;
     host->promoted = true;
     host->mergedCloseAfterInteraction = false;
@@ -71,29 +49,11 @@ void DesktopApp::UpdateDockStartMenu()
         [monitor](const auto& host) { return host && host->active && host->monitor == monitor; });
     MONITORINFO info{sizeof(info)};
     if (!generalSettings_.dockEnabled || !dockSettings_.startMenuKeepTaskbarHidden ||
-        !dockSettings_.showWindowsButton || dockSettings_.position != dockStartMenuPosition_ ||
-        desktopPassthroughActive_ || !GetMonitorInfoW(monitor, &info) ||
-        !EqualRect(&info.rcMonitor, &dockStartMenuPlacement_.screen) ||
+        !dockSettings_.showWindowsButton || desktopPassthroughActive_ ||
+        !GetMonitorInfoW(monitor, &info) ||
         found == persistentDockHosts_.end() ||
         (!dockSettings_.suppressSystemTaskbar && !IsSystemTaskbarAutoHideEnabled()))
         dockStartMenu_->Cancel(false, snowdesktop::NativeStartMenu::CancelReason::ConfigurationChanged);
-    if (found != persistentDockHosts_.end() && (*found)->container)
-    {
-        RECT avoid = (*found)->container->GetInteractiveBounds();
-        OffsetRect(&avoid, virtualLeft_, virtualTop_);
-        if ((*found)->container->IsMergedWithStatusBar() && statusBar_)
-            if (const auto strip = statusBar_->MergedStripBounds(monitor))
-            {
-                RECT combined{};
-                UnionRect(&combined, &avoid, &*strip);
-                avoid = combined;
-            }
-        auto current = dockStartMenuPlacement_;
-        current.avoid = avoid;
-        current.work = info.rcWork;
-        if (!snowdesktop::start_menu::PlacementStillFits(dockStartMenuPlacement_, current))
-            dockStartMenu_->Cancel(false, snowdesktop::NativeStartMenu::CancelReason::PlacementChanged);
-    }
     dockStartMenu_->Finish([&] {
         dockStartMenuHeldMonitor_ = nullptr;
         if (found != persistentDockHosts_.end())

@@ -4,6 +4,32 @@
 
 namespace snowdesktop::start_menu
 {
+enum class Dismissal { Closed, Cancelled, NotFound, ProtectionLost };
+
+// Keep the taskbar lease alive until the native Start menu is dismissed.
+// Observe/renew/wait/clock are the external Windows boundaries of this loop.
+template<class Observe, class Renew, class Wait, class Clock>
+Dismissal WaitForDismissal(bool seen, Observe observe, Renew renew, Wait wait, Clock clock)
+{
+    const auto started = clock();
+    auto renewed = started;
+    unsigned hidden = 0;
+    if (!renew()) return Dismissal::ProtectionLost;
+    while (wait(50))
+    {
+        const auto now = clock();
+        if (observe()) { seen = true; hidden = 0; }
+        else if (seen && ++hidden >= 2) return Dismissal::Closed;
+        else if (!seen && now - started >= 2000) return Dismissal::NotFound;
+        if (now - renewed >= 500)
+        {
+            if (!renew()) return Dismissal::ProtectionLost;
+            renewed = now;
+        }
+    }
+    return Dismissal::Cancelled;
+}
+
 // The worker completing is only half of an invocation. Keep it reserved until
 // the UI has released its Dock hold, including while a fallback is dispatched.
 class Invocation final
