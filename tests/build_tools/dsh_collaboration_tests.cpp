@@ -356,7 +356,8 @@ displayedVersions(panel);const rootVersion=panel.props['data-version'];
 // by the web dashboard. This carrier observes content, not native layout.
 const originalState=React.useState,originalEffect=React.useEffect;
 const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
-function renderBudget(model,lang='en'){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===3?{...value,tab:'validation'}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
+let lastRendered;
+function renderBudget(model,lang='en',tab='validation',preferences={}){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
 const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
 const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
 const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
@@ -371,6 +372,18 @@ mixedModel.batch.evidence={totalCount:1,tests:[{id:'7'.repeat(32),test:'Alpha',s
 const mixedText=renderBudget(mixedModel),mixedZh=renderBudget(mixedModel,'zh');
 mixedModel.batch.coverage.summary={...mixedModel.batch.coverage.summary,selected:1,executed:0,passed:0};mixedModel.batch.coverage.status='fulfilled';mixedModel.batch.coverage.completed=[];
 const referenceOnlyText=renderBudget(mixedModel);
+const logical='5'.repeat(32),current='6'.repeat(32),priorRun='7'.repeat(32);
+const workspaceSnapshot={current:{id:current,logicalBatchId:logical,attempt:2,phase:'editing',createdUtc:'2026-10-02T11:00:00Z',tasks:[{id:'former-agent',state:'finished',display:'waiting',check:{status:'passed'},plan:{}},{id:'current-editor',state:'editing',display:'editing',check:{status:'invalidated'},plan:{}}],log:{lines:[]}},
+ taskPresence:[{id:'former-agent',displayName:'Former conversation',phase:'waiting',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'current-editor',displayName:'Current editor',phase:'editing',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'old-investigation',displayName:'Old investigation',phase:'investigating',lastHeartbeatUtc:'2020-01-01T00:00:00Z',lastProgressUtc:'2020-01-01T00:00:00Z'}],
+ history:[{batchId:logical,logicalBatchId:logical,attempt:1,outcome:'failed',createdUtc:'2026-10-02T10:00:00Z',completedUtc:'2026-10-02T10:30:00Z',participants:['Former conversation','Current editor']}],
+ runs:[{id:priorRun,batchId:logical,status:'failed',task:'former-agent',log:{lines:['previous-only-log']}}],events:[]};
+const workspaceModel={snapshot:workspaceSnapshot,batch:workspaceSnapshot.current};
+renderBudget(workspaceModel,'en','participants',{detail:true,workKey:'batch:'+logical});
+function nodeText(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(nodeText).join(' ');return node&&typeof node==='object'&&node.type!=='style'?(node.children||[]).map(nodeText).join(' '):'';}
+function collectAttribute(node,attribute,result=[]){if(Array.isArray(node))node.forEach(item=>collectAttribute(item,attribute,result));else if(node&&typeof node==='object'){if(node.props?.[attribute])result.push({key:node.props[attribute],text:nodeText(node)});(node.children||[]).forEach(item=>collectAttribute(item,attribute,result));}return result;}
+const workspaceParticipants=collectAttribute(lastRendered,'data-participant'),workspaceActivities=collectAttribute(lastRendered,'data-activity');
+const workspaceBuilds=renderBudget(workspaceModel,'en','builds',{detail:true,workKey:'batch:'+logical});
+const workspaceParticipantsZh=renderBudget(workspaceModel,'zh','participants',{detail:true,workKey:'batch:'+logical});
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -385,11 +398,19 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
     const auto clientObserved=Json::parse(client.out);
+    const auto& participantRows=clientObserved.at("workspaceParticipants").items;
+    require(participantRows.size()==2&&participantRows[0].at("text").str().find("Ready")!=std::string::npos&&participantRows[1].at("text").str().find("Editing")!=std::string::npos,
+        "Current participant phases were replaced by heartbeat freshness or lost explicit batch readiness");
+    const auto& activityRows=clientObserved.at("workspaceActivities").items;
+    require(activityRows.size()==2&&activityRows[0].at("key").str()=="batch:"+std::string(32,'5')&&activityRows[1].at("text").str().find("Last recorded")!=std::string::npos,
+        "Overlay split repair attempts or presented an old investigation as currently running");
+    require(clientObserved.at("workspaceBuilds").str().find("previous-only-log")==std::string::npos&&clientObserved.at("workspaceParticipantsZh").str().find("已就绪")!=std::string::npos,
+        "Unstarted overlay attempt borrowed prior Run logs or participant status was untranslated");
     require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
         clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
         clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&

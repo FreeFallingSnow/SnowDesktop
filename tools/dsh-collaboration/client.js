@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.15';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.16';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -17,32 +17,132 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  Object.assign(words,{candidateRuns:['候选运行','Candidate runs'],capturedSource:['捕获来源','Captured source'],savedRuntime:['保存产物','Saved artifacts'],'candidate-capture':['捕获源码','Capture source'],'artifact-publish':['保存运行文件','Save runtime files'],'private-output-pending':['等待私有输出预检','Private output preflight pending'],productRuntime:['产品运行文件','Product runtime files'],testOutput:['所选测试输出','Selected test outputs']});
  Object.assign(words,{inputIdentity:['输入身份','Input identity'],buildDependencies:['编译依赖','Build dependencies'],runtimeFiles:['运行时文件','Runtime files'],actualModules:['实际模块','Actual modules'],sourceReports:['编译器报告','Compiler reports'],imageCount:['加载图像','Loaded images'],processCount:['进程','Processes'],resultReuse:['结果复用','Result reuse'],reusePermitted:['记录允许复用；此处没有复用执行记录','Reuse permitted by record; no reuse execution is recorded here'],moduleTimingNotice:['模块观察改变计时，不能直接与普通运行比较。','Module observation changes timing; it is not directly comparable with an ordinary run.'],inputReports:['输入身份与报告','Input identities and reports'],evidenceRun:['证据 / Run','Evidence / Run'],batchRound:['批次 / 逻辑轮次','Batch / logical round'],buildManifest:['编译依赖清单','Build dependency manifest'],fileStart:['文件输入 · 开始','File inputs · start'],fileEnd:['文件输入 · 结束','File inputs · end'],moduleReport:['模块报告','Module report'],moduleSet:['模块集合','Module set'],moreIssues:['另有原因未展开','Additional reasons not expanded'],fact_observed:['已采集','Observed'],fact_stable:['起止一致','Endpoints match'],fact_changed:['输入已改变','Inputs changed'],fact_incomplete:['采集不完整','Incomplete observation'],fact_unclosed:['依赖未闭合','Dependencies unclosed'],fact_unreviewed:['尚未审阅','Not reviewed'],fact_unavailable:['记录不可用','Record unavailable'],'fact_not-instrumented':['未启用模块观察','Module observation not enabled'],'fact_not-recorded':['未记录','Not recorded'],fact_unproven:['完整性未证明','Completeness unproven'],fact_closed:['范围已闭合','Scope closed'],fact_recorded:['身份已记录','Identity recorded'],fact_invalidated:['输入已改变','Inputs changed']});
  Object.assign(words,{fulfilled:['要求已满足（含证据引用）','Requirements fulfilled (including references)'],referenced:['引用原结果','Referenced original results'],referenceNotExecuted:['引用原结果（本次未执行）','Referenced original result (not executed this time)']});
+ Object.assign(words,{
+  activity:['动态','Activity'],activities:['活动','Activities'],participants:['参与对话','Participants'],builds:['构建','Builds'],delivery:['产物','Artifacts'],
+  activitySearch:['搜索活动、参与者','Search activities or participants'],activityState:['活动状态','Activity status'],active:['进行中','In progress'],recorded:['历史登记','Past registrations'],
+  backActivities:['返回活动','Back to activities'],latestAttempt:['最新轮次','Latest attempt'],lastPhase:['上次','Last recorded'],waitingReady:['等待就绪','Waiting for participants'],
+  readyPhase:['已就绪','Ready'],checkPending:['等待检查','Awaiting basic checks'],checkRunning:['检查中','Checking'],checkAttention:['检查需处理','Check needs attention'],
+  noBuildYet:['尚未构建','No build yet'],attempts:['构建记录','Build attempts'],activityMembers:['项任务','tasks'],activityBuilds:['次构建','builds'],
+  activityProgress:['进展','Progress'],openParticipants:['查看分工','View responsibilities'],openBuild:['查看构建','View build'],attemptOpened:['轮次登记','Attempt registered'],
+  attemptStarted:['开始执行','Execution started'],attemptFinished:['结果已保存','Result saved'],noRunLog:['本轮日志接口暂无内容','No log content returned for this attempt'],
+  productArtifact:['产品运行文件','Product runtime'],testArtifact:['测试产物','Test artifacts'],fileCount:['文件数','Files'],artifactLocation:['位置','Location'],
+  artifactSaved:['保存状态','Saved state'],activation:['应用切换','Activation'],heartbeat:['最后心跳','Last heartbeat'],participantCount:['参与者','Participants'],
+  check:['基础检查','Basic checks'],logSearch:['搜索日志','Search log'],dataTime:['记录时间','Recorded at'],title:['SnowDesktop 协作','SnowDesktop collaboration']
+ });
  const dictionaries=Object.fromEntries(['zh','en'].map((lang,index)=>[lang,Object.fromEntries(Object.entries(words).map(([key,value])=>[key,value[index]]))]));
- const tabs=['overview','tasks','validation','logs','messages','history'],storageKey='snow-collaboration-view.v1';
+ const tabs=['activity','participants','builds','validation','delivery'],storageKey='snow-collaboration-view.v1';
+ const endedStates=new Set(['passed','failed','cancelled','invalidated','interrupted','skipped','completed','fulfilled']);
+ const activityTime=item=>Math.max(0,...['completedUtc','closedUtc','lastProgressUtc','buildStartedUtc','createdUtc','openedUtc'].map(key=>Date.parse(item?.[key]||'')||0));
+ const latest=items=>[...items].sort((a,b)=>activityTime(b)-activityTime(a)||String(a.id).localeCompare(String(b.id)));
+ const recent=task=>{const stamp=Date.parse(task?.lastHeartbeatUtc||'');return Number.isFinite(stamp)&&Date.now()-stamp>=0&&Date.now()-stamp<=180000;};
+ function activitiesFor(snapshot,opened,cache){
+  const ledger=snapshot?.taskPresence||[],byId=new Map(ledger.map(task=>[task.id,task])),byName=new Map();
+  for(const task of ledger)if(task.displayName)byName.set(task.displayName,byName.has(task.displayName)?null:task);
+  const resolve=name=>byId.get(name)||byName.get(name)||{id:'origin:'+name,displayName:name};
+  const batches=new Map();
+  for(const entry of snapshot?.history||[])batches.set(entry.batchId,{...entry,id:entry.batchId,phase:entry.outcome,tasks:(entry.participants||[]).map(resolve)});
+  for(const entry of snapshot?.activeCandidates||[])batches.set(entry.id,{...entry,phase:entry.status,createdUtc:entry.capturedUtc,tasks:(entry.tasks||[]).map(resolve)});
+  for(const run of snapshot?.runs||[])if(run.batchId&&!batches.has(run.batchId))batches.set(run.batchId,{id:run.batchId,phase:run.status,createdUtc:run.createdUtc,completedUtc:run.completedUtc,tasks:run.task?[resolve(run.task)]:[]});
+  for(const [id,batch] of batches)if(cache?.has(id))batches.set(id,cache.get(id));
+  if(opened?.id)batches.set(opened.id,opened);
+  if(snapshot?.current)batches.set(snapshot.current.id,snapshot.current);
+  const groups=new Map(),linked=new Set();
+  for(const batch of batches.values()){
+   const key='batch:'+(batch.logicalBatchId||batch.id);
+   if(!groups.has(key))groups.set(key,{key,batches:[],members:new Map(),runs:[]});
+   const group=groups.get(key);group.batches.push(batch);
+   for(const member of batch.tasks||[]){const task=byId.get(member.id)||member;group.members.set(task.id,task);linked.add(task.id);}
+  }
+  for(const run of snapshot?.runs||[]){
+   let group=[...groups.values()].find(item=>item.batches.some(batch=>batch.id===run.batchId));
+   if(!group){const key='run:'+run.id;group={key,batches:[],members:new Map(),runs:[]};if(run.task){const task=resolve(run.task);group.members.set(task.id,task);linked.add(task.id);}groups.set(key,group);}
+   group.runs.push(run);
+  }
+  for(const task of ledger)if(!linked.has(task.id))groups.set('task:'+task.id,{key:'task:'+task.id,batches:[],members:new Map([[task.id,task]]),runs:[]});
+  for(const group of groups.values()){
+   group.batches=latest(group.batches);group.members=[...group.members.values()];
+   for(const batch of group.batches)if(batch.run&&!group.runs.some(run=>run.id===batch.run.id))group.runs.push(batch.run);
+   group.runs=latest(group.runs);const entry=group.batches[0]||group.runs[0];
+   group.state=entry?.phase||entry?.status||group.members[0]?.phase||'unknown';
+   group.liveBatch=group.batches.find(batch=>batch.id===snapshot?.current?.id||snapshot?.activeCandidates?.some(candidate=>candidate.id===batch.id))||null;
+   group.recorded=!group.liveBatch&&!endedStates.has(group.state)&&!group.runs.some(run=>run.ownerState==='alive'&&!endedStates.has(run.status))&&!group.members.some(recent);
+   group.kind=group.recorded?'recorded':['failed','interrupted','invalidated','blocked','attention','retirement-interrupted'].includes(group.state)?'attention':endedStates.has(group.state)?'done':'active';
+   group.timestamp=entry?activityTime(entry):Math.max(0,...group.members.map(activityTime));
+   if(group.liveBatch)group.timestamp=Math.max(group.timestamp,...group.members.map(activityTime));
+   group.buildCount=group.batches.filter(batch=>batch.run||batch.runId||batch.buildStartedUtc).length+group.runs.filter(run=>!group.batches.some(batch=>batch.id===run.batchId)).length;
+  }
+  return [...groups.values()].sort((a,b)=>b.timestamp-a.timestamp||a.key.localeCompare(b.key));
+ }
+ function activityScope(group,snapshot){
+  if(!group)return snapshot||{};
+  const ids=new Set(group.members.map(task=>task.id)),bids=new Set(group.batches.map(batch=>batch.id));
+  return {...snapshot,current:group.liveBatch,history:(snapshot?.history||[]).filter(entry=>bids.has(entry.batchId)),
+   taskPresence:(snapshot?.taskPresence||[]).filter(task=>ids.has(task.id)),taskPresenceTotal:group.members.length,runs:group.runs,
+   activeCandidates:(snapshot?.activeCandidates||[]).filter(entry=>bids.has(entry.id)),
+   waits:(snapshot?.waits||[]).filter(entry=>ids.has(entry.participant)||bids.has(entry.batchId)),
+   events:(snapshot?.events||[]).filter(entry=>ids.has(entry.sender)||ids.has(entry.target)),
+   acceptances:(snapshot?.acceptances||[]).filter(entry=>ids.has(entry.task)||bids.has(entry.batchId))};
+ }
  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v)),tone=value=>['passed','verified','eligible','passed-after-retry'].includes(value)?'good':['failed','attention','interrupted','invalidated','start-failed','exhausted-failed','environment-blocked','retirement-interrupted'].includes(value)?'bad':['editing','waiting','pending','awaiting_input','blocked','retrying','checking'].includes(value)?'wait':'info';
  function loadView(){
-  const initial={x:1,y:0,width:480,height:560,collapsed:false,tab:'overview',query:'',state:'active',historyQuery:'',historyState:'all',logQuery:'',errorsOnly:false,follow:true};
+  const initial={x:1,y:0,width:640,height:660,collapsed:false,tab:'activity',query:'',state:'all',historyQuery:'',historyState:'all',logQuery:'',errorsOnly:false,follow:true,workKey:'',batchId:null,detail:false,activityQuery:'',activityState:'all',folds:{},scrolls:{}};
   try{const raw=localStorage.getItem(storageKey);if(!raw||raw.length>65536)return initial;const saved=JSON.parse(raw);
    if(saved?.schema===1){const [x,y]=[[1,0],[1,1],[0,1],[0,0]][saved.corner]||[1,0];return{...initial,x,y,collapsed:saved.collapsed===true};}
-   if([2,3].includes(saved?.schema)){for(const key of ['x','y'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],0,1);for(const key of ['width','height'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],280,2000);initial.collapsed=saved.collapsed===true;if(tabs.includes(saved.tab))initial.tab=saved.tab;for(const key of ['query','historyQuery','logQuery'])if(typeof saved[key]==='string')initial[key]=saved[key].slice(0,200);for(const key of ['errorsOnly','follow'])if(typeof saved[key]==='boolean')initial[key]=saved[key];if(['active','all','editing','checking','waiting','attention','investigating','awaiting_input','blocked','validating','done'].includes(saved.state))initial.state=saved.state;if(['all','passed','failures','noBuild'].includes(saved.historyState))initial.historyState=saved.historyState;}
+   if([2,3,4].includes(saved?.schema)){for(const key of ['x','y'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],0,1);for(const key of ['width','height'])if(Number.isFinite(saved[key]))initial[key]=clamp(saved[key],280,2000);initial.collapsed=saved.collapsed===true;const tab=({overview:'activity',tasks:'participants',logs:'builds',messages:'activity',history:'activity'})[saved.tab]||saved.tab;if(tabs.includes(tab))initial.tab=tab;for(const key of ['query','historyQuery','logQuery','activityQuery'])if(typeof saved[key]==='string')initial[key]=saved[key].slice(0,200);for(const key of ['errorsOnly','follow','detail'])if(typeof saved[key]==='boolean')initial[key]=saved[key];if(['active','all','editing','checking','waiting','attention','investigating','awaiting_input','blocked','validating','done'].includes(saved.state))initial.state=saved.state;if(['all','passed','failures','noBuild'].includes(saved.historyState))initial.historyState=saved.historyState;if(/^(batch|task|run):[\w.-]{1,100}$/.test(saved.workKey||''))initial.workKey=saved.workKey;if(/^[a-f0-9]{32}$/.test(saved.batchId||''))initial.batchId=saved.batchId;if(['all','active','attention','recorded','done'].includes(saved.activityState))initial.activityState=saved.activityState;}
+   for(const name of ['folds','scrolls'])if(saved?.[name]&&typeof saved[name]==='object'&&!Array.isArray(saved[name]))for(const [key,value] of Object.entries(saved[name]).slice(-100))if(key.length<=400&&(name==='folds'?typeof value==='boolean':Number.isFinite(value)&&value>=0))initial[name][key]=value;
   }catch{}return initial;
  }
  const css=`.snow-collab{--sc-accent:light-dark(var(--dsw-static-blue-600),var(--dsw-static-blue-450));--sc-blue:var(--dsw-static-blue-100);--sc-good:var(--dsw-alias-state-success-primary);--sc-bad:var(--dsw-alias-state-error-primary);position:fixed;z-index:10;box-sizing:border-box;display:flex;flex-direction:column;min-width:0;pointer-events:auto;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;font:12px/1.5 inherit;font-family:inherit;font-size:12px;line-height:1.5;box-shadow:0 8px 28px var(--dsw-alias-bg-mask-1);overflow:hidden}.snow-collab *{box-sizing:border-box}.snow-collab header{display:flex;gap:9px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);flex-shrink:0}.sc-handle{flex:1;min-width:0;display:flex;align-items:center;gap:9px;cursor:grab;touch-action:none;user-select:none}.sc-handle:active{cursor:grabbing}.sc-symbol{display:grid;place-items:center;background:var(--sc-accent);color:var(--dsw-static-blue-50);border-radius:7px;width:27px;height:27px;flex-shrink:0}.sc-brand{font-size:13px;letter-spacing:.1px}.sc-sub{font-size:10px;color:var(--dsw-alias-label-secondary)}.snow-collab button,.snow-collab input,.snow-collab select{font:inherit;color:inherit;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1)}.snow-collab button{padding:4px 9px;cursor:pointer}.snow-collab button:hover{background:var(--dsw-alias-interactive-bg-hover)}.snow-collab :focus-visible{outline:2px solid var(--sc-accent);outline-offset:1px}.snow-collab input,.snow-collab select{padding:6px 8px;min-width:0}.snow-collab input[type=search]{flex:1;width:100%}.snow-collab input[type=checkbox]{accent-color:var(--sc-accent)}.sc-tabs{display:flex;gap:1px;flex-shrink:0;border-bottom:1px solid var(--dsw-alias-border-l1);padding:0 9px;background:var(--dsw-alias-bg-layer-2)}.sc-tabs button{flex:1;white-space:nowrap;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:9px 5px;color:var(--dsw-alias-label-secondary)}.sc-tabs button[aria-selected=true]{border-bottom-color:var(--sc-accent);color:var(--sc-accent);font-weight:650}.sc-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:13px 15px;overflow-wrap:anywhere}.snow-collab p{margin:5px 0}.snow-collab h3{font-size:12px;margin:17px 0 7px;font-weight:650}.snow-collab h3:first-child{margin-top:0}.snow-collab small,.sc-muted{font-size:11px;color:var(--dsw-alias-label-secondary)}.sc-hero{border-left:3px solid var(--sc-accent);padding:2px 0 2px 11px;margin-bottom:13px}.sc-hero-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.sc-hero-title>strong{font-size:20px;font-weight:650;letter-spacing:-.3px}.sc-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;flex-shrink:0;color:var(--dsw-alias-label-secondary)}.sc-badge:before,.sc-dot{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--sc-accent);flex-shrink:0}.sc-badge.good:before,.sc-dot.good{background:var(--sc-good)}.sc-badge.bad:before,.sc-dot.bad{background:var(--sc-bad)}.sc-badge.wait:before{background:var(--dsw-static-amber-500,var(--dsw-alias-state-error-secondary))}.sc-bad{color:var(--sc-bad)}.sc-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.sc-stat{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:9px 11px;background:var(--dsw-alias-bg-layer-2)}.sc-stat b{display:block;font-size:17px;line-height:1.4;margin-top:3px;font-weight:600}.sc-stat.good{border-top:2px solid var(--sc-good)}.sc-stat.bad{border-top:2px solid var(--sc-bad)}.sc-stat.info{border-top:2px solid var(--sc-accent)}.sc-row{padding:10px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}.sc-row:last-child{border-bottom:0}.sc-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.sc-row-top strong{font-size:12px}.sc-callout{padding:9px 10px;margin:7px 0;border-left:3px solid var(--sc-accent);background:var(--dsw-alias-bg-layer-2);border-radius:0 6px 6px 0}.sc-callout.bad{border-left-color:var(--sc-bad)}.sc-toolbar{display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap}.sc-toolbar>input{flex:1;min-width:120px}.sc-toolbar label{display:flex;align-items:center;gap:5px;font-size:11px}.sc-toolbar select{max-width:44%}.snow-collab details{margin-top:8px}.snow-collab summary{cursor:pointer;color:var(--dsw-alias-label-secondary);font-size:11px;padding:3px 0}.sc-detail{display:grid;grid-template-columns:100px minmax(0,1fr);gap:8px;border-top:1px solid var(--dsw-alias-border-l1);padding:7px 0;font-size:11px}.sc-detail>span{color:var(--dsw-alias-label-secondary)}.snow-collab pre{margin:7px 0;padding:9px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.65 Consolas,monospace;overflow:auto;max-height:240px}.sc-log-pane{height:100%;display:flex;flex-direction:column;min-height:0}.sc-log-pane pre{flex:1;min-height:80px;max-height:none;margin-bottom:0;overscroll-behavior:contain}.sc-log-pane .sc-toolbar{flex-shrink:0}.snow-collab table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}.snow-collab th,.snow-collab td{text-align:left;vertical-align:top;padding:7px 4px;border-bottom:1px solid var(--dsw-alias-border-l1);overflow-wrap:anywhere}.snow-collab th{font-weight:500;color:var(--dsw-alias-label-secondary)}.snow-collab th:first-child{width:52%}.snow-collab th:last-child{width:20%;text-align:right}.snow-collab td:last-child{text-align:right;font-variant-numeric:tabular-nums}.sc-selection{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 15px;font-size:11px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);flex-shrink:0}.sc-connection{display:flex;align-items:center;gap:6px;padding:7px 30px 7px 14px;font-size:10px;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);flex-shrink:0}.sc-connection time{margin-left:auto;white-space:nowrap}.sc-resize{position:absolute;touch-action:none;z-index:2}.sc-resize.e,.sc-resize.w{top:8px;bottom:8px;width:5px;cursor:ew-resize}.sc-resize.e{right:0}.sc-resize.w{left:0}.sc-resize.n,.sc-resize.s{left:8px;right:8px;height:5px;cursor:ns-resize}.sc-resize.n{top:0}.sc-resize.s{bottom:0}.sc-resize.ne,.sc-resize.nw,.sc-resize.se,.sc-resize.sw{width:12px;height:12px}.sc-resize.ne,.sc-resize.se{right:0}.sc-resize.nw,.sc-resize.sw{left:0}.sc-resize.ne,.sc-resize.nw{top:0}.sc-resize.se,.sc-resize.sw{bottom:0}.sc-resize.nw,.sc-resize.se{cursor:nwse-resize}.sc-resize.ne,.sc-resize.sw{cursor:nesw-resize}.snow-collab button.sc-resize.se{background:none;border:0;border-radius:0;padding:0;width:23px;height:23px;color:var(--sc-accent)}@media(forced-colors:active){.sc-tabs button[aria-selected=true]{border-bottom-color:Highlight}.sc-badge:before{background:CanvasText}}`;
+ const workspaceCss=css+`
+ .snow-collab{container-type:inline-size;font-family:"Noto Sans SC","Microsoft YaHei UI","Segoe UI Variable","Segoe UI",sans-serif;font-size:14px;line-height:1.65;border-radius:10px}
+ .snow-collab header{padding:7px 11px;gap:8px;min-height:42px}.sc-handle{font-size:13px;gap:8px}.sc-brand{font-size:13px;font-weight:500}.sc-grip{font-size:17px;color:var(--dsw-alias-label-secondary)}
+ .sc-header-state{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dsw-alias-label-secondary)}.sc-version{font-size:10px;opacity:.7}.snow-collab header>button{font-size:11px;padding:3px 7px}
+ .sc-workspace{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-height:0;min-width:0}.sc-activities{display:flex;flex-direction:column;min-height:0;padding:15px 11px 8px;background:var(--dsw-alias-bg-layer-2)}
+ .sc-activity-heading{display:flex;align-items:center;justify-content:space-between;padding:0 7px;margin-bottom:13px}.sc-activity-heading>strong{font-size:15px;font-weight:500}.sc-activities .sc-toolbar{gap:6px;margin:0 4px 8px}
+ .sc-activities .sc-toolbar>input{width:100%;min-width:100px;font-size:12px}.sc-activities .sc-toolbar>select{max-width:100%;font-size:11px;padding-inline:4px}.sc-activity-list{flex:1;overflow:auto;overscroll-behavior:contain;min-height:0}
+ .sc-activity-date{font-size:11px;color:var(--dsw-alias-label-secondary);padding:12px 9px 5px}.snow-collab .sc-activity-item{display:block;width:100%;text-align:left;border-color:transparent;border-radius:7px;background:none;padding:10px;margin:2px 0 4px}
+ .snow-collab .sc-activity-item.is-selected{background:color-mix(in srgb,var(--sc-accent) 10%,transparent)}.sc-activity-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;font-weight:400;line-height:1.7;overflow-wrap:anywhere}
+ .sc-activity-meta{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary);margin-top:6px}.sc-activity-meta>time{white-space:nowrap}
+ .sc-work-detail{display:none;flex-direction:column;min-width:0;min-height:0}.sc-workspace.has-selection .sc-activities{display:none}.sc-workspace.has-selection .sc-work-detail{display:flex}
+ .sc-work-heading{padding:13px 15px 10px}.sc-work-heading-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.sc-work-title{font-size:16px;font-weight:500;line-height:1.6;overflow-wrap:anywhere}.sc-work-meta{margin-top:7px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+ .snow-collab .sc-back{border:0;background:none;padding:0;margin:0 0 11px;font-size:12px;color:var(--sc-accent)}.sc-tabs{gap:12px;padding:0 15px;background:none;overflow:auto;scrollbar-width:thin}
+ .sc-tabs button{flex:0 0 auto;padding:8px 0 9px;font-size:12px;font-weight:400}.sc-tabs button[aria-selected=true]{font-weight:500}.sc-body{padding:15px;font-size:13px}.sc-body h3{font-weight:500;font-size:13px}
+ .sc-row{padding:14px 0}.sc-row:first-child{padding-top:0}.sc-row-top{align-items:flex-start}.sc-row-top strong{font-size:13px;font-weight:500;overflow-wrap:anywhere}.sc-row p{font-size:13px;line-height:1.8}.sc-badge{font-size:11px;white-space:normal}.sc-badge:before{width:5px;height:5px}
+ .sc-timeline-row{position:relative;margin-left:4px;padding:0 0 22px 17px;border-left:1px solid var(--dsw-alias-border-l1)}.sc-timeline-row:before{content:'';position:absolute;left:-3px;top:7px;width:5px;height:5px;border-radius:50%;background:var(--sc-accent)}
+ .sc-timeline-row>time{display:block;font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:5px}.sc-timeline-row>strong{display:block;font-size:13px;font-weight:500}.sc-timeline-row>button{border:0;padding:0;background:none;color:var(--sc-accent);font-size:12px;margin-top:6px}
+ .sc-timeline-row summary{font-size:12px;line-height:1.8}.sc-timeline-row>details{margin-top:5px}.sc-section-heading{display:flex;justify-content:space-between;align-items:center;gap:9px;margin-bottom:10px}.sc-section-heading h3{margin:0}
+ .sc-attempt-list{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:15px}.snow-collab .sc-attempt{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:9px 11px;gap:4px;min-width:128px;font-size:12px}
+ .snow-collab .sc-attempt.is-selected{border-color:var(--sc-accent);background:color-mix(in srgb,var(--sc-accent) 5%,transparent)}.sc-attempt>strong{font-weight:500}.sc-attempt>small{font-size:10px}
+ .sc-stats{gap:8px}.sc-stat{border:0!important;border-radius:0;background:none;padding:5px 0}.sc-stat b{font-size:14px;font-weight:500}.sc-body>p.sc-muted{font-size:11px}.sc-detail{grid-template-columns:94px minmax(0,1fr);font-size:11px}
+ .sc-log-pane{height:auto;min-height:180px;margin-bottom:15px}.sc-log-pane pre{max-height:300px;min-height:120px;font-family:"Cascadia Mono",Consolas,"Microsoft YaHei UI",monospace;font-size:11px}.sc-log-pane>small{font-size:10px}
+ .snow-collab summary{font-size:11px}.snow-collab th,.snow-collab td{font-size:11px}.sc-work-error{padding:8px 12px;color:var(--sc-bad);font-size:11px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+ @container (min-width:760px){.sc-workspace{grid-template-columns:245px minmax(0,1fr)}.sc-activities,.sc-workspace.has-selection .sc-activities{display:flex;border-right:1px solid var(--dsw-alias-border-l1)}.sc-work-detail{display:flex}.snow-collab .sc-back{display:none}.sc-work-heading{padding:18px 22px 12px}.sc-body{padding:18px 22px}.sc-tabs{padding-inline:22px;gap:17px}.sc-work-title{font-size:18px}}
+ @container (max-width:390px){.sc-tabs{gap:9px;padding-inline:11px}.sc-tabs button{font-size:11px}.sc-body{padding:12px}.sc-work-heading{padding-inline:12px}.sc-detail{grid-template-columns:minmax(0,1fr);gap:3px}.sc-header-state .sc-connection-label{display:none}.sc-work-title{font-size:15px}}
+ `;
  async function decode(promise){const response=await promise;if(!response?.ok)throw response?.error||new Error('Remote unavailable');return JSON.parse(response.value);}
  function Panel({remote,t}){
-  const [model,setModel]=React.useState(null),[error,setError]=React.useState(''),[view,setView]=React.useState(loadView),[selected,setSelected]=React.useState(null),[placement,setPlacement]=React.useState({right:12,top:72,width:480,height:560}),[previews,setPreviews]=React.useState({}),[testQuery,setTestQuery]=React.useState(''),[messageQuery,setMessageQuery]=React.useState(''),[urgentOnly,setUrgentOnly]=React.useState(false);
-  const panel=React.useRef(null),motion=React.useRef(null),alive=React.useRef(true),logBox=React.useRef(null);
-  const update=next=>setView(current=>{const value={...current,...next};try{localStorage.setItem(storageKey,JSON.stringify({schema:3,...value}));}catch{}return value;});
+  const [model,setModel]=React.useState(null),[error,setError]=React.useState(''),[view,setView]=React.useState(loadView),[selected,setSelected]=React.useState(()=>loadView().batchId),[placement,setPlacement]=React.useState({right:12,top:72,width:640,height:660}),[previews,setPreviews]=React.useState({}),[testQuery,setTestQuery]=React.useState(''),[messageQuery,setMessageQuery]=React.useState(''),[urgentOnly,setUrgentOnly]=React.useState(false);
+  const panel=React.useRef(null),motion=React.useRef(null),alive=React.useRef(true),logBox=React.useRef(null),batchCache=React.useRef(new Map()),bodyBox=React.useRef(null),scrollPositions=React.useRef({});
+  const update=next=>setView(current=>{const scrolls=Object.fromEntries(Object.entries({...current.scrolls,...scrollPositions.current}).slice(-40));const value={...current,...next,scrolls};try{localStorage.setItem(storageKey,JSON.stringify({schema:4,...value}));}catch{}return value;});
   React.useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   React.useEffect(()=>{let current=true,timer;
-   const poll=async()=>{try{const snapshot=await decode(remote.snapshot()),batch=selected?await decode(remote.read('/api/batches/'+selected)):snapshot.current;if(current){setModel({snapshot,batch,selection:selected});setError('');}}catch(reason){if(current)setError(String(reason.message||reason));}finally{if(current)timer=setTimeout(poll,3000);}};
+   const poll=async()=>{try{
+    const snapshot=await decode(remote.snapshot());
+    if(selected&&!batchCache.current.has(selected)){const opened=await decode(remote.read('/api/batches/'+selected));if(!current)return;batchCache.current.set(selected,opened);}
+    const activities=activitiesFor(snapshot,selected?batchCache.current.get(selected):null,batchCache.current);
+    const work=activities.find(item=>item.key===view.workKey||selected&&item.batches.some(batch=>batch.id===selected))||activities.find(item=>item.batches.some(batch=>batch.id===snapshot.current?.id))||activities[0];
+    const id=selected||work?.batches[0]?.id;const batch=id?(id===snapshot.current?.id?snapshot.current:await decode(remote.read('/api/batches/'+id))):null;
+    if(current){if(batch)batchCache.current.set(batch.id,batch);if(batchCache.current.size>60){for(const key of batchCache.current.keys())if(key!==id&&key!==selected){batchCache.current.delete(key);break;}}setModel({snapshot,batch,selection:selected,workKey:work?.key});setError('');}
+   }catch(reason){if(current)setError(String(reason.message||reason));}finally{if(current)timer=setTimeout(poll,3000);}};
    void poll();return()=>{current=false;clearTimeout(timer);};
-  },[remote,selected]);
+  },[remote,selected,view.workKey]);
   React.useLayoutEffect(()=>{
    const arrange=()=>{if(motion.current)return;const width=Math.min(view.collapsed?300:view.width,Math.max(180,window.innerWidth-24)),height=view.collapsed?52:Math.min(view.height,Math.max(140,window.innerHeight-84));setPlacement({left:12+view.x*Math.max(0,window.innerWidth-width-24),top:72+view.y*Math.max(0,window.innerHeight-height-84),width,height});};
    arrange();window.addEventListener('resize',arrange);return()=>window.removeEventListener('resize',arrange);
   },[view.x,view.y,view.width,view.height,view.collapsed]);
   React.useLayoutEffect(()=>{if(view.follow&&logBox.current)logBox.current.scrollTop=logBox.current.scrollHeight;},[model,view.follow,view.logQuery,view.errorsOnly,view.tab]);
+  const scrollKey=view.workKey+'|'+(view.batchId||'latest')+'|'+view.tab;
+  React.useLayoutEffect(()=>{if(bodyBox.current)bodyBox.current.scrollTop=scrollPositions.current[scrollKey]??view.scrolls[scrollKey]??0;},[scrollKey]);
   const startMotion=(event,kind)=>{if(event.button!==0)return;const rect=panel.current.getBoundingClientRect();event.currentTarget.setPointerCapture(event.pointerId);motion.current={id:event.pointerId,kind,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,width:rect.width,height:rect.height,next:{left:rect.left,top:rect.top,width:rect.width,height:rect.height}};event.preventDefault();event.stopPropagation();};
   const moveMotion=event=>{const m=motion.current;if(!m||m.id!==event.pointerId)return;const dx=event.clientX-m.x,dy=event.clientY-m.y,vw=window.innerWidth,vh=window.innerHeight;let left=m.left,top=m.top,right=m.left+m.width,bottom=m.top+m.height;
    if(m.kind==='move'){left=clamp(m.left+dx,12,Math.max(12,vw-m.width-12));top=clamp(m.top+dy,72,Math.max(72,vh-m.height-12));right=left+m.width;bottom=top+m.height;}
@@ -56,12 +156,14 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
   const ago=value=>{const n=Date.parse(value);return !Number.isFinite(n)?t('unrecorded'):Date.now()-n<10000?t('justNow'):duration((Date.now()-n)/1000)+t('ago');};
   const label=value=>words[value]?t(value):value||t('unrecorded'),badge=value=>h('span',{className:'sc-badge '+tone(value)},label(value));
   const detail=(name,value)=>h('div',{className:'sc-detail',key:name},h('span',null,name),h('div',null,value==null||value===''?t('unrecorded'):value));
-  const fold=(title,content,key)=>h('details',{key},h('summary',null,title),content),empty=text=>h('p',{className:'sc-muted'},text||t('empty'));
+  const fold=(title,content,key)=>{const identity=(view.workKey+'|'+(view.batchId||'latest')+'|'+view.tab+'|'+(key||title)).slice(0,400);return h('details',{key,open:view.folds[identity]===true,onToggle:event=>{const open=event.currentTarget.open;if((view.folds[identity]===true)!==open)update({folds:Object.fromEntries(Object.entries({...view.folds,[identity]:open}).slice(-100))});}},h('summary',null,title),content);},empty=text=>h('p',{className:'sc-muted'},text||t('empty'));
   const button=(text,onClick,props={})=>h('button',{type:'button',onClick,...props},text),heading=(key,count)=>h('h3',null,t(key)+(count==null?'':' · '+count));
   const stat=(key,value,color)=>h('div',{className:'sc-stat '+(color||'')},h('small',null,t(key)),h('b',null,value));
-  const snapshot=model?.snapshot,batch=model?.batch,counts=batch?.coverage?.summary,members=batch?.tasks||[],presence=snapshot?.taskPresence||[],byId=new Map(presence.map(task=>[task.id,task])),activeTasks=presence.filter(task=>!['completed','cancelled'].includes(task.phase));
+  const activities=activitiesFor(model?.snapshot,model?.batch,batchCache.current);
+  const work=activities.find(item=>item.key===view.workKey)||activities.find(item=>item.key===model?.workKey)||activities.find(item=>item.batches.some(batch=>batch.id===model?.snapshot?.current?.id))||activities[0];
+  const snapshot=activityScope(work,model?.snapshot),batch=work&&model?.batch&&!work.batches.some(item=>item.id===model.batch.id)?null:model?.batch,counts=batch?.coverage?.summary,members=batch?.tasks||[],presence=snapshot?.taskPresence||[],byId=new Map(presence.map(task=>[task.id,task])),activeTasks=presence.filter(task=>!['completed','cancelled'].includes(task.phase));
   const memberName=member=>byId.get(member.id)?.displayName||member.name||member.id,old=task=>!Number.isFinite(Date.parse(task.lastHeartbeatUtc))||Date.now()-Date.parse(task.lastHeartbeatUtc)>300000;
-  const selectBatch=id=>{setSelected(id);update({tab:'overview'});};
+  const selectBatch=id=>{const group=activities.find(item=>item.batches.some(batch=>batch.id===id));setSelected(id);update({batchId:id,workKey:group?.key||work?.key||'',tab:'builds',detail:true});};
   const preview=async route=>{if(previews[route]&&!previews[route].error)return;setPreviews(current=>({...current,[route]:{loading:true}}));try{const data=await decode(remote.read(route));if(alive.current)setPreviews(current=>({...current,[route]:{data}}));}catch(reason){if(alive.current)setPreviews(current=>({...current,[route]:{error:String(reason.message||reason)}}));}};
   const previewBox=route=>{const item=previews[route];return h(React.Fragment,null,button(t('retryLog'),()=>{if(item?.error)setPreviews(current=>{const next={...current};delete next[route];return next;});void preview(route);}),item?h('pre',null,item.loading?t('loading'):item.error||item.data?.lines?.join('\n')||t('noLog')):null);};
   const taskRow=(task,member=false)=>{
@@ -123,7 +225,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     detail(t('jobLimits'),(typeof resource.cpuLimitBasisPoints==='number'?(resource.cpuLimitBasisPoints/100).toFixed(2)+'%':t('unrecorded'))+' / '+(typeof resource.committedMemoryLimitBytes==='number'?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+' MiB':t('unrecorded'))),
     observation?detail(t('queueObservation'),known(observation.occupiedCpuSlots)+' '+t('cpuSlots')+' / '+known(observation.occupiedMemoryMiB)+' MiB '+t('reserved')+' · '+(words[observation.reason]?t(observation.reason):observation.reason)+(observation.observedUtc?' · '+date(observation.observedUtc):'')):null];
   };
-  const runRecords=batch?.historical?(batch.run?[batch.run]:[]):batch?.run?[batch.run,...(snapshot?.runs||[]).filter(item=>item.id!==batch.run.id)]:(snapshot?.runs||[]),displayedRun=batch?.run||snapshot?.runs?.[0],currentLog=batch?.log||displayedRun?.log;
+  const runRecords=batch?(batch.run?[batch.run]:[]):snapshot?.runs||[],displayedRun=batch?batch.run:snapshot?.runs?.[0],currentLog=batch?.log?.lines?.length?batch.log:displayedRun?.log||batch?.log;
   const testEvidenceView=(record,scope)=>{
    const evidence=record?.tests||[],fact=value=>words['fact_'+value]?t('fact_'+value):value||t('unrecorded'),number=value=>typeof value==='number'&&Number.isFinite(value)?value:t('unrecorded');
    return h('div',{'data-test-evidence':scope},fold(t('testEvidence')+' · '+evidence.length+' / '+(record?.totalCount??t('unrecorded')),h(React.Fragment,null,...evidence.map(item=>{
@@ -213,20 +315,79 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    return h(React.Fragment,null,h('div',{className:'sc-toolbar'},h('input',{type:'search',placeholder:t('historySearch'),'aria-label':t('historySearch'),value:view.historyQuery,maxLength:200,onChange:event=>update({historyQuery:event.target.value})}),h('select',{'aria-label':t('historyResult'),value:view.historyState,onChange:event=>update({historyState:event.target.value})},...['all','passed','failures','noBuild'].map(value=>h('option',{value,key:value},t(value))))),
     h('p',{className:'sc-muted'},t('historyHint')),...(records.length?records.map(item=>h('article',{className:'sc-row',key:item.batchId},h('div',{className:'sc-row-top'},h('strong',null,(item.participants||[]).join('、')||item.batchId.slice(0,8)),badge(item.outcome)),h('p',{className:'sc-muted'},item.batchId+' · '+t('attempt')+' '+(item.attempt||1)),h('p',{className:'sc-muted'},date(item.completedUtc)),button(t('viewBatch'),()=>selectBatch(item.batchId)))):[empty(t('noMatches'))]));
   };
-  const renderers={overview:overviewView,tasks:tasksView,validation:validationView,logs:logsView,messages:messagesView,history:historyView};
+  const workTitle=item=>{const title=item?.members[0]?.displayName||item?.members[0]?.name||item?.runs[0]?.task||t('title');return title+(item?.members.length>1?' · '+item.members.length+' '+t('activityMembers'):'');};
+  const workPhase=item=>!item?t('loading'):item.recorded?t('lastPhase')+'：'+label(item.state):item.state==='editing'&&item.batches.length?t('waitingReady'):label(item.state);
+  const memberPhase=task=>{
+   const context=work?.liveBatch||batch,member=context?.tasks?.find(item=>item.id===task.id);
+   if(member){
+    if(member.state==='withdrawn')return label('withdrawn');
+    if(context.outcome)return label(context.outcome);
+    if(context.phase!=='editing')return label(context.phase);
+    if(member.state==='editing')return label('editing');
+    if(member.check?.status==='pending')return t('checkPending');
+    if(member.check?.status==='running')return t('checkRunning');
+    if(['failed','interrupted','invalidated'].includes(member.check?.status))return t('checkAttention');
+    return t('readyPhase');
+   }
+   const state=task.phase||task.display||task.state||'unknown';
+   return !['completed','cancelled','verified','exempt','withdrawn','batch-ended'].includes(state)&&!recent(task)?t('lastPhase')+'：'+label(state):label(state);
+  };
+  const openActivity=item=>{setSelected(null);update({workKey:item.key,batchId:null,detail:true,tab:'activity'});};
+  const activitiesView=()=>{
+   const query=view.activityQuery.trim().toLocaleLowerCase();
+   const filtered=activities.filter(item=>(view.activityState==='all'||item.kind===view.activityState)&&[workTitle(item),...item.members.flatMap(task=>[task.id,task.progress,task.blocker])].join(' ').toLocaleLowerCase().includes(query));
+   let previous='';const rows=[];
+   for(const item of filtered){const day=item.timestamp?new Date(item.timestamp).toLocaleDateString():t('unrecorded');if(day!==previous){rows.push(h('div',{className:'sc-activity-date',key:'date:'+day},day));previous=day;}
+    rows.push(button(h(React.Fragment,null,h('span',{className:'sc-activity-title'},workTitle(item)),h('span',{className:'sc-activity-meta'},h('span',{className:item.kind==='recorded'?'sc-muted':''},workPhase(item)),h('time',null,item.timestamp?new Date(item.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—'))),()=>openActivity(item),{key:item.key,className:'sc-activity-item'+(item.key===work?.key?' is-selected':''),'data-activity':item.key,'aria-current':item.key===work?.key}));
+   }
+   return h('aside',{className:'sc-activities','aria-label':t('activities')},h('div',{className:'sc-activity-heading'},h('strong',null,t('activities')),h('small',null,filtered.length)),
+    h('div',{className:'sc-toolbar'},h('input',{type:'search',value:view.activityQuery,maxLength:200,placeholder:t('activitySearch'),'aria-label':t('activitySearch'),onChange:event=>update({activityQuery:event.target.value})}),
+     h('select',{'aria-label':t('activityState'),value:view.activityState,onChange:event=>update({activityState:event.target.value})},...['all','active','attention','recorded','done'].map(value=>h('option',{key:value,value},t(value))))),
+    h('div',{className:'sc-activity-list'},...rows,!rows.length?empty(t('noMatches')):null));
+  };
+  const participantsView=()=>h(React.Fragment,null,...(work?.members||[]).map(task=>{
+   const member=(work.liveBatch||batch)?.tasks?.find(item=>item.id===task.id),files=member?.ownedFiles||[];
+   return h('article',{className:'sc-row',key:task.id,'data-participant':task.id},h('div',{className:'sc-row-top'},h('strong',null,task.displayName||task.name||task.id),h('span',{className:'sc-badge'},memberPhase(task))),
+    h('p',null,task.progress||t('noProgress')),task.blocker?h('p',{className:'sc-bad'},task.blocker):null,
+    h('small',null,(task.adapter?.toUpperCase()||t('unrecorded'))+' · '+date(task.lastProgressUtc)),
+    files.length?h('p',{className:'sc-muted'},t('files')+'：'+files.slice(0,3).join('、')+(files.length>3?' · '+files.length:'')):null,
+    fold(t('details'),h(React.Fragment,null,detail('ID',task.id),detail(t('heartbeat'),date(task.lastHeartbeatUtc)),detail(t('source'),task.registrationOrigin),member?detail(t('check'),label(member.check?.status)):null,member?.plan?detail(t('plan'),[...(member.plan.suites||[]),...(member.plan.tests||[])].join(' · ')):null),task.id));
+  }),fold(t('files')+' / '+t('plan'),tasksView(),'member-records'));
+  const activityView=()=>{
+   const timeline=[];
+   for(const entry of work?.batches||[]){timeline.push({key:'open:'+entry.id,time:entry.createdUtc,title:t('attemptOpened')+' '+(entry.attempt||1),batch:entry.id});if(entry.buildStartedUtc)timeline.push({key:'start:'+entry.id,time:entry.buildStartedUtc,title:t('attemptStarted'),batch:entry.id});if(entry.completedUtc)timeline.push({key:'end:'+entry.id,time:entry.completedUtc,title:label(entry.outcome||entry.phase),body:entry.error,batch:entry.id});}
+   for(const task of work?.members||[])if(task.lastProgressUtc)timeline.push({key:'progress:'+task.id,time:task.lastProgressUtc,title:(task.displayName||task.name||task.id)+' · '+t('activityProgress'),body:task.progress,participants:true});
+   for(const event of urgent)timeline.push({key:'event:'+event.sequence,time:event.createdUtc,title:t('attention'),body:event.text});
+   timeline.sort((a,b)=>(Date.parse(b.time)||0)-(Date.parse(a.time)||0));
+   return h(React.Fragment,null,...timeline.slice(0,50).map(item=>h('article',{className:'sc-timeline-row',key:item.key},h('time',null,date(item.time)),h('strong',null,item.title),item.body?fold(item.body.length>140?item.body.slice(0,140)+'…':item.body,h('p',null,item.body),'timeline:'+item.key):null,item.batch?button(t('openBuild'),()=>selectBatch(item.batch)):item.participants?button(t('openParticipants'),()=>update({tab:'participants'})):null)),
+    !timeline.length?empty():null,
+    fold(t('attention')+' · '+attention.length,h(React.Fragment,null,...attention.map((item,index)=>h('p',{key:index,className:item.state==='bad'?'sc-bad':''},item.text))),'attention'),
+    fold(t('messages'),messagesView(),'messages'),
+    fold(t('waits'),h(React.Fragment,null,...(snapshot?.waits||[]).map(wait=>h('article',{className:'sc-row',key:wait.id},h('strong',null,wait.participant),h('p',null,label(wait.condition)+' · '+label(wait.status)),h('p',null,wait.reason),detail(t('next'),wait.next)))),'waits'));
+  };
+  const buildsView=()=>h(React.Fragment,null,h('div',{className:'sc-section-heading'},heading('attempts'),button(t('latestAttempt'),()=>selectBatch(null))),
+   h('div',{className:'sc-attempt-list'},...(work?.batches||[]).map(entry=>button(h(React.Fragment,null,h('strong',null,t('attempt')+' '+(entry.attempt||1)),h('span',null,label(entry.phase||entry.outcome)),h('small',null,date(entry.completedUtc||entry.buildStartedUtc||entry.createdUtc))),()=>selectBatch(entry.id),{key:entry.id,'data-attempt':entry.id,'aria-pressed':entry.id===batch?.id,className:'sc-attempt'+(entry.id===batch?.id?' is-selected':'')}))),
+   !work?.batches.length&&!runRecords.length?empty(t('noBuildYet')):null,logsView(),fold(t('executionRun'),runsView(),'runs'),fold(t('history'),historyView(),'attempt-history'));
+  const deliveryView=()=>{
+   const records=(work?.runs||[]).filter(run=>run.artifact);
+   return h(React.Fragment,null,...records.map(run=>h('article',{className:'sc-row',key:run.id},heading(run.artifact.productRuntime?'productArtifact':'testArtifact'),h('p',{className:'sc-muted'},date(run.completedUtc||run.createdUtc)),
+    detail(t('fileCount'),run.artifact.files),detail(t('artifactLocation'),run.artifact.runtime),detail(t('artifactSaved'),t(run.artifact.publicationComplete?'completed':'unrecorded')),detail(t('activation'),t('unrecorded')))),!records.length?empty():null);
+  };
+  const renderers={activity:activityView,participants:participantsView,builds:buildsView,validation:validationView,delivery:deliveryView};
   const motionProps=kind=>({onPointerDown:event=>startMotion(event,kind),onPointerMove:moveMotion,onPointerUp:finishMotion,onPointerCancel:finishMotion,onLostPointerCapture:finishMotion});
   return h('section',{ref:panel,className:'snow-collab',style:placement,'aria-label':t('title'),'data-version':VERSION,onKeyDown:event=>{if(event.key==='Escape'){update({collapsed:true});event.stopPropagation();}}},
-   h('style',null,css),h('header',null,
+   h('style',null,workspaceCss),h('header',null,
     h('div',{className:'sc-handle',tabIndex:0,'aria-label':t('drag'),title:t('drag'),...motionProps('move'),onKeyDown:event=>moveKey(event)},
-     h('span',{className:'sc-symbol','aria-hidden':true},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.6},h('path',{d:'M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9 5l3 3 3-3M9 19l3-3 3 3M5 10l4 .8L8 7M19 14l-4-.8 1 3.8M5 14l4-.8L8 17M19 10l-4 .8 1-3.8'}))),
-     h('div',null,h('strong',{className:'sc-brand'},t('title')),view.collapsed?null:h('div',{className:'sc-sub'},t('readOnly')))),
+     h('span',{className:'sc-grip','aria-hidden':true},'⠿'),h('strong',{className:'sc-brand'},t('title'))),
+    h('div',{className:'sc-header-state'},h('span',{className:'sc-dot '+(error?'bad':model?.snapshot?'good':'')}),h('span',{className:'sc-connection-label'},t(error?'offline':model?.snapshot?'connected':'loading')),h('span',{className:'sc-version'},VERSION)),
     button(t(view.collapsed?'expand':'collapse'),()=>update({collapsed:!view.collapsed}),{'aria-expanded':!view.collapsed})),
    view.collapsed?null:h(React.Fragment,null,
-    h('nav',{className:'sc-tabs',role:'tablist','aria-label':t('tabLabel'),onKeyDown:event=>{const index=tabs.indexOf(view.tab);let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;if(event.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;if(next!==undefined){update({tab:tabs[next]});event.currentTarget.querySelectorAll('[role=tab]')[next].focus();event.preventDefault();event.stopPropagation();}}},...tabs.map(tab=>h('button',{key:tab,type:'button',role:'tab',id:'sc-tab-'+tab,'aria-controls':'sc-panel','aria-selected':view.tab===tab,tabIndex:view.tab===tab?0:-1,onClick:()=>update({tab})},t(tab)+(tab==='messages'&&urgent.length?' · '+urgent.length:'')))),
-    selected?h('div',{className:'sc-selection'},h('span',null,t('historical')+' · '+selected.slice(0,8)+(model?.selection!==selected?' · '+t('loading'):'')),button(t('back'),()=>selectBatch(null))):null,
-    error?h('div',{className:'sc-callout bad',role:'status',style:{margin:'7px 15px 0'}},t('offline'),h('small',{style:{display:'block'}},error)):null,
-    h('div',{className:'sc-body',role:'tabpanel',id:'sc-panel','aria-labelledby':'sc-tab-'+view.tab},renderers[view.tab]()),
-    h('footer',{className:'sc-connection'},h('span',{className:'sc-dot '+(error?'bad':snapshot?'good':'')}),h('span',null,t(error?'offline':snapshot?'connected':'loading')),h('time',{title:date(snapshot?.updatedUtc)},snapshot?.updatedUtc?new Date(snapshot.updatedUtc).toLocaleTimeString():'—'),h('span',null,VERSION)),
+    error?h('div',{className:'sc-work-error',role:'status'},t('offline'),' · ',error):null,
+    h('div',{className:'sc-workspace'+(view.detail?' has-selection':'')},activitiesView(),
+     h('main',{className:'sc-work-detail'},h('div',{className:'sc-work-heading'},button('← '+t('backActivities'),()=>update({detail:false}),{className:'sc-back'}),h('div',{className:'sc-work-heading-top'},h('strong',{className:'sc-work-title'},workTitle(work)),h('span',{className:'sc-badge'},workPhase(work))),
+      h('div',{className:'sc-work-meta'},(work?.members.length||0)+' '+t('activityMembers')+' · '+(work?.buildCount||0)+' '+t('activityBuilds'))),
+      h('nav',{className:'sc-tabs',role:'tablist','aria-label':t('tabLabel'),onKeyDown:event=>{const index=tabs.indexOf(view.tab);let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;if(event.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;if(next!==undefined){update({tab:tabs[next]});event.currentTarget.querySelectorAll('[role=tab]')[next].focus();event.preventDefault();event.stopPropagation();}}},...tabs.map(tab=>h('button',{key:tab,type:'button',role:'tab',id:'sc-tab-'+tab,'aria-controls':'sc-panel','aria-selected':view.tab===tab,tabIndex:view.tab===tab?0:-1,onClick:()=>update({tab})},t(tab)))),
+      h('div',{ref:bodyBox,className:'sc-body',role:'tabpanel',id:'sc-panel','aria-labelledby':'sc-tab-'+view.tab,onScroll:event=>{scrollPositions.current[scrollKey]=event.currentTarget.scrollTop;}},work?renderers[view.tab]():empty()))),
     ...['n','e','s','w','ne','nw','sw'].map(edge=>h('div',{key:edge,className:'sc-resize '+edge,'aria-hidden':true,...motionProps(edge)})),
     h('button',{className:'sc-resize se',type:'button','aria-label':t('resize'),title:t('resize'),...motionProps('se'),onKeyDown:event=>moveKey(event,true)},h('svg',{width:14,height:14,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor',strokeWidth:1.5,'aria-hidden':true},h('path',{d:'M4 12l8-8M8 12l4-4M12 12h.1'}))))
   );
