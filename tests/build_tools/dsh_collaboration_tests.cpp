@@ -126,23 +126,24 @@ const [moduleFile,root]=process.argv.slice(2),{apply}=await import(pathToFileURL
 const hooks=new Map(),disposers=[],notices=[],services={};let tool,poll;
 const nativeSetInterval=globalThis.setInterval;globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
 const agent={id:'host-fixture-agent',session:{},status:'idle',inject:message=>notices.push(message)};
-const ctx={services,logger:{warn(){}},workingDirectory:{get:()=>root},fs:{processPath:target=>target},agents:{list:()=>[]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+const ctx={services,logger:{warn(){}},workingDirectory:{get:()=>root},fs:{resolve:async(target,options)=>({targetKey:path.resolve(options.cwd,target)}),processPath:target=>target.targetKey},agents:{list:()=>[]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:false});
+const mutate=(name,next=()=>null)=>hooks.get('tools/execute')({name,arguments:{file_path:'src/a.txt'},agent},next);
 let result;
 try{
  await hooks.get('tools/pre-execute')({agent,name:'read'},()=>({kind:'allow'}));
- const denied=[];for(const name of ['fs/write-intent','fs/edit-intent']){try{await hooks.get(name)(path.join(root,'src/a.txt'),{agent},()=>({sentinel:'kept'}));denied.push(false);}catch{denied.push(true);}}
+ const denied=[];for(const name of ['write','edit']){try{await mutate(name,()=>({sentinel:'kept'}));denied.push(false);}catch{denied.push(true);}}
  const registration=JSON.parse((await tool.execute({action:'begin'},{agent})).json);await tool.execute({action:'claim',files:'src/a.txt',adoptExistingChanges:true},{agent});
- const kept=[];for(const name of ['fs/write-intent','fs/edit-intent'])kept.push(await hooks.get(name)(path.join(root,'src/a.txt'),{agent},()=>({sentinel:'kept'})));
+ const kept=[];for(const name of ['write','edit'])kept.push(await mutate(name,()=>({sentinel:'kept'})));
  const bridge=services.snowCollaboration.bridge;
  await bridge.call('begin','synthetic-peer');
  await tool.execute({action:'plan',scope:'tool',suites:'none',inputs:'src/a.txt',reason:'isolated gate contract fixture; no host test needed'},{agent});
  const ownId=(await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')))).taskId(agent.id);
  await promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'ready',ownId,'-Batch',registration.batchId,'-Revision',String(registration.editRevision)],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
- async function deniedBoth(){const result=[];for(const name of ['fs/write-intent','fs/edit-intent']){try{await hooks.get(name)(path.join(root,'src/a.txt'),{agent},()=>null);result.push(false);}catch{result.push(true);}}return result;}
+ async function deniedBoth(){const result=[];for(const name of ['write','edit']){try{await mutate(name);result.push(false);}catch{result.push(true);}}return result;}
  const ready=await deniedBoth();
  await bridge.call('begin',ownId);const stale=await deniedBoth();
- await tool.execute({action:'begin'},{agent});const rebound=await hooks.get('fs/edit-intent')(path.join(root,'src/a.txt'),{agent},()=>({sentinel:'fresh'}));
+ await tool.execute({action:'begin'},{agent});const rebound=await mutate('edit',()=>({sentinel:'fresh'}));
  const output=await tool.execute({action:'status'},{agent});
  await promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Target',ownId,'-EventKey','fixture-urgent','-EventKind','requirements','-Importance','urgent','-Text','fixture changed requirement'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
  await poll();
@@ -264,10 +265,14 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
     require(observed.at("cold").at("requestedPort").integer()>=49152&&observed.at("cold").at("actualPort").integer()==observed.at("cold").at("requestedPort").integer(),"Isolated SDK cold-start ignored its reserved browser-compatible high port");
     require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration");
+    const auto& gate=observed.at("cold").at("fileGate");
+    require(gate.at("readAllowed").boolean&&gate.at("writeDenied").boolean&&gate.at("editDenied").boolean&&
+        gate.at("observationPolicyPreserved").boolean&&gate.at("newFileAbsent").boolean&&gate.at("existingUnchanged").boolean,
+        "Installed filesystem tools bypassed the collaboration gate or changed files without an owner: "+gate.dump());
     bool locale=false,provider=false;
     for(const auto& name:observed.at("cold").at("names").items){locale|=name.str()=="locale";provider|=name.str()=="llm-deepseek";}
     require(locale&&provider,"Cold Host lost the welcome configuration namespaces");
-    std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results and disposal (carrier only, not UI acceptance)\n";
+    std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results, filesystem tool gate and disposal (isolated Host, not live UI acceptance)\n";
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--installed-sdk")installed_sdk(repo);else run_tests(repo,argc>3&&std::string(argv[2])=="--preferred-port-control"?fs::path(wide(argv[3])):fs::path{});});}

@@ -2,6 +2,7 @@ import z from '@deepseek-ai/schemastery';
 import {Remote,TypertRemoteService} from '@deepseek-ai/dsh-typert-protocol';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
+import path from 'node:path';
 import {CollaborationBridge,inside,taskId,canonicalTarget} from './core.js';
 
 export const inject=['tools','agents','workingDirectory','fs'];
@@ -37,16 +38,21 @@ export function apply(ctx,config){
  ctx.on('agent/created',async({agent})=>{await ensure(agent);});
  ctx.on('agent/disposed',({agent})=>{agents.delete(agent.id);});
  ctx.on('tools/pre-execute',async(exec,next)=>{if(exec.agent)await ensure(exec.agent);return next();});
- const checkWrite=async(target,exec,next)=>{
+ // The host observation policy owns the first-wins fs/*-intent slots.
+ // Permissions wrap tool dispatch, leaving its CAS and sandbox checks intact.
+ ctx.on('tools/execute',async(exec,next)=>{
+  if(!['write','edit'].includes(exec.name)||typeof exec.arguments?.file_path!=='string')return next();
+  const cwd=exec.agent?ctx.workingDirectory.get(exec.agent.session):process.cwd();
+  const requested=path.resolve(cwd,exec.arguments.file_path);
+  const target=await ctx.fs.resolve(exec.arguments.file_path,{cwd,signal:exec.signal});
   const file=ctx.fs.processPath(target);
-  if(inside(bridge.root,file)||inside(bridge.root,canonicalTarget(file))){
+  if(inside(bridge.root,requested)||inside(bridge.root,file)||inside(bridge.root,canonicalTarget(file))){
    if(!exec.agent)throw new Error('SnowDesktop writes require an owning agent and an editing grant.');
-   await ensure(exec.agent);await bridge.verifyWrite(exec.agent.id,file);
+   if(!await ensure(exec.agent))throw new Error('Switch to the configured SnowDesktop working directory first.');
+   await bridge.verifyWrite(exec.agent.id,inside(bridge.root,requested)?requested:file);
   }
   return next();
- };
- ctx.on('fs/write-intent',checkWrite);
- ctx.on('fs/edit-intent',checkWrite);
+ },{prepend:true});
  ctx.on('tools/result',(exec,result)=>{
   const entry=exec.agent&&agents.get(exec.agent.id);
   if(entry&&exec.name!=='snow_collaboration')entry.lastTool=exec.name+(result.isError?' failed':' completed');
