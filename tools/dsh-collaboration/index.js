@@ -21,7 +21,13 @@ for(const name of ['snapshot','read'])Remote(SnapshotService.prototype[name],{ki
 export function apply(ctx,config){
  const bridge=new CollaborationBridge(config.repositoryRoot,{port:config.dashboardPort});
  new SnapshotService(ctx,bridge);
- const agents=new Map(),pending=new Map();let disposed=false,polling=false;
+ const agents=new Map(),pending=new Map(),released=new Set(),wakeAttempts=new Set();let disposed=false,polling=false,cold;
+ // Use the Host's ordinary-session owner so persisted presets and tools are
+ // composed before publication. The base plugin also works without this API.
+ ctx.inject(['sessionController'],scope=>{
+  const abort=new AbortController(),binding={service:scope.sessionController,signal:abort.signal};cold=binding;wakeAttempts.clear();
+  scope.effect(()=>()=>{abort.abort();if(cold===binding)cold=undefined;});
+ });
  const belongs=agent=>agent&&inside(bridge.root,ctx.workingDirectory.get(agent.session));
  const ensure=async agent=>{
   if(!belongs(agent))return false;
@@ -35,8 +41,8 @@ export function apply(ctx,config){
   })().finally(()=>pending.delete(agent.id)));
   return pending.get(agent.id);
  };
- ctx.on('agent/created',async({agent})=>{await ensure(agent);});
- ctx.on('agent/disposed',({agent})=>{agents.delete(agent.id);});
+ ctx.on('agent/created',async({agent})=>{released.delete(agent.id);await ensure(agent);});
+ ctx.on('agent/disposed',({agent})=>{agents.delete(agent.id);released.add(agent.id);});
  ctx.on('tools/pre-execute',async(exec,next)=>{if(exec.agent)await ensure(exec.agent);return next();});
  // The host observation policy owns the first-wins fs/*-intent slots.
  // Permissions wrap tool dispatch, leaving its CAS and sandbox checks intact.
@@ -68,10 +74,54 @@ export function apply(ctx,config){
    return {json:JSON.stringify(await bridge.operate(exec.agent.id,args))};
   }
  }));
+ const unconfirmed=(state,id)=>(state.taskLedger?.events||[]).filter(event=>event.importance==='urgent'&&event.recipients.includes(id)&&!event.receipts.some(receipt=>receipt.task===id&&receipt.level==='agent'));
+ const openTask=(state,id)=>state.taskLedger?.tasks?.some(task=>task.id===id&&task.adapter==='dsh'&&!task.closedUtc&&!['completed','cancelled'].includes(task.phase));
+ const resumePending=async state=>{
+  const binding=cold;if(!config.wakeResidentAgents||!binding)return false;
+  const resident=new Set([...agents.keys()].map(taskId)),targets=new Set();
+  for(const task of state.taskLedger?.tasks||[]){
+   if(resident.has(task.id)||!openTask(state,task.id))continue;
+   for(const event of unconfirmed(state,task.id)){
+    const key=event.sequence+':'+task.id;
+    if(wakeAttempts.has(key))continue;
+    wakeAttempts.add(key);targets.add(task.id);
+   }
+  }
+  if(!targets.size)return false;
+  const available=()=>!disposed&&cold===binding&&!binding.signal.aborted;
+  const summaries=await binding.service.list({},binding.signal);
+  if(!available())return false;
+  if(!Array.isArray(summaries?.items))throw new Error('Session controller returned no session summaries.');
+  const matches=new Map();
+  for(const summary of summaries.items){
+   if(typeof summary.sessionId!=='string'||typeof summary.cwd!=='string'||!path.isAbsolute(summary.cwd)||summary.origin==='subagent'||released.has(summary.sessionId)||!inside(bridge.root,summary.cwd))continue;
+   const id=taskId(summary.sessionId);if(!targets.has(id))continue;
+   const values=matches.get(id)||[];values.push(summary.sessionId);matches.set(id,values);
+  }
+  let changed=false;
+  for(const [id,ids] of matches){
+   if(!available())break;
+   const latest=bridge.state();
+   if(!openTask(latest,id)||!unconfirmed(latest,id).length)continue;
+   if(ids.length!==1){ctx.logger.warn('SnowDesktop collaboration: ambiguous persisted task '+id);continue;}
+   try{
+    changed=true;
+    const result=await binding.service.resolveAgent(ids[0]);
+    if(!available())break;
+    if(result.error)throw result.error;
+    if(result.agent?.id!==ids[0]||!belongs(result.agent))throw new Error('Resumed session identity or working directory changed.');
+    await ensure(result.agent);
+   }catch(error){ctx.logger.warn('SnowDesktop collaboration resume '+id+': '+String(error?.message||error));}
+  }
+  return changed;
+ };
  const poll=async()=>{
   if(disposed||polling)return;polling=true;
   try{
-   const state=bridge.state(),now=Date.now();
+   let state=bridge.state();
+   if(await resumePending(state))state=bridge.state();
+   if(disposed)return;
+   const now=Date.now();
    for(const entry of agents.values()){
     if(!belongs(entry.agent))continue;
     const id=taskId(entry.agent.id);

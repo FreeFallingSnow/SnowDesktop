@@ -142,7 +142,7 @@ const [moduleFile,root]=process.argv.slice(2),{apply}=await import(pathToFileURL
 const hooks=new Map(),disposers=[],notices=[],services={};let tool,poll;
 const nativeSetInterval=globalThis.setInterval;globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
 const agent={id:'host-fixture-agent',session:{},status:'idle',inject:message=>notices.push(message)};
-const ctx={services,logger:{warn(){}},workingDirectory:{get:()=>root},fs:{resolve:async(target,options)=>({targetKey:path.resolve(options.cwd,target)}),processPath:target=>target.targetKey},agents:{list:()=>[]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+const ctx={services,inject(){},logger:{warn(){}},workingDirectory:{get:()=>root},fs:{resolve:async(target,options)=>({targetKey:path.resolve(options.cwd,target)}),processPath:target=>target.targetKey},agents:{list:()=>[]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:false});
 const mutate=(name,next=()=>null)=>hooks.get('tools/execute')({name,arguments:{file_path:'src/a.txt'},agent},next);
 let result;
@@ -214,7 +214,7 @@ globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback
 const record=(agent,method,message)=>{notices.push({agent,method,message});notify?.();};
 const make=(name,status,cwd=root)=>({id:'wake-'+mode+'-'+name,session:{cwd},status,inject:message=>record(name,'inject',message),followup:message=>record(name,'followup',message)});
 const idle=make('idle','idle'),active=make('active','running'),released=make('released','idle'),outside=make('outside','idle',root+'-outside');
-const ctx={services,logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+const ctx={services,inject(){},logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 async function delivered(count){if(notices.length>=count)return;await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Production event delivery did not complete')),10000);notify=()=>{if(notices.length>=count){clearTimeout(timeout);notify=null;resolve();}};notify();});}
 let result;
 try{
@@ -259,6 +259,72 @@ console.log(JSON.stringify(result));
         for(const auto& phase:{"duplicate","unloaded"})require(wake.at(phase).at("acks").integer()==0&&wake.at(phase).at("notices").integer()==0,"Repeated polling or unloaded plugin delivered an event");
         require(wake.at("errors").items.empty(),"Production delivery reported an unexpected error");
     }
+    write(c.root/L"cold-recovery.mjs",R"JS(import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+const [moduleFile,root,mode]=process.argv.slice(2),{apply}=await import(pathToFileURL(moduleFile));
+const {CollaborationBridge,taskId}=await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')));
+const bridge=new CollaborationBridge(root),hooks=new Map(),services={},disposers=[],notices=[],errors=[],resumed=[];let poll,listCalls=0,releaseResume;
+const nativeSetInterval=globalThis.setInterval;
+globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
+const turn=()=>new Promise(resolve=>setImmediate(resolve));
+const wait=async predicate=>{const until=Date.now()+10000;while(!predicate()){if(Date.now()>until)throw new Error('Cold recovery carrier deadline');await new Promise(resolve=>setTimeout(resolve,5));}};
+const make=(name,cwd=root)=>({id:'cold-'+mode+'-'+name,session:{cwd},status:'idle',inject:message=>notices.push({name,method:'inject',message}),followup:message=>notices.push({name,method:'followup',message})});
+const main=make('main'),failed=make('failed'),closed=make('closed'),outside=make('outside',root+'-outside'),released=make('released'),child=make('child'),unknown=make('unknown');
+for(const agent of [main,failed,closed,outside,released,child])await bridge.open(agent.id);
+const controller={list:async(_request,signal)=>{signal.throwIfAborted();listCalls++;return {items:[main,failed,closed,outside,released,child,unknown].map(agent=>({sessionId:agent.id,cwd:agent.session.cwd,...(agent===child?{origin:'subagent'}:{})}))};},resolveAgent:async id=>{resumed.push(id);if(mode==='unload')return await new Promise(resolve=>{releaseResume=resolve;});if(id===failed.id)return {error:new Error('Controlled session restoration failure')};return {agent:main};}};
+const ctx={services,logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect()),inject:(_deps,apply)=>{if(mode!=='missing')apply({...ctx,sessionController:controller});}};
+const command=(action,id,args=[])=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,action,id,...args],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+const post=(key,importance)=>command('event-post','synthetic-peer',['-Target','*','-EventKey','cold-'+mode+'-'+key,'-Importance',importance,'-Text','Addressed project coordination data, not new permission']);
+const dispose=()=>{while(disposers.length){const disposer=disposers.pop();if(typeof disposer==='function')disposer();}};
+let result;
+try{
+ apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:mode!=='disabled'});
+ await hooks.get('tools/pre-execute')({agent:released,name:'read'},()=>null);hooks.get('agent/disposed')({agent:released});
+ const registered=notices.length,currentBefore=JSON.stringify(bridge.state().current);
+ await post('normal','normal');poll();await turn();const normal={lists:listCalls,resumes:resumed.length,notices:notices.length-registered};
+ await post('urgent','urgent');await command('task-close',taskId(closed.id),['-TaskRevision','0','-TaskPhase','completed']);poll();
+ if(mode==='enabled')await wait(()=>notices.some(row=>row.method==='followup')&&errors.length===1);
+ else if(mode==='unload'){await wait(()=>Boolean(releaseResume));dispose();releaseResume({agent:main});await turn();await turn();}
+ else await turn();
+ const beforeDuplicate={lists:listCalls,resumes:resumed.length,notices:notices.length};poll();await turn();
+ const duplicate={lists:listCalls-beforeDuplicate.lists,resumes:resumed.length-beforeDuplicate.resumes,notices:notices.length-beforeDuplicate.notices};
+ dispose();await post('unloaded','urgent');poll();await turn();
+ const state=bridge.state(),event=state.taskLedger.events.find(event=>event.key==='cold-'+mode+'-urgent');
+ result={mode,normal,resumed,listCalls,deliveries:notices.slice(registered),duplicate,unloaded:{lists:listCalls-beforeDuplicate.lists,resumes:resumed.length-beforeDuplicate.resumes,notices:notices.length-beforeDuplicate.notices},receipts:event.receipts,errors,currentPreserved:JSON.stringify(state.current)===currentBefore,mainTask:state.taskLedger.tasks.find(task=>task.id===taskId(main.id)),expectedMain:main.id,expectedFailed:failed.id,expectedTask:taskId(main.id)};
+}finally{dispose();}
+console.log(JSON.stringify(result));
+)JS");
+    const auto requireRestored=[](const Json& cold){
+        require(cold.at("listCalls").integer()==1&&cold.at("resumed").items.size()==2&&cold.at("resumed").items[0].str()==cold.at("expectedMain").str()&&cold.at("resumed").items[1].str()==cold.at("expectedFailed").str(),"Addressed urgent event did not restore its persisted project session");
+        require(cold.at("errors").items.size()==1&&cold.at("errors").items[0].str().find("Controlled session restoration failure")!=std::string::npos,"Failed restoration was hidden or retried");
+        require(cold.at("deliveries").items.size()==2&&cold.at("deliveries").items[0].at("method").str()=="inject"&&cold.at("deliveries").items[1].at("method").str()=="followup","Restored Agent did not register before receiving its wake notice");
+        const auto& message=cold.at("deliveries").items[1].at("message");
+        require(message.at("source").at("kind").str()=="snowdesktop-collaboration"&&message.at("source").at("form").str()=="notice","Cold recovery promoted project data to an unqualified user command");
+        require(cold.at("receipts").items.size()==1&&cold.at("receipts").items[0].at("task").str()==cold.at("expectedTask").str()&&cold.at("receipts").items[0].at("level").str()=="adapter","Cold recovery manufactured Agent acknowledgement or acknowledged failed/outside recipients");
+    };
+    for(const std::wstring mode:{L"enabled",L"disabled",L"missing",L"unload"}){
+        Coordinator recovery(repo,"dsh-cold-recovery");
+        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),recovery.root.wstring(),mode},c.root,40);
+        require(execution.code==0,"Production cold-session recovery carrier failed: "+execution.out+execution.err);
+        const auto cold=Json::parse(execution.out);
+        require(cold.at("normal").at("lists").integer()==0&&cold.at("normal").at("resumes").integer()==0&&cold.at("normal").at("notices").integer()==0,"Normal progress caused cold-session discovery or activation");
+        require(cold.at("currentPreserved").boolean&&cold.at("mainTask").at("revision").integer()==0&&cold.at("mainTask").at("phase").str()=="investigating","Cold recovery changed an editing grant or business task revision");
+        for(const auto& phase:{"duplicate","unloaded"})require(cold.at(phase).at("lists").integer()==0&&cold.at(phase).at("resumes").integer()==0&&cold.at(phase).at("notices").integer()==0,"Repeated poll or disposed plugin repeated cold recovery");
+        if(mode==L"enabled"){
+            requireRestored(cold);
+        }else{
+            require(cold.at("deliveries").items.empty()&&cold.at("receipts").items.empty()&&cold.at("errors").items.empty(),"Disabled/unavailable/disposed recovery delivered or acknowledged an event");
+            require(cold.at("resumed").items.size()==(mode==L"unload"?1u:0u),"Recovery ignored its configuration or service lifetime");
+        }
+    }
+    auto residentOnly=read(repo/L"tools/dsh-collaboration/index.js");
+    replace(residentOnly,"if(await resumePending(state))state=bridge.state();","// Former resident-only path leaves cold recipients inactive.");
+    write(c.root/L"cold-old/index.js",residentOnly);write(c.root/L"cold-old/core.js",read(repo/L"tools/dsh-collaboration/core.js"));write(c.root/L"cold-old/package.json","{\"type\":\"module\"}");
+    Coordinator former(repo,"dsh-cold-former");
+    const auto oldRun=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(c.root/L"cold-old/index.js").wstring(),former.root.wstring(),L"legacy"},c.root,40);
+    require(oldRun.code==0,"Former cold-session path did not reach its business observation: "+oldRun.out+oldRun.err);
+    const auto oldCold=Json::parse(oldRun.out);bool oldRejected=false;
+    try{requireRestored(oldCold);}catch(const std::exception& error){oldRejected=std::string(error.what())=="Addressed urgent event did not restore its persisted project session";}
+    require(oldRejected&&oldCold.at("receipts").items.empty(),"Former resident-only path did not fail the same persisted-session wake assertion");
     write(c.root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
 const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
 let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
@@ -355,6 +421,8 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
     require(observed.at("cold").at("requestedPort").integer()>=49152&&observed.at("cold").at("actualPort").integer()==observed.at("cold").at("requestedPort").integer(),"Isolated SDK cold-start ignored its reserved browser-compatible high port");
     require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration");
+    const auto& recoveryApi=observed.at("cold").at("recoveryApi");
+    require(recoveryApi.at("available").boolean&&recoveryApi.at("coldListIsArray").boolean&&recoveryApi.at("agentsPreserved").boolean,"Installed Session Controller lacks the public cold-list/resolution contract or activated an Agent while listing");
     const auto& gate=observed.at("cold").at("fileGate");
     require(gate.at("readAllowed").boolean&&gate.at("writeDenied").boolean&&gate.at("editDenied").boolean&&
         gate.at("observationPolicyPreserved").boolean&&gate.at("newFileAbsent").boolean&&gate.at("existingUnchanged").boolean,
