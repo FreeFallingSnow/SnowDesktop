@@ -608,6 +608,8 @@ scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -
 
 `task-open` 对未关闭 ID 幂等；重复调用只刷新 `lastHeartbeatUtc`，保留 progress、lastProgressUtc、任务/需求修订、阶段、名称及编辑许可，不复活已关闭 ID。每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。阶段变化和活动期间不超过 60 秒报告有意义进展；存活心跳不代替这项汇报。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
 
+`task-stage` 回执附带本任务尚未由 Agent 确认的急件索引：`urgentEvents` 最多 8 条，只含序号、发送者、种类等元数据；`pendingUrgentCount` 是未读总数，`urgentEventsTruncated` 表示仍有未展示项。普通消息和其他任务的定向急件不触发提示。发现急件后用现有 `event-read`（DSH 为 `messages`）读取正文，再显式 `event-ack -AckLevel agent`；返回提示、读取正文和 adapter 确认均不会代替 Agent 确认，也不改变编辑许可。
+
 ```bat
 scripts\build.bat event-post task-unique -Target target-task -EventKey requirement-unique -EventKind requirements -Importance urgent -Text "需求已更新，请复核" -RequirementsRevision 2
 scripts\build.bat event-read target-task -AfterSequence 0

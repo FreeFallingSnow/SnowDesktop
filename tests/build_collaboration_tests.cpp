@@ -24,6 +24,58 @@ Json registration_semantics(Json value){
     for(auto& item:value.items)item=registration_semantics(std::move(item));
     return value;
 }
+void run_progress_notices(const fs::path& repo,bool legacy,bool former=false){
+    Coordinator progress(repo,legacy?"progress-ps5":"progress-ps7");
+    if(former){
+        auto script=read(progress.scripts/L"build_manager.ps1");
+        replace(script,"if($Command -eq 'task-stage') { # Active progress must surface pending urgent notices.",
+            "if($false) { # Controlled former progress response omits pending notices.");
+        write(progress.scripts/L"build_manager.ps1",script,true);
+    }
+    if(legacy)progress.bridge=std::make_unique<Bridge>(repo,progress.root,true);
+    for(const auto& id:{"sender","receiver","other"})progress.call({"task-open",id});
+    progress.call({"event-post","sender","-Target","receiver","-EventKey","ordinary","-Text","Ordinary progress"});
+    progress.call({"event-post","sender","-Target","other","-EventKey","other-urgent","-Importance","urgent","-Text","Another task's event"});
+    const auto urgent=progress.call({"event-post","sender","-Target","receiver","-EventKey","target-urgent","-EventKind","requirements","-Importance","urgent","-RequirementsRevision","2","-Text","Read the revised requirement before continuing"});
+    const auto stage=[&](int revision){return progress.call({"task-stage","receiver","-TaskRevision",std::to_string(revision),"-TaskPhase","investigating","-Progress","Reviewing queue"});};
+    auto response=stage(0);
+    require(response.has("urgentEvents")&&response.has("pendingUrgentCount")&&response.at("pendingUrgentCount").integer()==1&&
+        response.at("urgentEvents").items.size()==1&&response.at("urgentEvents").items[0].at("sequence").integer()==urgent.at("sequence").integer(),
+        "Active progress hid an addressed urgent event until a separate wait");
+    require(response.at("task").at("progress").str()=="Reviewing queue"&&response.at("task").at("requirementsRevision").integer()==0&&
+        !response.at("editingAuthority").boolean&&progress.state().at("current").kind==Json::Kind::Null,
+        "An urgent progress notice changed business progress, requirements or editing authority");
+    require(progress.state().at("taskLedger").at("events").items[2].at("receipts").items.empty(),
+        "Returning an urgent progress notice acknowledged unread content");
+    const auto messages=progress.call({"event-read","receiver"});
+    require(messages.at("events").items.size()==2&&messages.at("events").items[1].at("text").str()==urgent.at("text").str(),
+        "Progress notice did not retain the existing full-message read path or recipient boundary");
+    const auto sequence=std::to_string(urgent.at("sequence").integer());
+    progress.call({"event-ack","receiver","-Sequence",sequence,"-AckLevel","adapter"});
+    require(stage(1).at("pendingUrgentCount").integer()==1,"Adapter receipt hid an unacknowledged urgent event");
+    progress.call({"event-ack","receiver","-Sequence",sequence,"-AckLevel","agent"});
+    response=stage(2);
+    require(response.at("pendingUrgentCount").integer()==0&&response.at("urgentEvents").kind==Json::Kind::Array&&response.at("urgentEvents").items.empty(),
+        "Acknowledged, ordinary or other-recipient events kept the progress alert active");
+    const auto broadcast=progress.call({"event-post","sender","-EventKey","urgent-broadcast","-Importance","urgent","-Text","Project coordination"});
+    response=stage(3);
+    require(response.at("pendingUrgentCount").integer()==1&&response.at("urgentEvents").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),
+        "Active progress missed an addressed urgent broadcast");
+    progress.call({"event-ack","receiver","-Sequence",std::to_string(broadcast.at("sequence").integer()),"-AckLevel","agent"});
+    for(int index=0;index<9;++index)progress.call({"event-post","sender","-Target","receiver","-EventKey","bounded-"+std::to_string(index),"-Importance","urgent","-Text","Long payload "+std::string(2000,'x')});
+    response=stage(4);
+    require(response.at("pendingUrgentCount").integer()==9&&response.at("urgentEvents").items.size()==8&&response.at("urgentEventsTruncated").boolean&&response.dump().size()<6000,
+        "Active progress inlined an unbounded event backlog or hid its remainder");
+    for(const auto& notice:response.at("urgentEvents").items)require(!notice.has("text")&&!notice.has("receipts")&&!notice.has("recipients"),
+        "Progress notice included full event payload instead of its bounded index");
+    require(progress.state().at("taskLedger").at("events").items.back().at("receipts").items.empty(),
+        "Truncated progress notices acknowledged unseen events");
+    if(!legacy&&!former){
+        const auto negative=run({executable().wstring(),repo.wstring(),L"--progress-events-old"},progress.root,45,{},true);
+        require(negative.code==1&&negative.err.find("Active progress hid an addressed urgent event")!=std::string::npos,
+            "Former progress response did not fail its actual pending-message assertion: "+negative.out+negative.err);
+    }
+}
 void run_presence(const fs::path& repo,bool legacy){
         Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
         if(legacy)presence.bridge=std::make_unique<Bridge>(repo,presence.root,true);
@@ -95,6 +147,7 @@ void run_presence(const fs::path& repo,bool legacy){
         presence.call({"task-close","reader","-TaskRevision","1","-TaskPhase","completed"});
         presence.call({"task-open","reader"},2);
         require(!presence.call({"task-list"}).at("tasks").items[0].at("capabilities").at("idleWake").boolean,"CLI falsely advertised host wake");
+        run_progress_notices(repo,legacy);
 }
 void run_contracts(const fs::path& repo){
     {
@@ -162,4 +215,7 @@ void run_tests(const fs::path& repo,bool sequential){
     if(failure)std::rethrow_exception(failure);
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){run_tests(repo,argc>2&&std::string(argv[2])=="--sequential");});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2&&std::string(argv[2])=="--progress-events-old"){run_progress_notices(repo,false,true);return;}
+    run_tests(repo,argc>2&&std::string(argv[2])=="--sequential");
+});}

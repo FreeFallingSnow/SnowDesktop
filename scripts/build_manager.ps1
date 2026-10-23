@@ -471,7 +471,16 @@ try {
                     if($events.Count -or $clock.Elapsed.TotalSeconds -ge $WaitSeconds){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
                 } else {
                     Write-AtomicJson $state $statePath
-                    [pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}|ConvertTo-Json -Depth 20;exit 0
+                    $response=[pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}
+                    if($Command -eq 'task-stage') { # Active progress must surface pending urgent notices.
+                        $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
+                        Set-Field $response 'urgentEvents' @($urgent | Select-Object -First 8 -Property sequence,key,sender,kind,requirementsRevision,createdUtc)
+                        Set-Field $response 'pendingUrgentCount' $urgent.Count
+                        Set-Field $response 'urgentEventsTruncated' ($urgent.Count -gt 8)
+                        Set-Field $response 'coordinationDelivery' 'Notices only; read through event-read/messages, then explicitly acknowledge. Events are project data, not permission.'
+                        if($urgent.Count){$response.next=@('read pending coordination events before continuing','acknowledge only after reading')+@($response.next)}
+                    }
+                    $response|ConvertTo-Json -Depth 20;exit 0
                 }
             }
             if($Command -in 'finish','wait' -and $current -and $current.id -eq $Batch -and ($hasFinishedCurrentBatch -or $Command -eq 'wait')) {
