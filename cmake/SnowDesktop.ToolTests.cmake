@@ -203,6 +203,13 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
+    foreach(cache_scene checkout-cache checkout-cache-control)
+        string(REPLACE "-" "_" cache_test "${cache_scene}")
+        add_test(NAME build_candidate_${cache_test} COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --${cache_scene})
+        set_tests_properties(build_candidate_${cache_test} PROPERTIES TIMEOUT 360 LABELS "tools;integration" PROCESSORS 4
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    endforeach()
     add_test(NAME build_candidate_weighted COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --weighted)
     set_tests_properties(build_candidate_weighted PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"

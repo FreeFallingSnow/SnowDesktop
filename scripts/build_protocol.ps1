@@ -202,6 +202,7 @@ function New-FrozenPlan($Current) {
         # The aggregate pipeline has one CPU ceiling and one committed-memory
         # ceiling. Use the largest member need, not additive nested budgets.
         $binding=($first|ConvertTo-Json -Depth 8)|ConvertFrom-Json
+        if($build -or @($resources|Where-Object compatibilityMode -ne 'shared').Count){$binding.compatibilityMode='exclusive'}
         $binding.cpuSlots=[int](($resources|Measure-Object cpuSlots -Maximum).Maximum)
         $binding.memoryMiB=[int](($resources|Measure-Object memoryMiB -Maximum).Maximum)
         $binding.reservedMemoryMiB=[int]([Math]::Ceiling($binding.memoryMiB/256.0)*256)

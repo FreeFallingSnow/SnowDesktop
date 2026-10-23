@@ -684,3 +684,9 @@ CMake 3.29及以上可为已审阅的非计时测试设置 `OBSERVE_RUNTIME_MODU
 观察 `watch wait` 的 eligible/completed=0 仅表示观察条件满足，其他观察结论=2；result 内仍保留
 原始 batch.exitCode，它不是验证入口的通过结论。WaitSeconds 仅限制等待，不取消存活构建；
 pipeline 没有新增执行预算。未知存活身份需显式诊断，不抢占或清登记。
+
+新快照将规范化检出路径纳入现有工具链/配置上下文摘要，槽位键和路径长度不增加。同一检出的后续候选保持原槽位；不同检出不覆盖其源码、CMake 缓存或对象文件，显式命名槽位也保留该检出边界。旧快照没有checkoutRoot字段时仍按原上下文核对，旧槽位、运行包和引用记录不清理、不重命名。
+
+独立工具计划可显式使用 plan -Scope tool -Suites selected -ResourceCpuSlots N -ResourceMemoryMiB M -ResourceShared 复用已有加权准入。需要所有执行成员均声明共享预算；混合独占成员仍独占。实际配置后核对选中测试均有 tools 标签、且无 RESOURCE_LOCK / RESOURCE_GROUPS / RUN_SERIAL，违反时明确失败、保留未运行项。私有 candidate release/debug 在无应用或 Shell 操作时可使用共享加权预算；任意 IDE、默认计划和未声明预算仍保守独占。物理内存余量、Job 硬限制、输入及租约校验不变。此入口要求已审阅测试不访问未声明的桌面或外部资源，不自动把所有工具测试视为独立。
+
+第4版已捕获结果的普通finish/wait核对该Run绑定的实际候选源码和程序：先核对请求nonce、Run/批次/快照及源码身份，再逐个核对程序哈希。原检出目录不是冻结候选的验证根，后续编辑需要新批次；同参与者的新活动批次仍阻止用旧结果验证新编辑。旧协议和没有捕获候选的豁免批次继续核对原工作区；status仍只读查看历史。

@@ -16,6 +16,7 @@ param(
     [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
+    [switch]$ResourceShared,
     [switch]$AutoCheck,
     [ValidateLength(0,160)][string]$TaskName='',
     [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
@@ -530,9 +531,14 @@ try {
                         throw 'This historical result has no input identity. Read it with status; begin a new batch to verify edits.'
                     }
                     Assert-ResultBinaries $result
-                    $nowInputs = Get-BuildInputIdentity $repositoryRoot
-                    if ($nowInputs.digest -ne $result.inputEnd.digest) {
-                        throw 'Repository inputs differ from this historical result. Use status for history; begin a new batch for current edits.'
+                    # Captured v4 results were just checked against their
+                    # actual frozen source. Original checkout edits are a new
+                    # input set, never a replacement for that snapshot.
+                    if((Get-Field $result 'protocolVersion' 1) -lt 4 -or -not (Get-Field $result 'candidateBinding')){
+                        $nowInputs = Get-BuildInputIdentity $repositoryRoot
+                        if ($nowInputs.digest -ne $result.inputEnd.digest) {
+                            throw 'Repository inputs differ from this historical result. Use status for history; begin a new batch for current edits.'
+                        }
                     }
                 }
                 Emit-Result $result
@@ -705,9 +711,12 @@ try {
                 if ($Command -eq 'plan') {
                     if ($entry.state -ne 'editing') { throw 'Plan changes require atomic begin/reopen before editing.' }
                     Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason)
+                    if($ResourceShared -and ($Scope -ne 'tool' -or $entry.testPlan.suites -contains 'none' -or $entry.testPlan.suites -contains 'full' -or -not $ResourceCpuSlots -or -not $ResourceMemoryMiB)){
+                        throw 'Shared resource admission requires a selected tool plan with explicit CPU and memory budgets.'
+                    }
                     if($ResourceCpuSlots -or $ResourceMemoryMiB){
                         if($entry.testPlan.suites -contains 'none'){throw 'An empty plan cannot reserve weighted resources.'}
-                        Set-Field $entry.testPlan 'projectResources' (Get-ProjectResourceBinding $repositoryRoot $true $ResourceCpuSlots $ResourceMemoryMiB $true)
+                        Set-Field $entry.testPlan 'projectResources' (Get-ProjectResourceBinding $repositoryRoot $true $ResourceCpuSlots $ResourceMemoryMiB (-not $ResourceShared))
                     }
                     $visible=Find-VisibleTask (Get-TaskLedger $state) $Participant
                     Set-Field $entry.testPlan 'requirementsRevision' $visible.requirementsRevision

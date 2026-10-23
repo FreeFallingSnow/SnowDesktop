@@ -510,6 +510,12 @@ if ($Mode -eq "plan") {
     $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
     $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     try {
+        if((Get-Field (Get-Field $plan 'projectResources') 'compatibilityMode' '') -eq 'shared'){
+            $unsafe=@($inventory.Tests|Where-Object {$names -contains $_.name -and (
+                @($_.properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value}).Count -or
+                @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -notcontains 'tools')})
+            if($unsafe.Count){throw ('Shared tool plan contains tests requiring exclusive or unreviewed resources: '+(@($unsafe|ForEach-Object name) -join ', '))}
+        }
         $blocked=@($inventory.Tests|Where-Object {$names -contains $_.name -and @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
         if($blocked.Count){
             $coverage.status='environment-blocked'

@@ -159,15 +159,33 @@ function Get-BinaryEvidence($Current,[bool]$BuildPassed) {
 
 function Assert-ResultBinaries($Result) {
     $evidence=Get-Field $Result 'binaryEvidence'
+    $coverage=Get-Field $Result 'coverage'
+    $testFiles=@(Get-Field $coverage 'testExecutablesBeforeRun' @())
+    $binaryRoot=$repositoryRoot
+    $binding=Get-Field $Result 'candidateBinding'
+    if((Get-Field $Result 'protocolVersion' 1) -ge 4 -and $binding){
+        if($Result.runId -notmatch '^[a-f0-9]{32}$'){throw 'Candidate result Run identity is invalid.'}
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        $run=Read-EntryJson (Join-Path $repositoryRoot ('.build/collaboration/runs/'+$Result.runId+'.json'))
+        $request=Read-EntryJson (Join-Path $repositoryRoot ('.build/collaboration/runs/'+$Result.runId+'.request.json'))
+        $context=Get-Field $run 'candidateExecution'
+        if(-not $context -or -not $request -or $run.id -cne $Result.runId -or $request.id -cne $Result.runId -or $run.nonce -cne $request.nonce -or
+            $run.repositoryRoot -ne $repositoryRoot -or $context.batchId -cne $Result.batchId -or
+            $request.repositoryRoot -ne $repositoryRoot -or $request.batch -cne $Result.batchId -or $context.runRoot -ne $repositoryRoot -or
+            $context.runId -cne $Result.runId -or $context.snapshot -cne $binding.snapshot -or $context.manifestDigest -cne $binding.manifestDigest){throw 'Candidate result execution identity changed.'}
+        $identity=Get-CandidateSourceIdentity $context.source $context
+        if($identity.digest -cne $Result.inputEnd.digest){throw 'Candidate result source identity changed.'}
+        $binaryRoot=$context.source
+    }
     if($evidence -and $evidence.buildStagePassed){
         foreach($file in $evidence.executables){
-            $path=Join-Path $repositoryRoot ('.build/Release/'+$file.file)
+            $path=Join-Path $binaryRoot ('.build/Release/'+$file.file)
             if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $file.sha256){throw 'Output binary differs from this historical result; use status for history and begin for current verification.'}
         }
     }
-    $coverage=Get-Field $Result 'coverage'
-    foreach($file in @(Get-Field $coverage 'testExecutablesBeforeRun' @())){
-        $path=Join-Path $repositoryRoot $file.executable
+    foreach($file in $testFiles){
+        $path=Join-Path $binaryRoot $file.executable
         if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $file.sha256){throw 'Test executable differs from recorded coverage; begin a new verification batch.'}
     }
 }

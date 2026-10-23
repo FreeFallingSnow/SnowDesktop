@@ -98,7 +98,7 @@ function Get-CandidatePaths([string]$Root,[string]$ExtraInputs='') {
     [string[]]$ordered=@($paths);[Array]::Sort($ordered,[StringComparer]::Ordinal)
     return $ordered
 }
-function Get-CandidateContext($Files,[string]$Configuration) {
+function Get-CandidateContext($Files,[string]$Configuration,[string]$CheckoutRoot='') {
     $environment=[ordered]@{}
     foreach($name in @('CMAKE_GENERATOR','CMAKE_GENERATOR_PLATFORM','CMAKE_GENERATOR_TOOLSET','PATH','INCLUDE','LIB','LIBPATH',
         'SNOWDESKTOP_STEAMWORKS_SDK_ROOT','SNOWDESKTOP_STEAMWORKS_SDK_PATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')){
@@ -113,6 +113,7 @@ function Get-CandidateContext($Files,[string]$Configuration) {
     $tools['powershell']=[pscustomobject]@{path=$runtime;sha256=(Get-FileDigest $runtime)}
     $presets=@($Files|Where-Object {$_.path -in 'CMakePresets.json','CMakeUserPresets.json'}|Select-Object path,state,sha256)
     $binding=[pscustomobject]@{schemaVersion=1;configuration=$Configuration;presets=$presets;environment=$environment;tools=$tools}
+    if($CheckoutRoot){Set-Field $binding 'checkoutRoot' ([IO.Path]::GetFullPath($CheckoutRoot).TrimEnd('\','/').ToLowerInvariant())}
     return [pscustomobject]@{digest=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 10 -Compress));binding=$binding;
         externalDependenciesClosed=$false;scope='Observed configuration, tools and build environment; external SDK/package contents are not yet closed.'}
 }
@@ -167,7 +168,7 @@ function New-CandidateSnapshot([string]$Root,[string]$TaskId,[long]$Requirements
         }
         if((@((Get-CandidatePaths $Root $ExtraInputs)) -join "`n") -cne ($paths -join "`n") -or (Get-BuildInputIdentity $Root).digest -ne $ExpectedDigest){throw 'Candidate inputs changed before publication.'}
         & $CheckCancellation
-        $context=Get-CandidateContext $files $Configuration;$id=[Guid]::NewGuid().ToString('N')
+        $context=Get-CandidateContext $files $Configuration $Root;$id=[Guid]::NewGuid().ToString('N')
         $head=Invoke-InputGit $Root 'rev-parse --verify HEAD'
         $manifest=[pscustomobject]@{schemaVersion=1;id=$id;sourceRoot=$Root;commonGitDirectory=$store.commonGitDirectory;task=$TaskId;requirementsRevision=$RequirementsRevision;
             capturedUtc=[DateTime]::UtcNow.ToString('o');head=$(if($head.code -eq 0){$head.output.Trim()}else{$null});buildInputDigest=$ExpectedDigest;
@@ -227,7 +228,7 @@ function Enter-CandidateSlot($Snapshot,[string]$Name) {
 function Set-CandidateSlotSource($Snapshot,$Lease) {
     if(-not $Lease.lease -or -not $Lease.lease.CanWrite){throw 'A live candidate slot lease is required.'}
     $manifest=$Snapshot.manifest
-    $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration
+    $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
     if($actual.digest -ne $manifest.context.digest){throw 'Candidate observed tools/environment changed; capture a new context.'}
     $old=if([IO.File]::Exists($Lease.state)){Read-CandidateJson $Lease.state}else{$null}
     if($old -and ($old.slot -ne $Lease.key -or $old.contextDigest -ne $manifest.context.digest)){throw 'Candidate slot context changed; preserve the cache and choose another slot.'}

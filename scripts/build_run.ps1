@@ -233,7 +233,8 @@ try {
         # Configured test execution has unknown cross-process resources until
         # selection. Keep it exclusive; only verified definitions may opt into
         # sharing. Preflight process actions and arbitrary IDE targets also do.
-        $exclusive=$request.action -notin 'release','debug' -or $request.reloadShell -or $request.closeApplication
+        $privateBuild=$request.action -eq 'candidate' -and $request.candidateAction -in 'release','debug'
+        $exclusive=($request.action -notin 'release','debug' -and -not $privateBuild) -or $request.reloadShell -or $request.closeApplication
         if($Mode -eq 'verify'){$exclusive=$false}
         $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
         $batchTransaction=$null;$joined=$false;$verification=$null;$referenceProposal=$null;$referenceReceipt=$null;$reused=$false
@@ -478,7 +479,17 @@ try {
                 foreach($name in @('compatibilityMode','cpuSlots','memoryMiB','reservedMemoryMiB','logicalProcessors','cpuCapacity','memoryCapacityMiB','headroomMiB','policyHash')){Set-Field $record.resourceAdmission $name $binding.$name}
                 $currentPolicy=Get-WeightedResourcePolicy $root -Persist
                 if($currentPolicy.hash -ne $binding.policyHash){$record.resourceAdmission.bindingValid=$false;throw 'Resource policy changed before admission.'}
-                $mustBeExclusive=($request.action -notin 'release','debug' -and $request.mode -ne 'verify') -or $request.reloadShell -or $request.closeApplication
+                $privateBuild=$request.action -eq 'candidate' -and $request.candidateAction -in 'release','debug'
+                $sharedToolBatch=$false
+                if($candidateBatch -and $binding.compatibilityMode -eq 'shared'){
+                    $frozenPath=Join-Path $root ('.build/collaboration/'+$request.batch+'.plan.json')
+                    if((Get-FileDigest $frozenPath) -ne $request.planHash){throw 'Frozen shared tool plan changed.'}
+                    $frozen=Read-EntryJson $frozenPath
+                    $sharedToolBatch=-not $frozen.buildRequired -and $frozen.mode -eq 'selected' -and
+                        @($frozen.tasks|Where-Object {$_.requirement.suites -notcontains 'none' -and
+                            ($_.requirement.scope -ne 'tool' -or (Get-Field (Get-Field $_.requirement 'projectResources') 'compatibilityMode' '') -ne 'shared')}).Count -eq 0
+                }
+                $mustBeExclusive=($request.action -notin 'release','debug' -and $request.mode -ne 'verify' -and -not $privateBuild -and -not $sharedToolBatch) -or $request.reloadShell -or $request.closeApplication
                 if($binding.compatibilityMode -notin 'shared','exclusive' -or ($mustBeExclusive -and $binding.compatibilityMode -ne 'exclusive')){$record.resourceAdmission.bindingValid=$false;throw 'Resource policy changed before admission.'}
                 $actual=Get-ProjectResourceBinding $root $true $binding.cpuSlots $binding.memoryMiB ($binding.compatibilityMode -eq 'exclusive')
             }else{$actual=Get-ProjectResourceBinding $root $true}

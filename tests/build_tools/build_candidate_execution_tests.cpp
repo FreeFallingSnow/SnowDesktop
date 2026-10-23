@@ -444,6 +444,104 @@ void scenario(const fs::path& repo,const std::string& control) {
     wait(c,submit(c,execution(snapshot)));program(output,7);
     std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";
 }
+void checkout_cache(const fs::path& repo,bool oldSlot=false) {
+    Coordinator a(repo,"cache-a",true,fixture_parent(repo));
+    require(a.git({L"config",L"core.autocrlf",L"false"}).code==0,"Cannot normalize fixture Git checkout bytes");
+    prepare(a,repo,"");
+    if(oldSlot){
+        auto source=read(a.scripts/L"build_candidate.ps1");
+        replace(source,"$context=Get-CandidateContext $files $Configuration $Root;","$context=Get-CandidateContext $files $Configuration '';");
+        write(a.scripts/L"build_candidate.ps1",source,true);
+    }
+    write(a.root/L"src/tool.cpp","int main(){return 0;}\n");
+    // Raw command adapter; the production Run and Job own actual compiler children.
+    write(a.scripts/L"build.bat","@echo off\r\n\"%SNOWDESKTOP_ENTRY_POWERSHELL%\" -NoProfile -File \"%~dp0build_command.ps1\" -Operation configure -Preset release\r\nif errorlevel 1 exit /b %ERRORLEVEL%\r\n\"%SNOWDESKTOP_ENTRY_POWERSHELL%\" -NoProfile -File \"%~dp0build_command.ps1\" -Operation build -Preset release -Targets SnowDesktopCandidateFixtureTests\r\nexit /b %ERRORLEVEL%\r\n");
+    write(a.root/L"CMakeLists.txt",read(a.root/L"CMakeLists.txt")+R"CMAKE(
+add_executable(SnowDesktopIndependentToolTests src/tool.cpp)
+target_compile_options(SnowDesktopIndependentToolTests PRIVATE /W4 /WX /Z7)
+set_target_properties(SnowDesktopIndependentToolTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+add_test(NAME independent_tool COMMAND SnowDesktopIndependentToolTests)
+set_tests_properties(candidate_rule independent_tool PROPERTIES LABELS "tools" )
+set_tests_properties(independent_tool PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIndependentToolTests>")
+)CMAKE");
+    require(a.git({L"add",L"--all"}).code==0&&a.git({L"commit",L"-m",L"Two checkout cache fixture"}).code==0,"Cannot save cache fixture");
+    Coordinator b(repo,"cache-b-unused",true,fixture_parent(repo));b.bridge.reset();
+    b.root=temporary("cache-b",fixture_parent(repo));
+    require(a.git({L"worktree",L"add",L"--detach",b.root.wstring(),L"HEAD"}).code==0,"Cannot create real linked checkout");
+    b.scripts=b.root/L"scripts";b.stateRoot=b.root/L".build/collaboration";b.bridge=std::make_unique<Bridge>(repo,b.root,false,true);
+    b.call({"task-open","candidate","-TaskName","Independent tool checkout"});
+    Json measurements=Json::parse("[]");
+    auto batch=[&](Coordinator& c,const std::string& test,const std::string& edit=""){
+        const auto clock=std::chrono::steady_clock::now();
+        const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});
+        const auto id=opened.at("batchId").str();const auto rev=std::to_string(opened.at("editRevision").integer());
+        c.call({"claim","candidate","-Batch",id,"-Revision",rev,"-Files",test=="independent_tool"?"src/value.h":"src/main.cpp"});
+        if(!edit.empty())write(c.root/(test=="independent_tool"?L"src/value.h":L"src/main.cpp"),edit);
+        c.plan("candidate",id,opened.at("editRevision").integer(),"selected",test,"tool",test=="independent_tool"?"src/value.h":"src/main.cpp");
+        const auto completed=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision",rev},{},100);
+        require(completed.code==0,"Cache scene failed: "+completed.out+completed.err);
+        const auto result=c.result(id);require(result.at("inputCheck").str()=="stable","Cache scene inputs changed");
+        const auto record=view(c,result.at("runId").str());
+        Json measure=Json::parse("{}");measure["test"]=test;measure["batch"]=result;measure["run"]=record;
+        measure["wallSeconds"]=std::chrono::duration<double>(std::chrono::steady_clock::now()-clock).count();
+        measurements.items.push_back(measure);atomic(a.root/L".build/cache-scenes.json",measurements.dump());
+        return record.at("record");
+    };
+    const auto warm=batch(a,"candidate_rule");
+    const auto output=fs::path(wide(warm.at("candidateExecution").at("output").str()));
+    const auto object=output/L"SnowDesktopCandidateFixtureTests.dir/Release/main.obj";
+    require(fs::exists(object),"Actual compiler object is missing");const auto original=fs::last_write_time(object);
+    const auto other=batch(b,"independent_tool","constexpr int value=11;\n");
+    const auto repeat=batch(a,"candidate_rule");
+    require(fs::last_write_time(object)==original,"Unchanged checkout recompiled after the other checkout replaced its shared header");
+    require(warm.at("candidateExecution").at("slot").str()==repeat.at("candidateExecution").at("slot").str()&&
+        warm.at("candidateExecution").at("slot").str()!=other.at("candidateExecution").at("slot").str(),"Automatic slots did not isolate linked checkouts");
+    const auto changed=batch(a,"candidate_rule",read(a.root/L"src/main.cpp")+"\n// single translation-unit edit\n");
+    require(fs::last_write_time(object)!=original&&changed.at("candidateExecution").at("slot").str()==warm.at("candidateExecution").at("slot").str(),"Single-file edit lost its warm checkout cache");
+    program(output,7);
+    const auto gate=a.stateRoot/L"concurrent-build-gate";write(gate,"hold");
+    const auto product=submit(a,{"-Action","release","-CpuSlots","2","-MemoryMiB","768"},{{L"CANDIDATE_FIXTURE_GATE",gate.wstring()}});
+    until([&]{return fs::exists(gate.wstring()+L".ready")||view(a,product).at("terminal").boolean;},35);
+    require(fs::exists(gate.wstring()+L".ready"),"Concurrent compiler scene never reached its actual build child");
+    const auto opened=b.bridge->call(b.scripts/L"build_manager.ps1",{"begin","candidate"});
+    const auto toolBatch=opened.at("batchId").str(),revision=std::to_string(opened.at("editRevision").integer());
+    b.call({"claim","candidate","-Batch",toolBatch,"-Revision",revision,"-Files","src/tool.cpp"});
+    b.call({"plan","candidate","-Batch",toolBatch,"-Revision",revision,"-Scope","tool","-Suites","selected","-Tests","independent_tool","-Inputs","src/tool.cpp","-Reason","Isolated tool fixture with no desktop or external resource use","-ResourceCpuSlots","2","-ResourceMemoryMiB","768","-ResourceShared"});
+    const auto launched=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",toolBatch,"-Revision",revision,"-WaitSeconds","1"},{},15);
+    require(launched.code==0||launched.code==2,"Cannot launch shared tool validation: "+launched.out+launched.err);
+    bool overlapped=false;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(32);
+    while(std::chrono::steady_clock::now()<deadline){
+        if(fs::exists(b.stateRoot/wide(toolBatch+".json"))){
+            const auto result=b.result(toolBatch);
+            if(result.has("outcome")){overlapped=result.at("outcome").str()=="passed"&&!view(a,product).at("terminal").boolean;break;}
+        }
+        Sleep(80);
+    }
+    fs::remove(gate);
+    const auto productResult=wait(a,product);
+    const auto toolResult=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",toolBatch,"-Revision",revision},{},70);
+    require(toolResult.code==0,"Shared tool validation failed: "+toolResult.out+toolResult.err);
+    require(overlapped,"Independent tool validation waited behind the active product compiler");
+    Json concurrent=Json::parse("{}");concurrent["scene"]="concurrent-compiler-and-tool";concurrent["product"]=productResult;concurrent["tool"]=view(b,b.result(toolBatch).at("runId").str());
+    const auto toolOutput=fs::path(wide(concurrent.at("tool").at("record").at("candidateExecution").at("output").str()));
+    const auto toolExecutable=toolOutput/L"Release/tests/SnowDesktopIndependentToolTests.exe";
+    const auto originalBytes=read(toolExecutable);const auto originalTime=fs::last_write_time(toolExecutable);
+    write(toolExecutable,originalBytes+"corrupted");
+    const auto rejected=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",toolBatch,"-Revision",revision},{},30);
+    write(toolExecutable,originalBytes);fs::last_write_time(toolExecutable,originalTime);
+    require(rejected.code!=0&&rejected.err.find("Test executable differs from recorded coverage")!=std::string::npos,"Candidate wait accepted changed executable bytes or failed outside its hash check: "+rejected.out+rejected.err);
+    const auto frozenSource=fs::path(wide(concurrent.at("tool").at("record").at("candidateExecution").at("source").str()))/L"src/tool.cpp";
+    const auto sourceBytes=read(frozenSource);const auto sourceTime=fs::last_write_time(frozenSource);
+    write(frozenSource,sourceBytes+"\n// changed frozen input\n");
+    const auto rejectedSource=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",toolBatch,"-Revision",revision},{},30);
+    write(frozenSource,sourceBytes);fs::last_write_time(frozenSource,sourceTime);
+    require(rejectedSource.code!=0&&rejectedSource.err.find("Candidate source input changed during execution")!=std::string::npos,"Candidate wait accepted changed frozen source or failed outside its source identity check: "+rejectedSource.out+rejectedSource.err);
+    const auto restored=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",toolBatch,"-Revision",revision},{},30);
+    require(restored.code==0,"Candidate wait failed after restoring the exact executable bytes: "+restored.out+restored.err);
+    measurements.items.push_back(concurrent);atomic(a.root/L".build/cache-scenes.json",measurements.dump());
+    std::cout<<"PASS real linked checkouts preserve warm objects across A/B/A and a single-file edit; measurements "<<utf8((a.root/L".build/cache-scenes.json").wstring())<<"\n";
+}
 void weighted_candidate(const fs::path& repo) {
     Coordinator c(repo,"weighted-candidate",true,fixture_parent(repo));prepare(c,repo,"");
     const auto snapshot=capture(c);
@@ -754,6 +852,13 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
     else if(mode=="--verify-checkout-lock")executor_control(repo,true);
     else if(mode=="--verify-source-lock")executor_control(repo,false);
+    else if(mode=="--checkout-cache")checkout_cache(repo);
+    else if(mode=="--checkout-cache-old")checkout_cache(repo,true);
+    else if(mode=="--checkout-cache-control"){
+        const auto result=run({executable().wstring(),repo.wstring(),L"--checkout-cache-old"},repo,300,{},true);
+        require(result.code==1&&result.err.find("Unchanged checkout recompiled after the other checkout replaced its shared header")!=std::string::npos,"Shared-slot control failed outside the unnecessary-recompile assertion: "+result.out+result.err);
+        std::cout<<"PASS old shared-slot behavior fails the real unnecessary-recompile assertion\n";
+    }
     else if(mode=="--weighted")weighted_candidate(repo);
     else if(mode=="--all"){scenario(repo,"");weighted_candidate(repo);executor_control(repo,true);executor_control(repo,false);}
     else scenario(repo,mode.empty()?"":mode.substr(2));

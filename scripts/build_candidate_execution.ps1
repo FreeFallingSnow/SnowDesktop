@@ -122,7 +122,7 @@ function Get-CandidateSourceIdentity([string]$Root,$Context) {
         $material.sourceDigest -ne $snapshot.manifest.sourceDigest){throw 'Verification candidate slot changed; use a matching new baseline.'}
     Initialize-CandidateOutput ([pscustomobject]@{source=$context.source;output=$context.output;directory=$directory}) $context.configuration -Existing
     if($snapshot.digest -ne $context.manifestDigest -or $snapshot.path -ne $context.manifest){throw 'Candidate source manifest changed.'}
-    $actual=Get-CandidateContext $snapshot.manifest.files $context.configuration
+    $actual=Get-CandidateContext $snapshot.manifest.files $context.configuration $(if(Get-Field $snapshot.manifest.context.binding 'checkoutRoot'){$snapshot.manifest.sourceRoot}else{''})
     if($actual.digest -ne $snapshot.manifest.context.digest){throw 'Candidate observed environment/tools changed.'}
     $files=@();$known=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($file in $snapshot.manifest.files){
