@@ -513,7 +513,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         for (const auto i : leftIndices)
             if (leftCursor + widths[i] <= leftLimit)
             { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
-        if (!mergedDock && timeNotificationRightAligned)
+        // Without a central clock/notification group the pinned tray can use
+        // the center too, but must still leave the left controls their space.
+        if (!mergedDock && (timeNotificationRightAligned || (!clockWidth && !notificationWidth)))
             trayMinimum = leftCursor + edgePadding;
         LONG trayEnd = viewportWidth - edgePadding;
         for (const auto i : rightIndices)

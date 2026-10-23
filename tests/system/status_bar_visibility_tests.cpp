@@ -52,6 +52,15 @@ int main(int argc, char** argv)
             reinterpret_cast<IUnknown**>(text.GetAddressOf()))), "offscreen production renderer initializes");
     StatusBarSnapshot data; data.clock = L"2026/10/23   16:25";
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
+    std::vector<std::string> pinned;
+    for (unsigned index = 0; index < 24; ++index)
+    {
+        tray::Icon icon;
+        icon.key = icon.persistentKey = "visibility-test-" + std::to_string(index);
+        icon.width = icon.height = 1; icon.pixels = {0xff33aa55};
+        pinned.push_back(icon.persistentKey);
+        data.tray.push_back(std::move(icon));
+    }
     const auto defaults = BuildStatusBarItems(StatusBarSettings{}, data);
     Check(Find(defaults, "clock") && Find(defaults, "notifications") && Find(defaults, "controlCenter"),
         "clock, notifications and grouped control center start visible");
@@ -63,6 +72,7 @@ int main(int argc, char** argv)
         StatusBarSettings settings;
         settings.controlCenter = mode != 2; settings.controlCenterSingleIcon = mode == 1;
         settings.clock = clock; settings.notifications = notifications; settings.batteryPercentage = true;
+        settings.pinnedTrayItems = pinned;
         auto items = BuildStatusBarItems(settings, data);
         Check((Find(items, "clock") != nullptr) == clock && (Find(items, "notifications") != nullptr) == notifications &&
             (Find(items, "controlCenter") != nullptr) == (mode != 2), "hidden items have no rendered or keyboard target");
