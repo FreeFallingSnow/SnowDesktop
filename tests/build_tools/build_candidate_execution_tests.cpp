@@ -340,7 +340,7 @@ void artifacts(const fs::path& repo,bool slotReference,bool inputDenied=false) {
     Coordinator c(repo,"candidate-artifacts",true,fixture_parent(repo));
     prepare(c,repo,slotReference?"artifacts-slot-reference":"");
     if(inputDenied){auto script=read(c.scripts/L"build_acceptance.ps1");replace(script,"# Preserve the pre-v4 input-acceptance contract for linked tools.","throw 'Former v4 only accepts exported output files.'");write(c.scripts/L"build_acceptance.ps1",script,true);}
-    write(c.root/L"plugin.js","export const version=1;\n");
+    write(c.root/L"scripts/plugin.js","export const version=1;\n");
     const auto snapshot=capture(c),id=submit(c,execution(snapshot,"tests"));
     const auto first=wait(c,id),record=first.at("record");
     const auto& saved=record.at("artifact");
@@ -384,15 +384,15 @@ void artifacts(const fs::path& repo,bool slotReference,bool inputDenied=false) {
         "Unrelated live checkout edits invalidated saved-program acceptance");
     complete(started.at("id").str(),"passed",2);
     auto sourceStart=[&](int code=0){const auto result=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"acceptance-start","candidate","-CandidateRun",id,"-TaskRevision",taskRevision(),
-        "-AcceptanceCriterion","Actual linked tool source matches its passed candidate","-Files","plugin.js"});
+        "-AcceptanceCriterion","Actual linked tool source matches its passed candidate","-Files","scripts/plugin.js"});
         require(result.code==code,"Candidate input could not start acceptance with its original identity: "+result.out+result.err);return result.code?Json{}:Json::parse(result.out);};
     const auto source=sourceStart().at("acceptance");
     require(source.at("artifacts").items.front().at("sourceAssociation").str()=="candidate input"&&source.at("candidate").str()==snapshot,
         "Linked tool acceptance was confused with an exported test executable");
     require(complete(source.at("id").str(),"passed").at("acceptance").at("status").str()=="passed","Unrelated source edits invalidated the unchanged linked tool input");
-    write(c.root/L"plugin.js","export const version=2;\n");sourceStart(2);write(c.root/L"plugin.js","export const version=1;\n");
+    write(c.root/L"scripts/plugin.js","export const version=2;\n");sourceStart(2);write(c.root/L"scripts/plugin.js","export const version=1;\n");
     const auto changedSource=sourceStart().at("acceptance").at("id").str();
-    write(c.root/L"plugin.js","export const version=2;\n");complete(changedSource,"passed",2);complete(changedSource,"cancelled");write(c.root/L"plugin.js","export const version=1;\n");
+    write(c.root/L"scripts/plugin.js","export const version=2;\n");complete(changedSource,"passed",2);complete(changedSource,"cancelled");write(c.root/L"scripts/plugin.js","export const version=1;\n");
     if(!inputDenied){const auto denied=run({executable().wstring(),repo.wstring(),L"--artifacts-input-denied"},c.root,100,{},true);
         require(denied.code==1&&denied.err.find("Candidate input could not start acceptance")!=std::string::npos,
             "Output-only control did not reach the linked-source acceptance assertion: "+denied.out+denied.err);}
