@@ -3,6 +3,7 @@
 #include <winhttp.h>
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <iostream>
 #include <thread>
 using namespace build_test;
@@ -16,16 +17,22 @@ HttpResult http(int port,const std::string& path="/api/status",const std::wstrin
 class Cdp {
     Internet session,connection,request,socket;int sequence=0;
 public:
-    std::string sessionId;std::vector<std::string> errors;
+    std::string sessionId,lastExpression;std::vector<std::string> errors;
     Cdp(int port,const std::string& path):session(WinHttpOpen(L"SnowDesktop native CDP",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)),connection(WinHttpConnect(session.value,L"127.0.0.1",static_cast<INTERNET_PORT>(port),0)),request(WinHttpOpenRequest(connection.value,L"GET",wide(path).c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,0)){
         WinHttpSetTimeouts(session.value,3000,3000,5000,5000);require(WinHttpSetOption(request.value,WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET,nullptr,0)!=0&&WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)!=0&&WinHttpReceiveResponse(request.value,nullptr)!=0,"CDP upgrade failed");socket.value=WinHttpWebSocketCompleteUpgrade(request.value,0);require(socket.value!=nullptr,"CDP socket missing");
     }
-    ~Cdp(){if(socket.value)WinHttpWebSocketClose(socket.value,WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS,nullptr,0);}
+    ~Cdp(){
+        if(socket.value&&std::uncaught_exceptions()>0){
+            const auto expression=lastExpression;
+            try{std::cerr<<"Browser failure expression: "<<expression.substr(0,700)<<"\nBrowser view: "<<evaluate("({title:document.getElementById('workTitle')?.textContent,batch:document.getElementById('batch')?.textContent,headline:document.getElementById('headline')?.textContent,tab:document.querySelector('[role=tab][aria-selected=true]')?.id,focus:document.activeElement?.tagName})").dump()<<"\n";}catch(...){}
+        }
+        if(socket.value)WinHttpWebSocketClose(socket.value,WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS,nullptr,0);
+    }
     Json send(const std::string& method,Json params=Json::object({}),bool page=true){
         Json command=Json::object({{"id",++sequence},{"method",method},{"params",params}});if(page&&!sessionId.empty())command["sessionId"]=sessionId;auto text=command.dump();require(WinHttpWebSocketSend(socket.value,WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,text.data(),static_cast<DWORD>(text.size()))==NO_ERROR,"CDP send failed");
         for(;;){std::string response;WINHTTP_WEB_SOCKET_BUFFER_TYPE type{};do{char buffer[65536];DWORD bytes=0;auto code=WinHttpWebSocketReceive(socket.value,buffer,sizeof(buffer),&bytes,&type);require(code==NO_ERROR&&type!=WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE,"CDP receive failed");response.append(buffer,bytes);require(response.size()<32*1024*1024,"CDP response too large");}while(type==WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE||type==WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE);auto message=Json::parse(response);if(message.has("method")&&(message.at("method").str()=="Runtime.exceptionThrown"||message.at("method").str()=="Log.entryAdded"))errors.push_back(response);if(message.has("id")&&message.at("id").integer()==sequence){require(!message.has("error"),"CDP error: "+response);return message.at("result");}}
     }
-    Json evaluate(const std::string& expression){auto value=send("Runtime.evaluate",Json::object({{"expression",expression},{"returnByValue",true},{"awaitPromise",true}}));require(!value.has("exceptionDetails"),"Browser expression failed: "+value.dump());auto result=value.at("result");return result.has("value")?result.at("value"):Json{};}
+    Json evaluate(const std::string& expression){lastExpression=expression;auto value=send("Runtime.evaluate",Json::object({{"expression",expression},{"returnByValue",true},{"awaitPromise",true}}));require(!value.has("exceptionDetails"),"Browser expression failed: "+value.dump());auto result=value.at("result");return result.has("value")?result.at("value"):Json{};}
     void connected(){until([&]{auto value=evaluate("document.getElementById('connection')?.textContent");return value.kind==Json::Kind::String&&value.str()=="已连接";},15);}
     void reload(){auto previous=evaluate("performance.timeOrigin").number;send("Page.reload");until([&]{try{return evaluate("performance.timeOrigin").number!=previous&&evaluate("document.readyState").str()=="complete";}catch(...){return false;}},15);connected();}
 };

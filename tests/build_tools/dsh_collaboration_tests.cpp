@@ -373,7 +373,7 @@ const mixedText=renderBudget(mixedModel),mixedZh=renderBudget(mixedModel,'zh');
 mixedModel.batch.coverage.summary={...mixedModel.batch.coverage.summary,selected:1,executed:0,passed:0};mixedModel.batch.coverage.status='fulfilled';mixedModel.batch.coverage.completed=[];
 const referenceOnlyText=renderBudget(mixedModel);
 const logical='5'.repeat(32),current='6'.repeat(32),priorRun='7'.repeat(32);
-const workspaceSnapshot={current:{id:current,logicalBatchId:logical,attempt:2,phase:'editing',createdUtc:'2026-10-02T11:00:00Z',tasks:[{id:'former-agent',state:'finished',display:'waiting',check:{status:'passed'},plan:{}},{id:'current-editor',state:'editing',display:'editing',check:{status:'invalidated'},plan:{}}],log:{lines:[]}},
+const workspaceSnapshot={current:{id:current,logicalBatchId:logical,attempt:2,phase:'editing',createdUtc:'2026-10-02T10:30:00Z',tasks:[{id:'former-agent',state:'finished',display:'waiting',check:{status:'passed'},plan:{}},{id:'current-editor',state:'editing',display:'editing',check:{status:'invalidated'},plan:{}}],log:{lines:[]}},
  taskPresence:[{id:'former-agent',displayName:'Former conversation',phase:'waiting',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'current-editor',displayName:'Current editor',phase:'editing',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'old-investigation',displayName:'Old investigation',phase:'investigating',lastHeartbeatUtc:'2020-01-01T00:00:00Z',lastProgressUtc:'2020-01-01T00:00:00Z'}],
  history:[{batchId:logical,logicalBatchId:logical,attempt:1,outcome:'failed',createdUtc:'2026-10-02T10:00:00Z',completedUtc:'2026-10-02T10:30:00Z',participants:['Former conversation','Current editor']}],
  runs:[{id:priorRun,batchId:logical,status:'failed',task:'former-agent',log:{lines:['previous-only-log']}}],events:[]};
@@ -412,6 +412,8 @@ console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,ma
     const auto& activityRows=clientObserved.at("workspaceActivities").items;
     require(activityRows.size()==2&&activityRows[0].at("key").str()=="batch:"+std::string(32,'5')&&activityRows[1].at("text").str().find("Last recorded")!=std::string::npos,
         "Overlay split repair attempts or presented an old investigation as currently running");
+    require(activityRows[0].at("text").str().find("Failed")==std::string::npos,
+        "Overlay replaced current repair phase with equal-time historical failure");
     require(clientObserved.at("workspaceBuilds").str().find("previous-only-log")==std::string::npos&&clientObserved.at("workspaceParticipantsZh").str().find("已就绪")!=std::string::npos,
         "Unstarted overlay attempt borrowed prior Run logs or participant status was untranslated");
     require(clientObserved.at("workspaceActivityText").str().find("broadcast-for-selected-activity")!=std::string::npos&&

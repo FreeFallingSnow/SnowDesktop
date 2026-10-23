@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.17';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.18';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -63,8 +63,9 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    group.batches=latest(group.batches);group.members=[...group.members.values()];
    for(const batch of group.batches)if(batch.run&&!group.runs.some(run=>run.id===batch.run.id))group.runs.push(batch.run);
    group.runs=latest(group.runs);const entry=group.batches[0]||group.runs[0];
-   group.state=entry?.phase||entry?.status||group.members[0]?.phase||'unknown';
    group.liveBatch=group.batches.find(batch=>batch.id===snapshot?.current?.id||snapshot?.activeCandidates?.some(candidate=>candidate.id===batch.id))||null;
+   const stateSource=group.liveBatch||entry;
+   group.state=stateSource?.phase||stateSource?.status||group.members[0]?.phase||'unknown';
    group.recorded=!group.liveBatch&&!endedStates.has(group.state)&&!group.runs.some(run=>run.ownerState==='alive'&&!endedStates.has(run.status))&&!group.members.some(recent);
    group.kind=group.recorded?'recorded':['failed','interrupted','invalidated','blocked','attention','retirement-interrupted'].includes(group.state)?'attention':endedStates.has(group.state)?'done':'active';
    group.timestamp=entry?activityTime(entry):Math.max(0,...group.members.map(activityTime));
@@ -131,7 +132,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
     if(selected&&!batchCache.current.has(selected)){const opened=await decode(remote.read('/api/batches/'+selected));if(!current)return;batchCache.current.set(selected,opened);}
     const activities=activitiesFor(snapshot,selected?batchCache.current.get(selected):null,batchCache.current);
     const work=activities.find(item=>item.key===view.workKey||selected&&item.batches.some(batch=>batch.id===selected))||activities.find(item=>item.batches.some(batch=>batch.id===snapshot.current?.id))||activities[0];
-    const id=selected||work?.batches[0]?.id;const batch=id?(id===snapshot.current?.id?snapshot.current:await decode(remote.read('/api/batches/'+id))):null;
+    const id=selected||work?.liveBatch?.id||work?.batches[0]?.id;const batch=id?(id===snapshot.current?.id?snapshot.current:await decode(remote.read('/api/batches/'+id))):null;
     if(current){if(batch)batchCache.current.set(batch.id,batch);if(batchCache.current.size>60){for(const key of batchCache.current.keys())if(key!==id&&key!==selected){batchCache.current.delete(key);break;}}setModel({snapshot,batch,selection:selected,workKey:work?.key});setError('');}
    }catch(reason){if(current)setError(String(reason.message||reason));}finally{if(current)timer=setTimeout(poll,3000);}};
    void poll();return()=>{current=false;clearTimeout(timer);};

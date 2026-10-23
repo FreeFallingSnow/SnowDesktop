@@ -487,7 +487,9 @@ function makeWorkItems(snapshot){
   group.batches=newest(group.batches);group.members=[...group.members.values()];
   for(const batch of group.batches)if(batch.run&&!group.runs.some(run=>run.id===batch.run.id))group.runs.push(batch.run);
   group.runs=newest(group.runs);const latest=group.batches[0]||group.runs[0];
-  group.state=latest?.phase||latest?.status||group.members[0]?.phase||"unknown";
+  group.liveBatch=group.batches.find(batch=>batch.id===snapshot.current?.id||snapshot.activeCandidates?.some(candidate=>candidate.id===batch.id))||null;
+  const stateSource=group.liveBatch||latest;
+  group.state=stateSource?.phase||stateSource?.status||group.members[0]?.phase||"unknown";
   group.title=group.members[0]?.displayName||group.members[0]?.name||group.runs[0]?.task||"协作事项";
   if(group.members.length>1)group.title+=" 等 "+group.members.length+" 项协作";
   group.timestamp=latest?activityTime(latest):Math.max(0,...group.members.map(activityTime));
@@ -495,7 +497,6 @@ function makeWorkItems(snapshot){
   group.buildCount=group.batches.filter(batch=>batch.buildStartedUtc||batch.runId||batch.run).length+group.runs.filter(run=>!group.batches.some(batch=>batch.id===run.batchId)).length;
   const liveRun=group.runs.some(run=>run.ownerState==="alive"&&!terminalStates.has(run.status));
   const recentMember=group.members.some(task=>presenceState(task).recent);
-  group.liveBatch=group.batches.find(batch=>batch.id===snapshot.current?.id||snapshot.activeCandidates?.some(candidate=>candidate.id===batch.id))||null;
   const historicalRegistration=!group.liveBatch&&!terminalStates.has(group.state)&&!liveRun&&!recentMember;
   group.kind=historicalRegistration?"recorded":["failed","interrupted","invalidated","blocked","attention","retirement-interrupted"].includes(group.state)||(!terminalStates.has(group.state)&&group.members.some(task=>task.blocker))?"attention":terminalStates.has(group.state)?"done":"active";
   group.displayState=historicalRegistration?"上次："+workLabel(group.state):group.state==="editing"&&group.batches.length?"等待就绪":workLabel(group.state);
@@ -577,7 +578,7 @@ async function poll(){
   if(!group){group=workItems.find(item=>item.batches.some(batch=>batch.id===data.current?.id))||workItems[0];if(group)workView.key=group.key;workView.batch=null;}
   if(revision!==navigationRevision){refreshRequested=true;return;}
   if(!group){text("workTitle","暂无任务记录");text("workSituation","任务后会出现在这里。");renderWorkList();return;}
-  workView.key=group.key;const bid=workView.batch||group.batches[0]?.id;let batch=null;
+  workView.key=group.key;const bid=workView.batch||group.liveBatch?.id||group.batches[0]?.id;let batch=null;
   if(bid){batch=bid===data.current?.id?data.current:await request("/api/batches/"+bid);if(revision!==navigationRevision){refreshRequested=true;return;}if(!batch)throw new Error("批次记录暂不可用");batchCache.set(bid,batch);}
   // Group only explicit logicalBatchId/participant associations; never infer a conversation from a title.
   workItems=makeWorkItems(data);group=workItems.find(item=>item.batches.some(entry=>entry.id===bid))||workItems.find(item=>item.key===workView.key)||group;
