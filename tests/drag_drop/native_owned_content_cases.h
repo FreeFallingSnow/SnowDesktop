@@ -121,7 +121,7 @@ public:
         }
         // Native synchronous Shell binding may inspect a CIDA during Drop.
         // Delayed file bytes on the asynchronous decoder path still require
-        // its source lease before extraction; hover separately forbids reads.
+        // its source lease before extraction; asynchronous hover forbids reads.
         readBeforeStart |= asynchronous && format->cfFormat == Named(CFSTR_FILECONTENTS) && starts == 0;
         HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, std::max<std::size_t>(size, 1));
         if (!memory) return E_OUTOFMEMORY;
@@ -498,7 +498,8 @@ inline void RunShellFiles(std::string_view targetName)
         effect = DROPEFFECT_COPY; Access::FreshExternalDwell(app);
         Require(SUCCEEDED(adapter->DragOver(MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)),
             "large Shell file hover preserves its offered Copy action");
-        Require(source->reads == 0 && source->starts == 0 && Staged() == staged,
+        Require(source->contentReads == 0 && (!asynchronous || source->reads == 0) &&
+            source->starts == 0 && Staged() == staged,
             "large Shell file hover must not extract content or lease the source");
         effect = DROPEFFECT_COPY; Access::FreshExternalDwell(app);
         Require(SUCCEEDED(adapter->Drop(source.Get(), MK_CONTROL, Access::ExternalPoint(point), &effect)) &&
