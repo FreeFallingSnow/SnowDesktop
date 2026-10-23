@@ -1,5 +1,7 @@
 #include "../build_tool_test_support.h"
+#include <future>
 #include <iostream>
+#include <memory>
 using namespace build_test;
 namespace {
 void run_tests(const fs::path& repo,const fs::path& preferredModule={}) {
@@ -302,9 +304,8 @@ console.log(JSON.stringify(result));
         require(message.at("source").at("kind").str()=="snowdesktop-collaboration"&&message.at("source").at("form").str()=="notice","Cold recovery promoted project data to an unqualified user command");
         require(cold.at("receipts").items.size()==1&&cold.at("receipts").items[0].at("task").str()==cold.at("expectedTask").str()&&cold.at("receipts").items[0].at("level").str()=="adapter","Cold recovery manufactured Agent acknowledgement or acknowledged failed/outside recipients");
     };
-    for(const std::wstring mode:{L"enabled",L"disabled",L"missing",L"unload"}){
-        Coordinator recovery(repo,"dsh-cold-recovery");
-        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),recovery.root.wstring(),mode},c.root,40);
+    const auto checkCold=[&](const std::wstring& mode,const fs::path& recoveryRoot){
+        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),recoveryRoot.wstring(),mode},c.root,40);
         require(execution.code==0,"Production cold-session recovery carrier failed: "+execution.out+execution.err);
         const auto cold=Json::parse(execution.out);
         require(cold.at("normal").at("lists").integer()==0&&cold.at("normal").at("resumes").integer()==0&&cold.at("normal").at("notices").integer()==0,"Normal progress caused cold-session discovery or activation");
@@ -316,16 +317,26 @@ console.log(JSON.stringify(result));
             require(cold.at("deliveries").items.empty()&&cold.at("receipts").items.empty()&&cold.at("errors").items.empty(),"Disabled/unavailable/disposed recovery delivered or acknowledged an event");
             require(cold.at("resumed").items.size()==(mode==L"unload"?1u:0u),"Recovery ignored its configuration or service lifetime");
         }
-    }
+    };
     auto residentOnly=read(repo/L"tools/dsh-collaboration/index.js");
     replace(residentOnly,"if(config.wakeResidentAgents&&cold&&await resumePending(state))state=bridge.state();","// Former resident-only path leaves cold recipients inactive.");
     write(c.root/L"cold-old/index.js",residentOnly);write(c.root/L"cold-old/core.js",read(repo/L"tools/dsh-collaboration/core.js"));write(c.root/L"cold-old/package.json","{\"type\":\"module\"}");
+    // Construct roots serially; run only independent process/state owners in
+    // three groups, matching this test's existing PROCESSORS3 reservation.
+    std::vector<std::unique_ptr<Coordinator>> recoveryRoots;
+    for(int index=0;index<4;++index)recoveryRoots.push_back(std::make_unique<Coordinator>(repo,"dsh-cold-recovery"));
     Coordinator former(repo,"dsh-cold-former");
-    const auto oldRun=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(c.root/L"cold-old/index.js").wstring(),former.root.wstring(),L"legacy"},c.root,40);
-    require(oldRun.code==0,"Former cold-session path did not reach its business observation: "+oldRun.out+oldRun.err);
-    const auto oldCold=Json::parse(oldRun.out);bool oldRejected=false;
-    try{requireRestored(oldCold);}catch(const std::exception& error){oldRejected=std::string(error.what())=="Addressed urgent event did not restore its persisted project session";}
-    require(oldRejected&&oldCold.at("receipts").items.empty(),"Former resident-only path did not fail the same persisted-session wake assertion");
+    auto coldPrimary=std::async(std::launch::async,[&]{
+        checkCold(L"enabled",recoveryRoots[0]->root);
+        const auto oldRun=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(c.root/L"cold-old/index.js").wstring(),former.root.wstring(),L"legacy"},c.root,40);
+        require(oldRun.code==0,"Former cold-session path did not reach its business observation: "+oldRun.out+oldRun.err);
+        const auto oldCold=Json::parse(oldRun.out);bool oldRejected=false;
+        try{requireRestored(oldCold);}catch(const std::exception& error){oldRejected=std::string(error.what())=="Addressed urgent event did not restore its persisted project session";}
+        require(oldRejected&&oldCold.at("receipts").items.empty(),"Former resident-only path did not fail the same persisted-session wake assertion");
+    });
+    auto coldDisabled=std::async(std::launch::async,[&]{checkCold(L"disabled",recoveryRoots[1]->root);});
+    auto coldOther=std::async(std::launch::async,[&]{checkCold(L"missing",recoveryRoots[2]->root);checkCold(L"unload",recoveryRoots[3]->root);});
+    coldPrimary.get();coldDisabled.get();coldOther.get();
     write(c.root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
 const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
 let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
