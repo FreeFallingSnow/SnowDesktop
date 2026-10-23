@@ -5,6 +5,9 @@ import path from 'node:path';
 import {promisify} from 'node:util';
 
 const execFileAsync=promisify(execFile);
+// Keep the command fixed: invocation data is JSON, never PowerShell source.
+// A GUI parent can leave redirected PowerShell output on the system code page.
+const coordinatorBootstrap=Buffer.from("$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding; $invocation=ConvertFrom-Json -InputObject $env:SNOWDESKTOP_DSH_COORDINATOR_ARGS; Remove-Item Env:SNOWDESKTOP_DSH_COORDINATOR_ARGS; $parameters=@{}; foreach($property in $invocation.parameters.PSObject.Properties){$parameters[$property.Name]=$property.Value}; & $invocation.script @parameters; exit $LASTEXITCODE",'utf16le').toString('base64');
 function dashboardPortAt(root,configured){
  if(configured!==8765)return configured;
  const parts=['.build','dashboard','preferred-port.json'];let cursor=root;
@@ -72,9 +75,17 @@ export class CollaborationBridge{
  async call(command,id,args=[],{timeout=15000}={}){
   if(!allowedCommands.has(command))throw new Error('Unsupported plugin coordinator operation');
   if(id&&!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(id))throw new Error('Invalid task ID');
-  const argv=['-NoProfile','-File',this.script,command,...(id?[id]:[]),...args];
+  const parameters={Command:command,...(id?{Participant:id}:{})};
+  for(let index=0;index<args.length;index++){
+   if(!/^-[A-Za-z][A-Za-z0-9]*$/.test(args[index])||/^-(Command|Participant)$/i.test(args[index]))throw new Error('Invalid coordinator argument name');
+   const name=args[index].slice(1);
+   if(name==='AdoptExistingChanges')parameters[name]=true;
+   else{if(index+1>=args.length)throw new Error('Missing coordinator argument value');parameters[name]=args[++index];}
+  }
+  const invocation={script:this.script,parameters};
+  const argv=['-NoProfile','-EncodedCommand',coordinatorBootstrap];
   try{
-   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass',SNOWDESKTOP_DSH_COORDINATOR_ARGS:JSON.stringify(invocation)}});
    return JSON.parse(result.stdout.replace(/^\uFEFF/,''));
   }catch(error){
    if(error.code===6&&error.stdout){return JSON.parse(error.stdout.replace(/^\uFEFF/,''));}

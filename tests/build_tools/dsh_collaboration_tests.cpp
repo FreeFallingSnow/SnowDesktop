@@ -17,6 +17,15 @@ async function attempt(){try{await bridge.verifyWrite(agent,target);fs.writeFile
 let result;
 if(mode==='open'){
  result={opened:await bridge.open(agent),write:await attempt(),current:bridge.state().current,id};
+}else if(mode==='unicode'){
+ const values=[];
+ for(const runtime of [path.join(process.env.ProgramFiles,'PowerShell/7/pwsh.exe'),path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe')]){
+  const reader=new CollaborationBridge(root,{powershell:runtime});
+  const updated=await reader.progress(agent,'协作消息 🧊 \'"; $(literal) ` |');
+  const received=await reader.operate(agent,{action:'messages',afterSequence:0});
+  values.push({runtime,progress:updated.task.progress,event:received.events.find(event=>event.key==='fixture-unicode').text});
+ }
+ result={values};
 }else if(mode==='grant'){
  const registration=await bridge.operate(agent,{action:'begin'});
  const claim=await bridge.operate(agent,{action:'claim',files:'src/a.txt'});
@@ -88,6 +97,12 @@ console.log(JSON.stringify(result));
     const auto opened=node("open");
     require(opened.at("current").kind==Json::Kind::Null&&!opened.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="original\n",
             "Investigation blocked a batch or an unregistered write mutated source");
+    const std::string unicode="协作消息 🧊 '\"; $(literal) ` |";
+    c.call({"event-post","unicode-sender","-Target",opened.at("id").str(),"-EventKey","fixture-unicode","-Text",unicode});
+    const auto roundTrip=node("unicode");
+    require(roundTrip.at("values").items.size()==2,"PowerShell 7 and 5.1 Unicode bridge coverage was incomplete");
+    for(const auto& value:roundTrip.at("values").items)
+        require(value.at("progress").str()==unicode&&value.at("event").str()==unicode,"PowerShell bridge damaged Unicode progress/event text or interpreted argument data");
     const auto granted=node("grant");
     const auto id=granted.at("id").str(),batch=granted.at("registration").at("batchId").str();
     require(granted.at("write").at("allowed").boolean&&read(c.root/L"src/a.txt")=="authorized write","Claimed write did not reach the real coordinator gate");
