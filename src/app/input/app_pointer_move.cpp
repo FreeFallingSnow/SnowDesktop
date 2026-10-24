@@ -1300,30 +1300,42 @@ void DesktopApp::OnMouseMoveAt(
             // Drop feedback lives on the foreground surface, but icon hover
             // pixels still belong to the background. Retire both hover states
             // before presenting the new feedback, including large-icon bounds.
-            if (IsPointOverWidgetChrome(oldMouse) ||
-                IsPointOverWidgetChrome(current))
+            const bool oldMouseOverWidget = IsPointOverWidgetChrome(oldMouse);
+            const bool newMouseOverWidget = IsPointOverWidgetChrome(current);
+            // This branch is past the nested OLE loop. Merge old/new child
+            // requests in the existing message-local batch and flush before
+            // returning, including continuously varying chrome/content hover.
+            desktopWidgetPointerBatchActive_ = true;
+            for (const auto& widget : widgets_)
             {
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)
+                    continue;
+                const RECT frame = GetStandaloneWidgetFrameRect(widget);
+                if (IsRectEmptyRect(frame) ||
+                    (!PtInRect(&frame, oldMouse) && !PtInRect(&frame, current)))
+                    continue;
+                if (!QueueDesktopWidgetComposition(widget.id))
+                    InvalidateRect(hwnd_, nullptr, FALSE);
             }
-            else
+
+            // Background hover uses the complete cell, with widget occlusion
+            // applied before comparing states. Crossing a widget edge inside
+            // the same cell must erase its previous icon highlight too.
+            for (const auto& entry : items_oo_)
             {
-                // Background hover uses the complete layout cell, whereas
-                // input hit testing uses the tighter selection rectangle.
-                // Leaving the cell's padding must also erase its hover pixels.
-                for (const auto& entry : items_oo_)
-                {
-                    const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
-                    const auto* item = icon ? icon->GetDesktopItem() : nullptr;
-                    if (!item || IsRectEmptyRect(item->bounds) ||
-                        PtInRect(&item->bounds, oldMouse) ==
-                            PtInRect(&item->bounds, current))
-                        continue;
-                    RECT dirty = item->largeIcon
-                        ? GetLargeIconFrameRect(*item) : item->bounds;
-                    if (IsRectEmptyRect(dirty)) continue;
-                    InflateRect(&dirty, 8, 8);
-                    InvalidateRect(hwnd_, &dirty, FALSE);
-                }
+                const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
+                const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                if (!item || IsRectEmptyRect(item->bounds)) continue;
+                const bool oldHovered = !oldMouseOverWidget &&
+                    PtInRect(&item->bounds, oldMouse);
+                const bool newHovered = !newMouseOverWidget &&
+                    PtInRect(&item->bounds, current);
+                if (oldHovered == newHovered) continue;
+                RECT dirty = item->largeIcon
+                    ? GetLargeIconFrameRect(*item) : item->bounds;
+                if (IsRectEmptyRect(dirty)) continue;
+                InflateRect(&dirty, 8, 8);
+                InvalidateRect(hwnd_, &dirty, FALSE);
             }
         }
 

@@ -225,3 +225,4 @@
         app.d3dDevice_.Reset();
         app.dwriteFactory_.Reset();
     }
+#include "../drag_drop/native_widget_drag_hover_access.inc"
