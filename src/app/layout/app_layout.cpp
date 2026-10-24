@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "app/widgets/widget_package_source_capture.h"
+#include "steam/steam_app_identity.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
@@ -1173,8 +1175,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
-    for (auto& widget : widgets_)
-        CaptureWidgetPackageSource(widget);
+    snowdesktop::widget_source_capture::CaptureForSave(widgets_,
+        WidgetEngine::ListWidgetPackages, WideToUtf8, Utf8ToWide,
+        snowdesktop::SnowDesktopSteamCommunityItemUrl);
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];

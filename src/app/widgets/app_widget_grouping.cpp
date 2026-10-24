@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widget_package_source_capture.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
@@ -266,54 +267,8 @@ void DesktopApp::CaptureWidgetPackageSource(DesktopWidget& widget) const
         return;
     const auto source = WidgetEngine::GetWidgetPackageSource(
         widget.packageId);
-    if (!source)
-    {
-        if (widget.packageSourceProvider != L"steam-workshop")
-        {
-            widget.packageSourceProvider.clear();
-            widget.packageSourceExternalItemId.clear();
-            widget.packageSourceUrl.clear();
-        }
-        return;
-    }
-
-    const bool hasRememberedWorkshopSource =
-        widget.packageSourceProvider == L"steam-workshop" &&
-        !snowdesktop::widget::SteamPublishedFileId(
-            WideToUtf8(widget.packageSourceExternalItemId)).empty();
-    if (hasRememberedWorkshopSource &&
-        source->providerId != "steam-workshop")
-    {
-        // A development override may remain after the subscribed managed copy
-        // disappears. Keep the durable Workshop recovery address instead of
-        // replacing it with the temporary local source.
-        return;
-    }
-
-    if (source->providerId != "steam-workshop")
-    {
-        // Built-in and local packages have no recoverable subscription page;
-        // keep their layout records free of provider-specific noise.
-        widget.packageSourceProvider.clear();
-        widget.packageSourceExternalItemId.clear();
-        widget.packageSourceUrl.clear();
-        return;
-    }
-
-    widget.packageSourceProvider = Utf8ToWide(source->providerId);
-    widget.packageSourceExternalItemId = Utf8ToWide(
-        source->externalItemId);
-    widget.packageSourceUrl.clear();
-    if (source->providerId == "steam-workshop")
-    {
-        const std::string publishedFileId = snowdesktop::widget::
-            SteamPublishedFileId(source->externalItemId);
-        if (!publishedFileId.empty())
-        {
-            widget.packageSourceUrl = snowdesktop::
-                SnowDesktopSteamCommunityItemUrl(publishedFileId);
-        }
-    }
+    snowdesktop::widget_source_capture::Apply(widget, source,
+        WideToUtf8, Utf8ToWide, snowdesktop::SnowDesktopSteamCommunityItemUrl);
 }
 
 void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
