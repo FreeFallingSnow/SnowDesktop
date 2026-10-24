@@ -744,9 +744,19 @@ $rows=@(foreach($stamp in $Stamps.Split(',')){
     auto baseline=[&]{
         const auto opened=c.bridge->call(c.scripts/L"build_manager.ps1",{"begin","candidate"});const auto id=opened.at("batchId").str();
         c.plan("candidate",id,0,"selected",selectedNames,"tool","src/main.cpp,src/value.h");
-        const auto finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
+        auto finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
+        const auto resultPath=c.stateRoot/wide(id+".json");
+        const auto observationTimedOut=[](const Result& value){return value.code==2&&value.err.find("Wait timed out. Registration was retained;")!=std::string::npos;};
+        // The coordinator's observation deadline does not end its durable Run.
+        // Continue that exact batch once; never resubmit ready or invent a pass.
+        if(observationTimedOut(finished)&&!fs::is_regular_file(resultPath))
+            finished=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",id,"-Revision","0","-WaitSeconds","60"},{},75);
+        if(finished.code!=0&&!observationTimedOut(finished))
+            throw std::runtime_error("Real native baseline observer failed; batch "+id+": "+finished.out+finished.err);
+        require(fs::is_regular_file(resultPath),"Real native baseline observation remained incomplete; batch "+id+": "+finished.out+finished.err);
         const auto result=c.result(id);
-        if(finished.code!=0){const auto log=read(fs::path(wide(result.at("logPath").str())));throw std::runtime_error("Real native baseline failed; batch "+id+": "+log.substr(log.size()>4000?log.size()-4000:0));}
+        require(result.at("batchId").str()==id,"Real native baseline result belongs to another batch");
+        if(result.at("outcome").str()!="passed"){const auto log=read(fs::path(wide(result.at("logPath").str())));throw std::runtime_error("Real native baseline failed; batch "+id+": "+log.substr(log.size()>4000?log.size()-4000:0));}
         return result;
     };
     const auto original=baseline();

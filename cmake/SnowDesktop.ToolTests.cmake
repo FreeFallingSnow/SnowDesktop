@@ -150,6 +150,9 @@ if(BUILD_TESTING AND WIN32)
     # their individual process deadlines and isolated fixtures remain unchanged.
     snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
         build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 120)
+    add_test(NAME dsh_collaboration_client COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --client)
+    set_tests_properties(dsh_collaboration_client PROPERTIES TIMEOUT 30 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
     add_test(NAME dsh_installed_sdk COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --installed-sdk)
     set_tests_properties(dsh_installed_sdk PROPERTIES TIMEOUT 60 LABELS "manual;integration;tools"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")

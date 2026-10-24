@@ -4,6 +4,147 @@
 #include <memory>
 using namespace build_test;
 namespace {
+void client_tests(const fs::path& repo,const fs::path& root) {
+    write(root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
+const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
+let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
+const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return await response;}};
+// Only the polling/disposal boundary is exercised by this carrier, never layout.
+const React={createElement:(type,props,...children)=>({type,props,children}),useRef:initial=>({current:initial}),useLayoutEffect(){},useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
+const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
+function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:(_namespace,value)=>{dictionaries=value;return ()=>{};},bind:()=>key=>dictionaries.en[key]||key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
+const first=context();const unmount=await plugin.apply(first.ctx);const panel=Panel(props),versions=[];
+function displayedVersions(node){if(typeof node==='string'&&/^0\.\d+\.\d+$/.test(node))versions.push(node);if(node&&typeof node==='object')for(const child of node.children||[])displayedVersions(child);}
+displayedVersions(panel);const rootVersion=panel.props['data-version'];
+// Render the production validation view against the same public projection used
+// by the web dashboard. This carrier observes content, not native layout.
+const originalState=React.useState,originalEffect=React.useEffect;
+const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
+let lastRendered;
+function renderBudget(model,lang='en',tab='validation',preferences={},connectionError=''){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===2?connectionError:index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
+const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
+const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
+const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
+const changed={...rich,id:'e'.repeat(32),test:'Changed input observation',identityStatus:'invalidated',runtimeInputs:{status:'changed'},runtimeModules:{status:'incomplete',imageCount:null,processCount:null,issues:['loaded-module-file-changed:fixture.dll'],issueCount:14}};
+const evidence={status:'recorded',totalCount:3,tests:[rich,legacy,changed]};run.evidence=evidence;
+const runEvidenceText=renderBudget(),evidenceModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),evidence}};
+const batchEvidenceText=renderBudget(evidenceModel),batchEvidenceZh=renderBudget(evidenceModel,'zh');
+run.verification={baseline:'f'.repeat(32),names:['Alpha'],referenceCount:2,references:[{id:'1'.repeat(32),task:'reference-observer',status:'recorded',sourceRunId:run.id,baseline:'f'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',tests:[{test:'Alpha'}],reviewPolicy:'reviewed-native-files-v1',sourceRunSha256:'2'.repeat(64),coverageSha256:'3'.repeat(64)},{id:'4'.repeat(32),task:'missing-receipt',status:'unavailable',reason:'Reference receipt is missing'}]};
+const referencesText=renderBudget(),referencesZh=renderBudget(undefined,'zh');
+const mixedModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),coverage:{status:'passed',summary:{selected:2,executed:1,passed:1,failed:0,referenced:1,notRun:0,unreported:0},completed:[{name:'Beta',status:'passed',seconds:0.1}],references:[{test:'Alpha',status:'recorded',sourceRunId:'9'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',receipts:[{task:'reference-owner',id:'8'.repeat(32)}]}]}}};
+mixedModel.batch.evidence={totalCount:1,tests:[{id:'7'.repeat(32),test:'Alpha',status:'referenced',attempts:[]}]};
+const mixedText=renderBudget(mixedModel),mixedZh=renderBudget(mixedModel,'zh');
+mixedModel.batch.coverage.summary={...mixedModel.batch.coverage.summary,selected:1,executed:0,passed:0};mixedModel.batch.coverage.status='fulfilled';mixedModel.batch.coverage.completed=[];
+const referenceOnlyText=renderBudget(mixedModel);
+const logical='5'.repeat(32),current='6'.repeat(32),priorRun='7'.repeat(32);
+const workspaceSnapshot={current:{id:current,logicalBatchId:logical,attempt:2,phase:'editing',createdUtc:'2026-10-02T10:30:00Z',tasks:[{id:'former-agent',state:'finished',display:'waiting',check:{status:'passed'},plan:{}},{id:'current-editor',state:'editing',display:'editing',check:{status:'invalidated'},plan:{}}],log:{lines:[]}},
+ taskPresence:[{id:'former-agent',displayName:'Former conversation',phase:'waiting',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'current-editor',displayName:'Current editor',phase:'editing',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'old-investigation',displayName:'Old investigation',phase:'investigating',lastHeartbeatUtc:'2020-01-01T00:00:00Z',lastProgressUtc:'2020-01-01T00:00:00Z'}],
+ history:[{batchId:logical,logicalBatchId:logical,attempt:1,outcome:'failed',createdUtc:'2026-10-02T10:00:00Z',completedUtc:'2026-10-02T10:30:00Z',participants:['Former conversation','Current editor']}],
+ runs:[{id:priorRun,batchId:logical,status:'failed',task:'former-agent',log:{lines:['previous-only-log']}}],events:[]};
+const workspaceModel={snapshot:workspaceSnapshot,batch:workspaceSnapshot.current};
+renderBudget(workspaceModel,'en','participants',{detail:true,workKey:'batch:'+logical});
+function nodeText(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(nodeText).join(' ');return node&&typeof node==='object'&&node.type!=='style'?(node.children||[]).map(nodeText).join(' '):'';}
+function collectAttribute(node,attribute,result=[]){if(Array.isArray(node))node.forEach(item=>collectAttribute(item,attribute,result));else if(node&&typeof node==='object'){if(node.props?.[attribute])result.push({key:node.props[attribute],text:nodeText(node)});(node.children||[]).forEach(item=>collectAttribute(item,attribute,result));}return result;}
+const workspaceParticipants=collectAttribute(lastRendered,'data-participant'),workspaceActivities=collectAttribute(lastRendered,'data-activity');
+const workspaceBuilds=renderBudget(workspaceModel,'en','builds',{detail:true,workKey:'batch:'+logical});
+const workspaceParticipantsZh=renderBudget(workspaceModel,'zh','participants',{detail:true,workKey:'batch:'+logical});
+workspaceSnapshot.events=[{sequence:1,sender:'outside-task',target:'*',recipients:['current-editor'],text:'broadcast-for-selected-activity'},
+ {sequence:2,sender:'outside-task',target:'*',recipients:['other-project-task'],text:'broadcast-for-another-activity'}];
+const workspaceActivityText=renderBudget(workspaceModel,'en','activity',{detail:true,workKey:'batch:'+logical});
+const logModel={snapshot:workspaceSnapshot,batch:{...workspaceSnapshot.current,log:{lines:['batch-tests-only']},run:{id:priorRun,log:{lines:['merged-product-marker','merged-test-marker']},logs:[
+ {key:'product',downloadUrl:'/api/runs/'+priorRun+'/logs/product',log:{lines:['selected-product-marker']}},
+ {key:'tests',downloadUrl:'/api/runs/'+priorRun+'/logs/tests',log:{lines:['unselected-test-marker']}}]}}};
+const selectedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'product'});
+const mergedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'all'});
+const deliveryRun={...logModel.batch.run,batchId:current,status:'failed',artifact:{productRuntime:true,files:2,runtime:'fixture-runtime',publicationComplete:true},activation:{status:'activated',completedUtc:'2026-10-02T10:31:00Z'}};
+const deliveryModel={snapshot:{...workspaceSnapshot,current:{...workspaceSnapshot.current,run:deliveryRun},runs:[deliveryRun]},batch:{...workspaceSnapshot.current,run:deliveryRun}};
+const deliveryText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
+const deliveryZh=renderBudget(deliveryModel,'zh','delivery',{detail:true,workKey:'batch:'+logical});
+deliveryRun.activation={status:'installed'};
+const installedText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
+function connectionView(model,error,lang='en'){
+ renderBudget(model,lang,'builds',{},error);const statuses=[];
+ function visit(node){if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'){if(node.props?.role==='status')statuses.push(node);(node.children||[]).forEach(visit);}}visit(lastRendered);
+ function visible(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(visible).join(' ');if(!node||typeof node!=='object')return '';if(node.type==='details'&&!node.props?.open)return visible(node.children?.[0]);return (node.children||[]).map(visible).join(' ');}
+ return {visible:statuses.map(visible).join(' '),details:statuses.map(nodeText).join(' '),times:statuses.flatMap(node=>collectAttribute(node,'dateTime')),count:statuses.length};
+}
+const retainedSnapshot={snapshot:{runs:[],updatedUtc:'2026-09-30T07:08:09.123Z'}},connectionError='controlled offline: ENOENT /private/server.json';
+const offlineView=connectionView(retainedSnapshot,connectionError),offlineZh=connectionView(retainedSnapshot,connectionError,'zh');
+const noSnapshotView=connectionView({snapshot:null},connectionError),unknownTimeView=connectionView({snapshot:{runs:[]}},connectionError),recoveredView=connectionView(retainedSnapshot,'');
+React.useState=originalState;React.useEffect=originalEffect;
+await new Promise(resolve=>setImmediate(resolve));
+const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
+async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
+response={ok:false,error:{message:'controlled offline'}};await poll();
+const offline=updates.filter(value=>value.index===1).at(-1)?.value;
+response={ok:true,value:'invalid JSON'};await poll();
+const malformed=updates.filter(value=>value.index===1).at(-1)?.value;
+let finish;response=new Promise(resolve=>{finish=resolve;});const pending=poll();
+for(const cleanup of componentCleanup)cleanup();const beforeLate=updates.length;
+await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pending;
+let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
+for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
+const descriptor=contribution.descriptors[0];
+console.log(JSON.stringify({offlineView,offlineZh,noSnapshotView,unknownTimeView,recoveredView,inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+)JS");
+    const auto client=run({L"node",(root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},root,15);
+    require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
+    const auto clientObserved=Json::parse(client.out);
+    const auto& offlineView=clientObserved.at("offlineView");
+    require(offlineView.at("visible").str().find("Data retained from")!=std::string::npos&&offlineView.at("times").items.size()==1&&offlineView.at("times").items[0].at("key").str()=="2026-09-30T07:08:09.123Z",
+        "Disconnected overlay omitted the retained snapshot time or replaced it with a current timestamp");
+    require(offlineView.at("visible").str().find("controlled offline:")==std::string::npos&&offlineView.at("details").str().find("controlled offline: ENOENT /private/server.json")!=std::string::npos&&clientObserved.at("offlineZh").at("visible").str().find("保留数据时间")!=std::string::npos,
+        "Disconnected overlay exposed raw diagnostics by default, discarded them, or lost translated staleness information");
+    require(clientObserved.at("noSnapshotView").at("visible").str().find("Connection failed")!=std::string::npos&&clientObserved.at("noSnapshotView").at("times").items.empty()&&clientObserved.at("noSnapshotView").at("visible").str().find("retaining")==std::string::npos&&clientObserved.at("unknownTimeView").at("visible").str().find("Not recorded")!=std::string::npos&&clientObserved.at("recoveredView").at("count").integer()==0,
+        "Overlay invented a retained snapshot/time before a successful read or left an offline notice after reconnection");
+    const auto& participantRows=clientObserved.at("workspaceParticipants").items;
+    require(participantRows.size()==2&&participantRows[0].at("text").str().find("Ready")!=std::string::npos&&participantRows[1].at("text").str().find("Editing")!=std::string::npos,
+        "Current participant phases were replaced by heartbeat freshness or lost explicit batch readiness");
+    const auto& activityRows=clientObserved.at("workspaceActivities").items;
+    require(activityRows.size()==2&&activityRows[0].at("key").str()=="batch:"+std::string(32,'5')&&activityRows[1].at("text").str().find("Last recorded")!=std::string::npos,
+        "Overlay split repair attempts or presented an old investigation as currently running");
+    require(activityRows[0].at("text").str().find("Failed")==std::string::npos,
+        "Overlay replaced current repair phase with equal-time historical failure");
+    require(clientObserved.at("workspaceBuilds").str().find("previous-only-log")==std::string::npos&&clientObserved.at("workspaceParticipantsZh").str().find("已就绪")!=std::string::npos,
+        "Unstarted overlay attempt borrowed prior Run logs or participant status was untranslated");
+    require(clientObserved.at("workspaceActivityText").str().find("broadcast-for-selected-activity")!=std::string::npos&&
+        clientObserved.at("workspaceActivityText").str().find("broadcast-for-another-activity")==std::string::npos,
+        "Overlay omitted a received broadcast or mixed another activity's messages");
+    require(clientObserved.at("selectedLogText").str().find("selected-product-marker")!=std::string::npos&&clientObserved.at("selectedLogText").str().find("unselected-test-marker")==std::string::npos&&clientObserved.at("selectedLogText").str().find("Download redacted log")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("merged-product-marker")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("batch-tests-only")==std::string::npos,
+        "Overlay log source selection or complete download entry lost its selected Run");
+    require(clientObserved.at("deliveryText").str().find("Activated in this attempt")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Attempt result")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Failed")!=std::string::npos&&clientObserved.at("deliveryZh").str().find("此轮已切换")!=std::string::npos&&clientObserved.at("installedText").str().find("Runtime installed; application was not running")!=std::string::npos,
+        "Overlay erased activation after a later failure or confused installed files with a running application");
+    require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
+        clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
+        clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&
+        clientObserved.at("referenceOnlyText").str().find("Executed / selected · 0 / 1")!=std::string::npos,
+        "Overlay conflated mixed/reference-only coverage with newly executed passes or lost translated receipt details");
+    const auto budgetText=clientObserved.at("budgetText").str(),missingBudgetText=clientObserved.at("missingBudgetText").str();
+    require(budgetText.find("CPU reservation / capacity")!=std::string::npos&&budgetText.find("2 / 6 CPU slots")!=std::string::npos&&budgetText.find("25.00% / 3072 MiB")!=std::string::npos&&budgetText.find("Insufficient CPU capacity")!=std::string::npos,"Overlay lost budget, kernel limit or queue content from the public Run projection");
+    require(missingBudgetText.find("Not recorded / Not recorded CPU slots")!=std::string::npos&&missingBudgetText.find("25.00% / 3072 MiB")==std::string::npos,"Overlay inferred or retained missing budget values");
+    for(const auto* key:{"runEvidenceText","batchEvidenceText"}){
+        const auto text=clientObserved.at(key).str();
+        require(text.find("Completeness unproven")!=std::string::npos&&text.find("Compiler reports 3")!=std::string::npos&&text.find("Loaded images 23 / Processes 2")!=std::string::npos&&text.find("Endpoints match")!=std::string::npos&&text.find("Dependency closure pending; no automatic reuse")!=std::string::npos,"Overlay batch/Run evidence lost observed scope or inferred reuse permission");
+        require(text.find("Loaded images Not recorded / Processes Not recorded")!=std::string::npos&&text.find("loaded-module-file-changed:fixture.dll")!=std::string::npos&&text.find("Inputs changed")!=std::string::npos&&text.find("Attempt 1 Failed")!=std::string::npos&&text.find("Attempt 2 Passed")!=std::string::npos,"Overlay lost legacy absence, invalidation reasons or original execution attempts");
+    }
+    const auto chinese=clientObserved.at("batchEvidenceZh").str();
+    require(chinese.find("完整性未证明")!=std::string::npos&&chinese.find("编译器报告 3")!=std::string::npos&&chinese.find("加载图像 23 / 进程 2")!=std::string::npos&&chinese.find("尚未自动复用")!=std::string::npos,"Overlay Chinese evidence fields were missing or untranslated");
+    const auto referencesText=clientObserved.at("referencesText").str(),referencesZh=clientObserved.at("referencesZh").str();
+    require(referencesText.find("Existing result references")!=std::string::npos&&referencesText.find("no new test execution")!=std::string::npos&&referencesText.find("Reference receipt unavailable")!=std::string::npos&&referencesText.find("reference-observer")!=std::string::npos&&referencesText.find("Alpha")!=std::string::npos,"Overlay lost independent completed-reference provenance or treated missing receipts as recorded");
+    require(referencesZh.find("引用既有结果")!=std::string::npos&&referencesZh.find("未新增测试执行")!=std::string::npos&&referencesZh.find("引用凭据不可核对")!=std::string::npos,"Overlay completed-reference fields were untranslated");
+    bool rootRemote=false,unavailableRemote=false;
+    for(const auto& value:clientObserved.at("inject").items){rootRemote|=value.str()=="remote";unavailableRemote|=value.str()=="remote.snowCollaboration";}
+    require(rootRemote&&!unavailableRemote&&clientObserved.at("events").items[0].str()=="mount"&&clientObserved.at("events").items[1].str()=="slot","Client waited on an unmounted namespace or registered its slot before mounting");
+    require(clientObserved.at("descriptor").at("id").str()=="@local/snowdesktop-collaboration#snowCollaboration/snapshot"&&clientObserved.at("descriptor").at("parameters").items.empty()&&clientObserved.at("descriptor").at("resultMode").str()=="strict"&&clientObserved.at("descriptor").at("resultType").str()=="string","Client snapshot Remote descriptor changed its read-only contract");
+    require(clientObserved.at("firstSnapshot").at("marker").str()=="known-good"&&clientObserved.at("offline").str()=="controlled offline"&&!clientObserved.at("malformed").str().empty()&&clientObserved.at("lastSnapshot").at("marker").str()=="known-good","Client failed RemoteResult decoding or lost the last snapshot after a carrier/data error");
+    require(!clientObserved.at("lateUpdated").boolean&&clientObserved.at("timers").integer()==0&&clientObserved.at("rejected").boolean&&clientObserved.at("events").items.back().str()=="unmount","Client updated after disposal, leaked a timer, or retained a failed mount");
+    const auto manifest=Json::parse(read(repo/L"tools/dsh-collaboration/package.json"));
+    require(clientObserved.at("rootVersion").str()==manifest.at("version").str()&&clientObserved.at("versions").items.size()==1&&clientObserved.at("versions").items[0].str()==manifest.at("version").str(),"Loaded overlay identity and displayed version disagreed with the package");
+    for(const auto& file:{"index.js","core.js","client.js","typert.host.js","typert.remote-client.js","cordis.patch.yml","locale/en.json","locale/zh.json","icon.svg","README.md"})
+        require(fs::is_regular_file(repo/L"tools/dsh-collaboration"/wide(file)),"Plugin package resource missing: "+std::string(file));
+    require(!manifest.has("scripts")&&manifest.at("dsh").at("client").at("platform").str()=="web","Plugin added install scripts or changed target surface");
+}
 void run_tests(const fs::path& repo,const fs::path& preferredModule={}) {
     Coordinator c(repo,"dsh-plugin");
     const auto script=c.root/L"exercise.mjs";
@@ -345,145 +486,7 @@ console.log(JSON.stringify(result));
     auto coldDisabled=std::async(std::launch::async,[&]{checkCold(L"disabled",recoveryRoots[1]->root);});
     auto coldOther=std::async(std::launch::async,[&]{checkCold(L"missing",recoveryRoots[2]->root);checkCold(L"unload",recoveryRoots[3]->root);});
     coldPrimary.get();coldDisabled.get();coldOther.get();
-    write(c.root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
-const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
-let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
-const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return await response;}};
-// Only the polling/disposal boundary is exercised by this carrier, never layout.
-const React={createElement:(type,props,...children)=>({type,props,children}),useRef:initial=>({current:initial}),useLayoutEffect(){},useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
-vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
-const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
-function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:(_namespace,value)=>{dictionaries=value;return ()=>{};},bind:()=>key=>dictionaries.en[key]||key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
-const first=context();const unmount=await plugin.apply(first.ctx);const panel=Panel(props),versions=[];
-function displayedVersions(node){if(typeof node==='string'&&/^0\.\d+\.\d+$/.test(node))versions.push(node);if(node&&typeof node==='object')for(const child of node.children||[])displayedVersions(child);}
-displayedVersions(panel);const rootVersion=panel.props['data-version'];
-// Render the production validation view against the same public projection used
-// by the web dashboard. This carrier observes content, not native layout.
-const originalState=React.useState,originalEffect=React.useEffect;
-const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
-let lastRendered;
-function renderBudget(model,lang='en',tab='validation',preferences={},connectionError=''){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===2?connectionError:index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
-const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
-const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
-const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
-const changed={...rich,id:'e'.repeat(32),test:'Changed input observation',identityStatus:'invalidated',runtimeInputs:{status:'changed'},runtimeModules:{status:'incomplete',imageCount:null,processCount:null,issues:['loaded-module-file-changed:fixture.dll'],issueCount:14}};
-const evidence={status:'recorded',totalCount:3,tests:[rich,legacy,changed]};run.evidence=evidence;
-const runEvidenceText=renderBudget(),evidenceModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),evidence}};
-const batchEvidenceText=renderBudget(evidenceModel),batchEvidenceZh=renderBudget(evidenceModel,'zh');
-run.verification={baseline:'f'.repeat(32),names:['Alpha'],referenceCount:2,references:[{id:'1'.repeat(32),task:'reference-observer',status:'recorded',sourceRunId:run.id,baseline:'f'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',tests:[{test:'Alpha'}],reviewPolicy:'reviewed-native-files-v1',sourceRunSha256:'2'.repeat(64),coverageSha256:'3'.repeat(64)},{id:'4'.repeat(32),task:'missing-receipt',status:'unavailable',reason:'Reference receipt is missing'}]};
-const referencesText=renderBudget(),referencesZh=renderBudget(undefined,'zh');
-const mixedModel={snapshot:{runs:[]},batch:{id:'f'.repeat(32),coverage:{status:'passed',summary:{selected:2,executed:1,passed:1,failed:0,referenced:1,notRun:0,unreported:0},completed:[{name:'Beta',status:'passed',seconds:0.1}],references:[{test:'Alpha',status:'recorded',sourceRunId:'9'.repeat(32),checkedUtc:'2026-10-02T10:04:00Z',receipts:[{task:'reference-owner',id:'8'.repeat(32)}]}]}}};
-mixedModel.batch.evidence={totalCount:1,tests:[{id:'7'.repeat(32),test:'Alpha',status:'referenced',attempts:[]}]};
-const mixedText=renderBudget(mixedModel),mixedZh=renderBudget(mixedModel,'zh');
-mixedModel.batch.coverage.summary={...mixedModel.batch.coverage.summary,selected:1,executed:0,passed:0};mixedModel.batch.coverage.status='fulfilled';mixedModel.batch.coverage.completed=[];
-const referenceOnlyText=renderBudget(mixedModel);
-const logical='5'.repeat(32),current='6'.repeat(32),priorRun='7'.repeat(32);
-const workspaceSnapshot={current:{id:current,logicalBatchId:logical,attempt:2,phase:'editing',createdUtc:'2026-10-02T10:30:00Z',tasks:[{id:'former-agent',state:'finished',display:'waiting',check:{status:'passed'},plan:{}},{id:'current-editor',state:'editing',display:'editing',check:{status:'invalidated'},plan:{}}],log:{lines:[]}},
- taskPresence:[{id:'former-agent',displayName:'Former conversation',phase:'waiting',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'current-editor',displayName:'Current editor',phase:'editing',lastHeartbeatUtc:'2020-01-01T00:00:00Z'},{id:'old-investigation',displayName:'Old investigation',phase:'investigating',lastHeartbeatUtc:'2020-01-01T00:00:00Z',lastProgressUtc:'2020-01-01T00:00:00Z'}],
- history:[{batchId:logical,logicalBatchId:logical,attempt:1,outcome:'failed',createdUtc:'2026-10-02T10:00:00Z',completedUtc:'2026-10-02T10:30:00Z',participants:['Former conversation','Current editor']}],
- runs:[{id:priorRun,batchId:logical,status:'failed',task:'former-agent',log:{lines:['previous-only-log']}}],events:[]};
-const workspaceModel={snapshot:workspaceSnapshot,batch:workspaceSnapshot.current};
-renderBudget(workspaceModel,'en','participants',{detail:true,workKey:'batch:'+logical});
-function nodeText(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(nodeText).join(' ');return node&&typeof node==='object'&&node.type!=='style'?(node.children||[]).map(nodeText).join(' '):'';}
-function collectAttribute(node,attribute,result=[]){if(Array.isArray(node))node.forEach(item=>collectAttribute(item,attribute,result));else if(node&&typeof node==='object'){if(node.props?.[attribute])result.push({key:node.props[attribute],text:nodeText(node)});(node.children||[]).forEach(item=>collectAttribute(item,attribute,result));}return result;}
-const workspaceParticipants=collectAttribute(lastRendered,'data-participant'),workspaceActivities=collectAttribute(lastRendered,'data-activity');
-const workspaceBuilds=renderBudget(workspaceModel,'en','builds',{detail:true,workKey:'batch:'+logical});
-const workspaceParticipantsZh=renderBudget(workspaceModel,'zh','participants',{detail:true,workKey:'batch:'+logical});
-workspaceSnapshot.events=[{sequence:1,sender:'outside-task',target:'*',recipients:['current-editor'],text:'broadcast-for-selected-activity'},
- {sequence:2,sender:'outside-task',target:'*',recipients:['other-project-task'],text:'broadcast-for-another-activity'}];
-const workspaceActivityText=renderBudget(workspaceModel,'en','activity',{detail:true,workKey:'batch:'+logical});
-const logModel={snapshot:workspaceSnapshot,batch:{...workspaceSnapshot.current,log:{lines:['batch-tests-only']},run:{id:priorRun,log:{lines:['merged-product-marker','merged-test-marker']},logs:[
- {key:'product',downloadUrl:'/api/runs/'+priorRun+'/logs/product',log:{lines:['selected-product-marker']}},
- {key:'tests',downloadUrl:'/api/runs/'+priorRun+'/logs/tests',log:{lines:['unselected-test-marker']}}]}}};
-const selectedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'product'});
-const mergedLogText=renderBudget(logModel,'en','builds',{detail:true,workKey:'batch:'+logical,logSource:'all'});
-const deliveryRun={...logModel.batch.run,batchId:current,status:'failed',artifact:{productRuntime:true,files:2,runtime:'fixture-runtime',publicationComplete:true},activation:{status:'activated',completedUtc:'2026-10-02T10:31:00Z'}};
-const deliveryModel={snapshot:{...workspaceSnapshot,current:{...workspaceSnapshot.current,run:deliveryRun},runs:[deliveryRun]},batch:{...workspaceSnapshot.current,run:deliveryRun}};
-const deliveryText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
-const deliveryZh=renderBudget(deliveryModel,'zh','delivery',{detail:true,workKey:'batch:'+logical});
-deliveryRun.activation={status:'installed'};
-const installedText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
-function connectionView(model,error,lang='en'){
- renderBudget(model,lang,'builds',{},error);const statuses=[];
- function visit(node){if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'){if(node.props?.role==='status')statuses.push(node);(node.children||[]).forEach(visit);}}visit(lastRendered);
- function visible(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(visible).join(' ');if(!node||typeof node!=='object')return '';if(node.type==='details'&&!node.props?.open)return visible(node.children?.[0]);return (node.children||[]).map(visible).join(' ');}
- return {visible:statuses.map(visible).join(' '),details:statuses.map(nodeText).join(' '),times:statuses.flatMap(node=>collectAttribute(node,'dateTime')),count:statuses.length};
-}
-const retainedSnapshot={snapshot:{runs:[],updatedUtc:'2026-09-30T07:08:09.123Z'}},connectionError='controlled offline: ENOENT /private/server.json';
-const offlineView=connectionView(retainedSnapshot,connectionError),offlineZh=connectionView(retainedSnapshot,connectionError,'zh');
-const noSnapshotView=connectionView({snapshot:null},connectionError),unknownTimeView=connectionView({snapshot:{runs:[]}},connectionError),recoveredView=connectionView(retainedSnapshot,'');
-React.useState=originalState;React.useEffect=originalEffect;
-await new Promise(resolve=>setImmediate(resolve));
-const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
-async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
-response={ok:false,error:{message:'controlled offline'}};await poll();
-const offline=updates.filter(value=>value.index===1).at(-1)?.value;
-response={ok:true,value:'invalid JSON'};await poll();
-const malformed=updates.filter(value=>value.index===1).at(-1)?.value;
-let finish;response=new Promise(resolve=>{finish=resolve;});const pending=poll();
-for(const cleanup of componentCleanup)cleanup();const beforeLate=updates.length;
-await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pending;
-let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
-for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
-const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({offlineView,offlineZh,noSnapshotView,unknownTimeView,recoveredView,inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
-)JS");
-    const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
-    require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
-    const auto clientObserved=Json::parse(client.out);
-    const auto& offlineView=clientObserved.at("offlineView");
-    require(offlineView.at("visible").str().find("Data retained from")!=std::string::npos&&offlineView.at("times").items.size()==1&&offlineView.at("times").items[0].at("key").str()=="2026-09-30T07:08:09.123Z",
-        "Disconnected overlay omitted the retained snapshot time or replaced it with a current timestamp");
-    require(offlineView.at("visible").str().find("controlled offline:")==std::string::npos&&offlineView.at("details").str().find("controlled offline: ENOENT /private/server.json")!=std::string::npos&&clientObserved.at("offlineZh").at("visible").str().find("保留数据时间")!=std::string::npos,
-        "Disconnected overlay exposed raw diagnostics by default, discarded them, or lost translated staleness information");
-    require(clientObserved.at("noSnapshotView").at("visible").str().find("Connection failed")!=std::string::npos&&clientObserved.at("noSnapshotView").at("times").items.empty()&&clientObserved.at("noSnapshotView").at("visible").str().find("retaining")==std::string::npos&&clientObserved.at("unknownTimeView").at("visible").str().find("Not recorded")!=std::string::npos&&clientObserved.at("recoveredView").at("count").integer()==0,
-        "Overlay invented a retained snapshot/time before a successful read or left an offline notice after reconnection");
-    const auto& participantRows=clientObserved.at("workspaceParticipants").items;
-    require(participantRows.size()==2&&participantRows[0].at("text").str().find("Ready")!=std::string::npos&&participantRows[1].at("text").str().find("Editing")!=std::string::npos,
-        "Current participant phases were replaced by heartbeat freshness or lost explicit batch readiness");
-    const auto& activityRows=clientObserved.at("workspaceActivities").items;
-    require(activityRows.size()==2&&activityRows[0].at("key").str()=="batch:"+std::string(32,'5')&&activityRows[1].at("text").str().find("Last recorded")!=std::string::npos,
-        "Overlay split repair attempts or presented an old investigation as currently running");
-    require(activityRows[0].at("text").str().find("Failed")==std::string::npos,
-        "Overlay replaced current repair phase with equal-time historical failure");
-    require(clientObserved.at("workspaceBuilds").str().find("previous-only-log")==std::string::npos&&clientObserved.at("workspaceParticipantsZh").str().find("已就绪")!=std::string::npos,
-        "Unstarted overlay attempt borrowed prior Run logs or participant status was untranslated");
-    require(clientObserved.at("workspaceActivityText").str().find("broadcast-for-selected-activity")!=std::string::npos&&
-        clientObserved.at("workspaceActivityText").str().find("broadcast-for-another-activity")==std::string::npos,
-        "Overlay omitted a received broadcast or mixed another activity's messages");
-    require(clientObserved.at("selectedLogText").str().find("selected-product-marker")!=std::string::npos&&clientObserved.at("selectedLogText").str().find("unselected-test-marker")==std::string::npos&&clientObserved.at("selectedLogText").str().find("Download redacted log")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("merged-product-marker")!=std::string::npos&&clientObserved.at("mergedLogText").str().find("batch-tests-only")==std::string::npos,
-        "Overlay log source selection or complete download entry lost its selected Run");
-    require(clientObserved.at("deliveryText").str().find("Activated in this attempt")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Attempt result")!=std::string::npos&&clientObserved.at("deliveryText").str().find("Failed")!=std::string::npos&&clientObserved.at("deliveryZh").str().find("此轮已切换")!=std::string::npos&&clientObserved.at("installedText").str().find("Runtime installed; application was not running")!=std::string::npos,
-        "Overlay erased activation after a later failure or confused installed files with a running application");
-    require(clientObserved.at("mixedText").str().find("Referenced original result (not executed this time)")!=std::string::npos&&
-        clientObserved.at("mixedZh").str().find("引用原结果（本次未执行）")!=std::string::npos&&
-        clientObserved.at("mixedText").str().find("Dependency closure pending; no automatic reuse")==std::string::npos&&
-        clientObserved.at("referenceOnlyText").str().find("Executed / selected · 0 / 1")!=std::string::npos,
-        "Overlay conflated mixed/reference-only coverage with newly executed passes or lost translated receipt details");
-    const auto budgetText=clientObserved.at("budgetText").str(),missingBudgetText=clientObserved.at("missingBudgetText").str();
-    require(budgetText.find("CPU reservation / capacity")!=std::string::npos&&budgetText.find("2 / 6 CPU slots")!=std::string::npos&&budgetText.find("25.00% / 3072 MiB")!=std::string::npos&&budgetText.find("Insufficient CPU capacity")!=std::string::npos,"Overlay lost budget, kernel limit or queue content from the public Run projection");
-    require(missingBudgetText.find("Not recorded / Not recorded CPU slots")!=std::string::npos&&missingBudgetText.find("25.00% / 3072 MiB")==std::string::npos,"Overlay inferred or retained missing budget values");
-    for(const auto* key:{"runEvidenceText","batchEvidenceText"}){
-        const auto text=clientObserved.at(key).str();
-        require(text.find("Completeness unproven")!=std::string::npos&&text.find("Compiler reports 3")!=std::string::npos&&text.find("Loaded images 23 / Processes 2")!=std::string::npos&&text.find("Endpoints match")!=std::string::npos&&text.find("Dependency closure pending; no automatic reuse")!=std::string::npos,"Overlay batch/Run evidence lost observed scope or inferred reuse permission");
-        require(text.find("Loaded images Not recorded / Processes Not recorded")!=std::string::npos&&text.find("loaded-module-file-changed:fixture.dll")!=std::string::npos&&text.find("Inputs changed")!=std::string::npos&&text.find("Attempt 1 Failed")!=std::string::npos&&text.find("Attempt 2 Passed")!=std::string::npos,"Overlay lost legacy absence, invalidation reasons or original execution attempts");
-    }
-    const auto chinese=clientObserved.at("batchEvidenceZh").str();
-    require(chinese.find("完整性未证明")!=std::string::npos&&chinese.find("编译器报告 3")!=std::string::npos&&chinese.find("加载图像 23 / 进程 2")!=std::string::npos&&chinese.find("尚未自动复用")!=std::string::npos,"Overlay Chinese evidence fields were missing or untranslated");
-    const auto referencesText=clientObserved.at("referencesText").str(),referencesZh=clientObserved.at("referencesZh").str();
-    require(referencesText.find("Existing result references")!=std::string::npos&&referencesText.find("no new test execution")!=std::string::npos&&referencesText.find("Reference receipt unavailable")!=std::string::npos&&referencesText.find("reference-observer")!=std::string::npos&&referencesText.find("Alpha")!=std::string::npos,"Overlay lost independent completed-reference provenance or treated missing receipts as recorded");
-    require(referencesZh.find("引用既有结果")!=std::string::npos&&referencesZh.find("未新增测试执行")!=std::string::npos&&referencesZh.find("引用凭据不可核对")!=std::string::npos,"Overlay completed-reference fields were untranslated");
-    bool rootRemote=false,unavailableRemote=false;
-    for(const auto& value:clientObserved.at("inject").items){rootRemote|=value.str()=="remote";unavailableRemote|=value.str()=="remote.snowCollaboration";}
-    require(rootRemote&&!unavailableRemote&&clientObserved.at("events").items[0].str()=="mount"&&clientObserved.at("events").items[1].str()=="slot","Client waited on an unmounted namespace or registered its slot before mounting");
-    require(clientObserved.at("descriptor").at("id").str()=="@local/snowdesktop-collaboration#snowCollaboration/snapshot"&&clientObserved.at("descriptor").at("parameters").items.empty()&&clientObserved.at("descriptor").at("resultMode").str()=="strict"&&clientObserved.at("descriptor").at("resultType").str()=="string","Client snapshot Remote descriptor changed its read-only contract");
-    require(clientObserved.at("firstSnapshot").at("marker").str()=="known-good"&&clientObserved.at("offline").str()=="controlled offline"&&!clientObserved.at("malformed").str().empty()&&clientObserved.at("lastSnapshot").at("marker").str()=="known-good","Client failed RemoteResult decoding or lost the last snapshot after a carrier/data error");
-    require(!clientObserved.at("lateUpdated").boolean&&clientObserved.at("timers").integer()==0&&clientObserved.at("rejected").boolean&&clientObserved.at("events").items.back().str()=="unmount","Client updated after disposal, leaked a timer, or retained a failed mount");
-    const auto manifest=Json::parse(read(repo/L"tools/dsh-collaboration/package.json"));
-    require(clientObserved.at("rootVersion").str()==manifest.at("version").str()&&clientObserved.at("versions").items.size()==1&&clientObserved.at("versions").items[0].str()==manifest.at("version").str(),"Loaded overlay identity and displayed version disagreed with the package");
-    for(const auto& file:{"index.js","core.js","client.js","typert.host.js","typert.remote-client.js","cordis.patch.yml","locale/en.json","locale/zh.json","icon.svg","README.md"})
-        require(fs::is_regular_file(repo/L"tools/dsh-collaboration"/wide(file)),"Plugin package resource missing: "+std::string(file));
-    require(!manifest.has("scripts")&&manifest.at("dsh").at("client").at("platform").str()=="web","Plugin added install scripts or changed target surface");
+    client_tests(repo,c.root);
     std::cout<<"PASS production DSH bridge: early presence, denied writes, claimed/reopened paths and retired grants; Host loading and overlay require DSH acceptance\n";
 }
 void installed_sdk(const fs::path& repo){
@@ -513,4 +516,4 @@ void installed_sdk(const fs::path& repo){
     std::cout<<"PASS installed DSH "<<observed.at("version").str()<<" Cordis injection, strict Remote mount, Gateway results, filesystem tool gate and disposal (isolated Host, not live UI acceptance)\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--installed-sdk")installed_sdk(repo);else run_tests(repo,argc>3&&std::string(argv[2])=="--preferred-port-control"?fs::path(wide(argv[3])):fs::path{});});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--client")client_tests(repo,temporary("dsh-client"));else if(argc>2&&std::string(argv[2])=="--installed-sdk")installed_sdk(repo);else run_tests(repo,argc>3&&std::string(argv[2])=="--preferred-port-control"?fs::path(wide(argv[3])):fs::path{});});}
