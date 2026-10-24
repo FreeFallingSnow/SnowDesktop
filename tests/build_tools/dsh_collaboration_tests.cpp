@@ -362,7 +362,7 @@ displayedVersions(panel);const rootVersion=panel.props['data-version'];
 const originalState=React.useState,originalEffect=React.useEffect;
 const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
 let lastRendered;
-function renderBudget(model,lang='en',tab='validation',preferences={}){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
+function renderBudget(model,lang='en',tab='validation',preferences={},connectionError=''){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===2?connectionError:index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
 const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
 const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
 const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
@@ -403,6 +403,15 @@ const deliveryText=renderBudget(deliveryModel,'en','delivery',{detail:true,workK
 const deliveryZh=renderBudget(deliveryModel,'zh','delivery',{detail:true,workKey:'batch:'+logical});
 deliveryRun.activation={status:'installed'};
 const installedText=renderBudget(deliveryModel,'en','delivery',{detail:true,workKey:'batch:'+logical});
+function connectionView(model,error,lang='en'){
+ renderBudget(model,lang,'builds',{},error);const statuses=[];
+ function visit(node){if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'){if(node.props?.role==='status')statuses.push(node);(node.children||[]).forEach(visit);}}visit(lastRendered);
+ function visible(node){if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(visible).join(' ');if(!node||typeof node!=='object')return '';if(node.type==='details'&&!node.props?.open)return visible(node.children?.[0]);return (node.children||[]).map(visible).join(' ');}
+ return {visible:statuses.map(visible).join(' '),details:statuses.map(nodeText).join(' '),times:statuses.flatMap(node=>collectAttribute(node,'dateTime')),count:statuses.length};
+}
+const retainedSnapshot={snapshot:{runs:[],updatedUtc:'2026-09-30T07:08:09.123Z'}},connectionError='controlled offline: ENOENT /private/server.json';
+const offlineView=connectionView(retainedSnapshot,connectionError),offlineZh=connectionView(retainedSnapshot,connectionError,'zh');
+const noSnapshotView=connectionView({snapshot:null},connectionError),unknownTimeView=connectionView({snapshot:{runs:[]}},connectionError),recoveredView=connectionView(retainedSnapshot,'');
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
@@ -417,11 +426,18 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({offlineView,offlineZh,noSnapshotView,unknownTimeView,recoveredView,inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(c.root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},c.root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
     const auto clientObserved=Json::parse(client.out);
+    const auto& offlineView=clientObserved.at("offlineView");
+    require(offlineView.at("visible").str().find("Data retained from")!=std::string::npos&&offlineView.at("times").items.size()==1&&offlineView.at("times").items[0].at("key").str()=="2026-09-30T07:08:09.123Z",
+        "Disconnected overlay omitted the retained snapshot time or replaced it with a current timestamp");
+    require(offlineView.at("visible").str().find("controlled offline:")==std::string::npos&&offlineView.at("details").str().find("controlled offline: ENOENT /private/server.json")!=std::string::npos&&clientObserved.at("offlineZh").at("visible").str().find("保留数据时间")!=std::string::npos,
+        "Disconnected overlay exposed raw diagnostics by default, discarded them, or lost translated staleness information");
+    require(clientObserved.at("noSnapshotView").at("visible").str().find("Connection failed")!=std::string::npos&&clientObserved.at("noSnapshotView").at("times").items.empty()&&clientObserved.at("noSnapshotView").at("visible").str().find("retaining")==std::string::npos&&clientObserved.at("unknownTimeView").at("visible").str().find("Not recorded")!=std::string::npos&&clientObserved.at("recoveredView").at("count").integer()==0,
+        "Overlay invented a retained snapshot/time before a successful read or left an offline notice after reconnection");
     const auto& participantRows=clientObserved.at("workspaceParticipants").items;
     require(participantRows.size()==2&&participantRows[0].at("text").str().find("Ready")!=std::string::npos&&participantRows[1].at("text").str().find("Editing")!=std::string::npos,
         "Current participant phases were replaced by heartbeat freshness or lost explicit batch readiness");

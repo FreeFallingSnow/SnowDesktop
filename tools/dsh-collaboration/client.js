@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(require){
- const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.20';
+ const React=require('react'),h=React.createElement,z=require('zod').z,NS='snowdesktop-collaboration',VERSION='0.2.21';
  const result=name=>({mode:'strict',typeSymbol:'@local/snowdesktop-collaboration#'+name,create:()=>z.string(),jsonSchema:{type:'string'}});
  const contribution={package:'@local/snowdesktop-collaboration',descriptors:[
   {id:'@local/snowdesktop-collaboration#snowCollaboration/snapshot',namespace:'snowCollaboration',method:'snapshot',service:'snowCollaboration',description:'Read this checkout’s collaboration snapshot.',invocation:{kind:'direct'},parameters:[],result:result('snapshot:result')},
@@ -31,6 +31,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  });
  Object.assign(words,{sourceLog:['日志来源','Log source'],allStages:['全部阶段','All stages'],downloadLog:['下载脱敏日志','Download redacted log'],downloadingLog:['下载中','Downloading'],source_product:['产品构建','Product build'],source_tests:['测试构建与执行','Test build and execution'],source_execution:['执行','Execution'],source_stdout:['执行器输出','Executor output'],source_stderr:['执行器诊断','Executor diagnostics']});
  Object.assign(words,{activation_activated:['此轮已切换','Activated in this attempt'],activation_installed:['已更新运行目录 · 应用未运行','Runtime installed; application was not running'],'activation_already-current':['运行文件已是此构建','Runtime already matches this build'],activation_superseded:['保留较新构建','Newer build retained'],'activation_restored-after-failure':['切换失败，已恢复原构建','Activation failed; previous build restored'],activation_failed:['切换失败','Activation failed'],activation_pending:['正在切换','Activating'],'activation_not-product-release':['不适用','Not applicable'],activation_unavailable:['回执不可用','Receipt unavailable'],activationTime:['切换时间','Activation time'],attemptResult:['本轮结果','Attempt result'],notApplicable:['不适用','Not applicable']});
+ Object.assign(words,{disconnected:['已断开','Disconnected'],connectionFailed:['连接失败','Connection failed'],snapshotAt:['保留数据时间','Data retained from'],connectionDetails:['连接详情','Connection details']});
  const dictionaries=Object.fromEntries(['zh','en'].map((lang,index)=>[lang,Object.fromEntries(Object.entries(words).map(([key,value])=>[key,value[index]]))]));
  const tabs=['activity','participants','builds','validation','delivery'],storageKey='snow-collaboration-view.v1';
  const endedStates=new Set(['passed','failed','cancelled','invalidated','interrupted','skipped','completed','fulfilled']);
@@ -118,7 +119,7 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
  .snow-collab .sc-attempt.is-selected{border-color:var(--sc-accent);background:color-mix(in srgb,var(--sc-accent) 5%,transparent)}.sc-attempt>strong{font-weight:500}.sc-attempt>small{font-size:10px}
  .sc-stats{gap:8px}.sc-stat{border:0!important;border-radius:0;background:none;padding:5px 0}.sc-stat b{font-size:14px;font-weight:500}.sc-body>p.sc-muted{font-size:11px}.sc-detail{grid-template-columns:94px minmax(0,1fr);font-size:11px}
  .sc-log-pane{height:auto;min-height:180px;margin-bottom:15px}.sc-log-pane pre{max-height:300px;min-height:120px;font-family:"Cascadia Mono",Consolas,"Microsoft YaHei UI",monospace;font-size:11px}.sc-log-pane>small{font-size:10px}
- .snow-collab summary{font-size:11px}.snow-collab th,.snow-collab td{font-size:11px}.sc-work-error{padding:8px 12px;color:var(--sc-bad);font-size:11px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+ .snow-collab summary{font-size:11px}.snow-collab th,.snow-collab td{font-size:11px}.sc-work-error{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;padding:8px 12px;color:var(--sc-bad);font-size:11px;border-bottom:1px solid var(--dsw-alias-border-l1)}.snow-collab .sc-connection-details{margin:0;padding:0;border:0}.sc-connection-details pre{max-height:140px;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
  @container (min-width:760px){.sc-workspace{grid-template-columns:245px minmax(0,1fr)}.sc-activities,.sc-workspace.has-selection .sc-activities{display:flex;border-right:1px solid var(--dsw-alias-border-l1)}.sc-work-detail{display:flex}.snow-collab .sc-back{display:none}.sc-work-heading{padding:18px 22px 12px}.sc-body{padding:18px 22px}.sc-tabs{padding-inline:22px;gap:17px}.sc-work-title{font-size:18px}}
  @container (max-width:390px){.sc-tabs{gap:9px;padding-inline:11px}.sc-tabs button{font-size:11px}.sc-body{padding:12px}.sc-work-heading{padding-inline:12px}.sc-detail{grid-template-columns:minmax(0,1fr);gap:3px}.sc-header-state .sc-connection-label{display:none}.sc-work-title{font-size:15px}}
  `;
@@ -397,10 +398,10 @@ window.__ModuleLoader__.load({id:'@local/snowdesktop-collaboration',factory(requ
    h('style',null,workspaceCss),h('header',null,
     h('div',{className:'sc-handle',tabIndex:0,'aria-label':t('drag'),title:t('drag'),...motionProps('move'),onKeyDown:event=>moveKey(event)},
      h('span',{className:'sc-grip','aria-hidden':true},'⠿'),h('strong',{className:'sc-brand'},t('title'))),
-    h('div',{className:'sc-header-state'},h('span',{className:'sc-dot '+(error?'bad':model?.snapshot?'good':'')}),h('span',{className:'sc-connection-label'},t(error?'offline':model?.snapshot?'connected':'loading')),h('span',{className:'sc-version'},VERSION)),
+    h('div',{className:'sc-header-state'},h('span',{className:'sc-dot '+(error?'bad':model?.snapshot?'good':'')}),h('span',{className:'sc-connection-label'},t(error?'disconnected':model?.snapshot?'connected':'loading')),h('span',{className:'sc-version'},VERSION)),
     button(t(view.collapsed?'expand':'collapse'),()=>update({collapsed:!view.collapsed}),{'aria-expanded':!view.collapsed})),
    view.collapsed?null:h(React.Fragment,null,
-    error?h('div',{className:'sc-work-error',role:'status'},t('offline'),' · ',error):null,
+    error?h('div',{className:'sc-work-error',role:'status'},h('span',null,t(model?.snapshot?'offline':'connectionFailed')),model?.snapshot?h('span',null,t('snapshotAt'),' ',h('time',{dateTime:model.snapshot.updatedUtc},date(model.snapshot.updatedUtc))):null,h('details',{className:'sc-connection-details'},h('summary',null,t('connectionDetails')),h('pre',null,error))):null,
     h('div',{className:'sc-workspace'+(view.detail?' has-selection':'')},activitiesView(),
      h('main',{className:'sc-work-detail'},h('div',{className:'sc-work-heading'},button('← '+t('backActivities'),()=>update({detail:false}),{className:'sc-back'}),h('div',{className:'sc-work-heading-top'},h('strong',{className:'sc-work-title'},workTitle(work)),h('span',{className:'sc-badge'},workPhase(work))),
       h('div',{className:'sc-work-meta'},(work?.members.length||0)+' '+t('activityMembers')+' · '+(work?.buildCount||0)+' '+t('activityBuilds'))),
