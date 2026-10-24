@@ -23,6 +23,7 @@ inline InvalidateFunction originalInvalidate = nullptr;
 inline PositionFunction originalPosition = nullptr;
 inline unsigned rootInvalidations = 0, popupInvalidations = 0, commits = 0, backdropUpdates = 0;
 inline bool floatingRoute = false;
+inline bool popupDamagePending = false;
 inline std::atomic<DWORD> testThread{0};
 inline std::vector<std::wstring> drawnOwners;
 
@@ -34,14 +35,23 @@ inline BOOL WINAPI Visible(HWND window)
 inline BOOL WINAPI Update(HWND window)
 {
     if (window != popup) return originalUpdate(window);
-    if (GetUpdateRect(window, nullptr, FALSE)) Access::PaintPopupInput(*owner);
+    // The test HWND stays hidden. Observe actual invalidation delivery because
+    // USER32 does not retain its visible-window update region in this fixture.
+    if (popupDamagePending || GetUpdateRect(window, nullptr, FALSE))
+    {
+        popupDamagePending = false;
+        Access::PaintPopupInput(*owner);
+    }
     return TRUE;
 }
 inline BOOL WINAPI Invalidate(HWND window, const RECT* rect, BOOL erase)
 {
     if (window == desktop) ++rootInvalidations;
     if (window == popup) ++popupInvalidations;
-    return originalInvalidate(window, rect, erase);
+    const BOOL result = originalInvalidate(window, rect, erase);
+    if (window == popup && result && (!rect || !IsRectEmpty(rect)))
+        popupDamagePending = true;
+    return result;
 }
 inline BOOL WINAPI Position(HWND window, HWND after, int x, int y, int width, int height, UINT flags)
 {
@@ -90,6 +100,7 @@ struct Observation
     {
         rootInvalidations = popupInvalidations = commits = backdropUpdates = 0; drawnOwners.clear();
         ValidateRect(desktop, nullptr); ValidateRect(popup, nullptr);
+        popupDamagePending = false;
     }
 };
 
@@ -249,7 +260,12 @@ inline void Run(Profile& profile)
             if (!scene.grouped && !scene.fileCategories)
                 Require(Access::PopupInputSource(app).categoryTabOrder.empty(),
                     "R02 a mapping popup edits its temporary order without changing source storage before release");
-            Require(rootInvalidations == 0 && surface->begins == draws + 1 && surface->ends == surface->begins,
+            if (rootInvalidations != 0 || surface->begins != draws + 1 ||
+                surface->ends != surface->begins || popupDamagePending)
+                std::cerr << "R02 changed-order delivery root=" << rootInvalidations << " popup=" << popupInvalidations
+                    << " begins/ends/baseline=" << surface->begins << '/' << surface->ends << '/' << draws
+                    << " pending=" << popupDamagePending << " commits=" << commits << '\n';
+            Require(rootInvalidations == 0 && surface->begins == draws + 1 && surface->ends == surface->begins && !popupDamagePending,
                 "R02 changed order redraws the actual popup exactly once without desktop damage");
             const auto& expectedOwner = scene.grouped ? std::wstring(L"r02-group") : std::wstring(L"r02-source");
             Require(scene.sharesSource ? drawnOwners == std::vector<std::wstring>{expectedOwner} : drawnOwners.empty(),
@@ -291,7 +307,11 @@ inline void Run(Profile& profile)
                 view.GetSearchSelectionAnchor() == anchor && view.GetSearchCompositionText() == L"\u5019\u9009" &&
                 view.GetSearchCompositionCursor() == 1 && view.IsSearchPointerSelecting(),
                 "R02 right-edge selection clamps to the text end while retaining anchor, composition and capture state");
-            Require(rootInvalidations == 0 && surface->begins == draws + 1,
+            if (rootInvalidations != 0 || surface->begins != draws + 1 || popupDamagePending)
+                std::cerr << "R02 changed-selection delivery root=" << rootInvalidations << " popup=" << popupInvalidations
+                    << " begins/ends/baseline=" << surface->begins << '/' << surface->ends << '/' << draws
+                    << " pending=" << popupDamagePending << " commits=" << commits << '\n';
+            Require(rootInvalidations == 0 && surface->begins == draws + 1 && !popupDamagePending,
                 "R02 changed text selection redraws the production popup once with no full desktop invalidation");
             Require(scene.sharesSource ? drawnOwners == std::vector<std::wstring>{expectedOwner} : drawnOwners.empty(),
                 "R02 search selection updates exactly the visible source sharing that editing state");
