@@ -137,7 +137,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 const std::wstring message = Utf8ToWide(
                     "Steam Workshop subscription query: " +
                     ready->snapshot.error);
-                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message.c_str(), DiagnosticLogLevel::Error);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, message.c_str(),
+                    snowdesktop::widget::SteamWorkshopQueryFailureLogLevel(ready->snapshot.error));
             }
         }
         if (synchronizationMessage.empty())

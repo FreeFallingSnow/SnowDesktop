@@ -13,6 +13,16 @@ namespace snowdesktop::widget
 {
 using SteamWorkshopDiagnosticSink = std::function<void(std::string_view)>;
 
+inline DiagnosticLogLevel SteamWorkshopQueryFailureLogLevel(
+    std::string_view error) noexcept
+{
+    // A Steam installation that has never subscribed may have no appworkshop
+    // manifest. Keep the snapshot non-authoritative; this only classifies its
+    // diagnostic and must not turn missing data into an empty subscription set.
+    return error == "Steam Workshop cache is unavailable"
+        ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error;
+}
+
 inline const char* SteamWorkshopDiagnosticActionName(
     SteamWorkshopSyncActionKind kind) noexcept
 {

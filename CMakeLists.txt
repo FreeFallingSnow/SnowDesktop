@@ -3235,6 +3235,14 @@ if (BUILD_TESTING)
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
     snowdesktop_add_test(
+        SnowDesktopDesktopLayerRecoveryTests
+        desktop_layer_recovery
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/desktop/desktop_layer_recovery_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS integration core desktop window)
+    snowdesktop_add_test(
         SnowDesktopDockDocumentProxyTests
         dock_document_proxy
         NATIVE_WINDOW_COMPATIBILITY

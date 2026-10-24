@@ -2,6 +2,7 @@
 #include "diagnostics/input_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "icons/icon_load_diagnostics.h"
+#include "steam/steam_workshop_diagnostics.h"
 
 #include <windows.h>
 #include <cstring>
@@ -64,6 +65,23 @@ int main()
         WriteModuleDiagnosticLogEntry(descriptor.module, L"disabled-debug", DiagnosticLogLevel::Debug);
     }
     Check(!std::filesystem::exists(path), "all detailed modules default off and create no log file");
+    constexpr auto missingWorkshopCache = "Steam Workshop cache is unavailable";
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, L"workshop-cache-absent",
+        snowdesktop::widget::SteamWorkshopQueryFailureLogLevel(missingWorkshopCache));
+    Check(!std::filesystem::exists(path),
+        "a missing never-subscribed Workshop cache does not create an error log by default");
+    SetLogModules(ModuleBit(DiagnosticLogModule::Steam));
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, L"workshop-cache-absent",
+        snowdesktop::widget::SteamWorkshopQueryFailureLogLevel(missingWorkshopCache));
+    Check(ReadLog().find(L"[INFO] workshop-cache-absent") != std::wstring::npos,
+        "Steam diagnostics retain missing-cache context as optional Info");
+    SetLogModules(0);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, L"workshop-cache-unreadable",
+        snowdesktop::widget::SteamWorkshopQueryFailureLogLevel("cannot access Steam Workshop library: access denied"));
+    Check(ReadLog().find(L"[ERROR] workshop-cache-unreadable") != std::wstring::npos,
+        "real Workshop cache access failures remain unconditional errors");
+    // Subsequent no-file assertions start with the same isolated clean sink.
+    std::filesystem::remove(path);
     int callbacks = 0;
     {
         snowdesktop::startup_diagnostics::Scope startup(L"disabled-root", true);

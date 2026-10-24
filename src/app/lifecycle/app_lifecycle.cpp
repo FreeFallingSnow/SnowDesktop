@@ -5,6 +5,7 @@
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "desktop/desktop_input_activation.h"
+#include "desktop/desktop_layer_recovery.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
@@ -1041,6 +1042,41 @@ void DesktopApp::WatchDesktopHost()
     {
         desktopWindows_ = current;
         HideExplorerIcons();
+    }
+
+    // Explorer can raise its still-valid DefView without changing our parent,
+    // HWND or bounds. Hiding its ListView alone leaves that view in front of
+    // the renderer and capable of receiving the desktop's mouse input.
+    namespace layer = snowdesktop::desktop_layer_recovery;
+    const bool interactionActive = mouseDown_ || marqueeActive_ ||
+        middleButtonWidgetMove_ || detailColumnResizeActive_ ||
+        luaWidgetPanelMouseDown_ || widgetAction_ != WidgetAction::None ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        GetCapture() != nullptr || HasActiveContextMenuSession();
+    const auto recovery = layer::TryRestore(hwnd_, currentHost, current.defView,
+        {customDesktopVisible_, !desktopPassthroughActive_ &&
+            !compositionPaintInProgress_ && !updatingDisplayTopology_ && !reloading_,
+            interactionActive});
+    if (recovery.status == layer::Status::Restored)
+    {
+        desktopBackdropCompositor_.Reattach(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        BeginDesktopInteractionTrace(L"desktop-layer-recovered");
+    }
+    static ULONGLONG nextFailureDiagnostic = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (recovery.status == layer::Status::Restored ||
+        (recovery.status == layer::Status::Failed && now >= nextFailureDiagnostic))
+    {
+        const bool restored = recovery.status == layer::Status::Restored;
+        nextFailureDiagnostic = restored ? 0 : now + 30000;
+        wchar_t message[384]{};
+        swprintf_s(message,
+            L"DesktopLayerRecovery result=%ls render=%p host=%p defView=%p previous=%p insertAfter=%p error=%lu",
+            restored ? L"restored" : L"failed", hwnd_, currentHost,
+            current.defView, recovery.previous, recovery.insertAfter, recovery.error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, message,
+            restored ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
     }
 }
 
