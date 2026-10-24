@@ -14,6 +14,7 @@
 #include <shellapi.h>
 #include <wrl/client.h>
 #include <cmath>
+#include <cstddef>
 #include <utility>
 
 namespace snowdesktop
@@ -350,19 +351,119 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     return items;
 }
 
+namespace
+{
+bool SameStatusBarItemPixels(const StatusBarItem& a, const StatusBarItem& b)
+{
+    if (a.key != b.key || a.left != b.left || a.action != b.action || a.icon.has_value() != b.icon.has_value()) return false;
+    // Pinned tray items paint only their pixels; text is tooltip metadata.
+    // Keep refreshing that metadata without invalidating the DComp surface.
+    if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
+        a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
+    return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
+        a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
+        a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon &&
+        a.batteryPercentageText == b.batteryPercentageText;
+}
+std::wstring StatusBarReservedText(const StatusBarItem& item, bool mergedDock)
+{
+    if (item.key == "memory") return L"RAM 100%";
+    if (item.key == "cpu") return L"CPU 100%";
+    if (item.key == "gpu") return L"GPU 100%";
+    auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, StatusBarUsesTwoLineClock(mergedDock)) : item.text;
+    if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
+    return reserved;
+}
+bool SameStatusBarExtentInput(const StatusBarItem& a, const StatusBarItem& b, bool mergedDock)
+{
+    if (a.action == StatusBarAction::ShowDesktop) return true;
+    if (a.key == "controlCenter")
+        return a.glyph.empty() == b.glyph.empty() &&
+            a.controlGlyphs[2].empty() == b.controlGlyphs[2].empty() &&
+            a.batteryPercentageText.empty() == b.batteryPercentageText.empty();
+    if (StatusBarFixedWidth(a.key) > 0) return true;
+    const bool shortA = a.icon || a.inputIcon || a.text.empty();
+    const bool shortB = b.icon || b.inputIcon || b.text.empty();
+    if (shortA || shortB) return shortA == shortB;
+    return a.glyph.empty() == b.glyph.empty() &&
+        StatusBarReservedText(a, mergedDock) == StatusBarReservedText(b, mergedDock);
+}
+RECT StatusBarItemPaintBounds(const StatusBarItem& item, float scale, RECT trayViewport)
+{
+    RECT result = item.bounds;
+    if (IsRectEmpty(&result) || item.action == StatusBarAction::ShowDesktop) return {};
+    if (item.icon)
+    {
+        // The 18-DIP image is centered by its alpha>=16 ink, so a low-alpha
+        // tail can extend 4 DIP past a 28-DIP cell. Include filtering too.
+        InflateRect(&result, static_cast<LONG>(std::ceil(4.f * scale)) + 1, 0);
+        IntersectRect(&result, &result, &trayViewport);
+    }
+    return result;
+}
+void AddStatusBarDamage(std::vector<RECT>& regions, RECT region)
+{
+    if (IsRectEmpty(&region)) return;
+    for (std::size_t i = 0; i < regions.size();)
+    {
+        const auto& other = regions[i];
+        if (region.left <= other.right && other.left <= region.right &&
+            region.top <= other.bottom && other.top <= region.bottom)
+        {
+            UnionRect(&region, &region, &other);
+            regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(i));
+            i = 0;
+        }
+        else ++i;
+    }
+    regions.push_back(region);
+}
+}
 bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vector<StatusBarItem>& right)
 {
-    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(), [](const auto& a, const auto& b) {
-        if (a.key != b.key || a.left != b.left || a.action != b.action || a.icon.has_value() != b.icon.has_value()) return false;
-        // Pinned tray items paint only their pixels; text is tooltip metadata.
-        // Keep refreshing that metadata without invalidating the DComp surface.
-        if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
-            a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
-        return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
-            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
-            a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon &&
-            a.batteryPercentageText == b.batteryPercentageText;
-    });
+    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(), SameStatusBarItemPixels);
+}
+bool SameStatusBarPalette(const StatusBarPalette& a, const StatusBarPalette& b)
+{
+    const auto color = [](const auto& x, const auto& y) { return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a; };
+    return a.highContrast == b.highContrast && color(a.background, b.background) && color(a.foreground, b.foreground) &&
+        color(a.highlight, b.highlight) && color(a.highlightText, b.highlightText);
+}
+bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>& items,
+    const std::vector<StatusBarItem>& previous, bool mergedDock, bool frameReusable)
+{
+    if (!frameReusable || items.size() != previous.size()) return false;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        const auto& a = items[i]; const auto& b = previous[i];
+        if (a.key != b.key || a.action != b.action || a.left != b.left || a.icon.has_value() != b.icon.has_value() ||
+            a.batteryPercentageText.empty() != b.batteryPercentageText.empty() ||
+            (a.icon && (a.icon->key != b.icon->key ||
+                a.icon->identity.guid != b.icon->identity.guid || a.icon->identity.window != b.icon->identity.window ||
+                a.icon->identity.id != b.icon->identity.id || a.icon->identity.process != b.icon->identity.process ||
+                a.icon->width != b.icon->width || a.icon->height != b.icon->height)) ||
+            !SameStatusBarExtentInput(a, b, mergedDock)) return false;
+    }
+    for (std::size_t i = 0; i < items.size(); ++i)
+    { items[i].bounds = previous[i].bounds; items[i].contentBounds = previous[i].contentBounds; }
+    return true;
+}
+std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>& items,
+    const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
+    const StatusBarTrayScroll& scroll, RECT additional)
+{
+    std::vector<RECT> result;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    if (items.size() != previous.size()) return {client};
+    const auto add = [&](RECT bounds) { RECT clipped{}; IntersectRect(&clipped, &bounds, &client); AddStatusBarDamage(result, clipped); };
+    for (std::size_t i = 0; i < items.size(); ++i)
+        if (!SameStatusBarItemPixels(items[i], previous[i]))
+        {
+            add(StatusBarItemPaintBounds(previous[i], scale, scroll.viewport));
+            add(StatusBarItemPaintBounds(items[i], scale, scroll.viewport));
+        }
+    add(additional);
+    return result;
 }
 namespace
 {
@@ -526,12 +627,7 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
                 (item.batteryPercentageText.empty() ? 0.f : percentageWidth) : 28.f * scale;
         if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
         if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
-        auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-        if (item.key == "memory") reserved = L"RAM 100%";
-        if (item.key == "cpu") reserved = L"CPU 100%";
-        if (item.key == "gpu") reserved = L"GPU 100%";
-        // Reserve equal digit advances for the date/time too.
-        if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
+        const auto reserved = StatusBarReservedText(item, mergedDock);
         ComPtr<IDWriteTextLayout> layout;
         DWRITE_TEXT_METRICS metrics{};
         const auto created = text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
@@ -763,7 +859,11 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 continue;
             }
             RECT intersection{};
-            if (updateBounds && !IntersectRect(&intersection, &item.bounds, updateBounds)) continue;
+            if (updateBounds)
+            {
+                const auto painted = StatusBarItemPaintBounds(item, scale, trayViewport);
+                if (!IntersectRect(&intersection, &painted, updateBounds)) continue;
+            }
             if (item.icon && !trayLayer)
             {
                 const auto clip = D2D1::RectF(static_cast<float>(trayViewport.left), static_cast<float>(trayViewport.top),
@@ -1035,6 +1135,23 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     return FAILED(result) ? result : ended;
 }
 
+HRESULT DrawStatusBarContentUpdates(IDCompositionSurface* surface, IDWriteFactory* text,
+    std::vector<StatusBarItem>& items, std::span<const RECT> damage, UINT width, UINT height, float scale,
+    const PersonalizationSettings& appearance, const StatusBarPalette& palette,
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused,
+    bool mergedDock, StatusBarTrayScroll& trayScroll, const std::optional<RECT>& indicator, UINT dpi,
+    StatusBarDrawResources* resources, bool* frameReusable)
+{
+    if (!surface) return E_INVALIDARG;
+    for (const auto& region : damage)
+    {
+        const auto result = DrawStatusBarContentUpdate(surface, text, items, region, width, height, scale,
+            appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, trayScroll,
+            indicator, dpi, resources, frameReusable);
+        if (FAILED(result)) return result;
+    }
+    return S_OK;
+}
 HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface* surface, IDWriteFactory* text,
     std::vector<StatusBarItem>& items, const std::array<RECT, 2>& damage,
     UINT width, UINT height, float scale, const PersonalizationSettings& appearance,

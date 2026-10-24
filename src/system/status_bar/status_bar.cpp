@@ -180,6 +180,7 @@ struct StatusBar::Impl
         bool backgroundDirty = true;
         bool partialHoverUpdates = true;
         bool retainedFrameValid = false;
+        std::optional<StatusBarPalette> retainedPalette;
         RECT adjacentDockBounds{};
         bool dockQuickSearch = false;
         PersonalizationSettings appearance;
@@ -709,23 +710,40 @@ struct StatusBar::Impl
             GetClientRect(hwnd, &client);
             if (IsRectEmpty(&client)) return;
             const UINT w = static_cast<UINT>(client.right), h = static_cast<UINT>(client.bottom);
-            if (scrollFrame && same && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
+            const bool partialCandidate = partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
                 surface && backgroundSurface && width == w && height == h && drawResources.iconFace &&
-                drawResources.TextMatches(owner.text.Get(), TrayScale()) &&
-                UpdateStatusBarTrayScrollLayout(items, scrollFrame->previousOffset, trayScroll, retainedFrameValid))
+                drawResources.TextMatches(owner.text.Get(), TrayScale()) && retainedFrameValid && retainedPalette;
+            std::optional<StatusBarPalette> updatePalette;
+            if (partialCandidate)
+                updatePalette = StatusBarPalette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
+                    SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+            const bool reusableContent = partialCandidate && SameStatusBarPalette(*retainedPalette, *updatePalette) &&
+                (same || RestoreStatusBarContentLayout(items, previousItems, mergedDockHeight > 0, retainedFrameValid));
+            if (reusableContent && (scrollFrame || !same) &&
+                (!scrollFrame || UpdateStatusBarTrayScrollLayout(items, scrollFrame->previousOffset, trayScroll, retainedFrameValid)))
             {
+                // Hidden pixel/tooltip changes still replace metadata, but do
+                // not begin or commit a surface update.
+                std::vector<RECT> damage;
+                if (!scrollFrame)
+                {
+                    damage = StatusBarContentDamage(items, previousItems, w, h, TrayScale(), trayScroll);
+                    if (damage.empty()) { SyncTooltip(); return; }
+                }
                 paintDirty = true;
                 PublishTrayGeometry();
-                if (!scrollFrame->previewKey.empty())
+                if (scrollFrame && !scrollFrame->previewKey.empty())
                 { scrollFrame->previewUpdated = true; owner.PreviewDrop(scrollFrame->previewKey, scrollFrame->previewPoint, this); }
                 if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
-                const auto damage = StatusBarTrayScrollDamage(items, scrollFrame->previousHover, trayScroll.viewport,
-                    scrollFrame->previousIndicator, dropIndicator, w, h);
-                const StatusBarPalette palette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
-                    SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+                if (scrollFrame)
+                {
+                    const auto scrollDamage = StatusBarTrayScrollDamage(items, scrollFrame->previousHover, trayScroll.viewport,
+                        scrollFrame->previousIndicator, dropIndicator, w, h);
+                    damage = StatusBarContentDamage(items, previousItems, w, h, TrayScale(), trayScroll, scrollDamage);
+                }
                 painting = true;
-                const auto result = DrawStatusBarContentUpdate(surface.Get(), owner.text.Get(), items, damage, w, h,
-                    TrayScale(), appearance, palette, interaction.hovered,
+                const auto result = DrawStatusBarContentUpdates(surface.Get(), owner.text.Get(), items, damage, w, h,
+                    TrayScale(), appearance, *updatePalette, interaction.hovered,
                     keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
                     interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll, dropIndicator, dpi, &drawResources, &retainedFrameValid);
                 painting = false;
@@ -838,6 +856,7 @@ struct StatusBar::Impl
                 {
                     if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                     paintDirty = false; lastPaintError = S_OK;
+                    retainedPalette = palette;
                     if (scrollFrame) scrollFrame->presented = true;
                     presentation.Release(); SyncTooltip();
                 }
@@ -895,6 +914,7 @@ struct StatusBar::Impl
             }
             paintDirty = true;
             retainedFrameValid = false;
+            retainedPalette.reset();
             surface.Reset();
             drawResources.Reset();
             if (owner.graphicsFailure) owner.graphicsFailure(result);

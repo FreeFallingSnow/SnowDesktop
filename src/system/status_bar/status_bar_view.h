@@ -9,6 +9,7 @@
 #include <d2d1_1.h>
 #include <optional>
 #include <array>
+#include <span>
 #include <memory>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -62,6 +63,16 @@ struct StatusBarPalette
 };
 std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
+bool SameStatusBarPalette(const StatusBarPalette&, const StatusBarPalette&);
+// Reuse only a complete, reliable layout with identical extent inputs. A
+// rejection does not change any geometry; variable reservations arrange again.
+bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>&,
+    const std::vector<StatusBarItem>& previous, bool mergedDock, bool frameReusable);
+// Use after successful layout retention (and any retained tray translation).
+// Painted envelopes include the low-alpha fringe, without changing hit bounds.
+std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>&,
+    const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
+    const StatusBarTrayScroll&, RECT additional = {});
 inline std::size_t StatusBarControlPart(float localDip, bool hasBattery = true)
 { return localDip < 28 ? 0 : (localDip < 56 || !hasBattery) ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
@@ -128,6 +139,12 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface*, IDWriteFactory*, std::
     RECT damage, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
     StatusBarTrayScroll&, const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources* resources = nullptr,
+    bool* frameReusable = nullptr);
+HRESULT DrawStatusBarContentUpdates(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
+    std::span<const RECT> damage, UINT width, UINT height, float scale,
+    const PersonalizationSettings&, const StatusBarPalette&, std::optional<std::size_t> hovered,
+    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll&,
+    const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources* resources = nullptr,
     bool* frameReusable = nullptr);
 
 // updateBounds limits drawing to intersecting items and retains their existing

@@ -380,11 +380,12 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
 }
 #include "status_bar_resources_cases.h"
 #include "status_bar_scroll_cases.h"
+#include "status_bar_content_update_cases.h"
 }
 int main(int argc, char** argv)
 {
     const std::string_view control = argc == 3 ? argv[2] : "";
-    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control")),
+    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control" || control == "--full-content-control")),
         "expected repository root and optional resource/atlas control");
     CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
@@ -445,9 +446,15 @@ int main(int argc, char** argv)
         CheckTrayScrollUpdates(device.Get(), context.Get(), text.Get(), data, pinned, true);
         return 0;
     }
+    if (control == "--full-content-control")
+    {
+        CheckContentUpdates(device.Get(), context.Get(), text.Get(), data, true);
+        return 0;
+    }
     CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, true, true);
     CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, false);
     CheckTrayScrollUpdates(device.Get(), context.Get(), text.Get(), data, pinned);
+    CheckContentUpdates(device.Get(), context.Get(), text.Get(), data);
     for (const int mode : {0, 1, 2}) for (const bool clock : {false, true})
     for (const bool notifications : {false, true}) for (const bool merged : {false, true})
     for (const bool rightAligned : {false, true}) for (const float scale : {1.f, 2.f})
