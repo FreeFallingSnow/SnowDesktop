@@ -167,6 +167,7 @@ private:
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
     std::vector<HTHUMBNAIL> thumbnails_;
+    std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};
     DockPosition dockPosition_ = DockPosition::Bottom;

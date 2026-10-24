@@ -95,6 +95,18 @@ RECT FitThumbnailRect(RECT bounds, SIZE sourceSize)
     return { left, top, left + width, top + height };
 }
 
+void ReleaseThumbnail(HTHUMBNAIL& thumbnail)
+{
+    if (thumbnail) DwmUnregisterThumbnail(thumbnail);
+    thumbnail = nullptr;
+}
+
+void ReleaseThumbnails(std::vector<HTHUMBNAIL>& thumbnails)
+{
+    for (auto& thumbnail : thumbnails) ReleaseThumbnail(thumbnail);
+    thumbnails.clear();
+}
+
 struct DockWindowPreviewMonitorContext
 {
     UINT dpi = 96;
@@ -681,22 +693,31 @@ bool DockWindowPreview::EnsureWindows(size_t count)
         hwnd_ = windows_.front();
         return true;
     }
-    UnregisterThumbnails();
+    ReleaseThumbnails(measuredThumbnails_);
     while (windows_.size() > count)
     {
+        const size_t index = windows_.size() - 1;
+        if (index < thumbnails_.size()) ReleaseThumbnail(thumbnails_[index]);
         if (windows_.back()) DestroyWindow(windows_.back());
         windows_.pop_back();
     }
+    thumbnails_.resize(std::min(thumbnails_.size(), count));
     windows_.resize(count, nullptr);
-    for (HWND& window : windows_)
+    for (size_t index = 0; index < windows_.size(); ++index)
     {
+        HWND& window = windows_[index];
         if (window && IsWindow(window)) continue;
+        if (index < thumbnails_.size()) ReleaseThumbnail(thumbnails_[index]);
         window = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             kDockWindowPreviewClassName, L"Dock Window Preview",
             WS_POPUP | WS_CLIPCHILDREN,
             0, 0, 1, 1, nullptr, nullptr, instance_, this);
-        if (!window) return false;
+        if (!window)
+        {
+            UnregisterThumbnails();
+            return false;
+        }
     }
     hwnd_ = windows_.empty() ? nullptr : windows_.front();
     return hwnd_ != nullptr;
@@ -749,12 +770,12 @@ void DockWindowPreview::Show(
     const DockWindowPreviewMonitorContext context =
         ResolveDockWindowPreviewMonitorContext(anchorCenter);
     dpi_ = context.dpi;
-    Layout(context.workArea, dpi_);
     if (!EnsureWindows(items_.size()))
     {
         Hide();
         return;
     }
+    Layout(context.workArea, dpi_);
     const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
         anchorScreen_, dockPosition_, panelSize_,
         context.workArea, dpi_);
@@ -823,14 +844,25 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
         static_cast<int>(std::floor(workHeight * 0.78)));
     std::vector<SIZE> sourceSizes;
     sourceSizes.reserve(items_.size());
-    for (const auto& item : items_)
+    // Keep the displayed generation alive throughout measurement and popup
+    // preparation, retiring it at the same display boundary as before.
+    ReleaseThumbnails(measuredThumbnails_);
+    measuredThumbnails_.resize(items_.size(), nullptr);
+    for (size_t index = 0; index < items_.size(); ++index)
     {
+        const auto& item = items_[index];
         SIZE size{};
         HTHUMBNAIL thumbnail = nullptr;
-        if (SUCCEEDED(DwmRegisterThumbnail(hwnd_, item.window, &thumbnail)))
+        // Registration alone does not render anything. Measure through the
+        // final card's relationship and retain it until properties are ready.
+        const HWND destination = windows_[index] ? windows_[index] : hwnd_;
+        if (SUCCEEDED(DwmRegisterThumbnail(destination, item.window, &thumbnail)))
         {
             DwmQueryThumbnailSourceSize(thumbnail, &size);
-            DwmUnregisterThumbnail(thumbnail);
+            if (windows_[index]) measuredThumbnails_[index] = thumbnail;
+            // A popup can be destroyed before a DPI anchor update. Preserve
+            // measurement through the surviving primary popup in that case.
+            else DwmUnregisterThumbnail(thumbnail);
         }
         if (size.cx <= 0 || size.cy <= 0)
         {
@@ -862,16 +894,20 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
 
 void DockWindowPreview::RegisterThumbnails()
 {
-    UnregisterThumbnails();
-    thumbnails_.resize(items_.size(), nullptr);
+    ReleaseThumbnails(thumbnails_);
+    thumbnails_.swap(measuredThumbnails_);
     for (size_t index = 0; index < items_.size(); ++index)
     {
-        HTHUMBNAIL thumbnail = nullptr;
-        if (FAILED(DwmRegisterThumbnail(
+        HTHUMBNAIL thumbnail = thumbnails_[index];
+        // Retry a failed measurement registration at the original display
+        // boundary, but reuse successful registrations from Layout.
+        if (!thumbnail && (FAILED(DwmRegisterThumbnail(
                 windows_[index], items_[index].window, &thumbnail)) ||
-            !thumbnail)
+            !thumbnail))
             continue;
 
+        // The source may have resized since measurement; preserve the fresh
+        // display-time size observation rather than caching its earlier size.
         SIZE sourceSize{};
         DwmQueryThumbnailSourceSize(thumbnail, &sourceSize);
         RECT destination = FitThumbnailRect(
@@ -891,6 +927,7 @@ void DockWindowPreview::RegisterThumbnails()
                 thumbnail, &properties)))
         {
             DwmUnregisterThumbnail(thumbnail);
+            thumbnails_[index] = nullptr;
             continue;
         }
         thumbnails_[index] = thumbnail;
@@ -899,10 +936,8 @@ void DockWindowPreview::RegisterThumbnails()
 
 void DockWindowPreview::UnregisterThumbnails()
 {
-    for (HTHUMBNAIL thumbnail : thumbnails_)
-        if (thumbnail)
-            DwmUnregisterThumbnail(thumbnail);
-    thumbnails_.clear();
+    ReleaseThumbnails(thumbnails_);
+    ReleaseThumbnails(measuredThumbnails_);
 }
 
 void DockWindowPreview::UpdateAnchor(
@@ -1041,6 +1076,7 @@ bool DockWindowPreview::IsCleared() const
         cardRects_.empty() &&
         thumbnailRects_.empty() &&
         thumbnails_.empty() &&
+        measuredThumbnails_.empty() &&
         panelSize_.cx == 0 &&
         panelSize_.cy == 0 &&
         hoveredIndex_ == -1 &&
