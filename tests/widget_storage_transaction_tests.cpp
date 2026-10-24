@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -59,6 +60,175 @@ void TestFailureLeavesSourceUntouched()
         "invalid UTF-8 rejects the staged operation");
     Check(source.at("instance.value") == "original",
         "failed staging never mutates the source map");
+}
+
+void TestSnapshotAndNetChanges()
+{
+    using namespace snowdesktop::widget_runtime;
+    StorageMap source = {
+        { "instance.value", "original" },
+        { "instance.empty", "" },
+        { "instance.__host.typedStorage.value", "marker" },
+        { "other.value", std::string(65536, 'x') },
+    };
+    const StorageMap initial = source;
+    WidgetStorageTransaction transaction(source, "instance");
+    source.clear();
+    std::string error;
+    bool changed = true;
+    Check(!transaction.Changed() &&
+            transaction.Get("value", error) == "original" &&
+            transaction.Set("value", "original", changed, error) && !changed &&
+            transaction.Remove("missing", changed, error) && !changed &&
+            !transaction.Changed(),
+        "transaction owns its snapshot and same-value or absent writes remain unchanged");
+    Check(transaction.Set("value", "replacement", changed, error) && changed &&
+            transaction.Changed() &&
+            transaction.Set("value", "original", changed, error) && changed &&
+            !transaction.Changed(),
+        "restoring an existing value cancels the net transaction change");
+    Check(transaction.Remove("empty", changed, error) && changed &&
+            transaction.Changed() &&
+            transaction.Set("empty", "", changed, error) && changed &&
+            !transaction.Changed() &&
+            transaction.Set("new", "", changed, error) && changed &&
+            transaction.Changed() &&
+            transaction.Remove("new", changed, error) && changed &&
+            !transaction.Changed(),
+        "empty values remain distinct from missing values during change cancellation");
+    Check(transaction.RemoveHostMetadata("__host.typedStorage.value", changed, error) && changed &&
+            transaction.Changed() &&
+            transaction.SetHostMetadata("__host.typedStorage.value", "marker", changed, error) && changed &&
+            !transaction.Changed() &&
+            transaction.SetHostMetadata("__host.new", "", changed, error) && changed &&
+            transaction.Changed() &&
+            transaction.RemoveHostMetadata("__host.new", changed, error) && changed &&
+            !transaction.Changed(),
+        "host metadata restores and removals participate in net-change detection");
+    Check(transaction.ValidateCommit(error) && transaction.TakeCandidate() == initial,
+        "a reverted transaction preserves all original entries, including unrelated widgets");
+}
+
+void TestMixedTransactionEquivalence()
+{
+    using namespace snowdesktop::widget_runtime;
+    StorageMap source{{"instance.key0", "original"}, {"other.key0", "unrelated"}};
+    WidgetStorageTransaction transaction(source, "instance");
+    StorageMap expected = source;
+    std::string error;
+    for (int index = 0; index < 512; ++index)
+    {
+        const std::string key = "key" + std::to_string((index / 4) % 7);
+        const bool metadata = (index / 28) % 2 != 0;
+        const std::string relative = metadata ? "__host." + key : key;
+        const std::string full = "instance." + relative;
+        const bool remove = index % 4 == 3;
+        const std::string value = index % 4 == 2 ? "" : "value";
+        const auto before = expected.find(full);
+        const bool expectedChanged = remove ? before != expected.end() :
+            before == expected.end() || before->second != value;
+        bool changed = false;
+        const bool ok = remove
+            ? (metadata ? transaction.RemoveHostMetadata(relative, changed, error)
+                        : transaction.Remove(relative, changed, error))
+            : (metadata ? transaction.SetHostMetadata(relative, value, changed, error)
+                        : transaction.Set(relative, value, changed, error));
+        if (remove) expected.erase(full);
+        else expected[full] = value;
+        const auto read = metadata ? transaction.GetHostMetadata(relative, error)
+                                   : transaction.Get(relative, error);
+        const auto found = expected.find(full);
+        Check(ok && changed == expectedChanged && error.empty() &&
+                read == (found == expected.end() ? std::nullopt :
+                    std::optional<std::string>(found->second)) &&
+                transaction.Changed() == (expected != source) &&
+                transaction.ValidateCommit(error),
+            "mixed repeated writes preserve immediate reads, operation results, and full-snapshot net changes");
+    }
+    Check(transaction.TakeCandidate() == expected && source.at("other.key0") == "unrelated",
+        "the final mixed candidate equals the independently updated snapshot");
+}
+
+void TestPersistenceBytesAndFailureRecovery()
+{
+    using namespace snowdesktop::widget_runtime;
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-storage-equivalence-" + std::to_wstring(GetCurrentProcessId()) +
+            L"-" + std::to_wstring(GetTickCount64()));
+    std::filesystem::create_directory(directory);
+    const auto path = directory / L"storage.json";
+    const auto temporary = std::filesystem::path(path.wstring() + L".tmp");
+    struct Cleanup
+    {
+        std::filesystem::path directory, path, temporary;
+        ~Cleanup()
+        {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+            std::filesystem::remove(temporary, ignored);
+            std::filesystem::remove(directory, ignored);
+        }
+    } cleanup{directory, path, temporary};
+    const auto readText = [&] {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    Check(storage_persistence::SaveStorageMap(path, {}) && readText() == "{}\n",
+        "empty storage keeps its exact persisted JSON format");
+    std::string controls;
+    for (int index = 0; index < 32; ++index) controls.push_back(static_cast<char>(index));
+    StorageMap committed{{"z", ""}, {"line\n\"\\", "雪/emoji 😀"}, {"a", controls}};
+    const std::string expected = "{\n  \"a\": \""
+        "\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f"
+        "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f"
+        "\",\n  \"line\\n\\\"\\\\\": \"雪/emoji 😀\",\n  \"z\": \"\"\n}\n";
+    Check(storage_persistence::SaveStorageMap(path, committed) && readText() == expected,
+        "sorted JSON bytes preserve all control escapes, quoted keys, UTF-8, and empty values");
+    StorageMap reordered;
+    for (const auto& [key, value] : committed) reordered.emplace(key, value);
+    reordered.rehash(97);
+    Check(storage_persistence::SaveStorageMap(path, reordered) && readText() == expected,
+        "serialization is deterministic across map insertion and bucket order");
+    StorageMap loaded;
+    Check(storage_persistence::ReadStorageMap(path, loaded, [](const auto&) { return false; }) &&
+            loaded == committed,
+        "the actual storage reader round-trips every escaped value");
+    const StorageMap before = committed;
+    const auto commit = [&] {
+        WidgetStorageTransaction transaction(committed, "instance");
+        bool changed = false;
+        std::string error;
+        if (!transaction.Set("value", "new", changed, error) ||
+            !transaction.ValidateCommit(error)) return false;
+        auto previous = transaction.TakeCandidate();
+        committed.swap(previous);
+        if (storage_persistence::SaveStorageMap(path, committed)) return true;
+        committed.swap(previous);
+        return false;
+    };
+    HANDLE lock = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(lock != INVALID_HANDLE_VALUE, "replacement failure fixture locks the actual target file");
+    if (lock != INVALID_HANDLE_VALUE)
+    {
+        Check(!commit() && committed == before && readText() == expected,
+            "failed atomic replacement reports failure and preserves both memory and disk");
+        CloseHandle(lock);
+    }
+    lock = CreateFileW(temporary.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(lock != INVALID_HANDLE_VALUE, "temporary-open failure fixture locks the actual temporary file");
+    if (lock != INVALID_HANDLE_VALUE)
+    {
+        Check(!commit() && committed == before && readText() == expected,
+            "failed temporary-file open reports failure and preserves both memory and disk");
+        CloseHandle(lock);
+    }
+    loaded.clear();
+    Check(commit() &&
+            storage_persistence::ReadStorageMap(path, loaded, [](const auto&) { return false; }) &&
+            loaded == committed && loaded.at("instance.value") == "new",
+        "an unlocked retry synchronously persists the complete transaction before success");
 }
 
 void TestFinalQuotaIsAtomic()
@@ -276,6 +446,9 @@ int main()
 {
     TestReadWriteAndRemoval();
     TestFailureLeavesSourceUntouched();
+    TestSnapshotAndNetChanges();
+    TestMixedTransactionEquivalence();
+    TestPersistenceBytesAndFailureRecovery();
     TestFinalQuotaIsAtomic();
     TestHostReservedStateDoesNotConsumeWidgetQuota();
     TestHostMetadataIsAtomicAndHiddenFromQuota();
