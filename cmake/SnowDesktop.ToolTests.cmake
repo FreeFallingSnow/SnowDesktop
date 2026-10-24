@@ -108,6 +108,9 @@ if(BUILD_TESTING AND WIN32)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
         build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
+    add_test(NAME build_dashboard_candidate_logs COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --candidate-logs)
+    set_tests_properties(build_dashboard_candidate_logs PROPERTIES TIMEOUT 60 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     add_test(NAME build_dashboard_references COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --references)
     set_tests_properties(build_dashboard_references PROPERTIES TIMEOUT 60 LABELS "tools;integration" PROCESSORS 3
         ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
@@ -198,6 +201,8 @@ if(BUILD_TESTING AND WIN32)
     set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateTests build_candidate
         build_tools/build_candidate_tests.cpp "tools;integration" 180)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateRecoveryTests build_candidate_recovery
+        build_tools/build_candidate_recovery_tests.cpp "tools;integration" 90)
     set_tests_properties(build_candidate PROPERTIES PROCESSORS 4)
     snowdesktop_add_native_tool_test(SnowDesktopBuildActivationTests build_activation
         build_tools/build_activation_tests.cpp "tools;integration" 120)
@@ -205,7 +210,7 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
         build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
     set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
-    foreach(cache_scene checkout-cache checkout-cache-control)
+    foreach(cache_scene checkout-cache)
         string(REPLACE "-" "_" cache_test "${cache_scene}")
         add_test(NAME build_candidate_${cache_test} COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --${cache_scene})
         set_tests_properties(build_candidate_${cache_test} PROPERTIES TIMEOUT 360 LABELS "tools;integration" PROCESSORS 4

@@ -17,7 +17,7 @@ void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
             replace(module,"[IO.File]::Copy($object,$path,$true)","[IO.File]::Copy((Join-Path $manifest.sourceRoot $file.path),$path,$true)");
             replace(module,"if((Get-FileDigest $path) -ne $file.sha256){throw 'Candidate copied content failed integrity verification.'}","# Controlled legacy live-source copy has no frozen-byte check.");
         }else if(control=="per-snapshot-slot") {
-            replace(module,"$key=$Snapshot.manifest.context.digest.Substring(0,16)+'-'+$Name", "$key=$Snapshot.manifest.id.Substring(0,16)+'-'+$Name");
+            replace(module,"$directory=Get-CandidateWorkspaceDirectory $Snapshot.store", "$directory=Resolve-CandidatePath $Snapshot.store.slots $Snapshot.manifest.id");
         }else{require(false,"Unknown candidate control");}
         write(c.scripts/L"build_candidate.ps1",module,true);
     }
@@ -144,6 +144,11 @@ void scenario(const fs::path& repo,const std::string& control) {
     const auto exeTime=fs::last_write_time(exe),sourceTime=fs::last_write_time(source/L"src/main.cpp"),headerTime=fs::last_write_time(source/L"src/common.h");
     write(output/L"candidate-cache-sentinel.txt","preserve unrelated build cache\n");
     const auto same=materialize(c,aId);require(same.at("copied").integer()==0&&same.at("kept").integer()>0,"Same snapshot copied unchanged inputs");
+    if(control.empty()){
+        const auto named=c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","materialize","-Snapshot",aId,"-Task","snap","-Slot","another-name"});
+        require(named.at("source").str()==first.at("source").str()&&named.at("output").str()==first.at("output").str()&&named.at("slot").str()=="workspace",
+            "Legacy named input created another compiler workspace instead of reusing the fixed directory");
+    }
     build(same);program(same,8);
     require(fs::last_write_time(exe)==exeTime&&fs::last_write_time(source/L"src/main.cpp")==sourceTime,"Same snapshot rebuilt unchanged program or input");
     fs::remove(c.root/L"src/new.h");write(c.root/L"src/newer.txt","new candidate input\n");

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <thread>
 using namespace build_test;
@@ -247,6 +248,96 @@ void dashboard_references(const fs::path& repo){
     write(root/L".build/dashboard"/wide("stop-"+info.at("instance").str()+".request"),info.at("instance").str());
     require(server.wait(8).code==0,"Independent reference dashboard did not stop with its verified nonce");
     std::cout<<"PASS independent reference HTTP: exact/compatible receipts, immutable origins, missing/corrupt proofs, lossless UTC comparison and strict-equality control\n";
+}
+void candidate_logs(const fs::path& repo){
+    // Real HTTP and filesystem boundaries: only the build producer is replaced.
+    // Two slots deliberately use the same entry filename to detect log mixing.
+    const auto root=temporary("dashboard-candidate-logs"),state=root/L".build/collaboration",runs=state/L"runs";
+    const std::string batch(32,'b'),entry="entry-"+std::string(32,'1')+".log",snapshot(32,'c'),digest(64,'a'),nonce(32,'9');
+    fs::create_directories(runs);write(state/L"state.json","{}");
+    const auto port=free_port();Child server({production_python().wstring(),(repo/L"tools/build-dashboard/server.py").wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(port)},root);
+    until([&]{require(server.running(),"Candidate log server exited: "+server.err());try{return http(port,"/api/health").code==200;}catch(...){return false;}},10);
+    auto view=[&](const std::string& id){atomic(state/wide(batch+".json"),Json::object({{"batchId",batch},{"runId",id}}).dump());return Json::parse(http(port,"/api/batches/"+batch).body).at("run");};
+    auto make=[&](char letter,const std::string& name,const fs::path& storage,bool singleton=false){
+        const std::string id(32,letter),slot=singleton?"workspace":std::string(16,'a')+"-"+name;
+        const auto directory=singleton?storage/L".build/build-workspace":storage/L".build/candidate-slots"/wide(slot),source=directory/L"source",output=directory/L"output";
+        fs::create_directories(source);fs::create_directories(output/L"collaboration");
+        const auto aliases=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("$ErrorActionPreference='Stop'; foreach($name in @('.build','.build_debug')){New-Item -ItemType Junction -Path (Join-Path "+ps_literal(source)+" $name) -Target "+ps_literal(output)+"|Out-Null}")},root,10);
+        require(aliases.code==0,"Candidate log output aliases unavailable: "+aliases.out+aliases.err);
+        auto request=Json::object({{"schemaVersion",1},{"id",id},{"repositoryRoot",utf8(root.wstring())},{"nonce",nonce},{"task","candidate-log-fixture"},{"action","candidate"},{"candidateAction","release"},{"candidateSlot",name},{"snapshot",snapshot},{"snapshotManifestDigest",digest},{"configuration","Release"}});
+        auto context=Json::object({{"schemaVersion",1},{"runRoot",utf8(root.wstring())},{"runId",id},{"nonce",nonce},{"snapshot",snapshot},{"manifestDigest",digest},{"source",utf8(source.wstring())},{"output",utf8(output.wstring())},{"slot",slot},{"configuration","Release"}});
+        auto record=Json::object({{"schemaVersion",1},{"id",id},{"repositoryRoot",utf8(root.wstring())},{"nonce",nonce},{"status","running"},{"owner",owner(GetCurrentProcessId())},{"candidateExecution",context}});
+        auto event=Json::object({{"schemaVersion",1},{"runId",id},{"kind","start"},{"id",std::string(32,'2')},{"utc","2026-10-24T08:00:00Z"},{"name","release-pipeline"},{"logPath",utf8((source/L".build/collaboration"/wide(entry)).wstring())}});
+        atomic(runs/wide(id+".request.json"),request.dump());atomic(runs/wide(id+".json"),record.dump());
+        write(runs/wide(id+".stages.fixture.jsonl"),event.dump()+"\n");write(runs/wide(id+".stdout.log"),"");write(runs/wide(id+".stderr.log"),"child remains active\n");
+        std::string text="early-"+name+"\n";for(int i=0;i<220;++i)text+="compile "+name+" "+std::to_string(i)+".cpp\n";
+        text+="tail-"+name+" token=fixture-private\n";write(output/L"collaboration"/wide(entry),text);
+        return Json::object({{"id",id},{"request",request},{"record",record},{"event",event},{"source",utf8(source.wstring())},{"output",utf8(output.wstring())}});
+    };
+    auto first=make('d',"default",root),second=make('e',"desktop-layer",root);
+    for(const auto& item:{first,second}){
+        const auto id=item.at("id").str(),name=item.at("request").at("candidateSlot").str();
+        const auto displayed=view(id);const auto text=displayed.at("log").at("lines").dump();
+        require(text.find("tail-"+name)!=std::string::npos&&text.find("fixture-private")==std::string::npos&&displayed.at("logs").items[0].at("key").str()=="product","Candidate product log tail missing, misclassified or not redacted");
+        require(displayed.at("logs").items[0].at("log").at("lines").items.size()<=180,"Candidate log tail became unbounded");
+        const auto downloaded=http(port,"/api/runs/"+id+"/logs/product");
+        require(downloaded.code==200&&downloaded.body.find("early-"+name)!=std::string::npos&&downloaded.body.find("tail-"+name)!=std::string::npos&&downloaded.body.find("fixture-private")==std::string::npos,"Candidate full log download lost original lines or exposed secrets");
+    }
+    const auto id=first.at("id").str();const auto recordPath=runs/wide(id+".json"),requestPath=runs/wide(id+".request.json"),eventsPath=runs/wide(id+".stages.fixture.jsonl");
+    auto rejected=[&](const std::string& why){require(http(port,"/api/runs/"+id+"/logs/product").code==503,"Candidate log accepted "+why);};
+    auto changed=first.at("event");changed["logPath"]=second.at("event").at("logPath");write(eventsPath,changed.dump()+"\n");rejected("another slot's stage path");
+    changed=first.at("event");changed["runId"]=second.at("id");write(eventsPath,changed.dump()+"\n");rejected("another Run's event");
+    changed=first.at("event");changed["logPath"]=utf8((root/L"outside"/wide(entry)).wstring());write(eventsPath,changed.dump()+"\n");rejected("an external path");
+    write(eventsPath,first.at("event").dump()+"\n");
+    for(const auto& field:{"nonce","snapshot","manifestDigest","configuration","source","output","slot"}){
+        auto invalid=first.at("record");invalid["candidateExecution"][field]="wrong";atomic(recordPath,invalid.dump());rejected(std::string("changed ")+field);
+    }
+    atomic(recordPath,first.at("record").dump());
+    const auto source=fs::path(wide(first.at("source").str())),output=fs::path(wide(first.at("output").str()));
+    auto point_alias=[&](const fs::path& target){fs::remove(source/L".build");const auto result=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("New-Item -ItemType Junction -Path "+ps_literal(source/L".build")+" -Target "+ps_literal(target)+"|Out-Null")},root,10);require(result.code==0,"Candidate alias fixture failed: "+result.err);};
+    point_alias(fs::path(wide(second.at("output").str())));rejected("a redirected source output junction");point_alias(output);
+    // Tail and download must both advance after the initial read.
+    {std::ofstream stream(output/L"collaboration"/wide(entry),std::ios::app);stream<<"live-append-marker\n";}
+    require(view(id).at("log").at("lines").dump().find("live-append-marker")!=std::string::npos&&http(port,"/api/runs/"+id+"/logs/product").body.find("live-append-marker")!=std::string::npos,"Candidate logs stopped following appended compiler output");
+    auto testRequest=first.at("request");testRequest["candidateAction"]="tests";atomic(requestPath,testRequest.dump());
+    require(view(id).at("logs").items[0].at("key").str()=="tests"&&http(port,"/api/runs/"+id+"/logs/tests").code==200,"Candidate test logs did not share the normal source/download interface");
+    auto debugRequest=first.at("request"),debugRecord=first.at("record"),debugEvent=first.at("event");
+    debugRequest["configuration"]="Debug";debugRequest["candidateAction"]="debug";debugRecord["candidateExecution"]["configuration"]="Debug";
+    debugEvent["logPath"]=utf8((source/L".build_debug/collaboration"/wide(entry)).wstring());
+    atomic(requestPath,debugRequest.dump());atomic(recordPath,debugRecord.dump());write(eventsPath,debugEvent.dump()+"\n");
+    require(view(id).at("log").at("lines").dump().find("live-append-marker")!=std::string::npos&&http(port,"/api/runs/"+id+"/logs/product").code==200,"Debug candidate alias could not show or download its compiler log");
+    auto batchRequest=first.at("request"),batchRecord=first.at("record");batchRequest["action"]="batch";batchRequest["batch"]=batch;
+    batchRecord["candidateExecution"]["slot"]=std::string(16,'a')+"-batches";
+    // Bind a real batches directory without moving either existing slot.
+    const auto batchFixture=make('a',"batches",root);batchRecord["candidateExecution"]=batchFixture.at("record").at("candidateExecution");
+    batchRecord["candidateExecution"]["runId"]=id;batchRecord["candidateExecution"]["batchId"]=batch;
+    batchRecord["candidateBinding"]=Json::object({{"runId",id},{"nonce",nonce},{"batchId",batch},{"snapshot",snapshot},{"manifestDigest",digest}});
+    auto batchEvent=first.at("event");batchEvent["logPath"]=batchFixture.at("event").at("logPath");
+    atomic(requestPath,batchRequest.dump());atomic(recordPath,batchRecord.dump());write(eventsPath,batchEvent.dump()+"\n");
+    write(state/wide(batch+".log.product.log"),"batch-product-marker\n");write(state/wide(batch+".log"),"batch-tests-marker\n");
+    require(view(id).at("log").at("lines").dump().find("batch-product-marker")!=std::string::npos&&http(port,"/api/runs/"+id+"/logs/tests").body.find("batch-tests-marker")!=std::string::npos,"Captured batch lost its separate product and test logs");
+    auto legacyRequest=first.at("request"),legacyRecord=first.at("record"),legacyEvent=first.at("event");
+    legacyRequest["action"]="ide";legacyRecord.fields.erase("candidateExecution");legacyEvent["logPath"]=utf8((state/wide(entry)).wstring());
+    atomic(requestPath,legacyRequest.dump());atomic(recordPath,legacyRecord.dump());write(eventsPath,legacyEvent.dump()+"\n");write(state/wide(entry),"legacy-shared-entry-marker\n");
+    require(view(id).at("log").at("lines").dump().find("legacy-shared-entry-marker")!=std::string::npos&&http(port,"/api/runs/"+id+"/logs/execution").code==200,"Shared-output Run lost its legacy entry log");
+    atomic(requestPath,first.at("request").dump());
+    atomic(recordPath,first.at("record").dump());write(eventsPath,first.at("event").dump()+"\n");
+    const auto single=make('8',"ignored-old-name",root,true);
+    require(view(single.at("id").str()).at("log").at("lines").dump().find("tail-ignored-old-name")!=std::string::npos&&http(port,"/api/runs/"+single.at("id").str()+"/logs/product").code==200,"Single fixed compiler workspace did not expose its product log");
+    auto migrated=first.at("record");migrated["candidateExecution"]["slot"]="workspace";
+    atomic(root/L".build/candidate-workspace.json",Json::object({{"schemaVersion",1},{"commonGitDirectory",utf8((root/L".git").wstring())},{"directory",utf8(source.parent_path().wstring())}}).dump());
+    atomic(recordPath,migrated.dump());require(view(id).at("log").at("lines").dump().find("live-append-marker")!=std::string::npos,"Migrated fixed workspace lost its original warm directory's log");
+    fs::remove(root/L".build/candidate-workspace.json");atomic(recordPath,first.at("record").dump());
+    const auto archived=state/L"workspace-archive"/source.parent_path().filename()/wide(entry);fs::create_directories(archived.parent_path());
+    fs::rename(output/L"collaboration"/wide(entry),archived);fs::remove(source/L".build");
+    require(view(id).at("log").at("lines").dump().find("live-append-marker")!=std::string::npos&&http(port,"/api/runs/"+id+"/logs/product").code==200,"Retiring redundant compiler files lost the preserved historical log");
+    // A linked checkout uses the main checkout's common slots, not local slots.
+    const auto main=root/L"main-checkout",gitDir=main/L".git/worktrees/linked";fs::create_directories(gitDir);
+    write(root/L".git","gitdir: "+utf8(gitDir.wstring())+"\n");write(gitDir/L"commondir","../..\n");
+    const auto linked=make('f',"linked",main);require(view(linked.at("id").str()).at("log").at("lines").dump().find("tail-linked")!=std::string::npos&&http(port,"/api/runs/"+linked.at("id").str()+"/logs/product").code==200,"Linked checkout could not read its common Git candidate slot");
+    const auto receipt=Json::parse(read(root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json")));
+    write(root/L".build/dashboard"/wide("stop-"+receipt.at("instance").str()+".request"),receipt.at("instance").str());require(server.wait(8).code==0,"Candidate log fixture server did not stop");
+    std::cout<<"PASS independent candidate slot log tails, downloads, live append, identity/path isolation and linked checkout\n";
 }
 void dashboard(const fs::path& repo,bool browser){
     auto root=temporary("dashboard");auto state=root/L".build/collaboration";fs::create_directories(state);int port=free_port();std::string bid(32,'d'),largeId(32,'a'),child(32,'e'),ticket(32,'f');
@@ -544,6 +635,7 @@ int main(int argc,char** argv){try{
     }else if(mode=="--startup"){dashboard_startup(repo);dashboard_listener(repo);}
     else if(mode=="--old-dashboard-listener")dashboard_listener(repo,true);
     else if(mode=="--references")dashboard_references(repo);
+    else if(mode=="--candidate-logs")candidate_logs(repo);
     else if(mode.empty()||mode=="--browser")dashboard(repo,mode=="--browser");
     else if(mode=="--all"){dashboard_startup(repo);dashboard(repo,false);dashboard_references(repo);}
     else throw std::runtime_error("Unknown dashboard fixture mode");

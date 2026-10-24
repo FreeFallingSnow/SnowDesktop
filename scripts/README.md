@@ -183,7 +183,7 @@ PDB 与导入库留在 Release/Debug 根目录，增量链接状态留在原中�
 scripts\build.bat run start -Task task-a -Action snapshot -SnapshotInputs generated/config.h
 scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
 scripts\build.bat candidate inspect -Snapshot <snapshotId>
-scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId> -Slot release
+scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId>
 ```
 
 快照使用持久 Run，等待当前编辑屏障和输出执行权；捕获时不会关闭应用、重载 Shell、配置或编译。
@@ -199,28 +199,35 @@ scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId> -Slo
 `candidate inspect`、物化及执行准入仍以 `VerifyObjects` 核对真实对象路径、重解析点、大小和内容；
 实际源码核对继续遍历真实目录并逐文件计算哈希，不以时间戳缓存替代内容校验。
 
-`materialize` 为同一配置上下文和 Slot 保留稳定源码、输出目录，只复制变化的受管文件；未变化文件
+候选编译统一使用一份稳定工作目录和排他执行租约，不再按上下文摘要、任务名或调用者指定的名称创建目录。
+新检出默认使用 `.build/build-workspace/`；已有热目录可由 `.build/candidate-workspace.json` 的受限绑定继续使用，
+不搬动缓存。旧 `Slot`/`CandidateSlot` 参数仅兼容已保存调用，不能选择第二份缓存。工具链与快照上下文仍逐次校验，
+不同检出及配置在同一公共 Git 资源中串行使用这份目录；源码变化正常触发依赖重编，不能跨上下文冒用结果。
+`materialize` 保留固定源码、输出目录，只复制变化的受管文件；未变化文件
 时间及输出缓存保持原样。变化文件使用实际准备时间，防止原工作区在旧候选编译期间完成的编辑携带更早
-时间戳、使后续候选错误跳过重编译。只删除上一个快照管理、且内容仍匹配的旧输入，不清理输出目录。活动 Slot
-由操作系统文件句柄互斥，外部修改或文件冲突会拒绝覆盖。失败的部分准备须检查并选择新 Slot，不把
+时间戳、使后续候选错误跳过重编译。只删除上一个快照管理、且内容仍匹配的旧输入，不清理输出目录。活动工作目录
+由操作系统文件句柄互斥，外部修改或文件冲突会拒绝覆盖。失败的部分准备须保留证据并在同一目录处理，不把
 未完成目录当作有效候选。调用结束即释放本次准备租约；真正的执行者仍须重新校验并持有租约。
 
 捕获及仅准备接口仍返回 `snapshotReady=true`、`executionReady=false`，不授予执行权。
 显式执行使用独立的持久 Run：
 
 ```bat
-scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction ide -CandidateSlot release -Targets SnowDesktopBuildCandidateExecutionTests
-scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction tests -CandidateSlot release -Mode name -Filter "^build_candidate_execution$"
+scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction ide -Targets SnowDesktopBuildCandidateExecutionTests
+scripts\build.bat run start -Task task-a -Action candidate -Snapshot <snapshotId> -CandidateAction tests -Mode name -Filter "^build_candidate_execution$"
 scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
 ```
 
 `CandidateAction` 支持 release/debug/ide/tests，配置必须与快照一致；debug 另传 `-Configuration Debug`。
 不支持候选内 batch/plan/verify 或关闭应用、重载 Shell。提交时创建只读工具副本，快照须携带匹配的执行
-工具；旧快照需要重新捕获。执行者在排队及运行期间保留 Slot、私有输出和源码文件句柄，结束或退出才释放。
-同 Slot 排队，不同 Slot 仍遵守项目 CPU/内存准入；现有共享桌面资源继续独占。源码下的 `.build` 和
-`.build_debug` 只允许映射到该 Slot 的私有输出，标准脚本、预设和 CMake 凭据检查保持生效。原工作区只保存
+工具；旧快照需要重新捕获。执行者在排队及运行期间保留工作目录、私有输出和源码文件句柄，结束或退出才释放。
+候选执行在同一工作目录排队，仍遵守项目 CPU/内存准入；现有共享桌面资源继续独占。源码下的 `.build` 和
+`.build_debug` 只允许映射到这份工作目录的私有输出，标准脚本、预设和 CMake 凭据检查保持生效。原工作区只保存
 Run 请求、结果、事件及资源观测，候选执行不取得原工作区的输出租约，原工作区可通过正常 begin/claim 继续编辑。
 不能直接在候选源码登记任务或用过期凭据编译。
+受管源码被意外改动或准备中断时，可在排他租约下执行 `scripts\build.bat candidate repair -Task task-a -Snapshot <snapshotId>`：
+原源码及物化记录先归档为恢复证据，再从已验证的内容对象恢复同一源码目录，不清空输出、对象文件或用户数据。
+工具链、环境或预设发生实际变化时，第一次配置使用 `cmake --fresh` 原地更新配置；未变化的检出/配置切换不据此另建缓存。
 占用预检同时识别逻辑输出路径和其链接指向的实际目录；Release/Debug 分别观察，邻近目录的应用不归入本次输出。
 只读检查不会关闭进程；显式处理占用仍须由持有执行许可的外层执行者完成。
 
@@ -689,7 +696,10 @@ CMake 3.29及以上可为已审阅的非计时测试设置 `OBSERVE_RUNTIME_MODU
 原始 batch.exitCode，它不是验证入口的通过结论。WaitSeconds 仅限制等待，不取消存活构建；
 pipeline 没有新增执行预算。未知存活身份需显式诊断，不抢占或清登记。
 
-新快照将规范化检出路径纳入现有工具链/配置上下文摘要，槽位键和路径长度不增加。同一检出的后续候选保持原槽位；不同检出不覆盖其源码、CMake 缓存或对象文件，显式命名槽位也保留该检出边界。旧快照没有checkoutRoot字段时仍按原上下文核对，旧槽位、运行包和引用记录不清理、不重命名。
+新快照将规范化检出路径纳入工具链/配置上下文摘要，保持来源与验证身份；目录分配不再依赖该摘要。
+不同检出在唯一工作目录的排他租约下更新冻结源码并重新配置，不再为保留各自缓存而分配多份目录。
+旧快照没有checkoutRoot字段时仍按原上下文核对；旧运行包和引用记录保留原身份，旧编译目录只有在核对活动租约、
+保存日志及用户数据后才可按明确授权清理。已保存的运行文件独立于编译缓存。
 
 独立工具计划可显式使用 plan -Scope tool -Suites selected -ResourceCpuSlots N -ResourceMemoryMiB M -ResourceShared 复用已有加权准入。需要所有执行成员均声明共享预算；混合独占成员仍独占。实际配置后核对选中测试均有 tools 标签、且无 RESOURCE_LOCK / RESOURCE_GROUPS / RUN_SERIAL，违反时明确失败、保留未运行项。私有 candidate release/debug 在无应用或 Shell 操作时可使用共享加权预算；任意 IDE、默认计划和未声明预算仍保守独占。物理内存余量、Job 硬限制、输入及租约校验不变。此入口要求已审阅测试不访问未声明的桌面或外部资源，不自动把所有工具测试视为独立。
 

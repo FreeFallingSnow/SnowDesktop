@@ -79,9 +79,9 @@ function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExistin
     try {
         $slot=Enter-CandidateSlot $snapshot $Request.candidateSlot
         $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects
-        $expectedKey=$snapshot.manifest.context.digest.Substring(0,16)+'-'+$Request.candidateSlot
+        $expectedKey='workspace'
         if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration -or
-            $slot.key -ne $expectedKey -or $slot.directory -ne (Resolve-CandidatePath $snapshot.store.slots $expectedKey)){
+            $slot.key -ne $expectedKey -or $slot.directory -ne (Get-CandidateWorkspaceDirectory $snapshot.store)){
             throw 'Candidate snapshot/configuration identity changed after slot acquisition.'
         }
         Assert-CandidateToolset $snapshot $Request.runnerRuntime
@@ -128,7 +128,7 @@ function Get-CandidateSourceIdentity([string]$Root,$Context) {
     # This read-only provenance check installs no execution credential.
     $context=$Context
     $snapshot=Read-CandidateManifest $context.runRoot $context.snapshot
-    $directory=Resolve-CandidatePath $snapshot.store.slots $context.slot
+    $directory=Get-CandidateExecutionDirectory $snapshot.store $context.slot
     if($Root -ne (Resolve-CandidatePath $directory 'source') -or $context.source -ne $Root -or
         $context.output -ne (Resolve-CandidatePath $directory 'output')){throw 'Verification candidate path changed.'}
     $material=Read-CandidateJson (Resolve-CandidatePath $directory 'materialization.json')

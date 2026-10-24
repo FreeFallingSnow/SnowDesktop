@@ -39,6 +39,58 @@ def safe_path(root, name):
             raise ValueError("Reparse points are not served")
     return path
 
+def plain_path(path):
+    """Check every existing ancestor before reading a private output directly."""
+    path = Path(os.path.abspath(path))
+    for part in (path, *path.parents):
+        try:
+            info = part.lstat()
+        except FileNotFoundError:
+            continue
+        if part.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Reparse points are not served")
+    return path
+
+
+def candidate_common_git_directory(checkout):
+    # Match Get-CandidateStore without executing Git. Linked worktrees share
+    # their common Git directory's slots, rather than the worktree's .build.
+    git_dir = plain_path(checkout / ".git")
+    if git_dir.is_file():
+        with shared_open(git_dir) as stream:
+            text = stream.read(4097).decode("utf-8-sig").strip()
+        if len(text) > 4096 or not text.startswith("gitdir: "):
+            raise ValueError("Invalid worktree Git directory")
+        git_dir = plain_path(checkout / text[8:].strip())
+        with shared_open(safe_path(git_dir, "commondir")) as stream:
+            text = stream.read(4097).decode("utf-8-sig").strip()
+        if not text or len(text) > 4096:
+            raise ValueError("Invalid common Git directory")
+        git_dir = plain_path(git_dir / text)
+    return git_dir
+
+
+def candidate_slots_root(checkout):
+    common = candidate_common_git_directory(checkout)
+    parent = common.parent if common.name == ".git" else checkout
+    return plain_path(parent / ".build" / "candidate-slots")
+
+
+def candidate_workspace_directory(checkout):
+    slots = candidate_slots_root(checkout)
+    default = slots.parent / "build-workspace"
+    binding = read_json(slots.parent, "candidate-workspace.json")
+    if binding is None:
+        return plain_path(default)
+    if (not isinstance(binding, dict) or binding.get("schemaVersion") != 1
+            or Path(binding.get("commonGitDirectory", "")) != candidate_common_git_directory(checkout)):
+        raise ValueError("Invalid compiler workspace binding")
+    path = Path(binding.get("directory", ""))
+    if path != default and (path.parent != slots or not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", path.name)):
+        raise ValueError("Compiler workspace escaped its fixed output scope")
+    return plain_path(path)
+
+
 def shared_open(path):
     # File.Replace must remain possible while the monitor reads. Python's
     # default Windows open omits FILE_SHARE_DELETE, so use an explicit handle.
@@ -508,7 +560,63 @@ class Store:
         self.cache_time = 0
         self.lock = threading.Lock()
 
-    def run(self, run_id):
+    def candidate_log_scope(self, run_id, request, record):
+        context = record.get("candidateExecution")
+        if context is None:
+            return None
+        checkout = self.root.parent.parent
+        if not isinstance(context, dict):
+            raise ValueError("Invalid candidate execution")
+        binding = record.get("candidateBinding") if request.get("action") == "batch" else request
+        if (not isinstance(binding, dict) or not HEX.fullmatch(str(binding.get("snapshot")))
+                or not re.fullmatch(r"[a-f0-9]{64}", str(context.get("manifestDigest")))
+                or context.get("schemaVersion") != 1 or context.get("runId") != run_id
+                or context.get("nonce") != request.get("nonce") or context.get("runRoot") != request.get("repositoryRoot")
+                or context.get("snapshot") != binding.get("snapshot")
+                or context.get("manifestDigest") != binding.get("manifestDigest", binding.get("snapshotManifestDigest"))
+                or context.get("configuration") != request.get("configuration")):
+            raise ValueError("Candidate log identity mismatch")
+        if request.get("action") == "batch":
+            if (binding.get("runId") != run_id or binding.get("nonce") != request.get("nonce")
+                    or binding.get("batchId") != request.get("batch") or context.get("batchId") != request.get("batch")):
+                raise ValueError("Candidate batch log identity mismatch")
+            slot_name = "batches"
+        else:
+            slot_name = request.get("candidateSlot", "default")
+        slot = context.get("slot")
+        if slot == "workspace":
+            directory = candidate_workspace_directory(checkout)
+        else:
+            if (not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", str(slot))
+                    or slot[17:] != slot_name):
+                raise ValueError("Candidate log slot mismatch")
+            directory = safe_path(candidate_slots_root(checkout), slot)
+        source, output = plain_path(directory / "source"), plain_path(directory / "output")
+        if Path(context.get("source", "")) != source or Path(context.get("output", "")) != output:
+            raise ValueError("Candidate log output mismatch")
+        archive = plain_path(self.root / "workspace-archive" / directory.name)
+        return source, plain_path(output / "collaboration"), archive
+
+    def pipeline_log_path(self, hint, scope):
+        path = Path(hint)
+        if not re.fullmatch(r"entry-[a-f0-9]{32}\.log", path.name):
+            raise ValueError("Invalid pipeline log name")
+        if scope is None:
+            if path.parent != self.root:
+                raise ValueError("Pipeline log escaped its Run")
+            return safe_path(self.root, path.name)
+        source, output, archive = scope
+        archived = safe_path(archive, path.name)
+        if path.parent != output:
+            aliases = (source / ".build", source / ".build_debug")
+            alias = next((item for item in aliases if path.parent == item / "collaboration"), None)
+            # The one permitted alias is checked, but never followed for reads.
+            if alias is None or (alias.resolve() != output.parent and not (not os.path.lexists(alias) and archived.is_file())):
+                raise ValueError("Pipeline log escaped its candidate slot")
+        original = safe_path(output, path.name)
+        return original if original.is_file() or not archived.is_file() else archived
+
+    def run(self, run_id, log_paths=None):
         if not HEX.fullmatch(str(run_id)):
             raise ValueError("Invalid Run identity")
         directory = safe_path(self.root, "runs")
@@ -519,6 +627,7 @@ class Store:
         checkout = self.root.parent.parent
         if not isinstance(record, dict) or not isinstance(request, dict) or record.get("schemaVersion") != 1 or request.get("schemaVersion") != 1 or not HEX.fullmatch(str(request.get("nonce"))) or record.get("id") != run_id or request.get("id") != run_id or record.get("nonce") != request.get("nonce") or Path(request.get("repositoryRoot", "")).resolve() != checkout or record.get("repositoryRoot") != request.get("repositoryRoot"):
             raise ValueError("Run request/result identity mismatch")
+        scope = self.candidate_log_scope(run_id, request, record)
         def number(value):
             return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
         operations = {}
@@ -563,9 +672,8 @@ class Store:
                         raise ValueError("Duplicate Run stage identity")
                     pair[kind] = event
                     if kind == "start" and event.get("logPath") and event.get("name", "").endswith("-pipeline"):
-                        path_hint = Path(event["logPath"])
-                        if path_hint.parent == self.root and re.fullmatch(r"entry-[a-f0-9]{32}\.log", path_hint.name):
-                            pipeline_logs.append((event.get("utc", ""), path_hint.name))
+                        path = self.pipeline_log_path(event["logPath"], scope)
+                        pipeline_logs.append((event.get("utc", ""), path))
         segments = []
         summaries = {}
         units = 0
@@ -638,8 +746,11 @@ class Store:
         log_key = run_id + ".stdout.log"
         log_root = directory
         if pipeline_logs:
-            log_root, log_key = self.root, sorted(pipeline_logs)[-1][1]
-        sources = [("execution", "执行", log_root, log_key)]
+            path = sorted(pipeline_logs, key=lambda item: (item[0], str(item[1])))[-1][1]
+            log_root, log_key = path.parent, path.name
+        action = request.get("candidateAction") if request.get("action") == "candidate" else request.get("action")
+        key, title = ("product", "产品构建") if action in ("release", "debug") else (("tests", "测试构建与执行") if action == "tests" else ("execution", "执行"))
+        sources = [(key, title, log_root, log_key)]
         batch_id = request.get("batch")
         if request.get("action") == "batch" and HEX.fullmatch(str(batch_id)):
             sources = [("product", "产品构建", self.root, batch_id + ".log.product.log"),
@@ -651,6 +762,8 @@ class Store:
             path = safe_path(base, name)
             if not path.is_file():
                 continue
+            if log_paths is not None:
+                log_paths[key] = path
             cache_key = "run:" + run_id + ":" + key
             if cache_key not in self.logs:
                 if len(self.logs) > 150:
@@ -705,29 +818,11 @@ class Store:
 
     def download_log(self, run_id, key):
         # Resolve through the same verified Run/request identity and fixed names.
-        run = self.run(run_id)
-        if not run or not any(item["key"] == key for item in run["logs"]):
+        paths = {}
+        run = self.run(run_id, paths)
+        if not run or key not in paths:
             return None
-        directory = safe_path(self.root, "runs")
-        request = read_json(directory, run_id + ".request.json")
-        if key in ("product", "tests"):
-            suffix = ".log.product.log" if key == "product" else ".log"
-            path = safe_path(self.root, request["batch"] + suffix)
-        elif key in ("stdout", "stderr"):
-            path = safe_path(directory, run_id + "." + key + ".log")
-        else:
-            # Entry logs are selected only from matching, bounded stage events.
-            names = []
-            for stage in directory.glob(run_id + ".stages.*.jsonl"):
-                with shared_open(safe_path(directory, stage.name)) as stream:
-                    for line in stream.read(4 * 1024 * 1024 + 1).decode("utf-8-sig").split("\n")[:-1]:
-                        if not line:
-                            continue
-                        event = json.loads(line)
-                        hint = Path(event.get("logPath") or "")
-                        if event.get("runId") == run_id and event.get("kind") == "start" and event.get("name", "").endswith("-pipeline") and hint.parent == self.root and re.fullmatch(r"entry-[a-f0-9]{32}\.log", hint.name):
-                            names.append((event.get("utc", ""), hint.name))
-            path = safe_path(self.root, sorted(names)[-1][1]) if names else safe_path(directory, run_id + ".stdout.log")
+        path = paths[key]
         with shared_open(path) as stream:
             data = stream.read(64 * 1024 * 1024 + 1)
         if len(data) > 64 * 1024 * 1024:

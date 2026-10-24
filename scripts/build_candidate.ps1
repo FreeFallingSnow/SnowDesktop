@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Alias('Verb')][ValidateSet('candidate')][string]$CandidateVerb='candidate',
-    [Alias('Command')][ValidateSet('inspect','materialize','artifact')][string]$CandidateCommand='inspect',
+    [Alias('Command')][ValidateSet('inspect','materialize','repair','artifact')][string]$CandidateCommand='inspect',
     [Alias('Snapshot')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateSnapshot,
     [Alias('Task')][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$CandidateTask,
     [Alias('Artifact')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateArtifact,
@@ -51,7 +51,27 @@ function Get-CandidateStore([string]$Root,[switch]$Create) {
     if($Create){
         foreach($path in @($store,(Join-Path $store 'objects'),(Join-Path $store 'manifests'))){[void][IO.Directory]::CreateDirectory($path)}
     }
-    return [pscustomobject]@{root=$store;commonGitDirectory=$common;slots=$slots}
+    return [pscustomobject]@{root=$store;commonGitDirectory=$common;slots=$slots;
+        workspace=(Resolve-CandidatePath $parent '.build/build-workspace');
+        workspaceBinding=(Resolve-CandidatePath $parent '.build/candidate-workspace.json')}
+}
+function Get-CandidateWorkspaceDirectory($Store) {
+    # One stable compiler workspace for the common Git resource. A migration
+    # binding may retain an existing warm directory without relocating caches.
+    if(-not [IO.File]::Exists($Store.workspaceBinding)){return $Store.workspace}
+    $binding=Read-CandidateJson $Store.workspaceBinding
+    if($binding.schemaVersion -ne 1 -or $binding.commonGitDirectory -ne $Store.commonGitDirectory){throw 'Invalid compiler workspace binding.'}
+    $directory=[IO.Path]::GetFullPath([string]$binding.directory)
+    if($directory -eq $Store.workspace){return Resolve-CandidatePath ([IO.Path]::GetDirectoryName($directory)) ([IO.Path]::GetFileName($directory))}
+    $name=[IO.Path]::GetFileName($directory)
+    if([IO.Path]::GetDirectoryName($directory) -ne $Store.slots -or $name -notmatch '^[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}$'){throw 'Compiler workspace escaped its fixed output scope.'}
+    return Resolve-CandidatePath $Store.slots $name
+}
+function Get-CandidateExecutionDirectory($Store,[string]$Key) {
+    if($Key -eq 'workspace'){return Get-CandidateWorkspaceDirectory $Store}
+    # Historical records keep their original paths; they never allocate space.
+    if($Key -notmatch '^[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}$'){throw 'Invalid historical compiler directory.'}
+    return Resolve-CandidatePath $Store.slots $Key
 }
 function Write-CandidateJson($Value,[string]$Path,[switch]$Immutable) {
     $temp=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp';$backup=$temp+'.bak'
@@ -121,6 +141,12 @@ function Get-CandidateSourceDigest($Files,[string]$ContextDigest) {
     $text=[Text.StringBuilder]::new();[void]$text.Append("sha256-candidate-source-v1`n").Append($ContextDigest).Append("`n")
     foreach($file in $Files){[void]$text.Append($file.path).Append([char]0).Append($file.state).Append([char]0).Append($file.sha256).Append([char]0).Append($file.bytes).Append("`n")}
     return Get-VerificationTextDigest $text.ToString()
+}
+function Get-CandidateCompilerContextDigest($Context) {
+    # Configuration and checkout identity remain in the snapshot, but a
+    # multi-config compiler tree does not need a new cache for either alone.
+    return Get-VerificationTextDigest ([pscustomobject]@{presets=$Context.binding.presets;
+        environment=$Context.binding.environment;tools=$Context.binding.tools}|ConvertTo-Json -Depth 10 -Compress)
 }
 function New-CandidateSnapshot([string]$Root,[string]$TaskId,[long]$RequirementsRevision,[string]$Configuration,[string]$ExtraInputs,[string]$ExpectedDigest,[scriptblock]$CheckCancellation) {
     Assert-EntryExecutionOwner $Root
@@ -218,8 +244,10 @@ function Read-CandidateManifest([string]$Root,[string]$Id,[switch]$VerifyObjects
 }
 function Enter-CandidateSlot($Snapshot,[string]$Name) {
     if($Name -notmatch '^[a-z0-9][a-z0-9-]{0,31}$'){throw 'Invalid candidate slot name.'}
-    $key=$Snapshot.manifest.context.digest.Substring(0,16)+'-'+$Name
-    $directory=Resolve-CandidatePath $Snapshot.store.slots $key
+    # The legacy Name argument is accepted for captured callers only. It no
+    # longer selects or creates a compiler directory.
+    $key='workspace'
+    $directory=Get-CandidateWorkspaceDirectory $Snapshot.store
     [void][IO.Directory]::CreateDirectory($directory)
     try{$lease=[IO.File]::Open((Join-Path $directory 'slot.lock'),'OpenOrCreate','ReadWrite','None')}
     catch [IO.IOException]{throw 'Candidate slot is busy; existing materialization/executor retains its files.'}
@@ -231,7 +259,7 @@ function Set-CandidateSlotSource($Snapshot,$Lease) {
     $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
     if($actual.digest -ne $manifest.context.digest){throw 'Candidate observed tools/environment changed; capture a new context.'}
     $old=if([IO.File]::Exists($Lease.state)){Read-CandidateJson $Lease.state}else{$null}
-    if($old -and ($old.slot -ne $Lease.key -or $old.contextDigest -ne $manifest.context.digest)){throw 'Candidate slot context changed; preserve the cache and choose another slot.'}
+    if($old -and ($old.source -ne $Lease.source -or $old.output -ne $Lease.output)){throw 'Compiler workspace provenance changed.'}
     [void][IO.Directory]::CreateDirectory($Lease.source);[void][IO.Directory]::CreateDirectory($Lease.output)
     $previous=@{}
     if($old){
@@ -272,7 +300,13 @@ function Set-CandidateSlotSource($Snapshot,$Lease) {
         # generators rebuild them; unchanged managed inputs keep their times.
         [IO.File]::SetLastWriteTimeUtc($path,[DateTime]::UtcNow);$copied++
     }
-    $record=[pscustomobject]@{schemaVersion=1;slot=$Lease.key;snapshot=$manifest.id;manifestDigest=$Snapshot.digest;contextDigest=$manifest.context.digest;
+    $compilerContext=Get-CandidateCompilerContextDigest $manifest.context
+    if($old -and (Get-CandidateCompilerContextDigest $oldSnapshot.manifest.context) -ne $compilerContext){
+        $reset=Resolve-CandidatePath $Lease.output 'collaboration/configuration-reset.json'
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($reset))
+        Write-CandidateJson ([pscustomobject]@{schemaVersion=1;compilerContextDigest=$compilerContext;configured=@()}) $reset
+    }
+    $record=[pscustomobject]@{schemaVersion=1;slot=$Lease.key;snapshot=$manifest.id;manifestDigest=$Snapshot.digest;contextDigest=$manifest.context.digest;compilerContextDigest=$compilerContext;
         sourceDigest=$manifest.sourceDigest;source=$Lease.source;output=$Lease.output;files=$manifest.files;materializedUtc=[DateTime]::UtcNow.ToString('o')}
     Write-CandidateJson $record $Lease.state
     return [pscustomobject]@{snapshot=$manifest.id;slot=$Lease.key;source=$Lease.source;output=$Lease.output;sourceDigest=$manifest.sourceDigest;
@@ -298,6 +332,11 @@ try {
     $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
     if(-not $CandidateTask -or -not $state -or @((Get-Field (Get-Field $state 'taskLedger') 'tasks' @())|Where-Object {$_.id -eq $CandidateTask -and -not $_.closedUtc}).Count -ne 1){throw 'Materialization requires an active registered Task.'}
     $slotLease=Enter-CandidateSlot $snapshotRecord $CandidateSlotName
-    try{Set-CandidateSlotSource $snapshotRecord $slotLease|ConvertTo-Json -Depth 8}finally{$slotLease.lease.Dispose()}
+    try{
+        if($CandidateCommand -eq 'repair'){
+            . (Join-Path $PSScriptRoot 'build_candidate_recovery.ps1')
+            Repair-CandidateWorkspace $snapshotRecord $slotLease|ConvertTo-Json -Depth 8
+        }else{Set-CandidateSlotSource $snapshotRecord $slotLease|ConvertTo-Json -Depth 8}
+    }finally{$slotLease.lease.Dispose()}
     exit 0
 }catch{[Console]::Error.WriteLine($_.Exception.Message);exit 2}

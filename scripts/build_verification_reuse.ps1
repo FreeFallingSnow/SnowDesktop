@@ -235,10 +235,10 @@ function Get-CompletedVerificationProposal([string]$Root,$Verification) {
         Set-Field $Verification 'referenceCheck' 'checking-candidate-slot'
         $snapshot=Read-CandidateManifest $Root $binding.snapshot
         $prefix=$snapshot.manifest.context.digest.Substring(0,16)+'-'
-        if(-not $binding.slot.StartsWith($prefix,[StringComparison]::Ordinal)){return $null}
+        if($binding.slot -ne 'workspace' -and -not $binding.slot.StartsWith($prefix,[StringComparison]::Ordinal)){return $null}
         $slotWait=[Diagnostics.Stopwatch]::StartNew()
         while(-not $lease){
-            try{$lease=Enter-CandidateSlot $snapshot $binding.slot.Substring($prefix.Length)}
+            try{$lease=Enter-CandidateSlot $snapshot $(if($binding.slot -eq 'workspace'){'default'}else{$binding.slot.Substring($prefix.Length)})}
             catch{
                 if($_.Exception.Message -notlike 'Candidate slot is busy;*' -or $slotWait.Elapsed.TotalSeconds -ge 30){throw}
                 # Another read check can own this handle without any active

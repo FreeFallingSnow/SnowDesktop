@@ -246,11 +246,11 @@ try {
                 . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
                 $manifest=Read-CandidateManifest $root $candidateVerification.snapshot
                 $prefix=$manifest.manifest.context.digest.Substring(0,16)+'-'
-                if(-not $candidateVerification.slot.StartsWith($prefix,[StringComparison]::Ordinal)){throw 'Verification candidate slot identity changed.'}
+                if($candidateVerification.slot -ne 'workspace' -and -not $candidateVerification.slot.StartsWith($prefix,[StringComparison]::Ordinal)){throw 'Verification candidate slot identity changed.'}
                 Set-Field $request 'candidateVerification' $true
                 Set-Field $request 'snapshot' $candidateVerification.snapshot
                 Set-Field $request 'snapshotManifestDigest' $candidateVerification.manifestDigest
-                Set-Field $request 'candidateSlot' $candidateVerification.slot.Substring($prefix.Length)
+                Set-Field $request 'candidateSlot' $(if($candidateVerification.slot -eq 'workspace'){'default'}else{$candidateVerification.slot.Substring($prefix.Length)})
             }
             if($request.projectResources.policy -eq 'project-weighted-v1'){
                 $shared=@($verification.tests|ForEach-Object properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value})

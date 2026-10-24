@@ -506,15 +506,10 @@ void scenario(const fs::path& repo,const std::string& control) {
     wait(c,submit(c,execution(snapshot)));program(output,7);
     std::cout<<"PASS private candidate compiler/test execution, editing overlap, frozen toolset, warm cache, slot queue/cancel, urgent messages, failed reports and owner loss\n";
 }
-void checkout_cache(const fs::path& repo,bool oldSlot=false) {
+void checkout_cache(const fs::path& repo) {
     Coordinator a(repo,"cache-a",true,fixture_parent(repo));
     require(a.git({L"config",L"core.autocrlf",L"false"}).code==0,"Cannot normalize fixture Git checkout bytes");
     prepare(a,repo,"");
-    if(oldSlot){
-        auto source=read(a.scripts/L"build_candidate.ps1");
-        replace(source,"$context=Get-CandidateContext $files $Configuration $Root;","$context=Get-CandidateContext $files $Configuration '';");
-        write(a.scripts/L"build_candidate.ps1",source,true);
-    }
     write(a.root/L"src/tool.cpp","int main(){return 0;}\n");
     // Raw command adapter; the production Run and Job own actual compiler children.
     write(a.scripts/L"build.bat","@echo off\r\n\"%SNOWDESKTOP_ENTRY_POWERSHELL%\" -NoProfile -File \"%~dp0build_command.ps1\" -Operation configure -Preset release\r\nif errorlevel 1 exit /b %ERRORLEVEL%\r\n\"%SNOWDESKTOP_ENTRY_POWERSHELL%\" -NoProfile -File \"%~dp0build_command.ps1\" -Operation build -Preset release -Targets SnowDesktopCandidateFixtureTests\r\nexit /b %ERRORLEVEL%\r\n");
@@ -553,11 +548,13 @@ set_tests_properties(independent_tool PROPERTIES REQUIRED_FILES "$<TARGET_FILE:S
     const auto output=fs::path(wide(warm.at("candidateExecution").at("output").str()));
     const auto object=output/L"SnowDesktopCandidateFixtureTests.dir/Release/main.obj";
     require(fs::exists(object),"Actual compiler object is missing");const auto original=fs::last_write_time(object);
+    const auto unchanged=batch(a,"candidate_rule");
+    require(fs::last_write_time(object)==original&&unchanged.at("candidateExecution").at("output").str()==warm.at("candidateExecution").at("output").str(),"Unchanged source lost the single workspace's warm compiler cache");
     const auto other=batch(b,"independent_tool","constexpr int value=11;\n");
     const auto repeat=batch(a,"candidate_rule");
-    require(fs::last_write_time(object)==original,"Unchanged checkout recompiled after the other checkout replaced its shared header");
-    require(warm.at("candidateExecution").at("slot").str()==repeat.at("candidateExecution").at("slot").str()&&
-        warm.at("candidateExecution").at("slot").str()!=other.at("candidateExecution").at("slot").str(),"Automatic slots did not isolate linked checkouts");
+    require(fs::last_write_time(object)!=original,"Restoring a different checkout's shared header failed to rebuild its dependent source");
+    require(warm.at("candidateExecution").at("slot").str()=="workspace"&&repeat.at("candidateExecution").at("output").str()==other.at("candidateExecution").at("output").str()&&
+        warm.at("candidateExecution").at("output").str()==other.at("candidateExecution").at("output").str(),"Linked checkouts allocated additional compiler workspaces");
     const auto changed=batch(a,"candidate_rule",read(a.root/L"src/main.cpp")+"\n// single translation-unit edit\n");
     require(fs::last_write_time(object)!=original&&changed.at("candidateExecution").at("slot").str()==warm.at("candidateExecution").at("slot").str(),"Single-file edit lost its warm checkout cache");
     program(output,7);
@@ -602,7 +599,7 @@ set_tests_properties(independent_tool PROPERTIES REQUIRED_FILES "$<TARGET_FILE:S
     const auto restored=b.bridge->invoke(b.scripts/L"build_manager.ps1",{"wait","candidate","-Batch",toolBatch,"-Revision",revision},{},30);
     require(restored.code==0,"Candidate wait failed after restoring the exact executable bytes: "+restored.out+restored.err);
     measurements.items.push_back(concurrent);atomic(a.root/L".build/cache-scenes.json",measurements.dump());
-    std::cout<<"PASS real linked checkouts preserve warm objects across A/B/A and a single-file edit; measurements "<<utf8((a.root/L".build/cache-scenes.json").wstring())<<"\n";
+    std::cout<<"PASS one compiler workspace preserves unchanged objects and safely updates inputs across linked checkouts; measurements "<<utf8((a.root/L".build/cache-scenes.json").wstring())<<"\n";
 }
 void weighted_candidate(const fs::path& repo) {
     Coordinator c(repo,"weighted-candidate",true,fixture_parent(repo));prepare(c,repo,"");
@@ -915,12 +912,6 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--verify-checkout-lock")executor_control(repo,true);
     else if(mode=="--verify-source-lock")executor_control(repo,false);
     else if(mode=="--checkout-cache")checkout_cache(repo);
-    else if(mode=="--checkout-cache-old")checkout_cache(repo,true);
-    else if(mode=="--checkout-cache-control"){
-        const auto result=run({executable().wstring(),repo.wstring(),L"--checkout-cache-old"},repo,300,{},true);
-        require(result.code==1&&result.err.find("Unchanged checkout recompiled after the other checkout replaced its shared header")!=std::string::npos,"Shared-slot control failed outside the unnecessary-recompile assertion: "+result.out+result.err);
-        std::cout<<"PASS old shared-slot behavior fails the real unnecessary-recompile assertion\n";
-    }
     else if(mode=="--weighted")weighted_candidate(repo);
     else if(mode=="--all"){scenario(repo,"");weighted_candidate(repo);executor_control(repo,true);executor_control(repo,false);}
     else scenario(repo,mode.empty()?"":mode.substr(2));
