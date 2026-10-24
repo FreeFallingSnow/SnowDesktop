@@ -30,20 +30,29 @@ void Await(Predicate predicate, const char* message)
 
 struct Fixture
 {
-    const std::filesystem::path temporary = std::filesystem::temp_directory_path();
+    const std::filesystem::path temporary = std::filesystem::weakly_canonical(
+        std::filesystem::temp_directory_path());
     const std::wstring name = L"SnowDesktopScriptReadAhead-" +
         std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
-    const std::filesystem::path root = temporary / name;
+    const std::filesystem::path sandbox = temporary / name;
+    // The producer also watches the package's parent. Keep that parent inside
+    // the fixture so other parallel tests' Temp directories are not inputs.
+    const std::filesystem::path root = sandbox / L"package";
     const std::filesystem::path script = root / L"main.lua";
     const std::filesystem::path manifest = root / L"widget.json";
-    const std::filesystem::path retired = temporary / (name + L".retired");
+    const std::filesystem::path retired = sandbox / L"retired";
     snowdesktop::widget_runtime::WidgetScriptReadAhead watcher;
 
     Fixture()
     {
-        Require(std::filesystem::create_directory(root), "create isolated read-ahead fixture");
-        Write(script, "return { render = function() end }\n");
-        Write(manifest, "{\"version\":\"1\"}\n");
+        Require(std::filesystem::create_directory(sandbox), "create owned read-ahead sandbox");
+        try
+        {
+            Require(std::filesystem::create_directory(root), "create isolated read-ahead package");
+            Write(script, "return { render = function() end }\n");
+            Write(manifest, "{\"version\":\"1\"}\n");
+        }
+        catch (...) { Cleanup(); throw; }
     }
 
     ~Fixture()
@@ -54,16 +63,17 @@ struct Fixture
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (watcher.Inspect().running && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        for (const auto& path : {root, retired})
+        if (!watcher.Inspect().running) Cleanup();
+    }
+
+    void Cleanup()
+    {
+        const DWORD attributes = GetFileAttributesW(sandbox.c_str());
+        if (sandbox.parent_path() == temporary && sandbox.filename() == name &&
+            attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT))
         {
-            const DWORD attributes = GetFileAttributesW(path.c_str());
-            if (!watcher.Inspect().running && path.parent_path() == temporary &&
-                (path.filename() == name || path.filename() == name + L".retired") &&
-                attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT))
-            {
-                std::error_code error;
-                std::filesystem::remove_all(path, error);
-            }
+            std::error_code error;
+            std::filesystem::remove_all(sandbox, error);
         }
     }
 
@@ -174,15 +184,22 @@ inline void Run()
     }
     catch (...) { CloseHandle(exclusive); throw; }
     CloseHandle(exclusive);
+    const auto beforeRetryManifest = watcher.PreparedCount(fixture.manifest.wstring());
     Fixture::Write(fixture.manifest, "{\"version\":\"3\",\"description\":\"retry\"}\n");
     fixture.Prepared(fixture.script, beforeFailure);
+    // The script can finish before the manifest in the same scan. Directory
+    // rename below tests long-lived monitor handles after both reads complete.
+    fixture.Prepared(fixture.manifest, beforeRetryManifest);
     Require(Fixture::Read(fixture.script).find("replacement") != std::string::npos,
         "a later notification retries failed preparation without changing source bytes");
 
     const auto beforeDirectoryReplacement = watcher.PreparedCount(fixture.script.wstring());
-    Require(MoveFileExW(fixture.root.c_str(), fixture.retired.c_str(),
-        MOVEFILE_WRITE_THROUGH) != FALSE,
-        "directory notification handles allow an editor to rename the package root");
+    if (!MoveFileExW(fixture.root.c_str(), fixture.retired.c_str(), MOVEFILE_WRITE_THROUGH))
+    {
+        const DWORD error = GetLastError();
+        throw std::runtime_error("directory notification handles allow an editor to rename the package root; Win32 error " +
+            std::to_string(error));
+    }
     Require(std::filesystem::create_directory(fixture.root), "create replacement package root");
     Fixture::Write(fixture.script, "return { render = function() return 'new directory' end }\n");
     Fixture::Write(fixture.manifest, "{\"version\":\"4\"}\n");
@@ -201,5 +218,7 @@ inline void Run()
     Await([&] { return !watcher.Inspect().running; }, "read-ahead worker stops without a host callback");
     Require(!watcher.Track(L"late", fixture.script.wstring(), fixture.manifest.wstring()),
         "stopped watcher cannot resurrect a retired engine");
+    fixture.Cleanup();
+    Require(!std::filesystem::exists(fixture.sandbox), "owned sandbox and retired package are cleaned");
 }
 }
