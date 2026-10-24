@@ -130,6 +130,9 @@
             item.iconBitmapSize = {256, 256}; item.iconState = IconState::FullQuality;
             app.items_.push_back(std::move(item));
         }
+        // Real DockEntryItem title/icon lookup uses this production index;
+        // populating the vector alone leaves both providers unresolved.
+        app.RefreshDesktopItemIndexCache();
         app.dockEntries_.clear();
         for (const auto& item : app.items_)
         {
@@ -145,6 +148,9 @@
             for (const auto& slot : dock->GetSlots())
                 if (slot->GetItem())
                 {
+                    check(!slot->GetItem()->GetTitle().empty() &&
+                        slot->GetItem()->GetIconBitmap() != nullptr,
+                        "real Dock providers resolve populated titles and icons through the desktop index");
                     auto marker = std::make_unique<ForegroundItem>(slot->GetItem());
                     slot->SetItem(marker.get()); items.push_back(std::move(marker));
                 }
@@ -209,9 +215,11 @@
         render(nullptr);
         const RECT anchor = docks[1]->GetSlots().front()->GetBounds();
         app.lastMousePoint_ = {(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
-        app.dockSettings_.hoverEffect = 2;
+        // Semantic titles remain active with magnification disabled. Keep
+        // geometry stationary while testing discovery and damage repair.
         surface->updates.clear();
         render(&unrelated);
+        std::cout << "R06 new tooltip repair passes=" << surface->updates.size() << '\n';
         check(surface->updates.size() == 2,
             "new tooltip outside requested damage triggers production discovery and repair before return");
         const auto withTooltip = pixels();
@@ -223,7 +231,6 @@
         render(nullptr);
         check(withoutTooltip == pixels(), "old tooltip text is erased during the same local transaction");
         check(withoutTooltip != withTooltip, "tooltip checks observe real text pixel changes");
-        app.dockSettings_.hoverEffect = 0;
         const auto checkTiles = [&] {
             render(nullptr);
             const auto complete = pixels();
