@@ -22,10 +22,13 @@
         const int mode = snowdesktop::animation::detail::mode.exchange(
             snowdesktop::animation::Disabled);
         const auto moduleMask = snowdesktop::runtime_modules::policyMask.exchange(0);
+        // Win32 discards dirty regions for hidden windows. This receiver is
+        // visible at the private desktop's origin; that desktop is never
+        // activated, and no SnowDesktop presentation window is constructed.
         const HWND output = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            L"STATIC", L"Dock running damage fixture", WS_POPUP,
-            -16000, -16000, 1200, 800, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-        check(output != nullptr, "create hidden, owned damage receiver without a desktop host");
+            L"STATIC", L"Dock running damage fixture", WS_POPUP | WS_VISIBLE,
+            0, 0, 1200, 800, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        check(output != nullptr, "create owned damage receiver on the inactive fixture desktop");
         const auto cleanup = [&] {
             app.dockIconWork_.Stop(); app.shellVisualWork_.Stop();
             for (auto& item : app.dockUnpinnedRunningApps_)
@@ -218,7 +221,8 @@
             refresh(true, true);
             check(tracked().presence.Amount() == 1.0f, "new discovered task reaches its full disabled-motion geometry");
             refresh(false, false);
-            check(!IsWindowVisible(output), "pixel regression must never reveal a desktop host");
+            check(IsWindowVisible(output) != FALSE,
+                "Win32 damage receiver must remain visible on the inactive fixture desktop");
             std::cout << "R07 actual discovery, unchanged/title/state/shrink/growth damage, hits and WARP full/partial pixels passed\n";
         }
         catch (...) { cleanup(); throw; }
