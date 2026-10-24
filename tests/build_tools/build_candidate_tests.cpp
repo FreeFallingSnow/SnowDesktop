@@ -138,7 +138,12 @@ void compiler_context_scenario(const fs::path& repo) {
     const auto sourceTime=fs::last_write_time(source/L"src/main.cpp"),objectTime=fs::last_write_time(output/L"cache-object-sentinel.txt");
     const auto launcher=c.root/L".build/launcher-path",shadow=c.root/L".build/compiler-path";
     fs::create_directories(launcher);fs::create_directories(shadow);
-    const Env pathOnly={{L"PATH",launcher.wstring()+L";"+environment(L"PATH")}};
+    const auto runtimeDirectory=fs::path(wide(inspect(c,aId).at("context").at("binding").at("tools").at("powershell").at("path").str())).parent_path().wstring();
+    // A newly started PowerShell host puts PSHOME first. The persistent test
+    // bridge patches its already-running process, so supply the same effective
+    // PATH to both carriers rather than weakening production context checks.
+    const auto childPath=[&](const fs::path& extra){return runtimeDirectory+L";"+extra.wstring()+L";"+environment(L"PATH");};
+    const Env pathOnly={{L"PATH",childPath(launcher)}};
     const auto b=capture(c,pathOnly);const auto stable=materialize(c,b.at("id").str(),pathOnly);
     require(inspect(c,aId).at("context").at("digest").str()!=inspect(c,b.at("id").str()).at("context").at("digest").str(),
         "Complete candidate identity stopped observing PATH changes");
@@ -147,7 +152,7 @@ void compiler_context_scenario(const fs::path& repo) {
     require(fs::last_write_time(source/L"src/main.cpp")==sourceTime&&fs::last_write_time(output/L"cache-object-sentinel.txt")==objectTime,
         "PATH-only materialization touched source or compiler objects");
     fs::copy_file(executable(),shadow/L"ninja.exe");
-    const Env changedTool={{L"PATH",shadow.wstring()+L";"+environment(L"PATH")}};
+    const Env changedTool={{L"PATH",childPath(shadow)}};
     const auto tool=capture(c,changedTool);materialize(c,tool.at("id").str(),changedTool);
     const auto toolDigest=Json::parse(read(state)).at("compilerContextDigest").str();
     require(toolDigest!=original&&Json::parse(read(marker)).at("configured").items.empty(),
@@ -155,7 +160,7 @@ void compiler_context_scenario(const fs::path& repo) {
     require(inspect(c,tool.at("id").str()).at("context").at("binding").at("compilerTools").at("resolved").at("ninja.exe").at("path").str()==utf8((shadow/L"ninja.exe").wstring()),
         "Compiler context did not record the actual PATH-resolved executable");
     write(marker,"{\"schemaVersion\":1,\"compilerContextDigest\":\""+toolDigest+"\",\"configured\":[\"preset-output\"]}\n");
-    const Env flags={{L"PATH",shadow.wstring()+L";"+environment(L"PATH")},{L"CXXFLAGS",environment(L"CXXFLAGS")+L" /DCANDIDATE_CONTEXT_PROBE=1"}};
+    const Env flags={{L"PATH",childPath(shadow)},{L"CXXFLAGS",environment(L"CXXFLAGS")+L" /DCANDIDATE_CONTEXT_PROBE=1"}};
     const auto changedFlags=capture(c,flags);materialize(c,changedFlags.at("id").str(),flags);
     require(Json::parse(read(state)).at("compilerContextDigest").str()!=toolDigest&&Json::parse(read(marker)).at("configured").items.empty(),
         "An explicit compiler flags change retained the previous compiler identity");
