@@ -1146,6 +1146,7 @@ struct NativeDragIntegrationAccess
 #include "native_external_namespace_cases.h"
 #include "../icons/native_icon_customization_cases.h"
 #include "../dock/native_preview_order_cases.h"
+#include "../dock/native_folder_icon_completion_cases.h"
 #include "../layout/native_list_hover_cases.h"
 #include "../layout/native_popup_display_menu_cases.h"
 #include "native_input_safety_cases.h"
@@ -1270,7 +1271,10 @@ int main(int argc, char** argv)
             native_status_selection_cases::Run();
         }
         else if (argc == 2 && std::string_view(argv[1]) == "--status-selection") native_status_selection_cases::Run();
-        else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") native_icon_customization_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") {
+            native_icon_customization_cases::Run();
+            native_folder_icon_completion_cases::RunStandalone();
+        }
         else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") {
             native_namespace_rejection_cases::Run(); native_external_namespace_cases::Run();
         }

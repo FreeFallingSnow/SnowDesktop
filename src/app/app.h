@@ -607,6 +607,7 @@ public:
     friend class LuaScript;
     friend class GuideWidget;
     friend struct NativeDragIntegrationAccess;
+    friend struct DockFolderIconCompletionTestAccess;
 
     /**
      * @brief 快速导航面板中的条目结构体。
@@ -3086,6 +3087,8 @@ private:
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0, const DesktopWidget* widgetSource = nullptr,
         snowdesktop::WidgetPreviewScene* previewScene = nullptr);
+    void OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
+        std::uint64_t ticket, HBITMAP source, bool refined);
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
         float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
