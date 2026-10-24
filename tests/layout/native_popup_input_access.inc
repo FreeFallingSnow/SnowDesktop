@@ -101,6 +101,9 @@
         check(app.uiAnimationScheduler_.Initialize(), "initialize isolated popup scheduler");
         app.gridPages_.front().bounds = app.gridPages_.front().workArea =
             app.gridPages_.front().visualWorkArea = app.layoutWorkArea_ = {0, 0, 1200, 900};
+        app.gridPages_.front().columns = 12; app.gridPages_.front().rows = 9;
+        app.savedPageColumns_[app.gridPages_.front().id] = 12;
+        app.savedPageRows_[app.gridPages_.front().id] = 9;
         app.virtualWidth_ = 1200; app.virtualHeight_ = 900;
         app.desktopItemsReady_ = true;
         app.personalizationSettings_.glassEnabled = app.personalizationSettings_.acrylicEnabled = false;
@@ -138,7 +141,7 @@
         child.type = fileCategories ? DesktopWidgetType::FileCategories : DesktopWidgetType::FolderMapping;
         child.gridCell = {app.gridPages_.front().id, 0, 0};
         child.gridSpan = singleCell ? GridSpan{1, 1} : GridSpan{6, 5};
-        child.bounds = singleCell ? RECT{20, 20, 100, 100} : RECT{20, 20, 900, 700};
+        child.bounds = singleCell ? RECT{10, 10, 90, 90} : RECT{10, 10, 590, 490};
         child.showSearchBox = child.showFileCategories = true;
         // Model an already active Alpha tab. Production pointer-down leaves
         // the pressed category active throughout its drag and cancellation.
@@ -172,15 +175,23 @@
         else app.containers_.push_back(std::make_unique<FolderMapping>(&app.widgets_.front(), &app));
         app.popupWidgetIndex_ = app.widgets_.size() - 1;
         app.popupAnchoredToDock_ = !singleCell && !grouped;
+        app.popupHasAnchor_ = true; app.popupAnchorPoint_ = {400, 400};
+        app.popupPageId_ = app.gridPages_.front().id;
         app.popupAnimation_.ShowImmediately();
-        if (dockCopy)
+        // OpenCollectionPopupAt delegates every standalone FolderMapping to
+        // OpenDockFolderPopupAt. Even a desktop mapping popup renders/edits
+        // this temporary model; a FileGroup instead hosts the original child.
+        if (dockCopy || (!grouped && !fileCategories))
         {
             app.dockFolderPopupWidget_ = app.widgets_.front();
             app.dockFolderPopupWidget_.id = kDockFolderPopupWidgetId;
             app.dockFolderPopupWidget_.gridSpan = {1, 1};
             app.dockFolderPopupWidget_.gridCell = {kDockPageId, 0, 0};
+            app.dockFolderPopupWidget_.bounds = {};
             app.dockFolderPopupOpen_ = app.dockFolderPopupAvailable_ = true;
-            app.popupAnchoredToDock_ = true; app.popupWidgetIndex_ = static_cast<size_t>(-1);
+            app.dockFolderPopupKnownItemCount_ = app.dockFolderPopupWidget_.folderEntries.size();
+            app.dockFolderPopupMappingWidgetId_ = dockCopy ? L"" : L"r02-source";
+            app.popupAnchoredToDock_ = dockCopy; app.popupWidgetIndex_ = static_cast<size_t>(-1);
             app.dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&app.dockFolderPopupWidget_, &app);
         }
         auto* view = app.GetCategorizedPopupView();

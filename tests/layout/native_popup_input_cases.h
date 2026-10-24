@@ -186,15 +186,16 @@ inline void CheckOriginalRoute(Profile& profile)
 inline void Run(Profile& profile)
 {
     if (!std::getenv("SNOWDESKTOP_R02_ORIGINAL_ROUTING")) CheckOriginalRoute(profile);
-    struct Scene { const char* name; bool grouped, singleCell, dockCopy, fileCategories; };
+    struct Scene { const char* name; bool grouped, singleCell, dockCopy, fileCategories, sharesSource; };
     constexpr Scene scenes[] = {
-        {"single-cell mapping", false, true, false, false},
-        {"visible mapping source", false, false, false, false},
-        {"visible file-group owner", true, false, false, false},
-        {"single-cell file-group", true, true, false, false},
-        {"single-cell file categories", false, true, false, true},
-        {"visible file-categories group", true, false, false, true},
-        {"Dock folder copy", false, true, true, false},
+        {"single-cell mapping", false, true, false, false, false},
+        {"visible mapping source copy", false, false, false, false, false},
+        {"visible file-group owner", true, false, false, false, true},
+        {"single-cell file-group", true, true, false, false, false},
+        {"single-cell file categories", false, true, false, true, false},
+        {"visible file categories", false, false, false, true, true},
+        {"visible file-categories group", true, false, false, true, true},
+        {"Dock folder copy", false, true, true, false, false},
     };
     if (std::getenv("SNOWDESKTOP_R02_ORIGINAL_ROUTING"))
         std::cout << "R02 negative: executing the frozen original popup move/presentation route\n";
@@ -245,10 +246,13 @@ inline void Run(Profile& profile)
             Move(app, pointB);
             Require(view.GetCategoryTabOrder() == std::vector<std::wstring>{L"all", L"b", L"a", L"others"},
                 "R02 moving Alpha onto Beta swaps the two literal category positions");
+            if (!scene.grouped && !scene.fileCategories)
+                Require(Access::PopupInputSource(app).categoryTabOrder.empty(),
+                    "R02 a mapping popup edits its temporary order without changing source storage before release");
             Require(rootInvalidations == 0 && surface->begins == draws + 1 && surface->ends == surface->begins,
                 "R02 changed order redraws the actual popup exactly once without desktop damage");
             const auto& expectedOwner = scene.grouped ? std::wstring(L"r02-group") : std::wstring(L"r02-source");
-            Require(scene.singleCell ? drawnOwners.empty() : drawnOwners == std::vector<std::wstring>{expectedOwner},
+            Require(scene.sharesSource ? drawnOwners == std::vector<std::wstring>{expectedOwner} : drawnOwners.empty(),
                 "R02 only the actual visible source owner redraws; a single-cell icon or Dock copy does not");
             CheckPixels(app, *surface.Get());
             const auto movedA = Tab(view, L"a");
@@ -289,7 +293,7 @@ inline void Run(Profile& profile)
                 "R02 right-edge selection clamps to the text end while retaining anchor, composition and capture state");
             Require(rootInvalidations == 0 && surface->begins == draws + 1,
                 "R02 changed text selection redraws the production popup once with no full desktop invalidation");
-            Require(scene.singleCell ? drawnOwners.empty() : drawnOwners == std::vector<std::wstring>{expectedOwner},
+            Require(scene.sharesSource ? drawnOwners == std::vector<std::wstring>{expectedOwner} : drawnOwners.empty(),
                 "R02 search selection updates exactly the visible source sharing that editing state");
             CheckPixels(app, *surface.Get());
             observation.Reset(); draws = surface->begins;
@@ -322,10 +326,10 @@ inline void Run(Profile& profile)
             Access::PaintPopupInput(app);
             Access::SyncPopupInputFrame(app, view);
             Require(view.BeginCategoryTabDrag(Tab(view, L"a")), "R02 begins a final tab gesture before closing");
-            Access::SetPopupInputFullCollection(app, !scene.singleCell);
+            Access::SetPopupInputFullCollection(app, scene.sharesSource);
             observation.Reset(); draws = surface->begins;
             Move(app, Tab(view, L"b"));
-            if (!scene.singleCell)
+            if (scene.sharesSource)
                 Require(rootInvalidations > 0 && drawnOwners.empty() && surface->begins == draws + 1,
                     "R02 pending complete collection retains the root recovery route without prematurely drawing a child");
             observation.Reset();
@@ -336,11 +340,11 @@ inline void Run(Profile& profile)
             Require(Access::FinalizePopupInput(app) && rootInvalidations > 0 &&
                 Access::PopupInputSource(app).categoryTabOrder.empty(),
                 "R02 popup finalization restores original source order and retains full desktop recovery");
-            if (!scene.dockCopy)
+            if (scene.grouped || scene.fileCategories)
                 Require(!view.IsPopupHosted() && !view.HasCategoryTabPress() &&
                     !view.IsSearchPointerSelecting() && !view.IsSearchFocused(),
                     "R02 finalization restores the surviving desktop view and releases categorized input state");
-            // Dock copy finalization destroys its temporary view; inspect only
+            // Mapping/Dock copy finalization destroys its temporary view; inspect only
             // the surviving source/model and the production recovery request.
         }
         catch (...) { cleanup(); throw; }
