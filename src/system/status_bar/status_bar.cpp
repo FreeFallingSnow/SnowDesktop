@@ -4,6 +4,7 @@
 #include "status_bar_view.h"
 #include "status_bar_interaction.h"
 #include "status_bar_appbar.h"
+#include "status_bar_fullscreen.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "app/render/desktop_backdrop_compositor.h"
 #include "theme/panel_gradient_renderer.h"
@@ -31,6 +32,7 @@
 #include <wrl/client.h>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <sstream>
 
@@ -42,15 +44,21 @@ namespace
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5;
-std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
+std::map<HWND, StatusBarFullscreenRequest*> liveBars; // All access, including hooks, on the UI thread.
+bool PostFullscreen(HWND receiver) { return PostMessageW(receiver, kFullscreen, 0, 0) != FALSE; }
+void QueueFullscreen(HWND window)
+{
+    if (const auto found = liveBars.find(window); found != liveBars.end())
+        found->second->Queue(window, PostFullscreen);
+}
 void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
     if (object != OBJID_WINDOW) return;
-    for (auto& [window, pending] : liveBars)
+    for (const auto& [window, request] : liveBars)
     {
         if (event == EVENT_SYSTEM_FOREGROUND)
             PostMessageW(window, kForeground, reinterpret_cast<WPARAM>(target), static_cast<LPARAM>(time));
-        if (!pending) pending = PostMessageW(window, kFullscreen, 0, 0) != FALSE;
+        request->Queue(window, PostFullscreen);
     }
 }
 bool HighContrast()
@@ -73,44 +81,39 @@ bool WindowClientScreenRect(HWND window, RECT& client)
     client = {origin.x, origin.y, end.x, end.y};
     return true;
 }
+std::vector<std::optional<HWND>> MonitorFullscreenSources(std::span<const HMONITOR> monitors)
+{
+    std::vector<std::optional<RECT>> bounds;
+    bounds.reserve(monitors.size());
+    for (const auto monitor : monitors)
+    {
+        MONITORINFO info{sizeof(info)};
+        bounds.push_back(GetMonitorInfoW(monitor, &info) ? std::optional{info.rcMonitor} : std::nullopt);
+    }
+    return ObserveStatusBarFullscreen(bounds, [](const auto& visit) {
+        return EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+            const auto& observe = *reinterpret_cast<const std::function<bool(const StatusBarFullscreenWindow&)>*>(parameter);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(window, &pid);
+            if (pid == GetCurrentProcessId() || !IsWindowVisible(window) || IsIconic(window)) return TRUE;
+            DWORD cloaked = 0;
+            (void)DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+            wchar_t name[128]{};
+            GetClassNameW(window, name, static_cast<int>(std::size(name)));
+            const bool shell = wcscmp(name, L"Progman") == 0 || wcscmp(name, L"WorkerW") == 0 ||
+                wcscmp(name, L"Shell_TrayWnd") == 0 || wcscmp(name, L"Shell_SecondaryTrayWnd") == 0;
+            const auto style = GetWindowLongPtrW(window, GWL_STYLE), extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
+            const bool maximized = IsZoomed(window) != FALSE;
+            RECT client{};
+            if (!WindowClientScreenRect(window, client)) return TRUE;
+            return observe({window, client, style, extended, maximized, cloaked != 0, shell}) ? TRUE : FALSE;
+        }, reinterpret_cast<LPARAM>(&visit)) != FALSE;
+    });
+}
 std::optional<HWND> MonitorFullscreenSource(HMONITOR monitor)
 {
-    MONITORINFO info{sizeof(info)};
-    if (!GetMonitorInfoW(monitor, &info)) return std::nullopt;
-    struct Context { RECT monitor; bool stopped = false; HWND window = nullptr; } context{info.rcMonitor};
-    const BOOL enumerated = EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
-        auto& state = *reinterpret_cast<Context*>(parameter);
-        DWORD pid = 0;
-        GetWindowThreadProcessId(window, &pid);
-        if (pid == GetCurrentProcessId() || !IsWindowVisible(window) || IsIconic(window)) return TRUE;
-        DWORD cloaked = 0;
-        (void)DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-        wchar_t name[128]{};
-        GetClassNameW(window, name, static_cast<int>(std::size(name)));
-        const bool shell = wcscmp(name, L"Progman") == 0 || wcscmp(name, L"WorkerW") == 0 ||
-            wcscmp(name, L"Shell_TrayWnd") == 0 || wcscmp(name, L"Shell_SecondaryTrayWnd") == 0;
-        const auto style = GetWindowLongPtrW(window, GWL_STYLE), extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
-        const bool fullscreenCandidate = StatusBarFullscreenCandidate(style, extended, IsZoomed(window) != FALSE, shell);
-        RECT client{};
-        if (!WindowClientScreenRect(window, client)) return TRUE;
-        if (fullscreenCandidate && StatusBarFullscreenClient(client, state.monitor, true, false, cloaked != 0, shell))
-        {
-            state.stopped = true;
-            state.window = window;
-            return FALSE;
-        }
-        // EnumWindows is in Z order. A regular window covering the monitor's
-        // center hides a background full-screen window after Alt+Tab. Small
-        // tooltips/owned tool windows do not cancel the full-screen state.
-        const POINT center{state.monitor.left + (state.monitor.right - state.monitor.left) / 2,
-            state.monitor.top + (state.monitor.bottom - state.monitor.top) / 2};
-        if (!shell && !cloaked && PtInRect(&client, center) &&
-            !(extended & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)))
-        { state.stopped = true; return FALSE; }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&context));
-    if (!enumerated && !context.stopped) return std::nullopt;
-    return context.window;
+    const std::array monitors{monitor};
+    return MonitorFullscreenSources(monitors).front();
 }
 bool DockFullscreenSourceEligible(HWND source, DWORD expectedProcess, HMONITOR monitor)
 {
@@ -148,6 +151,7 @@ struct StatusBar::Impl
     struct Window
     {
         Impl& owner;
+        const std::uint64_t identity;
         HWND hwnd = nullptr;
         HMONITOR monitor = nullptr;
         StatusBarAppBar appbar;
@@ -166,7 +170,7 @@ struct StatusBar::Impl
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
-        bool checkingFullscreen = false;
+        bool checkingFullscreen = false, clockTimerActive = false;
         bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
         DWORD dockFullscreenProcess = 0;
@@ -246,7 +250,7 @@ struct StatusBar::Impl
             StopTrayScroll();
             if (std::exchange(trayPreview, false) && owner.dragFeedback.end) owner.dragFeedback.end();
         }
-        explicit Window(Impl& value) : owner(value) {}
+        explicit Window(Impl& value) : owner(value), identity(++value.nextWindowIdentity) {}
         ~Window()
         {
             closing = true;
@@ -257,6 +261,9 @@ struct StatusBar::Impl
             if (owner.tray) { owner.tray->UnsubscribeChanges(hwnd); owner.tray->CancelFocusReturn(hwnd); }
             ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
+            if (owner.fullscreenRequest.Consume(hwnd))
+                for (const auto& [receiver, request] : liveBars)
+                    if (request == &owner.fullscreenRequest) QueueFullscreen(receiver);
             if (owner.hidden) owner.hidden(monitor);
             if (hwnd) { KillTimer(hwnd, kClockTimer); KillTimer(hwnd, kPlacementTimer); }
             tooltip.Close();
@@ -348,12 +355,12 @@ struct StatusBar::Impl
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
             if (notify && owner.hidden) owner.hidden(monitor);
         }
-        void CheckFullscreen()
+        void CheckFullscreen(std::optional<HWND> observed = {}, bool collect = true)
         {
             if (closing || checkingFullscreen) return;
             checkingFullscreen = true;
             struct CheckScope { bool& active; ~CheckScope() { active = false; } } checkScope{checkingFullscreen};
-            const auto observed = MonitorFullscreenSource(monitor);
+            if (collect) observed = MonitorFullscreenSource(monitor);
             const auto dock = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
             const bool previousObservation = fullscreenObserved;
             DWORD foregroundProcess = 0;
@@ -991,7 +998,7 @@ struct StatusBar::Impl
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
                     [&] {
                         self->fullscreenState.DismissReveal();
-                        PostMessageW(window, kFullscreen, 0, 0);
+                        QueueFullscreen(window);
                         self->DismissSurfaces();
                     })) return 0;
             }
@@ -1011,13 +1018,11 @@ struct StatusBar::Impl
                 self->PollTrayMenu();
                 return 0;
             case kFullscreen:
-                if (auto found = liveBars.find(window); found != liveBars.end()) found->second = false;
-                self->CheckFullscreen();
-                if (self->UpdateAppearance()) self->QueuePlace();
+                if (self->owner.fullscreenRequest.Consume(window)) self->owner.CheckFullscreenWindows(true);
                 return 0;
             case kAppBar:
                 if (wp == ABN_POSCHANGED) self->QueuePlace();
-                else if (wp == ABN_FULLSCREENAPP) PostMessageW(window, kFullscreen, 0, 0);
+                else if (wp == ABN_FULLSCREENAPP) QueueFullscreen(window);
                 return 0;
             case WM_TIMER:
                 if (wp == kClockTimer)
@@ -1026,7 +1031,7 @@ struct StatusBar::Impl
                     // all bars: the first monitor must not drain another's result.
                     for (const auto& completion : self->owner.data->Controls()->DrainCompletions("statusBarVolume"))
                         self->owner.volumeWheel.Complete(completion.id);
-                    self->CheckFullscreen();
+                    if (self->owner.IsFullscreenClock(window)) self->owner.CheckFullscreenWindows();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
                     self->PollTrayMenu();
@@ -1328,10 +1333,51 @@ struct StatusBar::Impl
     ComPtr<IDCompositionDesktopDevice> composition;
     ComPtr<IDWriteFactory> text;
     std::map<std::wstring, std::unique_ptr<Window>> windows;
+    std::uint64_t nextWindowIdentity = 0;
+    StatusBarFullscreenRequest fullscreenRequest;
     bool removingWindows = false;
     bool presentationEnabled = true;
     std::vector<HWINEVENTHOOK> hooks;
     UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    bool IsFullscreenClock(HWND receiver) const
+    {
+        // Keep every bar's clock/paint cadence, but only one existing timer
+        // initiates the one-second fullscreen round. No time-based cache.
+        for (const auto& [id, window] : windows)
+            if (window && !window->closing && window->clockTimerActive)
+                return window->hwnd == receiver;
+        return false;
+    }
+    void CheckFullscreenWindows(bool updateAppearance = false)
+    {
+        if (removingWindows) return;
+        struct Target { std::wstring id; std::uint64_t identity; HMONITOR monitor; };
+        std::vector<Target> targets;
+        std::vector<HMONITOR> monitors;
+        for (const auto& [id, window] : windows)
+            if (window && !window->closing)
+            {
+                targets.push_back({id, window->identity, window->monitor});
+                monitors.push_back(window->monitor);
+            }
+        const auto sources = MonitorFullscreenSources(monitors);
+        for (std::size_t i = 0; i < targets.size(); ++i)
+        {
+            const auto& target = targets[i];
+            const auto current = [&]() -> Window* {
+                const auto found = windows.find(target.id);
+                return found != windows.end() && found->second && !found->second->closing &&
+                    found->second->identity == target.identity && found->second->monitor == target.monitor
+                    ? found->second.get() : nullptr;
+            };
+            if (auto window = current()) window->CheckFullscreen(sources[i], false);
+            // Applying a result may notify Dock/hidden callbacks that remove or
+            // replace another monitor. Never retain map iterators or Window*
+            // across those callbacks, nor deliver an old sample to a new bar.
+            if (updateAppearance)
+                if (auto window = current(); window && window->UpdateAppearance()) window->QueuePlace();
+        }
+    }
     struct DropTarget { Window* window; bool pinned; std::string before; RECT indicator; };
     std::optional<DropTarget> FindDrop(std::string_view key, POINT point)
     {
@@ -1658,7 +1704,7 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
         if (!window || window->monitor != monitor || !window->fullscreenState.Revealed()) continue;
         window->fullscreenState.DismissReveal();
         // Let the existing popup close path consume the outside down first.
-        PostMessageW(window->hwnd, kFullscreen, 0, 0);
+        QueueFullscreen(window->hwnd);
     }
 }
 void StatusBar::SetGraphicsFailureHandler(std::function<void(HRESULT)> handler) { impl_->graphicsFailure = std::move(handler); }
@@ -1824,9 +1870,9 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 window.reset();
                 continue;
             }
-            liveBars.emplace(window->hwnd, false);
+            liveBars.emplace(window->hwnd, &self.fullscreenRequest);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
-            SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
+            window->clockTimerActive = SetTimer(window->hwnd, kClockTimer, 1000, nullptr) != 0;
         }
         if (self.tray && (createdWindow || trayChanged)) self.tray->SubscribeChanges(window->hwnd);
         if (self.settings.inputMethod) SetTimer(window->hwnd, kInputMethodTimer, 200, nullptr);

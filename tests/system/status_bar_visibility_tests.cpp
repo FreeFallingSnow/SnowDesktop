@@ -1,6 +1,7 @@
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_glyphs.h"
 #include "system/status_bar/status_bar_interaction.h"
+#include "system/status_bar/status_bar_fullscreen.h"
 #include "common/l10n.h"
 #include <d3d11.h>
 #include <dwrite.h>
@@ -10,6 +11,8 @@
 #include <filesystem>
 #include <iostream>
 #include <cstring>
+#include <array>
+#include <initializer_list>
 
 // Replace only the embedded icon-font resource boundary. Production item
 // construction, DirectWrite measurement, drawing, hit testing and invocation
@@ -30,6 +33,83 @@ using Microsoft::WRL::ComPtr;
 void Check(bool passed, const char* message)
 {
     if (!passed) { std::cerr << message << '\n'; std::exit(1); }
+}
+void CheckFullscreenRounds()
+{
+    // Replace only native sampling/posting. These are the production Z-order
+    // fold and request lifecycle, without touching the user's windows/AppBars.
+    const auto hwnd = [](UINT_PTR id) { return reinterpret_cast<HWND>(id); };
+    const RECT left{-1920, 0, 0, 1080}, right{0, 0, 2560, 1440};
+    const RECT both{-1920, 0, 2560, 1440};
+    const std::array<std::optional<RECT>, 3> monitors{left, right, std::nullopt};
+    const auto window = [&](UINT_PTR id, RECT client, LONG_PTR style = WS_POPUP,
+        LONG_PTR extended = 0, bool maximized = false, bool cloaked = false, bool shell = false) {
+        return StatusBarFullscreenWindow{hwnd(id), client, style, extended, maximized, cloaked, shell};
+    };
+    unsigned enumerations = 0, samples = 0;
+    const auto scan = [&](const auto& targets, std::initializer_list<StatusBarFullscreenWindow> windows,
+        bool success = true) {
+        return ObserveStatusBarFullscreen(targets, [&](const auto& visit) {
+            ++enumerations;
+            for (const auto& sample : windows)
+            {
+                ++samples;
+                if (!visit(sample)) return false; // EnumWindows callback stop.
+            }
+            return success;
+        });
+    };
+    auto observed = scan(monitors, {
+        window(1, {-1100, 450, -800, 650}, WS_POPUP, WS_EX_TOOLWINDOW),
+        window(2, right), window(3, left), window(4, both)});
+    Check(enumerations == 1 && samples == 3 && observed[0] == hwnd(3) && observed[1] == hwnd(2) && !observed[2],
+        "one round samples each Z-order window once and stops only after every valid screen settles");
+
+    observed = scan(monitors, {window(5, {-1500, 100, -200, 1000}, WS_OVERLAPPEDWINDOW), window(6, both)});
+    Check(observed[0] == HWND{} && observed[1] == hwnd(6),
+        "Alt+Tab center occlusion settles only its monitor, preserving another screen's fullscreen source");
+    observed = scan(monitors, {window(7, both, WS_POPUP, 0, false, true),
+        window(8, both, WS_POPUP, 0, false, false, true),
+        window(9, {-1100, 450, -800, 650}, WS_POPUP, WS_EX_NOACTIVATE),
+        window(10, {1000, 600, 1400, 850}, WS_POPUP, WS_EX_TRANSPARENT), window(11, both)});
+    Check(observed[0] == hwnd(11) && observed[1] == hwnd(11),
+        "cloaked/Shell windows and passive overlays do not hide a spanning fullscreen source");
+    observed = scan(monitors, {window(12, left, WS_OVERLAPPEDWINDOW | WS_MAXIMIZE, 0, true), window(13, both)});
+    Check(observed[0] == HWND{} && observed[1] == hwnd(13),
+        "ordinary maximization remains a center blocker rather than a fullscreen source");
+    observed = scan(monitors, {window(14, left, WS_POPUP | WS_MAXIMIZE, 0, true), window(15, right)});
+    Check(observed[0] == hwnd(14) && observed[1] == hwnd(15),
+        "browser fullscreen retaining maximized style remains independently detected");
+    observed = scan(monitors, {window(16, right)}, false);
+    Check(!observed[0] && observed[1] == hwnd(16) && !observed[2],
+        "partial enumeration failure preserves a settled monitor and leaves unresolved/removed monitors unknown");
+    observed = scan(monitors, {});
+    Check(observed[0] == HWND{} && observed[1] == HWND{} && !observed[2],
+        "successful empty observation clears fullscreen; failed monitor lookup remains unknown");
+    const std::array<std::optional<RECT>, 1> changedMonitor{RECT{0, 0, 3840, 2160}};
+    observed = scan(changedMonitor, {window(17, {0, 32, 3840, 2160})});
+    Check(observed[0] == HWND{}, "work-area coverage is not full monitor coverage after a DPI/topology change");
+    observed = scan(changedMonitor, {window(18, *changedMonitor[0])});
+    Check(observed[0] == hwnd(18), "a new round uses current monitor geometry without a cross-round result cache");
+    const std::array<std::optional<RECT>, 1> invalidMonitor{std::nullopt};
+    const auto before = enumerations;
+    observed = scan(invalidMonitor, {window(19, both)});
+    Check(enumerations == before && !observed[0], "removing the last valid monitor avoids unnecessary enumeration");
+
+    StatusBarFullscreenRequest request;
+    std::vector<HWND> posted;
+    const auto post = [&](HWND receiver) { posted.push_back(receiver); return true; };
+    Check(!request.Queue(hwnd(20), [](HWND) { return false; }) && request.Queue(hwnd(20), post),
+        "failed event posting remains retryable");
+    Check(!request.Queue(hwnd(21), post) && posted.size() == 1 && !request.Consume(hwnd(21)),
+        "all monitors coalesce into one request; another HWND cannot consume it");
+    Check(request.Consume(hwnd(20)) && request.Queue(hwnd(21), post) && posted.size() == 2,
+        "destroying the recipient permits transfer to a surviving bar");
+    Check(!request.Consume(hwnd(20)) && request.Consume(hwnd(21)) && request.Queue(hwnd(21), post),
+        "an obsolete recipient cannot clear its replacement request, and later events trigger a fresh round");
+    Check(request.Consume(hwnd(21)) && !request.Queue(nullptr, post),
+        "closing the last receiver leaves no pointer or queued request to a destroyed bar");
+    std::cout << "Shared fullscreen Z-order rounds and request lifecycle passed\n";
 }
 const StatusBarItem* Find(const std::vector<StatusBarItem>& items, std::string_view key)
 {
@@ -244,6 +324,7 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
 int main(int argc, char** argv)
 {
     Check(argc == 2, "expected repository root");
+    CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
     Locale::Instance().SetLanguage("en-US");
     ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;
