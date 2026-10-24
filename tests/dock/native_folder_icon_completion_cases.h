@@ -278,6 +278,7 @@ struct Window
 
 void Run(ID2D1DeviceContext* context)
 {
+    std::cerr << "R09 completion cases: private receivers and models\n";
     Window currentWindow, referenceWindow;
     auto& current = Access::FolderIconScene(context, currentWindow.value);
     auto& reference = Access::FolderIconScene(context, referenceWindow.value);
@@ -304,7 +305,7 @@ void Run(ID2D1DeviceContext* context)
     const auto deliver = [&](HBITMAP source, bool isRefined, bool expectedAccepted, bool expectedPixelChange,
         std::uint64_t currentTicket, std::uint64_t referenceTicket,
         const std::wstring& currentKey, const std::wstring& referenceKey) {
-        std::cout << "R09 transition=" << ++transition << ", source=" << (source ? "pixels" : "empty")
+        std::cerr << "R09 transition=" << ++transition << ", source=" << (source ? "pixels" : "empty")
             << ", refined=" << isRefined << ", accepted=" << expectedAccepted << '\n';
         ValidateRect(currentWindow.value, nullptr); ValidateRect(referenceWindow.value, nullptr);
         const auto geometry = Access::FolderIconGeometry(current);
@@ -350,7 +351,7 @@ void Run(ID2D1DeviceContext* context)
         size_t changedPixels = 0;
         for (size_t index = 0; index != next.size(); ++index)
             if (next[index] != currentPixels[index]) ++changedPixels;
-        std::cout << "R09 transition=" << transition << ", changedPixels=" << changedPixels
+        std::cerr << "R09 transition=" << transition << ", changedPixels=" << changedPixels
             << ", comparedPixels=" << complete.size() << ", exactPartialReference=1\n";
         DeleteObject(damage); currentPixels = next; referencePixels = complete;
         const auto actualState = Access::FolderIconRead(current);
@@ -449,12 +450,13 @@ void Run(ID2D1DeviceContext* context)
 
     Access::StopFolderIconScene(current); Access::StopFolderIconScene(reference);
     DeleteObject(first); DeleteObject(refined);
-    std::cout << "R09 production completion: accepted=" << accepted << ", rejected=" << rejected
+    std::cerr << "R09 production completion: accepted=" << accepted << ", rejected=" << rejected
         << "; two Dock mirrors + desktop pixels/hits/state/dirty-region reference comparison passed\n";
 }
 
 inline void RunRootCulling(ID2D1DeviceContext* context)
 {
+    std::cerr << "R09 root culling: private receivers and real renderer\n";
     Window currentWindow, referenceWindow;
     auto& current = Access::FolderIconScene(context, currentWindow.value);
     auto& reference = Access::FolderIconScene(context, referenceWindow.value);
@@ -495,7 +497,7 @@ inline void RunRootCulling(ID2D1DeviceContext* context)
         oldRejected = true;
     }
     Require(oldRejected && referenceUploads > 0, "R09 original callback fails the same real draw-resource assertion");
-    std::cout << "R09 actual root routing: unrelated styled uploads candidate=" << currentUploads
+    std::cerr << "R09 actual root routing: unrelated styled uploads candidate=" << currentUploads
         << ", original=" << referenceUploads << ", comparedPixels=" << complete.size() << "; negative control rejected\n";
     // Existing first-frame/layout/device work remains pending. Native glass
     // still uses complete owner collection for a bitmap-only callback.
@@ -512,6 +514,7 @@ inline void RunRootCulling(ID2D1DeviceContext* context)
 
 inline void RunOffscreen()
 {
+    std::cerr << "R09 offscreen: initialize COM and WARP\n";
     Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "R09 initializes isolated COM scope");
     struct ComScope { ~ComScope() { CoUninitialize(); } } comScope;
     ComPtr<ID3D11Device> d3d;
@@ -534,6 +537,7 @@ inline void RunOffscreen()
 
 inline void RunStandalone()
 {
+    std::cerr << "R09 standalone: create inactive desktop\n";
     const auto name = L"SnowDesktopR09-" + std::to_wstring(GetCurrentProcessId());
     const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
     Require(desktop != nullptr, "R09 creates a private desktop without activating it");
@@ -542,6 +546,7 @@ inline void RunStandalone()
         try
         {
             Require(SetThreadDesktop(desktop) != FALSE, "R09 attaches a fresh fixture thread");
+            std::cerr << "R09 standalone: fixture thread attached\n";
             RunOffscreen();
         }
         catch (...) { failure = std::current_exception(); }
@@ -550,5 +555,6 @@ inline void RunStandalone()
     const bool closed = CloseDesktop(desktop) != FALSE;
     if (failure) std::rethrow_exception(failure);
     Require(closed, "R09 closes its inactive desktop after owned receivers exit");
+    std::cerr << "R09 standalone: complete\n";
 }
 }

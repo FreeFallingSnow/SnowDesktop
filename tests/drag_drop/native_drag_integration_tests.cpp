@@ -1276,6 +1276,8 @@ int main(int argc, char** argv)
             native_status_selection_cases::Run();
         }
         else if (argc == 2 && std::string_view(argv[1]) == "--status-selection") native_status_selection_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-folder-icon-completion")
+            native_folder_icon_completion_cases::RunStandalone();
         else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") {
             native_icon_customization_cases::Run();
             native_folder_icon_completion_cases::RunStandalone();
