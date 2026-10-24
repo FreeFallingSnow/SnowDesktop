@@ -2919,6 +2919,70 @@ static std::string Sha256File(const std::wstring& path)
     return result;
 }
 
+static std::string WidgetPrewarmContentDigest(
+    std::span<const std::uint8_t> bytes)
+{
+    if (bytes.size() > (std::numeric_limits<ULONG>::max)()) return {};
+    std::array<unsigned char, 32> digest{};
+    if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
+            const_cast<PUCHAR>(bytes.data()), static_cast<ULONG>(bytes.size()),
+            digest.data(), static_cast<ULONG>(digest.size())) < 0)
+        return {};
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string key;
+    key.reserve(64);
+    for (const auto byte : digest)
+    {
+        key.push_back(hex[byte >> 4]);
+        key.push_back(hex[byte & 0x0f]);
+    }
+    return key;
+}
+
+static void PrewarmWidgetPackageResources(D2DState* state)
+{
+    // Preparation is optional: the normal loader remains authoritative for
+    // current files, permissions, errors, Lua execution and device resources.
+    try
+    {
+        std::vector<std::wstring> files;
+        std::vector<std::wstring> images;
+        auto enqueue = [&](const std::filesystem::path& root,
+            const std::wstring& relative, bool image = false) {
+            if (files.size() + images.size() >= 128) return;
+            if (const auto path = ResolvePackageAssetWithinRoot(root, relative))
+                (image ? images : files).push_back(*path);
+        };
+        for (const auto& package : GetWidgetPackageManager().ListPackages())
+        {
+            if (!package.active || !package.enabled ||
+                !snowdesktop::widget::IsExecutablePackageContract(package.manifest))
+                continue;
+            const auto grant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(
+                package.permissionState, package.manifest.permissions,
+                package.manifest.optionalPermissions, package.manifest.networkDomains,
+                package.grantedPermissions, package.grantedNetworkDomains);
+            if (grant.runtimeBlock != snowdesktop::widget::PermissionRuntimeBlock::None)
+                continue;
+            enqueue(package.root, L"widget.json");
+            enqueue(package.root, Utf8ToWideLocal(package.manifest.entry));
+            for (const auto& [name, resource] : package.manifest.resources)
+            {
+                (void)name;
+                if (resource.type == "image")
+                    enqueue(package.root, Utf8ToWideLocal(resource.path), true);
+            }
+            if (files.size() + images.size() >= 128) break;
+        }
+        state->packageImageCache.Prewarm(std::move(files), std::move(images),
+            WidgetPrewarmContentDigest);
+    }
+    catch (...)
+    {
+        // Speculation must never replace the synchronous load/error path.
+    }
+}
+
 static int CompareVersions(const std::string& left, const std::string& right)
 {
     std::istringstream a(left), b(right);
@@ -15749,6 +15813,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     // before loading layouts, so the first Add Widget popup only probes changes.
     (void)GetWidgetPackageManager();
     (void)ListAvailableMenuEntries();
+    PrewarmWidgetPackageResources(d2dState_);
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
@@ -15807,6 +15872,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     InitializeWidgetDataBroker();
     InitializeWidgetTaskBroker();
     LoadNotificationSchedules();
+    (void)d2dState_->packageImageCache.PrewarmPending();
     return true;
 }
 
