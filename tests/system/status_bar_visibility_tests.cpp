@@ -15,6 +15,7 @@
 #include <array>
 #include <initializer_list>
 #include <string_view>
+#include <functional>
 
 // Replace only the embedded resource loader with its original bundled TTF.
 // Production glyph lookup, outlines, drawing, layout and hit testing stay real.
@@ -455,6 +456,7 @@ int main(int argc, char** argv)
     CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, false);
     CheckTrayScrollUpdates(device.Get(), context.Get(), text.Get(), data, pinned);
     CheckContentUpdates(device.Get(), context.Get(), text.Get(), data);
+    CheckContentTextGenerations(context.Get(), text.Get(), data);
     for (const int mode : {0, 1, 2}) for (const bool clock : {false, true})
     for (const bool notifications : {false, true}) for (const bool merged : {false, true})
     for (const bool rightAligned : {false, true}) for (const float scale : {1.f, 2.f})

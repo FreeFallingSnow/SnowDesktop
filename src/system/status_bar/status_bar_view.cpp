@@ -492,6 +492,10 @@ bool StatusBarDrawResources::TextMatches(IDWriteFactory* text, float value) cons
     return format && iconFormat && batteryFormat && factory.Get() == text && scale == value &&
         fontRevision == app_fonts::revision.load() && fontSelection == app_fonts::current.load();
 }
+bool StatusBarDrawResources::FrameTextMatches(IDWriteFactory* text, float value, std::uint64_t generation) const
+{
+    return fontBuilds == generation && iconFace && TextMatches(text, value);
+}
 void StatusBarDrawResources::Reset()
 {
     factory.Reset(); format.Reset(); iconFormat.Reset(); batteryFormat.Reset(); iconFace.Reset();
@@ -1112,7 +1116,8 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     std::vector<StatusBarItem>& items, RECT region, UINT width, UINT height, float scale,
     const PersonalizationSettings& appearance, const StatusBarPalette& palette,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused,
-    bool mergedDock, StatusBarTrayScroll& trayScroll, const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources* resources, bool* frameReusable)
+    bool mergedDock, StatusBarTrayScroll& trayScroll, const std::optional<RECT>& indicator, UINT dpi,
+    StatusBarDrawResources* resources, bool* frameReusable, bool keepPreparedText)
 {
     if (!surface) return E_INVALIDARG;
     if (IsRectEmpty(&region)) return S_OK;
@@ -1128,7 +1133,7 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
         static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
     context->Clear(D2D1::ColorF(0, 0.f));
     const auto result = DrawStatusBarContent(context.Get(), text, items, width, height, scale,
-        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, false, frameReusable);
+        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, keepPreparedText, frameReusable);
     DrawStatusBarDropIndicator(context.Get(), indicator, appearance, palette, dpi);
     context->PopAxisAlignedClip(); context.Reset();
     const auto ended = surface->EndDraw();
@@ -1147,7 +1152,7 @@ HRESULT DrawStatusBarContentUpdates(IDCompositionSurface* surface, IDWriteFactor
     {
         const auto result = DrawStatusBarContentUpdate(surface, text, items, region, width, height, scale,
             appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, trayScroll,
-            indicator, dpi, resources, frameReusable);
+            indicator, dpi, resources, frameReusable, true);
         if (FAILED(result)) return result;
     }
     return S_OK;

@@ -111,6 +111,9 @@ struct StatusBarDrawResources
     std::uint64_t fontBuilds = 0, faceLookups = 0, bitmapBuilds = 0, inkScans = 0;
     ~StatusBarDrawResources() { Reset(); }
     bool TextMatches(IDWriteFactory*, float) const;
+    // A hover can recover a missing face without changing the external key.
+    // Partial content must still match the last complete frame's resources.
+    bool FrameTextMatches(IDWriteFactory*, float, std::uint64_t generation) const;
     void RetainIcons(const std::vector<StatusBarItem>&);
     // Prepare one frame's font snapshot without opening a surface draw.
     HRESULT PrepareText(IDWriteFactory*, float);
@@ -139,7 +142,8 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface*, IDWriteFactory*, std::
     RECT damage, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
     StatusBarTrayScroll&, const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources* resources = nullptr,
-    bool* frameReusable = nullptr);
+    bool* frameReusable = nullptr, bool keepPreparedText = false);
+// Cached draws reuse one prepared text snapshot for the entire damage set.
 HRESULT DrawStatusBarContentUpdates(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
     std::span<const RECT> damage, UINT width, UINT height, float scale,
     const PersonalizationSettings&, const StatusBarPalette&, std::optional<std::size_t> hovered,

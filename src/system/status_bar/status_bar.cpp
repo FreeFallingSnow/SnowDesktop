@@ -181,6 +181,7 @@ struct StatusBar::Impl
         bool partialHoverUpdates = true;
         bool retainedFrameValid = false;
         std::optional<StatusBarPalette> retainedPalette;
+        std::uint64_t retainedTextGeneration = 0;
         RECT adjacentDockBounds{};
         bool dockQuickSearch = false;
         PersonalizationSettings appearance;
@@ -711,8 +712,9 @@ struct StatusBar::Impl
             if (IsRectEmpty(&client)) return;
             const UINT w = static_cast<UINT>(client.right), h = static_cast<UINT>(client.bottom);
             const bool partialCandidate = partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
-                surface && backgroundSurface && width == w && height == h && drawResources.iconFace &&
-                drawResources.TextMatches(owner.text.Get(), TrayScale()) && retainedFrameValid && retainedPalette;
+                surface && backgroundSurface && width == w && height == h &&
+                drawResources.FrameTextMatches(owner.text.Get(), TrayScale(), retainedTextGeneration) &&
+                retainedFrameValid && retainedPalette;
             std::optional<StatusBarPalette> updatePalette;
             if (partialCandidate)
                 updatePalette = StatusBarPalette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
@@ -857,6 +859,7 @@ struct StatusBar::Impl
                     if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                     paintDirty = false; lastPaintError = S_OK;
                     retainedPalette = palette;
+                    retainedTextGeneration = drawResources.fontBuilds;
                     if (scrollFrame) scrollFrame->presented = true;
                     presentation.Release(); SyncTooltip();
                 }
@@ -915,6 +918,7 @@ struct StatusBar::Impl
             paintDirty = true;
             retainedFrameValid = false;
             retainedPalette.reset();
+            retainedTextGeneration = 0;
             surface.Reset();
             drawResources.Reset();
             if (owner.graphicsFailure) owner.graphicsFailure(result);

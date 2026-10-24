@@ -1,3 +1,159 @@
+class StatusBarTextChangeSurface final : public IDCompositionSurface
+{
+public:
+    StatusBarTextChangeSurface(IDCompositionSurface* surface, std::function<void()> change)
+        : surface_(surface), change_(std::move(change)) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override
+    {
+        if (!value) return E_POINTER;
+        *value = nullptr;
+        if (iid != __uuidof(IUnknown) && iid != __uuidof(IDCompositionSurface)) return E_NOINTERFACE;
+        *value = static_cast<IDCompositionSurface*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto count = --references_; if (!count) delete this; return count; }
+    HRESULT STDMETHODCALLTYPE BeginDraw(const RECT* region, REFIID iid, void** value, POINT* offset) override
+    {
+        if (draws++ == 1) change_();
+        return surface_->BeginDraw(region, iid, value, offset);
+    }
+    HRESULT STDMETHODCALLTYPE EndDraw() override { return surface_->EndDraw(); }
+    HRESULT STDMETHODCALLTYPE SuspendDraw() override { return surface_->SuspendDraw(); }
+    HRESULT STDMETHODCALLTYPE ResumeDraw() override { return surface_->ResumeDraw(); }
+    HRESULT STDMETHODCALLTYPE Scroll(const RECT* scroll, const RECT* clip, int x, int y) override
+    { return surface_->Scroll(scroll, clip, x, y); }
+    unsigned draws = 0;
+private:
+    ULONG references_ = 1;
+    ComPtr<IDCompositionSurface> surface_;
+    std::function<void()> change_;
+};
+
+void CheckContentTextGenerations(ID2D1DeviceContext* context, IDWriteFactory* text, StatusBarSnapshot data)
+{
+    constexpr UINT width = 1920, height = 32;
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap1> retained, reference, stale, readable;
+    Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &retained)) &&
+        SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &reference)) &&
+        SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &stale)) &&
+        SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                properties.pixelFormat), &readable)), "font-generation comparison targets initialize");
+    ComPtr<AtlasSurface> surface, oracle, oldSurface;
+    surface.Attach(new AtlasSurface(context, retained.Get(), true));
+    oracle.Attach(new AtlasSurface(context, reference.Get(), true));
+    oldSurface.Attach(new AtlasSurface(context, stale.Get(), true));
+    PersonalizationSettings appearance;
+    StatusBarPalette palette;
+    const auto full = [&](IDCompositionSurface* output, auto& items, auto& scroll,
+        StatusBarDrawResources* resources, bool* reusable) {
+        POINT offset{}; ComPtr<ID2D1DeviceContext> drawing;
+        Check(SUCCEEDED(output->BeginDraw(nullptr, IID_PPV_ARGS(&drawing), &offset)), "font-generation complete frame begins");
+        drawing->SetDpi(96, 96);
+        drawing->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+        drawing->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+        drawing->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        drawing->Clear(D2D1::ColorF(0, 0.f));
+        const auto result = DrawStatusBarContent(drawing.Get(), text, items, width, height, 1.f,
+            appearance, palette, 0, false, 0, false, false, &scroll, true, nullptr, resources, false, reusable);
+        drawing.Reset();
+        Check(SUCCEEDED(result) && SUCCEEDED(output->EndDraw()), "font-generation complete frame ends");
+    };
+    const auto pixels = [&](ID2D1Bitmap1* bitmap) {
+        Check(SUCCEEDED(readable->CopyFromBitmap(nullptr, bitmap, nullptr)), "font-generation pixels copy");
+        D2D1_MAPPED_RECT mapped{};
+        Check(SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped)), "font-generation pixels map");
+        std::vector<std::uint32_t> result(static_cast<std::size_t>(width) * height);
+        for (UINT y = 0; y < height; ++y) std::memcpy(result.data() + static_cast<std::size_t>(y) * width,
+            mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(width) * 4);
+        readable->Unmap(); return result;
+    };
+    const auto compare = [&](const auto& items, const auto& expected) {
+        Check(pixels(retained.Get()) == pixels(reference.Get()), "font-generation pixels equal independent complete reference");
+        Check(items.size() == expected.size(), "font-generation item count matches");
+        for (std::size_t i = 0; i < items.size(); ++i)
+            Check(EqualRect(&items[i].bounds, &expected[i].bounds) &&
+                EqualRect(&items[i].contentBounds, &expected[i].contentBounds), "font-generation complete geometry matches");
+    };
+    data.tray.clear();
+    StatusBarSettings settings; settings.cpu = true;
+    auto items = BuildStatusBarItems(settings, data);
+    StatusBarTrayScroll scroll;
+    StatusBarDrawResources resources;
+    bool reusable = false;
+    fluentFallbackForControl = true;
+    full(surface.Get(), items, scroll, &resources, &reusable);
+    const auto generation = resources.fontBuilds;
+    Check(reusable && !resources.iconFace && resources.TextMatches(text, 1.f), "complete frame records real missing-face fallback");
+    fluentFallbackForControl = false;
+    const auto hoverDamage = StatusBarHoverDamage(items, {}, 0, width, height);
+    Check(SUCCEEDED(DrawStatusBarHoverUpdate(surface.Get(), text, items, hoverDamage, width, height, 1.f,
+        appearance, palette, 0, false, 0, false, scroll, &resources, &reusable)), "existing hover recovers the real Fluent face");
+    Check(resources.iconFace && resources.TextMatches(text, 1.f) &&
+        !resources.FrameTextMatches(text, 1.f, generation), "same-key font recovery invalidates the previous complete frame generation");
+    auto next = items;
+    for (auto& item : next) if (item.key == "cpu") item.text = L"CPU 29%";
+    Check(RestoreStatusBarContentLayout(next, items, false, reusable), "same-key recovery control has unchanged reservations");
+    const auto damage = StatusBarContentDamage(next, items, width, height, 1.f, scroll);
+    Check(SUCCEEDED(stale->CopyFromBitmap(nullptr, retained.Get(), nullptr)), "partly recovered old pixels copy");
+    auto oldItems = next; auto oldScroll = scroll;
+    Check(SUCCEEDED(DrawStatusBarContentUpdates(oldSurface.Get(), text, oldItems, damage, width, height, 1.f,
+        appearance, palette, 0, false, 0, false, oldScroll, {}, 96, &resources, &reusable)), "generation-free negative really paints changed CPU");
+    auto expected = next; auto expectedScroll = scroll;
+    full(oracle.Get(), expected, expectedScroll, nullptr, nullptr);
+    Check(pixels(stale.Get()) != pixels(reference.Get()), "generation-free negative retains unrelated fallback glyph pixels");
+    full(surface.Get(), next, scroll, &resources, &reusable);
+    compare(next, expected);
+    Check(resources.FrameTextMatches(text, 1.f, resources.fontBuilds), "complete recovery records the new reusable generation");
+
+    const auto selection = app_fonts::current.load();
+    const auto revision = app_fonts::revision.load();
+    auto replacement = std::make_shared<app_fonts::Resource>(); replacement->family = L"Consolas";
+    const auto changeFont = [&] { app_fonts::current.store(replacement); app_fonts::revision.store(revision + 1); };
+    const auto restoreFont = [&] { app_fonts::current.store(selection); app_fonts::revision.store(revision); };
+    items = next;
+    full(surface.Get(), items, scroll, &resources, &reusable);
+    next = items;
+    for (auto& item : next)
+    {
+        if (item.key == "cpu") item.text = L"CPU 30%";
+        if (item.key == "clock") item.text = L"2026/10/23   16:28";
+    }
+    Check(RestoreStatusBarContentLayout(next, items, false, reusable), "multi-region font fixture reuses complete layout");
+    const auto regions = StatusBarContentDamage(next, items, width, height, 1.f, scroll);
+    Check(regions.size() == 2, "font-change fixture has two disjoint real content regions");
+    expected = next; expectedScroll = scroll;
+    full(oracle.Get(), expected, expectedScroll, nullptr, nullptr);
+    StatusBarDrawResources oldResources;
+    oldItems = items; oldScroll = scroll;
+    full(oldSurface.Get(), oldItems, oldScroll, &oldResources, &reusable);
+    oldItems = next;
+    ComPtr<StatusBarTextChangeSurface> changeSurface;
+    changeSurface.Attach(new StatusBarTextChangeSurface(oldSurface.Get(), changeFont));
+    for (const auto& region : regions)
+        Check(SUCCEEDED(DrawStatusBarContentUpdate(changeSurface.Get(), text, oldItems, region, width, height, 1.f,
+            appearance, palette, 0, false, 0, false, oldScroll, {}, 96, &oldResources, &reusable)),
+            "per-region preparation negative executes the actual old path");
+    Check(changeSurface->draws == 2 && pixels(stale.Get()) != pixels(reference.Get()),
+        "per-region preparation negative mixes real body fonts between dirty regions");
+    restoreFont();
+    const auto prepared = resources.fontBuilds;
+    changeSurface.Attach(new StatusBarTextChangeSurface(surface.Get(), changeFont));
+    Check(SUCCEEDED(DrawStatusBarContentUpdates(changeSurface.Get(), text, next, regions, width, height, 1.f,
+        appearance, palette, 0, false, 0, false, scroll, {}, 96, &resources, &reusable)), "content regions retain one prepared text snapshot");
+    Check(changeSurface->draws == 2 && resources.fontBuilds == prepared && !resources.TextMatches(text, 1.f),
+        "all regions use the same generation and the next request detects the changed global font");
+    compare(next, expected);
+    full(surface.Get(), next, scroll, &resources, &reusable);
+    expected = next; expectedScroll = scroll;
+    full(oracle.Get(), expected, expectedScroll, nullptr, nullptr);
+    compare(next, expected);
+    restoreFont();
+    std::cout << "Font generation: real hover recovery and between-region font-change negatives differ; complete recovery and snapshot pixels match\n";
+}
+
 // DComp allocation/copy is the only drawing substitute. Both the candidate
 // and the independent complete oracle use production layout, glyphs and pixels.
 void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWriteFactory* text,
@@ -49,7 +205,7 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
         bool valid = false;
         const auto full = [&](IDCompositionSurface* output, IDWriteFactory* factory, auto& content,
             auto& scrolling, const StatusBarPalette& colors, StatusBarDrawResources* cache, bool* reusable,
-            const std::optional<RECT>& marker = {}, std::optional<std::size_t> hover = 0) {
+            const std::optional<RECT>& marker = {}, std::optional<std::size_t> hover = 0, std::size_t focus = 1) {
             POINT origin{}; ComPtr<ID2D1DeviceContext> drawing;
             Check(SUCCEEDED(output->BeginDraw(nullptr, IID_PPV_ARGS(&drawing), &origin)), "complete content surface begins");
             drawing->SetDpi(96, 96);
@@ -58,7 +214,7 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
             drawing->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             drawing->Clear(D2D1::ColorF(0, 0.f));
             const auto result = DrawStatusBarContent(drawing.Get(), factory, content, width, height, scale,
-                appearance, colors, hover, true, 1, merged, right, &scrolling, true, nullptr, cache, false, reusable);
+                appearance, colors, hover, true, focus, merged, right, &scrolling, true, nullptr, cache, false, reusable);
             DrawStatusBarDropIndicator(drawing.Get(), marker, appearance, colors, dpi);
             drawing.Reset();
             Check(SUCCEEDED(result) && SUCCEEDED(output->EndDraw()), "complete content surface ends");
@@ -114,7 +270,7 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
         Check(valid, "initial content frame is complete and reliable");
         scroll.Move(scroll.Maximum() / 2 + (scroll.Maximum() ? 7 : 0));
         full(surface.Get(), text, items, scroll, palette, &resources, &valid);
-        for (unsigned change = 0; change < 15; ++change)
+        for (unsigned change = 0; change < 16; ++change)
         {
             const auto before = items;
             auto next = items;
@@ -141,6 +297,7 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
                 image.assign(256, 0x08080000);
                 image[first ? 255 : 0] = 0xffaa7733;
             };
+            std::optional<std::size_t> focusedTray;
             switch (change)
             {
             case 0: recolor(iconIndex(true, false)); break;
@@ -171,21 +328,24 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
                 edit("inputMethodLayout").inputIcon->pixels.assign(64, 0xff5577aa); break;
             case 13: edit("inputMethodLayout").inputIcon->pixels[0] = 0xffaa7755; break;
             case 14: edit("cpu").text = L"CPU 37%"; recolor(iconIndex(true, false)); break;
+            case 15: focusedTray = iconIndex(true, false); recolor(*focusedTray); break;
             }
             const auto previousOffset = scroll.offset;
             if (change == 14) Check(scroll.Move(7), "combined content/scroll fixture really changes offset");
             std::optional<std::size_t> hover = 0;
             if (change == 14) hover.reset();
+            if (focusedTray) hover = focusedTray;
+            const auto focus = focusedTray.value_or(1);
             const auto oldComplete = surface->completeUpdates, updateStart = surface->updates.size();
             const std::optional<RECT> marker = (change == 10 || change == 14) && !IsRectEmpty(&scroll.viewport) ?
                 std::optional<RECT>(RECT{scroll.viewport.left, scroll.viewport.top + 5,
                     scroll.viewport.left + 2, scroll.viewport.bottom - 5}) : std::nullopt;
             // Establish the stable overlay before changing content, as the
             // controller does. Its pixels must survive an intersecting update.
-            if (marker && change == 10)
+            if ((marker && change == 10) || focusedTray)
             {
                 auto original = before;
-                full(surface.Get(), text, original, scroll, palette, &resources, &valid, marker);
+                full(surface.Get(), text, original, scroll, palette, &resources, &valid, marker, hover, focus);
             }
             const auto start = surface->updates.size(), completeStart = surface->completeUpdates;
             if (fullRouteControl)
@@ -202,14 +362,14 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
                 const auto extra = change == 14 ? StatusBarTrayScrollDamage(next, 0, scroll.viewport, {}, marker, width, height) : RECT{};
                 const auto damage = StatusBarContentDamage(next, before, width, height, scale, scroll, extra);
                 Check(SUCCEEDED(DrawStatusBarContentUpdates(surface.Get(), text, next, damage, width, height, scale,
-                    appearance, palette, hover, true, 1, merged, scroll, marker, dpi, &resources, &valid)),
+                    appearance, palette, hover, true, focus, merged, scroll, marker, dpi, &resources, &valid)),
                     "production changed-content route draws its complete damage set");
                 Check(surface->completeUpdates == completeStart, "content delta never upgrades to a complete strip");
             }
             else
             {
                 // An empty tray viewport is an existing full-layout fallback.
-                full(surface.Get(), text, next, scroll, palette, &resources, &valid, marker, hover);
+                full(surface.Get(), text, next, scroll, palette, &resources, &valid, marker, hover, focus);
                 ++fullFallbacks;
             }
             if (change == 7 || change == 9)
@@ -226,7 +386,7 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
             }
             items = std::move(next);
             auto expected = items; auto expectedScroll = scroll;
-            full(oracle.Get(), text, expected, expectedScroll, palette, nullptr, nullptr, marker, hover);
+            full(oracle.Get(), text, expected, expectedScroll, palette, nullptr, nullptr, marker, hover, focus);
             compare(expected, expectedScroll);
             if (change == 7)
                 for (const auto& item : items) Check(item.tip == L"new metadata" &&
@@ -248,7 +408,12 @@ void CheckContentUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWri
             if (change == 3) for (auto& item : next) if (item.key == "controlCenter") { item.controlGlyphs[2].clear(); item.batteryPercentageText.clear(); }
             if (change == 4) { nextPalette.highContrast = !palette.highContrast; nextPalette.foreground = D2D1::ColorF(0xaa2266); }
             if (change == 5) resources.Reset();
-            if (change == 6) { auto i = std::find_if(next.begin(), next.end(), [](const auto& item) { return item.icon.has_value(); }); ++i->icon->identity.process; }
+            if (change == 6)
+            {
+                auto i = std::find_if(next.begin(), next.end(), [](const auto& item) { return item.icon && !IsRectEmpty(&item.bounds); });
+                if (i == next.end()) i = std::find_if(next.begin(), next.end(), [](const auto& item) { return item.icon.has_value(); });
+                ++i->icon->identity.process; i->icon->pixels[0] = 0xff5577aa;
+            }
             const bool retain = SameStatusBarPalette(palette, nextPalette) && resources.TextMatches(text, scale) &&
                 RestoreStatusBarContentLayout(next, items, merged, valid);
             Check(!retain, "structural/reservation/palette/font invalidation requires complete drawing");
