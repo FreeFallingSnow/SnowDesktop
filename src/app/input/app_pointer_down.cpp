@@ -681,6 +681,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
+                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                {
+                    WriteDiagnosticLogEntry(L"[DockStartMenu] releasing owned pointer capture before Start action");
+                    ReleaseCapturePreservingPointerState();
+                }
                 ToggleWindowsStartMenu(dock);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
@@ -688,6 +693,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsSearchPoint(pt))
             {
                 mouseDown_ = false;
+                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                    ReleaseCapturePreservingPointerState();
                 if (snowdesktop::quick_navigation_rules::
                         ShouldOpenFromDockSearchPress(
                             quickNavigationDismissedByThisPress))

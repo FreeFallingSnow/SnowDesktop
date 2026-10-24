@@ -9,6 +9,12 @@ namespace snowdesktop::start_menu
 {
 enum class Dismissal { Closed, Cancelled, NotFound, ProtectionLost };
 
+constexpr bool ShouldDispatchInitial(bool existing, bool closeRequested) noexcept
+{
+    // Cancelling an opening must still close a menu that already existed.
+    return existing || !closeRequested;
+}
+
 // The opening down can reach the global sampler after the Dock handler.
 // It belongs to the open action, not an immediate outside-click dismissal.
 class PointerDismissal final
@@ -27,13 +33,19 @@ private:
 class CloseRequest final
 {
 public:
-    void Reset() noexcept { requested_.store(0); sent_ = false; }
+    void Reset() noexcept { requested_.store(0); dispatched_.store(0); sent_ = false; }
     void Request(std::uint64_t now) noexcept
     {
         std::uint64_t empty = 0;
         requested_.compare_exchange_strong(empty, now + 1);
     }
     bool Requested() const noexcept { return requested_.load() != 0; }
+    void Dispatched(std::uint64_t now) noexcept
+    {
+        sent_ = true;
+        std::uint64_t empty = 0;
+        dispatched_.compare_exchange_strong(empty, now + 1);
+    }
     bool Take(bool visible) noexcept
     {
         const auto request = requested_.load();
@@ -46,10 +58,13 @@ public:
     bool Expired(std::uint64_t now) const noexcept
     {
         const auto request = requested_.load();
-        return request && now - (request - 1) >= 1500;
+        const auto dispatch = dispatched_.load();
+        const auto start = dispatch ? dispatch : request;
+        return request && now - (start - 1) >= 1500;
     }
 private:
     std::atomic<std::uint64_t> requested_{0};
+    std::atomic<std::uint64_t> dispatched_{0};
     bool sent_ = false; // Worker only; Reset runs before the worker starts.
 };
 

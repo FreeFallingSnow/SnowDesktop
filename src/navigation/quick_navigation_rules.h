@@ -497,6 +497,25 @@ constexpr bool ShouldCloseOnDeactivate(
     return !activatedWithinInteractionSurface;
 }
 
+// Outside presses also dismiss a popup that never acquired activation.
+// Disregard the opening press and rely on held-button transitions, not the
+// process-shared, consumable low bit returned by GetAsyncKeyState.
+class OutsidePress final
+{
+public:
+    explicit OutsidePress(unsigned down) noexcept : down_(down), armed_(down == 0) {}
+    bool Observe(unsigned down, bool inside, bool retained) noexcept
+    {
+        const bool pressed = (down & ~down_) != 0;
+        down_ = down;
+        if (!armed_) { armed_ = down == 0; return false; }
+        return pressed && !inside && !retained;
+    }
+private:
+    unsigned down_ = 0;
+    bool armed_ = false;
+};
+
 constexpr bool ShouldRestoreDesktopFocusOnClose(bool explicitDismissal,
     bool desktopVisible, bool pendingHandoff, bool searchHasForeground)
 {

@@ -740,6 +740,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             RECT dockBounds = dock->GetInteractiveBounds();
             if (dock->ContainsInteractivePoint(pt))
             {
+                if (dock->IsWindowsButtonPoint(pt) || dock->IsSearchPoint(pt))
+                {
+                    // Double-click replaces the second down, including for
+                    // toggle buttons that have no DockEntryItem.
+                    OnLeftButtonDown(wp, lp);
+                    return 0;
+                }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;

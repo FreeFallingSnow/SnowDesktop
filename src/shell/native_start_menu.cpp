@@ -34,7 +34,17 @@ struct LauncherClient
     Apartment apartment;
     settings_ipc::Channel channel;
     settings_ipc::SettingsProcess process;
-    ~LauncherClient() { process.Stop(); channel.Close(); }
+    bool healthy = true;
+    ~LauncherClient()
+    {
+        if (healthy && process.Running())
+        {
+            try { channel.Notify("start.exit"); } catch (...) {}
+            const auto deadline = GetTickCount64() + 250;
+            while (process.Running() && GetTickCount64() < deadline) Sleep(5);
+        }
+        process.Stop(); channel.Close();
+    }
     HRESULT Start(bool& visible)
     {
         if (FAILED(apartment.result)) return apartment.result;
@@ -43,7 +53,7 @@ struct LauncherClient
             process.Start(channel, start_menu::kHelperCommand);
             return State(visible, 1500);
         }
-        catch (...) { return HRESULT_FROM_WIN32(ERROR_PROCESS_ABORTED); }
+        catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_PROCESS_ABORTED); }
     }
     HRESULT State(bool& visible, DWORD timeout = 500)
     {
@@ -53,12 +63,12 @@ struct LauncherClient
             visible = state.second;
             return state.first;
         }
-        catch (...) { return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+        catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
     }
     HRESULT Dismiss()
     {
         try { return channel.CallWithTimeout<LONG>(500, "start.dismiss"); }
-        catch (...) { return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+        catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
     }
 };
 }
@@ -96,6 +106,7 @@ std::optional<int> start_menu::TryRunLauncherHelper()
             const HRESULT result = initialize();
             return FAILED(result) ? result : launcher.Dismiss();
         });
+        channel.Bind<void>("start.exit", [] { PostQuitMessage(0); });
         channel.SetDisconnected([] { PostQuitMessage(0); });
         MSG message{};
         while (GetTickCount64() - touched < 30000)
@@ -146,7 +157,7 @@ struct NativeStartMenu::Impl
         using namespace start_menu;
         const runtime_modules::Activity activity{runtime_modules::Module::StartMenu};
         HWND window = nullptr;
-        bool invoked = false, attempted = false, protection = false;
+        bool invoked = false, attempted = false, protection = false, closingExisting = false;
         const ULONGLONG started = GetTickCount64();
         unsigned protectionAttempts = 0;
         DWORD failure = ERROR_SUCCESS;
@@ -155,8 +166,7 @@ struct NativeStartMenu::Impl
         try
         {
             LauncherClient launcher;
-            bool closingExisting = false;
-            const HRESULT connected = launcher.Start(closingExisting);
+            const HRESULT connected = stop.stop_requested() ? E_ABORT : launcher.Start(closingExisting);
             if (FAILED(connected)) failure = static_cast<DWORD>(connected);
             else if (!stop.stop_requested())
             {
@@ -169,12 +179,15 @@ struct NativeStartMenu::Impl
                     if (protection || GetTickCount64() - started >= 750) break;
                 } while (Pause(stop, 75));
                 if (!protection && !stop.stop_requested()) failure = ERROR_NOT_READY;
-                if (protection && !stop.stop_requested() && !close.Requested())
+                if (protection && !stop.stop_requested() &&
+                    ShouldDispatchInitial(closingExisting, close.Requested()))
                 {
                     attempted = true;
+                    if (closingExisting) close.Request(GetTickCount64());
                     const HRESULT dispatched = closingExisting ? launcher.Dismiss() :
                         NativeStartMenu::Toggle() ? S_OK : E_ACCESSDENIED;
                     invoked = SUCCEEDED(dispatched);
+                    if (invoked && closingExisting) close.Dispatched(GetTickCount64());
                     if (!invoked) failure = static_cast<DWORD>(dispatched);
                     else
                     {
@@ -198,6 +211,7 @@ struct NativeStartMenu::Impl
                             if (!closingExisting && close.Take(visible))
                             {
                                 const HRESULT dismissed = launcher.Dismiss();
+                                if (SUCCEEDED(dismissed)) close.Dispatched(GetTickCount64());
                                 if (FAILED(dismissed))
                                 { failure = static_cast<DWORD>(dismissed); healthy = false; }
                                 WriteDiagnosticLogEntry(SUCCEEDED(dismissed) ?
@@ -237,7 +251,7 @@ struct NativeStartMenu::Impl
         }
         catch (...) {} // The lease also expires if a cleanup boundary fails.
         invocation.Complete(!attempted && !stop.stop_requested(),
-            !stop.stop_requested() && (!attempted || result == Dismissal::Closed));
+            !stop.stop_requested() && ((!attempted && !closingExisting) || result == Dismissal::Closed));
     }
 };
 

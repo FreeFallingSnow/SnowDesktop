@@ -1436,6 +1436,19 @@ void TestGenieDestinationPixelCoverage()
 
 void TestDeactivateRules()
 {
+    rules::OutsidePress openFromHeldButton(1);
+    Check(!openFromHeldButton.Observe(1, false, false) &&
+            !openFromHeldButton.Observe(0, false, false),
+        "the search opener's held button and release cannot dismiss its own panel");
+    Check(openFromHeldButton.Observe(1, false, false),
+        "an outside application press dismisses search even when it never acquired activation");
+    Check(!openFromHeldButton.Observe(1, false, false), "a held outside button is not another press");
+    rules::OutsidePress idle(0);
+    Check(!idle.Observe(1, true, false), "clicking search content keeps it open");
+    idle.Observe(0, false, false);
+    Check(!idle.Observe(1, false, true), "source buttons, editing menus and active drags retain their input route");
+    idle.Observe(0, false, false);
+    Check(idle.Observe(2, false, false), "a later outside right-button press dismisses an unfocused panel");
     Check(!rules::ShouldCloseOnDeactivate(
             true),
         "an owned context menu must keep quick navigation open");

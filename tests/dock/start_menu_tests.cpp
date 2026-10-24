@@ -15,8 +15,8 @@ struct LauncherFixture final : snowdesktop::start_menu::LauncherCurrent,
 {
     ULONG references = 1;
     bool current = true, legacy = true, visible = true;
-    HRESULT currentError = S_OK, visibilityError = S_OK;
-    unsigned currentQueries = 0, legacyQueries = 0, shows = 0, closes = 0;
+    HRESULT currentError = S_OK, visibilityError = S_OK, syncError = S_OK;
+    unsigned currentQueries = 0, legacyQueries = 0, shows = 0, closes = 0, syncCloses = 0;
     int closeMethod = 0;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override
     {
@@ -53,7 +53,12 @@ struct LauncherFixture final : snowdesktop::start_menu::LauncherCurrent,
     HRESULT STDMETHODCALLTYPE IsVisible(BOOL* value) override
     { *value = visible ? TRUE : FALSE; return visibilityError; }
     HRESULT STDMETHODCALLTYPE ReservedDismiss2(int) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE ReservedDismissSync() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE DismissWithoutTransition() override
+    {
+        ++syncCloses;
+        if (FAILED(syncError)) return syncError;
+        ++closes; closeMethod = 0; visible = false; return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE Reserved2() override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE Reserved3() override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE Reserved4() override { return E_NOTIMPL; }
@@ -88,6 +93,14 @@ int RunDockStartMenuTests()
     check(!close.Expired(2499) && close.Expired(2500), "a close that never completes has a bounded deadline");
     close.Reset(); close.Request(100);
     check(close.Take(true), "a nonactivating click dispatches native dismissal immediately");
+    close.Dispatched(1000);
+    check(!close.Expired(2499) && close.Expired(2500),
+        "a slow initial handshake leaves a bounded observation window after actual native dispatch");
+    close.Dispatched(1500);
+    check(close.Expired(2500), "repeat clicks cannot extend the close deadline after dispatch");
+    check(ShouldDispatchInitial(true, true) && ShouldDispatchInitial(true, false) &&
+            ShouldDispatchInitial(false, false) && !ShouldDispatchInitial(false, true),
+        "cancelling a pending open suppresses new input but still dismisses a pre-existing native menu");
 
     {
         LauncherFixture server;
@@ -98,7 +111,7 @@ int RunDockStartMenuTests()
         check(launcher.Visible(visible) == S_OK && visible, "Shell visibility is read from the native launcher");
         close.Reset(); close.Request(1);
         if (close.Take(visible)) check(launcher.Dismiss() == S_OK, "owned-area dismissal reaches the native COM close method");
-        check(server.closes == 1 && server.shows == 0 && server.closeMethod == 4 &&
+        check(server.closes == 1 && server.shows == 0 && server.syncCloses == 1 &&
                 launcher.Visible(visible) == S_OK && !visible,
             "second click closes Start without opening anything or requiring its process to own foreground");
         check(launcher.Dismiss() == S_OK && !server.visible && server.shows == 0,
@@ -111,8 +124,15 @@ int RunDockStartMenuTests()
         LauncherFixture server; server.current = false;
         Launcher launcher;
         check(launcher.Bind(&server) == S_OK && server.currentQueries == 1 && server.legacyQueries == 1 &&
-                launcher.Dismiss() == S_OK && server.closes == 1 && server.shows == 0,
-            "early Win10 falls back to the legacy Dismiss slot, never a toggle");
+                launcher.Dismiss() == S_OK && server.closes == 1 && server.closeMethod == 7 && server.shows == 0,
+            "early Win10 uses legacy one-way nonanimating dismissal, never a toggle");
+    }
+    {
+        LauncherFixture server; server.syncError = E_NOTIMPL;
+        Launcher launcher;
+        check(launcher.Bind(&server) == S_OK && launcher.Dismiss() == S_OK &&
+                server.syncCloses == 1 && server.closes == 1 && server.closeMethod == 7 && server.shows == 0,
+            "an unavailable synchronous method falls back only to one-way nonanimating dismissal");
     }
     {
         LauncherFixture server; server.currentError = E_ACCESSDENIED;

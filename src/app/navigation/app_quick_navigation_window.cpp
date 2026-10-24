@@ -4,6 +4,17 @@
 #include "navigation/quick_navigation_rules.h"
 #include "platform/shell_overlay_window.h"
 
+namespace
+{
+constexpr wchar_t kQuickNavigationOutsidePress[] = L"SnowDesktop.Navigation.OutsidePress";
+unsigned NavigationPointerButtons()
+{
+    return ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+        ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+        ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+}
+}
+
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
     if (quickNavigationAnimationCompletionToken_)
@@ -74,6 +85,7 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
+    if (quickNavigationHwnd_) RemovePropW(quickNavigationHwnd_, kQuickNavigationOutsidePress);
     CancelQuickNavigationTabHover();
     quickNavigationHasLastEditAnimationFrame_ = false;
     quickNavBackdropCompositor_.Reset();
@@ -971,6 +983,42 @@ void DesktopApp::OpenQuickNavigation(
             OpenQuickNavigation(source);
         })) return;
 
+    const auto watchOutside = [this] {
+        const HWND target = quickNavigationHwnd_;
+        if (!target || !IsWindow(target)) return;
+        auto press = std::make_shared<snowdesktop::quick_navigation_rules::OutsidePress>(NavigationPointerButtons());
+        if (!SetPropW(target, kQuickNavigationOutsidePress, press.get())) return;
+        const auto watch = uiAnimationScheduler_.ScheduleInterval(16, [this, target, press](auto token) {
+            if (!quickNavigationOpen_ || target != quickNavigationHwnd_ || !IsWindow(target) ||
+                GetPropW(target, kQuickNavigationOutsidePress) != press.get())
+            {
+                uiAnimationScheduler_.Cancel(token);
+                return;
+            }
+            POINT screen{};
+            if (!GetCursorPos(&screen)) return;
+            const POINT point{screen.x - virtualLeft_, screen.y - virtualTop_};
+            const auto* dock = GetDockContainerAtPoint(point);
+            const HWND foreground = GetForegroundWindow();
+            // Activated search keeps its normal deactivation/IME/menu route.
+            // This supplement is for a popup whose activation request failed.
+            const bool searchForeground = foreground && (foreground == target ||
+                foreground == quickNavigationSearchEdit_ || IsChild(target, foreground));
+            const bool retained = searchForeground || (dock && dock->ContainsInteractivePoint(point)) ||
+                (statusBar_ && statusBar_->ContainsPoint(screen)) || HasActiveContextMenuSession() ||
+                dragSession_.IsActive() || dragDropController_.IsTransportActive() ||
+                snowdesktop::text_input::HasEditingMenu(quickNavigationSearchEdit_) ||
+                (renameController_.IsQuickNavigationPresentation() &&
+                    snowdesktop::text_input::HasEditingMenu(renameInputWindow_));
+            if (!press->Observe(NavigationPointerButtons(), PtInRect(&quickNavigationRect_, point) != FALSE, retained)) return;
+            if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
+                CancelStatusBarActivation(statusBarActivationMonitor_);
+            CloseQuickNavigation(false);
+            uiAnimationScheduler_.Cancel(token);
+        });
+        if (!watch) RemovePropW(target, kQuickNavigationOutsidePress);
+    };
+
     POINT requestedOpenPoint = lastMousePoint_;
     POINT requestedAnchorPoint = requestedOpenPoint;
     RECT requestedDockRect{};
@@ -1153,6 +1201,7 @@ void DesktopApp::OpenQuickNavigation(
                 quickNavigationHwnd_, true,
                 L"Quick navigation window", true);
         }
+        watchOutside();
         ApplyFloatingDockLayerPolicy();
         return;
     }
@@ -1257,6 +1306,7 @@ void DesktopApp::OpenQuickNavigation(
             quickNavigationHwnd_, true,
             L"Quick navigation window", true);
     }
+    watchOutside();
     ApplyFloatingDockLayerPolicy();
 }
 
@@ -1265,6 +1315,11 @@ void DesktopApp::OpenQuickNavigation(
  */
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
+    if (quickNavigationHwnd_) RemovePropW(quickNavigationHwnd_, kQuickNavigationOutsidePress);
+    const HWND captured = GetCapture();
+    if (captured && (captured == quickNavigationHwnd_ || captured == quickNavigationSearchEdit_ ||
+        (renameController_.IsQuickNavigationPresentation() && captured == renameInputWindow_)))
+        ReleaseCapturePreservingPointerState();
     CancelQuickNavigationTabHover();
     if (!quickNavigationOpen_) return;
     if (!quickNavigationPostCloseAction_)

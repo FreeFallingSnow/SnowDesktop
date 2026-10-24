@@ -22,7 +22,7 @@ MIDL_INTERFACE("d8d60399-a0f1-f987-5551-321fd1b49864") LauncherCurrent : IUnknow
     virtual HRESULT STDMETHODCALLTYPE ReservedShow(int, int) = 0;
     virtual HRESULT STDMETHODCALLTYPE Dismiss(int method) = 0;
     virtual HRESULT STDMETHODCALLTYPE ReservedDismiss2(int) = 0;
-    virtual HRESULT STDMETHODCALLTYPE ReservedDismissSync() = 0;
+    virtual HRESULT STDMETHODCALLTYPE DismissWithoutTransition() = 0;
     virtual HRESULT STDMETHODCALLTYPE IsVisible(BOOL*) = 0;
 };
 MIDL_INTERFACE("93f91f5a-a4ca-4205-9beb-ce4d17c708f9") LauncherLegacy : IUnknown
@@ -59,9 +59,14 @@ public:
     }
     HRESULT Dismiss()
     {
-        // ILDM_ESCAPEKEY. Unlike a Win key, this never opens a closed menu
-        // and does not depend on which process currently owns foreground.
-        return current_ ? current_->Dismiss(4) : legacy_ ? legacy_->Dismiss(4) : E_NOINTERFACE;
+        // Finish the input/focus handoff before the replacement popup opens.
+        // ILDM_GENERIC_NONANIMATING is the legacy one-way fallback.
+        if (current_)
+        {
+            const HRESULT result = current_->DismissWithoutTransition();
+            return result == E_NOTIMPL ? current_->Dismiss(7) : result;
+        }
+        return legacy_ ? legacy_->Dismiss(7) : E_NOINTERFACE;
     }
 private:
     Microsoft::WRL::ComPtr<LauncherCurrent> current_;
