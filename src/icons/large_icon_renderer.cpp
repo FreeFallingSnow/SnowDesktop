@@ -18,6 +18,41 @@ namespace
 D2D1_RECT_F Rect(RECT r)
 { return D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right), static_cast<float>(r.bottom)); }
 
+void PrepareTitle(TitleResources& cached, IDWriteFactory* fonts, const LargeIconConfig& c,
+    const View& view, D2D1_SIZE_F source)
+{
+    const TitleResources::Key key{static_cast<double>(view.frame.right - view.frame.left),
+        static_cast<double>(view.frame.bottom - view.frame.top), source.width, source.height,
+        view.scale, c.contentScale, c.revealTitleSize, c.titleWeight, c.titleDirection,
+        c.autoTitleDirection, view.original};
+    const auto revision = app_fonts::revision.load();
+    if (cached.valid && cached.factory.Get() == fonts && cached.fontRevision == revision &&
+        cached.key == key && cached.name == view.name) return;
+    cached = {};
+    cached.key = key; cached.factory = fonts; cached.fontRevision = revision; cached.name = view.name;
+    const auto measure = large_icon_render_rules::MeasureTitleText(fonts, c, view.name, view.scale);
+    cached.closed = large_icon_render_rules::ResolveContent(c, key.width, key.height,
+        source.width, source.height, view.scale, view.original, 0, measure);
+    cached.open = large_icon_render_rules::ResolveContent(c, key.width, key.height,
+        source.width, source.height, view.scale, view.original, 1, measure);
+    if (!fonts || view.name.empty() || (!cached.open.leftReveal && !cached.open.upReveal))
+    { cached.valid = true; return; }
+    const float size = static_cast<float>(c.revealTitleSize) * view.scale;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(app_fonts::CreateTextFormat(fonts, L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 1.3f, size);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    ComPtr<IDWriteInlineObject> ellipsis;
+    fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
+    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    format->SetTrimming(&trimming, ellipsis.Get());
+    cached.valid = SUCCEEDED(fonts->CreateTextLayout(view.name.data(), static_cast<UINT32>(view.name.size()),
+        format.Get(), static_cast<float>(cached.open.titleWidth), static_cast<float>(cached.open.titleHeight), &cached.layout));
+}
+
 void DrawShine(ID2D1RenderTarget* target, const LargeIconConfig& c, const View& view,
     const D2D1_RECT_F& image, const D2D1_RECT_F& source)
 {
@@ -172,9 +207,19 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
 
     if (c.shape <= 1) push();
     const auto sourceSize = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
-    const auto geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
-        sourceSize.width, sourceSize.height, view.scale, view.original, c.effect == 3 && !view.animations ? 0 : view.hover,
-        c.effect == 2 ? large_icon_render_rules::MeasureTitleText(fonts, c, view.name, view.scale) : large_icon_render_rules::MeasureTitle{});
+    TitleResources temporaryTitle;
+    auto& title = view.titleResources ? *view.titleResources : temporaryTitle;
+    large_icon_render_rules::ContentGeometry geometry;
+    if (c.effect == 2 && !fill)
+    {
+        PrepareTitle(title, fonts, c, view, sourceSize);
+        geometry = title.open;
+        const double progress = std::clamp<double>(view.hover, 0, 1);
+        geometry.x = title.closed.x + (title.open.x - title.closed.x) * progress;
+        geometry.y = title.closed.y + (title.open.y - title.closed.y) * progress;
+    }
+    else geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
+        sourceSize.width, sourceSize.height, view.scale, view.original, c.effect == 3 && !view.animations ? 0 : view.hover);
     const auto image = D2D1::RectF(frame.left + static_cast<float>(geometry.x), frame.top + static_cast<float>(geometry.y),
         frame.left + static_cast<float>(geometry.x + geometry.width), frame.top + static_cast<float>(geometry.y + geometry.height));
     const auto source = D2D1::RectF(static_cast<float>(geometry.sourceX), static_cast<float>(geometry.sourceY),
@@ -193,32 +238,18 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         view.placeholder(target, {static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
             static_cast<LONG>(std::lround(image.right)), static_cast<LONG>(std::lround(image.bottom))}, view.opacity);
 
-    if (fonts && !view.name.empty() && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
+    if (title.layout && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
     {
-        const float size = static_cast<float>(c.revealTitleSize) * view.scale;
-        ComPtr<IDWriteTextFormat> format;
-        snowdesktop::app_fonts::CreateTextFormat(fonts, L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
         const unsigned textColor = large_icon_render_rules::TextColor(c,
             fill ? view.neutral : background.color, view.componentForeground);
         ComPtr<ID2D1SolidColorBrush> brush;
         target->CreateSolidColorBrush(D2D1::ColorF(textColor, view.hover * view.opacity), &brush);
-        if (format && brush)
+        if (brush)
         {
-            format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-            format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 1.3f, size);
-            format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            ComPtr<IDWriteInlineObject> ellipsis;
-            fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
-            const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            format->SetTrimming(&trimming, ellipsis.Get());
             const float slide = view.animations ? (1 - view.hover) * 6 * view.scale : 0;
             const float x = frame.left + static_cast<float>(geometry.titleLeft) + (geometry.leftReveal ? slide : 0);
             const float y = frame.top + static_cast<float>(geometry.titleTop) + (geometry.upReveal ? slide : 0);
-            target->DrawText(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(),
-                D2D1::RectF(x, y, x + static_cast<float>(geometry.titleWidth),
-                    y + static_cast<float>(geometry.titleHeight)), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            target->DrawTextLayout(D2D1::Point2F(x, y), title.layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
     DrawEdgeGlow(target, c, view, frame, radius);

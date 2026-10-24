@@ -667,6 +667,11 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     view.componentForeground = appearance.contentTheme == 1 ? 0x161616 : 0xffffff;
     const bool fill = snowdesktop::IsLargeIconFill(config);
     auto& runtime = largeIconRuntime_[item.layoutKey];
+    if (config.effect == 2 && !fill)
+    {
+        if (!runtime.cardResources) runtime.cardResources = std::make_shared<snowdesktop::large_icon_renderer::CardResources>();
+        view.titleResources = &runtime.cardResources->title;
+    }
     if (state != 3)
     {
         if (fill || !appearance.glassEnabled)
@@ -714,6 +719,6 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
             return;
         }
     }
-    else runtime.cardResources.reset();
+    else if (!view.titleResources) runtime.cardResources.reset();
     snowdesktop::large_icon_renderer::DrawFrame(context, dwriteFactory_.Get(), config, view);
 }

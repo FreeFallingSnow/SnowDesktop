@@ -196,15 +196,38 @@ int main(int argc, char** argv)
     motion.Advance(1071, true, true, true, 1, config);
     Check(motion.hover == 0, "title never appears before its delay");
     motion.Advance(1132, true, true, true, 1, config);
-    Check(std::abs(motion.hover - .5f) < .0001, "title reaches transition midpoint");
+    Check(motion.hover > .9f && motion.hover < 1,
+        "title covers most travel in the first half like the popup opening curve");
+    const float openingPose = motion.hover;
+    const double openingVelocity = motion.titleMotion.velocity;
     motion.Advance(1132, false, true, true, 1, config);
-    Check(std::abs(motion.hover - .5f) < .0001, "rapid exit preserves current pose");
+    Check(motion.hover == openingPose && std::abs(motion.titleMotion.velocity - openingVelocity) < .0001,
+        "rapid exit preserves current pose and velocity without restarting ease-in");
     motion.Advance(1180, false, true, true, 1, config);
-    Check(std::abs(motion.hover - .25f) < .0001, "exit uses independent duration");
+    Check(motion.hover > .2f && motion.hover < .6f, "exit retains meaningful travel through its independent duration");
     motion.Advance(1180, true, true, true, 1, config);
     Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled title stops animation frames");
     Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately reset");
     Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced motion shows inner title instantly");
+    Check(!motion.Advance(1502, true, true, true, 1, config) && motion.hover == 1,
+        "reenabling motion preserves a previously settled title");
+    {
+        snowdesktop::LargeIconMotion cancelled;
+        cancelled.Advance(1000, true, true, true, 1, config);
+        Check(!cancelled.Advance(1020, false, true, true, 1, config) && cancelled.hover == 0,
+            "leaving during the delay cancels the pending title without a ghost transition");
+        auto instant = config; instant.delayMs = 0;
+        Check(!cancelled.Advance(1100, true, true, true, 0, instant) && cancelled.hover == 1,
+            "zero duration resolves directly to the requested title pose");
+        snowdesktop::LargeIconMotion delayedInstant;
+        auto zeroEnter = config; zeroEnter.enterMs = 0;
+        Check(delayedInstant.Advance(2000, true, true, true, 1, zeroEnter) && delayedInstant.hover == 0,
+            "zero enter duration does not bypass the independent hover delay");
+        delayedInstant.Advance(2071, true, true, true, 1, zeroEnter);
+        Check(delayedInstant.hover == 0, "instant title remains hidden before the hover deadline");
+        Check(!delayedInstant.Advance(2072, true, true, true, 1, zeroEnter) && delayedInstant.hover == 1,
+            "instant title publishes its endpoint exactly at the hover deadline");
+    }
     {
         snowdesktop::LargeIconMotion menuMotion;
         Check(!menuMotion.Advance(100, false, true, true, 1, config, true) && menuMotion.hover == 1,

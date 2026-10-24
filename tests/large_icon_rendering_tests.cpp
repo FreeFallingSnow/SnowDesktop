@@ -5,6 +5,7 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "ui/preview/preview_png_writer.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "ui/render/app_font.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>
@@ -712,6 +713,46 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(bounds.top > 115 && bounds.top < 150 && bounds.bottom - bounds.top == 64, "automatic up reveal centers a compact vertical icon-text stack");
         Check(Visible(pixels, {152, 200, 308, 242}) > 50, "up reveal places title close beneath the image");
         Save(outputDirectory, "04-up-title.png", pixels);
+
+        // Exercise the production cache while animation changes only position
+        // and opacity. Layout inputs must invalidate it without stale glyphs.
+        {
+            snowdesktop::large_icon_renderer::TitleResources cache;
+            auto cachedView = view;
+            auto cachedConfig = config;
+            cachedView.titleResources = &cache;
+            (void)canvas.Draw(cachedConfig, cachedView);
+            const auto firstLayout = cache.layout;
+            Check(firstLayout != nullptr, "title cache contains an actual DirectWrite layout");
+            for (const float progress : {.1f, .5f, .95f, 1.f})
+            {
+                cachedView.hover = progress;
+                const auto retainedPixels = canvas.Draw(cachedConfig, cachedView);
+                auto freshView = cachedView; freshView.titleResources = nullptr;
+                Check(retainedPixels == canvas.Draw(cachedConfig, freshView),
+                    "cached animated title matches fresh layout pixels");
+                Check(cache.layout == firstLayout, "animation frames reuse the retained text layout");
+            }
+            const auto compareFresh = [&] {
+                const auto retainedPixels = canvas.Draw(cachedConfig, cachedView);
+                auto freshView = cachedView; freshView.titleResources = nullptr;
+                Check(retainedPixels == canvas.Draw(cachedConfig, freshView),
+                    "changed title inputs invalidate cached geometry and glyphs");
+            };
+            cachedView.name = L"A different title that needs wrapping"; compareFresh();
+            cachedConfig.revealTitleSize = 18; cachedConfig.titleWeight = 900; compareFresh();
+            cachedView.frame = {40, 75, 440, 255}; cachedView.scale = 1.25f; compareFresh();
+            cachedConfig.autoTitleDirection = false; cachedConfig.titleDirection = 0;
+            cachedConfig.contentScale = .4; compareFresh();
+            cachedView.original = false; compareFresh();
+            auto replacement = canvas.Image(96, 48);
+            cachedView.bitmap = replacement.Get(); compareFresh();
+            const auto previousFontLayout = cache.layout;
+            snowdesktop::app_fonts::revision.fetch_add(1);
+            compareFresh();
+            Check(cache.layout && cache.layout != previousFontLayout,
+                "font selection revision rebuilds the retained title layout");
+        }
 
         config = {}; config.backgroundStyle = -2; config.radius = 32;
         view = {}; view.frame = {100, 60, 300, 260};

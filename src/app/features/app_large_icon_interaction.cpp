@@ -187,6 +187,9 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
 
 void DesktopApp::UpdateLargeIconHover()
 {
+    // An active track owns its clock. Sampling it from WM_PAINT would make
+    // unrelated partial paints consume its last pose and completion token.
+    if (compositionPaintInProgress_ && largeIconAnimationToken_) return;
     if (!CanEditLargeIcons())
     {
         CancelLargeIconGesture();
@@ -208,6 +211,9 @@ void DesktopApp::UpdateLargeIconHover()
         const auto& item = items_[index];
         const auto& config = EffectiveLargeIconConfig(item);
         auto& state = it->second;
+        const float previousHover = state.motion.hover, previousShine = state.motion.shine;
+        const float previousTiltX = state.motion.tiltX, previousTiltY = state.motion.tiltY;
+        const int previousEffect = state.motion.activeEffect;
         const auto frame = GetLargeIconFrameRect(item);
         const bool visible = IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_);
         if (state.visible != visible)
@@ -233,6 +239,18 @@ void DesktopApp::UpdateLargeIconHover()
             2 * (lastMousePoint_.y - frame.top) / height - 1, PtInRect(&frame, lastMousePoint_) != FALSE,
             visible && interactive && pointerInteractive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
+        if (!compositionPaintInProgress_ && (previousHover != state.motion.hover || previousShine != state.motion.shine ||
+            previousTiltX != state.motion.tiltX || previousTiltY != state.motion.tiltY))
+        {
+            // Dynamic titles stay clipped inside the fixed card. Keep the
+            // existing full path for effects with transformed extents.
+            if (config.effect == 2 && previousEffect == 2)
+            {
+                RECT dirty = frame; InflateRect(&dirty, 8, 8);
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            }
+            else InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         ++it;
     }
     if (!moving && largeIconAnimationToken_)
@@ -243,11 +261,7 @@ void DesktopApp::UpdateLargeIconHover()
     if (moving && !largeIconAnimationToken_)
         largeIconAnimationToken_ = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::Desktop,
             [this](double) {
-                // Clear before recomputing so the update can schedule the next
-                // finite transition; no animation survives a settled frame.
-                largeIconAnimationToken_ = 0;
                 UpdateLargeIconHover();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return false;
+                return largeIconAnimationToken_ != 0;
             });
 }

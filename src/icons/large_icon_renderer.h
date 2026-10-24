@@ -5,11 +5,31 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <functional>
+#include <cstdint>
+#include <string>
 #include <string_view>
 #include <wrl/client.h>
 
 namespace snowdesktop::large_icon_renderer
 {
+struct TitleResources
+{
+    struct Key
+    {
+        double width = 0, height = 0, sourceWidth = 0, sourceHeight = 0;
+        double scale = 0, contentScale = 0, size = 0;
+        int weight = 0, direction = 0;
+        bool automatic = false, original = false;
+        bool operator==(const Key&) const = default;
+    } key;
+    Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+    std::uint64_t fontRevision = 0;
+    std::wstring name;
+    large_icon_render_rules::ContentGeometry closed, open;
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    bool valid = false;
+};
+
 struct View
 {
     RECT frame{};
@@ -22,6 +42,7 @@ struct View
     std::function<void(ID2D1RenderTarget*, RECT, float, float)> drawBackground;
     std::wstring_view name;
     ID2D1Bitmap* bitmap = nullptr;
+    TitleResources* titleResources = nullptr;
     std::function<void(ID2D1RenderTarget*, RECT, float)> placeholder;
 };
 
@@ -29,6 +50,7 @@ struct CardResources
 {
     Microsoft::WRL::ComPtr<ID2D1Device> device;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> recorder;
+    TitleResources title;
 };
 
 // These are the production desktop draw paths, also usable with a WIC render
