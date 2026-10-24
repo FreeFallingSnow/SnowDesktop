@@ -160,17 +160,35 @@
         auto retainedRoot = WidgetDragBitmap(app), complete = WidgetDragBitmap(app);
         (void)WidgetDragRaster(app, retainedRoot.Get(), -1);
         std::vector<std::vector<std::uint32_t>> retained;
+        std::vector<RECT> initialFrames;
         for (size_t i = 0; i < app.widgets_.size(); ++i)
         {
             require(app.QueueDesktopWidgetComposition(app.widgets_[i].id), "initialize actual child drag surface");
+            initialFrames.push_back(app.desktopWidgetCompositionItems_.at(app.widgets_[i].id).bounds);
             retained.push_back(WidgetDragRaster(app, complete.Get(), static_cast<int>(i)));
         }
+        const auto presentWithoutWindow = [&] {
+            app.dragSession_.SetVisualVisible(true);
+            app.PresentPointerInteractionFrame(true);
+            app.dragSession_.SetVisualVisible(false);
+        };
+        observation.drawn.clear(); observation.dirty.clear();
         observation.full = observation.sync = 0;
-        app.dragSession_.SetVisualVisible(true);
-        app.PresentPointerInteractionFrame(true);
-        app.dragSession_.SetVisualVisible(false);
+        app.OnMouseMoveAt(MK_LBUTTON, {190, 120});
+        require(observation.full > 0 && observation.drawn.empty(),
+            "first drag move retains full root migration before any new child draw");
+        presentWithoutWindow();
         require(observation.full > 0 && observation.sync > 0,
             "first feedback retains full migration and synchronous root presentation");
+        app.OnMouseMoveAt(MK_LBUTTON, {100, 120}); presentWithoutWindow();
+        observation.drawn.clear(); observation.dirty.clear(); observation.full = 0;
+        app.desktopBackdropFullCollectionPending_ = true;
+        app.OnMouseMoveAt(MK_LBUTTON, {190, 120});
+        require(observation.full > 0 && observation.drawn.empty(),
+            "pending complete backdrop collection stays in the full root transaction");
+        presentWithoutWindow();
+        app.desktopBackdropFullCollectionPending_ = false;
+        app.OnMouseMoveAt(MK_LBUTTON, {100, 120}); presentWithoutWindow();
         bool detectsMissingOldWidget = false, detectsMissingIconDamage = false;
         unsigned savedUnrelatedDraws = 0, synchronousFrames = 0, legacyUnrelatedDraws = 0;
         auto* guide = dynamic_cast<WidgetContainer*>(app.containers_.at(1).get());
@@ -183,8 +201,9 @@
                   button.right = std::max(button.right, x + 1); button.bottom = std::max(button.bottom, y + 1); }
         require(!IsRectEmpty(&button), "matrix includes a real native button rather than a guessed coordinate");
         const POINT buttonPoint{(button.left + button.right) / 2, (button.top + button.bottom) / 2};
+        const POINT outsideButtonOwner{initialFrames[0].right + 10, buttonPoint.y};
         const POINT points[] = {{160, 120}, {190, 120}, {210, 120}, {220, 150}, buttonPoint,
-            {380, 260}, {420, 280}, {510, 120}, {520, 130}, {710, 120}, {160, 120}};
+            outsideButtonOwner, {380, 260}, {510, 120}, {520, 130}, {710, 120}, {160, 120}};
         for (const POINT point : points)
         {
             const POINT old = app.lastMousePoint_;
@@ -207,9 +226,7 @@
                     !app.desktopWidgetHoverTailToken_, "old/new child draws commit together before pressed move returns without timer delay");
                 ++synchronousFrames;
             }
-            app.dragSession_.SetVisualVisible(true);
-            app.PresentPointerInteractionFrame(true);
-            app.dragSession_.SetVisualVisible(false);
+            presentWithoutWindow();
             require(observation.full == 0 && !app.desktopWidgetCompositionFailurePending_,
                 "subsequent desktop target feedback preserves the immediate foreground route");
             require(!app.desktopBackdropFullCollectionPending_, "local pointer work preserves backdrop owner collection scope");
@@ -230,12 +247,13 @@
                 if (count)
                 {
                     const auto& surface = app.desktopWidgetCompositionItems_.at(id);
-                    require(surface.surface && surface.visible && EqualRect(&surface.bounds, &frames[i]) &&
+                    require(surface.surface && surface.visible && EqualRect(&surface.bounds, &initialFrames[i]) &&
                         !app.desktopWidgetCompositionFailurePending_, "observed actual DComp draw completed with unchanged geometry");
-                    if (PtInRect(&frames[i], old) && !PtInRect(&frames[i], point) && retained[i] != expected)
+                    if (PtInRect(&initialFrames[i], old) && !PtInRect(&initialFrames[i], point) && retained[i] != expected)
                         detectsMissingOldWidget = true;
                     retained[i] = expected;
                 }
+                require(EqualRect(&app.widgets_[i].bounds, &frames[i]), "pointer hover preserves the independent logical model bounds");
                 require(retained[i] == expected, "retained widget pixels equal complete chrome/content reference after old/new hover changes");
                 if (i == 3) { require(count == 0, "unrelated component never redraws during this gesture"); ++savedUnrelatedDraws; }
             }
