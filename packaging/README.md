@@ -79,6 +79,22 @@ scripts\release.bat steam-upload-public -Yes `
 
 ## SteamPipe 分支发布
 
+从冻结源码或保存的候选运行文件生成 Steam 包时，使用 `package_steam.ps1 -SkipBuild`
+并显式指定原仓库的 `-ArtifactRepositoryRoot`；可用 `-BuildOutputDirectory` 指向对应
+构建目录或保存的运行文件目录。版本、源码资产和 Steam 身份仍读取脚本所属的源码副本，
+载荷与 ZIP 则统一写入原仓库 `artifacts/vA.B.C.D/`。`-OutputDirectory` 只能选择该版本
+目录内的载荷暂存子目录，ZIP 与 `.sha256` 保留在同一个版本根目录。
+
+```powershell
+& '<冻结源码>\scripts\package_steam.ps1' -SkipBuild `
+  -BuildOutputDirectory '<候选运行文件目录>' `
+  -ArtifactRepositoryRoot 'D:\Code\Other\SnowDesktop' `
+  -OutputDirectory 'D:\Code\Other\SnowDesktop\artifacts\v1.0.12.0\steam-frozen'
+```
+
+冻结源码中省略发行根、输入输出目录重叠、输出越过版本目录或经过重解析点时，脚本在
+写入之前拒绝执行。普通检出中的 `scripts\release.bat package-steam` 用法不变。
+
 Steam App/Depot 身份保存在 `packaging\steam-identity.json`。SteamPipe 私有开发分支
 和公开发布分支都显式保存在 `packaging\steam-pipe.json`。私有分支必须先在 Steamworks
 后台创建并设置密码，而且仍会拒绝 `default`、`public`、`release`、`live` 等公开名称；

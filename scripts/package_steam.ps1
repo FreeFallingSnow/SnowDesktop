@@ -2,7 +2,9 @@
 param(
     [switch]$SkipBuild,
     [switch]$ReloadShell,
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [string]$BuildOutputDirectory = "",
+    [string]$ArtifactRepositoryRoot = ""
 )
 
 Set-StrictMode -Version Latest
@@ -40,9 +42,9 @@ function Get-TextSha256 {
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
-$buildOutput = Join-Path $repositoryRoot ".build\Release"
 $runtimeDirectory = "SnowDesktop.Runtime"
 Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
+Import-Module (Join-Path $scriptDirectory "steam_packaging_paths.psm1") -Force
 $steamIdentity = Get-Content -LiteralPath `
     (Join-Path $repositoryRoot "packaging\steam-identity.json") `
     -Encoding UTF8 -Raw | ConvertFrom-Json
@@ -57,20 +59,14 @@ $version = (Get-Content -LiteralPath `
 if ($version -notmatch "^[1-9][0-9]*\.[0-9]+\.[0-9]+\.0$") {
     throw "version.json must use Store-compatible A.B.C.0 format."
 }
-$versionRoot = Join-Path $repositoryRoot "artifacts\v$version"
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $versionRoot "steam"
-}
-$OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-$versionRootFull = [System.IO.Path]::GetFullPath($versionRoot).TrimEnd("\") + "\"
-if (-not $OutputDirectory.StartsWith(
-        $versionRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Steam artifacts must remain under artifacts\v$version\."
-}
-
-if ($SkipBuild -and $ReloadShell) {
-    throw "-ReloadShell cannot be combined with -SkipBuild."
-}
+$paths = Resolve-SnowDesktopSteamPackagingPaths `
+    -SourceRepositoryRoot $repositoryRoot -Version $version `
+    -BuildOutputDirectory $BuildOutputDirectory `
+    -ArtifactRepositoryRoot $ArtifactRepositoryRoot `
+    -OutputDirectory $OutputDirectory -SkipBuild:$SkipBuild -ReloadShell:$ReloadShell
+$buildOutput = $paths.buildOutput
+$versionRoot = $paths.versionRoot
+$OutputDirectory = $paths.outputDirectory
 if (-not $SkipBuild) {
     $buildCommand = "call `"$repositoryRoot\scripts\build.bat`""
     if ($ReloadShell) {
@@ -380,7 +376,7 @@ $manifest | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath (Join-Path $OutputDirectory "manifest.json") `
         -Encoding utf8
 
-$zip = Join-Path $versionRoot "SnowDesktop-Steam-x64-$version.zip"
+$zip = $paths.zip
 if (Test-Path -LiteralPath $zip) {
     Remove-Item -LiteralPath $zip -Force
 }
