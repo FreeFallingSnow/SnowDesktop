@@ -11,6 +11,7 @@
 #include "steam/steam_workshop_cache.h"
 #include "steam/steam_workshop_sync.h"
 #include "steam/steam_workshop_watch_thread.h"
+#include "widget/package_source_lookup_cases.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
 #include "workshop_upload_validation.h"
@@ -416,7 +417,7 @@ void TestPreviewCacheNotifications()
 
 void TestJson()
 {
-    JsonValue value;
+    snowdesktop::steam_bridge::JsonValue value;
     std::string error;
     Check(ParseJson("{\"中文\":\"雪\\n桌面\",\"n\":1,\"ok\":true}",
         value, error), "JSON parser accepts UTF-8 and escapes");
@@ -424,7 +425,7 @@ void TestJson()
         "JSON boolean helper reads a boolean");
     Check(JsonUnsigned(value, "n") == 1,
         "JSON unsigned helper reads an integer");
-    JsonValue duplicate;
+    snowdesktop::steam_bridge::JsonValue duplicate;
     Check(!ParseJson("{\"a\":1,\"a\":2}", duplicate, error),
         "JSON parser rejects duplicate keys");
     Check(!ParseJson("{\"n\":9007199254740992}", duplicate, error) ||
@@ -985,10 +986,10 @@ void TestProjectStore()
         const std::string legacyText(
             (std::istreambuf_iterator<char>(legacyInput)), {});
         legacyInput.close();
-        JsonValue legacyJson;
+        snowdesktop::steam_bridge::JsonValue legacyJson;
         Check(ParseJson(legacyText, legacyJson, error),
             "legacy migration fixture parses its project store");
-        legacyJson.object["schemaVersion"] = JsonValue::Number(1);
+        legacyJson.object["schemaVersion"] = snowdesktop::steam_bridge::JsonValue::Number(1);
         for (auto& entry : legacyJson.object["projects"].array)
             entry.object.erase("publishPreferences");
         std::ofstream(legacy.StorePath(),
@@ -1017,7 +1018,7 @@ void TestProjectStore()
         std::ifstream migratedInput(migrated.StorePath(), std::ios::binary);
         const std::string migratedText(
             (std::istreambuf_iterator<char>(migratedInput)), {});
-        JsonValue migratedJson;
+        snowdesktop::steam_bridge::JsonValue migratedJson;
         Check(ParseJson(migratedText, migratedJson, error) &&
                 JsonUnsigned(migratedJson, "schemaVersion") ==
                     kProjectStoreSchemaVersion,
@@ -2047,7 +2048,7 @@ std::uint64_t BundledAuthoringRevision(const std::filesystem::path& repositoryRo
 {
     std::ifstream file(repositoryRoot / L"widgets" / L"snowdesktop-lua-widget" / L"skill.json");
     const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    JsonValue manifest;
+    snowdesktop::steam_bridge::JsonValue manifest;
     std::string error;
     const bool valid = ParseJson(text, manifest, error) && JsonUnsigned(manifest, "revision") > 0;
     Check(valid, "bundled authoring manifest has a positive revision");
@@ -2121,7 +2122,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
                 static_cast<int>(capabilitiesBuffer.size()), capabilitiesPipe))
             capabilitiesText += capabilitiesBuffer.data();
         const int capabilitiesExit = _pclose(capabilitiesPipe);
-        JsonValue capabilities;
+        snowdesktop::steam_bridge::JsonValue capabilities;
         std::string capabilitiesError;
         Check(capabilitiesExit == 0 &&
             ParseJson(capabilitiesText, capabilities, capabilitiesError) &&
@@ -2216,6 +2217,8 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 
 int wmain(int argc, wchar_t** argv)
 {
+    try { package_source_lookup_cases::Run(); }
+    catch (const std::exception& error) { Check(false, error.what()); }
     TestSteamWorkshopWatchThreadShutdown(false);
     TestSteamWorkshopWatchThreadShutdown(true);
     TestJson();
