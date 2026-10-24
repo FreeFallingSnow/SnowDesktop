@@ -368,6 +368,9 @@ struct DesktopBackdropCompositor::Impl
         std::uintptr_t ownerKey = 0;
         float cornerRadius = 0;
         float regionCornerRadius = 0;
+        RECT synchronizedRegionFrame{};
+        float synchronizedRegionRadius = 0;
+        bool regionFenceSynchronized = false;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
@@ -535,6 +538,11 @@ struct DesktopBackdropCompositor::Impl
     bool visible = true;
     bool animationPathRegionExpanded = false;
     RECT occlusionRect{};
+    bool panelRegionSnapshotValid = false;
+    std::size_t synchronizedPanelCount = 0;
+    RECT synchronizedOcclusionRect{};
+    SIZE synchronizedWindowSize{};
+    UINT synchronizedWindowDpi = 0;
 
     void SetError(const wchar_t* stage, HRESULT hr)
     {
@@ -728,6 +736,56 @@ struct DesktopBackdropCompositor::Impl
             !IsWindow(backdropWindow))
             return false;
 
+        // The owned HWND fence depends on the final collection, not on the
+        // individual setters used while collecting it. In particular, a card
+        // can restore its ordinary pose and reapply the same projection in one
+        // frame. Compare exact physical-pixel inputs, without hash collisions
+        // or another per-frame snapshot allocation. Opacity and Composition
+        // clips deliberately retain the existing, conservative HWND semantics.
+        RECT windowFrame{};
+        const UINT windowDpi = GetDpiForWindow(backdropWindow);
+        const bool windowGeometryKnown = GetWindowRect(backdropWindow, &windowFrame) && windowDpi != 0;
+        const SIZE windowSize{windowFrame.right - windowFrame.left, windowFrame.bottom - windowFrame.top};
+        bool inputsMatch = panelRegionSnapshotValid && !animationPathRegionExpanded &&
+            windowGeometryKnown && synchronizedPanelCount == panels.size() &&
+            EqualRect(&synchronizedOcclusionRect, &occlusionRect) &&
+            synchronizedWindowSize.cx == windowSize.cx && synchronizedWindowSize.cy == windowSize.cy &&
+            synchronizedWindowDpi == windowDpi;
+        if (inputsMatch)
+        {
+            for (const auto& panel : panels)
+            {
+                if (!panel.regionFenceSynchronized ||
+                    !EqualRect(&panel.synchronizedRegionFrame, &panel.regionFrame) ||
+                    panel.synchronizedRegionRadius != panel.regionCornerRadius)
+                {
+                    inputsMatch = false;
+                    break;
+                }
+            }
+        }
+        if (inputsMatch)
+            return true;
+
+        // A failed allocation/combine/publication must remain retryable even
+        // when the next commit supplies exactly the same input geometry.
+        panelRegionSnapshotValid = false;
+        const auto rememberSynchronizedRegion = [&] {
+            animationPathRegionExpanded = false;
+            if (!windowGeometryKnown) return;
+            for (auto& panel : panels)
+            {
+                panel.synchronizedRegionFrame = panel.regionFrame;
+                panel.synchronizedRegionRadius = panel.regionCornerRadius;
+                panel.regionFenceSynchronized = true;
+            }
+            synchronizedPanelCount = panels.size();
+            synchronizedOcclusionRect = occlusionRect;
+            synchronizedWindowSize = windowSize;
+            synchronizedWindowDpi = windowDpi;
+            panelRegionSnapshotValid = true;
+        };
+
         HRGN panelRegion = CreateRectRgn(0, 0, 0, 0);
         if (!panelRegion)
             return false;
@@ -772,7 +830,7 @@ struct DesktopBackdropCompositor::Impl
         if (unchanged)
         {
             DeleteObject(panelRegion);
-            animationPathRegionExpanded = false;
+            rememberSynchronizedRegion();
             return true;
         }
 
@@ -785,7 +843,7 @@ struct DesktopBackdropCompositor::Impl
             DeleteObject(panelRegion);
             return false;
         }
-        animationPathRegionExpanded = false;
+        rememberSynchronizedRegion();
         return true;
     }
 
@@ -798,7 +856,10 @@ struct DesktopBackdropCompositor::Impl
         if (expanded && IsRectEmpty(&occlusionRect))
         {
             if (SetWindowRgn(backdropWindow, nullptr, FALSE))
+            {
                 animationPathRegionExpanded = true;
+                panelRegionSnapshotValid = false;
+            }
             return;
         }
         SyncPanelWindowRegion();
@@ -944,6 +1005,7 @@ struct DesktopBackdropCompositor::Impl
     void Reset()
     {
         available = false;
+        panelRegionSnapshotValid = false;
         genieOutline.clear();
         genieGeometry = nullptr;
         genieGeometryFactory = nullptr;

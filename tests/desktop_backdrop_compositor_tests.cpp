@@ -18,6 +18,7 @@
 #include "dock/dock_desktop_layer_cases.h"
 #include "navigation/quick_navigation_attraction_render_cases.h"
 #include "ui/render/desktop_backdrop_panel_properties_cases.h"
+#include "ui/render/desktop_backdrop_region_cache_cases.h"
 #include <commctrl.h>
 
 #include <roapi.h>
@@ -791,6 +792,8 @@ int RunDesktopBackdropCompositorTests()
     if (!check(SUCCEEDED(RoInitialize(RO_INIT_SINGLETHREADED)),
             "backdrop integration initializes its Windows Runtime apartment"))
         return failures;
+
+    snowdesktop::test::backdrop_region_cache::CheckWindowRegionCache(check, FindOwnedBackdrop);
 
     PopupWindow content;
     PopupWindow otherContent;
