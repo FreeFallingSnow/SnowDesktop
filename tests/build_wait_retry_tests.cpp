@@ -1,4 +1,5 @@
 #include "build_tool_test_support.h"
+#include "build_tools/build_repair_merge_cases.h"
 #include <algorithm>
 #include <iostream>
 using namespace build_test;
@@ -48,7 +49,8 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     const std::string mode=argc>2?argv[2]:"";
     if(mode.empty())process_cases(repo);
     else if(mode=="--ctest-selection")real_selection(repo);
-    else if(mode=="--repairs")repairs(repo);
-    else if(mode=="--all"){process_cases(repo);real_selection(repo);repairs(repo);}
+    else if(mode=="--repairs"){repairs(repo);repair_merge_cases::run(repo);}
+    else if(mode=="--repair-merge-control")repair_merge_cases::merged_sources(repo,true);
+    else if(mode=="--all"){process_cases(repo);real_selection(repo);repairs(repo);repair_merge_cases::run(repo);}
     else throw std::runtime_error("Unknown retry fixture mode");
 });}

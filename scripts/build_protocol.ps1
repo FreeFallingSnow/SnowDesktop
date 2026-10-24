@@ -93,6 +93,88 @@ function Reopen-Entry($Entry) {
     $check = Get-Field $Entry 'check'
     if ($check) { $check.status = 'invalidated'; Set-Field $check 'reason' 'Registration reopened; evidence belongs to an older edit revision.' }
 }
+function Get-RepairSources($Batch) {
+    $sources=@(Get-Field $Batch 'repairSources' @())
+    if($sources.Count){return $sources}
+    $parent=Get-Field $Batch 'repairOf'
+    if($parent){return @([pscustomobject]@{parentBatchId=$parent;logicalBatchId=(Get-Field $Batch 'logicalBatchId' $parent);attempt=(Get-Field $Batch 'attempt' 2);reason=(Get-Field $Batch 'repairReason' '')})}
+    return @()
+}
+function Find-RepairBatches($State,[string]$Parent) {
+    return @(@($State.current)+@(Get-Field $State 'activeCandidates' @())|Where-Object {
+        $_ -and @(Get-RepairSources $_|Where-Object parentBatchId -eq $Parent).Count
+    })
+}
+function Get-EffectiveTaskPlan($Entry) {
+    $primary=Get-Field $Entry 'testPlan'
+    if(-not $primary){$primary=Default-TaskPlan $Entry}
+    $extra=@(Get-Field $Entry 'repairRequirements' @())
+    if(-not $extra.Count){return $primary}
+    # Keep the live registration/claim/revision intact. Other parents add
+    # obligations rather than replacing that member's own declared plan.
+    $plan=$primary|ConvertTo-Json -Depth 20|ConvertFrom-Json
+    $requirements=@($primary)+@($extra|ForEach-Object {$_.requirement})
+    $plan.tests=@($requirements|ForEach-Object {$_.tests}|Sort-Object -Unique)
+    $plan.suites=@($requirements|ForEach-Object {$_.suites}|Sort-Object -Unique)
+    if($plan.suites.Count -gt 1){$plan.suites=@($plan.suites|Where-Object {$_ -ne 'none'})}
+    $plan.inputs=@(if(-not @($requirements|Where-Object {@($_.inputs).Count -eq 0}).Count){$requirements|ForEach-Object {$_.inputs}|Sort-Object -Unique})
+    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}else{'component'}
+    $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
+    Set-Field $plan 'mergedRepairRequirements' $extra
+    $resources=@($requirements|Where-Object {$_.suites -notcontains 'none'}|ForEach-Object {Get-Field $_ 'projectResources'}|Where-Object {$_})
+    $selected=@($requirements|Where-Object {$_.suites -notcontains 'none'})
+    if($resources.Count -ne $selected.Count){$plan.PSObject.Properties.Remove('projectResources')}
+    elseif($resources.Count){
+        $first=$resources[0]
+        if(@($resources|Where-Object {$_.policy -ne $first.policy -or $_.policyHash -ne $first.policyHash -or $_.commonGitDirectory -ne $first.commonGitDirectory}).Count){throw 'Merged repair resource policies differ; update the affected plans.'}
+        $binding=$first|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $binding.cpuSlots=[int](($resources|Measure-Object cpuSlots -Maximum).Maximum)
+        $binding.memoryMiB=[int](($resources|Measure-Object memoryMiB -Maximum).Maximum)
+        $binding.reservedMemoryMiB=[int]([Math]::Ceiling($binding.memoryMiB/256.0)*256)
+        if(@($resources|Where-Object compatibilityMode -ne 'shared').Count){$binding.compatibilityMode='exclusive'}
+        Set-Field $plan 'projectResources' $binding
+    }
+    return $plan
+}
+function Add-RepairSource($Current,$Result,[string]$Parent,[string]$Requester,[string]$Reason) {
+    $known=@(Get-RepairSources $Current)
+    if(@($known|Where-Object parentBatchId -eq $Parent).Count){return}
+    if($Current.phase -ne 'editing'){throw 'Repair attempt is frozen. Observe it; no edit permission granted.'}
+    if((Get-Field $Current 'protocolVersion' 1) -lt (Get-Field $Result 'protocolVersion' 1)){throw 'An older active protocol cannot import a newer failed batch; wait for its editing window to close.'}
+    if(@($Current.participants|Where-Object id -eq $Requester).Count){throw 'This requester already has another active registration; use its current batch/revision instead of reopening it from another parent.'}
+    $now=[DateTime]::UtcNow.ToString('o')
+    foreach($old in @($Result.participants|Where-Object state -ne 'withdrawn')){
+        $previous=Get-EffectiveTaskPlan $old
+        $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
+        $existing=@($Current.participants|Where-Object id -eq $old.id)
+        if($existing.Count){
+            $entry=$existing[0]
+            if($entry.state -eq 'withdrawn'){throw 'A withdrawn registration cannot be silently restored by another repair source.'}
+            $requirements=@(Get-Field $entry 'repairRequirements' @())+@([pscustomobject]@{parentBatchId=$Parent;editRevision=(Get-EditRevision $old);requirement=$plan})
+            Set-Field $entry 'repairRequirements' $requirements
+            # Supersede any in-flight check by replacing its operation record.
+            # Its late completion cannot publish against the new obligations.
+            if($entry.state -eq 'finished'){
+                Set-Field $entry.testPlan 'inputIdentity' $null
+                Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=(Get-EditRevision $entry);reason='Another repair source added requirements; check the merged inputs.'})
+            }
+        }else{
+            $entry=[pscustomobject]@{id=$old.id;state='finished';editRevision=((Get-EditRevision $old)+1);registeredUtc=$now;finishedUtc=$now;withdrawalReason=$null;carriedFrom=$Parent;repairRequested=$false}
+            $plan.source='repair-carried';$plan.editRevision=Get-EditRevision $entry;$plan.inputIdentity=$null
+            $plan.requiredFull=$plan.suites -contains 'full'
+            Set-Field $plan 'originalRequirement' (Get-Field $previous 'originalRequirement' $previous)
+            Set-Field $entry 'testPlan' $plan
+            Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=(Get-EditRevision $entry);reason='Prior ready evidence is not reused for repaired inputs.'})
+            $Current.participants=@($Current.participants)+@($entry)
+        }
+    }
+    $source=[pscustomobject]@{parentBatchId=$Parent;logicalBatchId=(Get-Field $Result 'logicalBatchId' $Parent);attempt=([int](Get-Field $Result 'attempt' 1)+1);reason=$Reason}
+    Set-Field $Current 'repairSources' @($known+@($source))
+    if(-not $known.Count){
+        Set-Field $Current 'repairOf' $Parent;Set-Field $Current 'logicalBatchId' $source.logicalBatchId
+        Set-Field $Current 'attempt' $source.attempt;Set-Field $Current 'repairReason' $Reason
+    }
+}
 function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','tools','selected','none' }).Count) { throw 'Suites must be full/core/fast/tools/selected/none.' }
@@ -182,8 +264,7 @@ function New-FrozenPlan($Current) {
     $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
-        $plan=Get-Field $entry 'testPlan'
-        if (-not $plan) { $plan=Default-TaskPlan $entry }
+        $plan=Get-EffectiveTaskPlan $entry
         if ($plan.editRevision -ne (Get-EditRevision $entry)) { throw "Plan is stale for $($entry.id); reopen/update plan before ready." }
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }
         $check=Get-Field $entry 'check'
@@ -206,6 +287,7 @@ function New-FrozenPlan($Current) {
     $suites=@($tasks | ForEach-Object { $_.requirement.suites } | Where-Object { $_ -ne 'none' } | Sort-Object -Unique)
     $result=[pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
         mode=$(if($full){'full'}elseif($testing){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
+    Set-Field $result 'repairSources' @(Get-RepairSources $Current)
     if($resources.Count -and -not $exclusive){
         $first=$resources[0]
         if(@($resources|Where-Object {$_.policy -ne 'project-weighted-v1' -or $_.policyHash -ne $first.policyHash -or $_.commonGitDirectory -ne $first.commonGitDirectory}).Count){throw 'Participant resource policies differ; reopen and update the affected plans.'}

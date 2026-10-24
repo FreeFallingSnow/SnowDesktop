@@ -229,7 +229,7 @@ function Owner-State($Owner) {
 function New-Result($Current, [string]$Outcome, [int]$Code, [string]$ErrorText) {
     return [pscustomobject]@{
         schemaVersion = 1; protocolVersion=(Get-Field $Current 'protocolVersion' 1); batchId = $Current.id; repositoryRoot = $repositoryRoot
-        logicalBatchId=(Get-Field $Current 'logicalBatchId' $Current.id); attempt=[int](Get-Field $Current 'attempt' 1); repairOf=(Get-Field $Current 'repairOf'); testingPlan=(Get-Field $Current 'testingPlan')
+        logicalBatchId=(Get-Field $Current 'logicalBatchId' $Current.id); attempt=[int](Get-Field $Current 'attempt' 1); repairOf=(Get-Field $Current 'repairOf'); repairSources=@(Get-RepairSources $Current); testingPlan=(Get-Field $Current 'testingPlan')
         outcome = $Outcome; exitCode = $Code; error = $ErrorText
         createdUtc = $Current.createdUtc; buildStartedUtc = $Current.buildStartedUtc
         completedUtc = [DateTime]::UtcNow.ToString('o'); participants = @($Current.participants)
@@ -288,8 +288,7 @@ function Start-ReadyWorker($Current, $Entry) {
     } finally { $worker.Dispose() }
 }
 function Start-CheckRecord($Current, $Entry) {
-    $plan = Get-Field $Entry 'testPlan'
-    if (-not $plan) { $plan=Default-TaskPlan $Entry }
+    $plan = Get-EffectiveTaskPlan $Entry
     $checks=@(Get-Field $plan 'lightChecks' @('builtin-basic'))
     if($checks.Count -ne 1 -or $checks[0] -ne 'builtin-basic'){throw 'Unsupported lightweight check plan; no arbitrary command was executed.'}
     $start = Get-TaskIdentity $plan
@@ -575,7 +574,7 @@ try {
                 if ([string]::IsNullOrWhiteSpace($Reason)) { throw 'Abandon requires a reason; saved evidence is retained.' }
                 $chainPath=Join-Path $stateRoot ($Batch+'.repair.json')
                 $chain=if([IO.File]::Exists($chainPath)){[IO.File]::ReadAllText($chainPath)|ConvertFrom-Json}else{[pscustomobject]@{parentBatchId=$Batch;childBatchId=$null;abandoned=$false}}
-                if($current -and (Get-Field $current 'repairOf') -eq $Batch){throw 'An active repair cannot be abandoned for other participants. Withdraw only your stopped registration with begin/recover.'}
+                if(@(Find-RepairBatches $state $Batch).Count){throw 'An active repair cannot be abandoned for other participants. Withdraw only your stopped registration with begin/recover.'}
                 Set-Field $chain 'abandoned' $true;Set-Field $chain 'reason' $Reason;Set-Field $chain 'updatedUtc' ([DateTime]::UtcNow.ToString('o'))
                 Write-AtomicJson $chain $chainPath;$chain|ConvertTo-Json;exit 0
             }
@@ -589,38 +588,33 @@ try {
                 $chain=if([IO.File]::Exists($chainPath)){[IO.File]::ReadAllText($chainPath)|ConvertFrom-Json}else{$null}
                 if($chain -and (Get-Field $chain 'abandoned' $false)){throw 'This repair was explicitly abandoned. Its evidence remains; begin an independent task if authorized.'}
                 if($chain -and $chain.childBatchId -and (Read-Result $chain.childBatchId)){throw ('Repair attempt already ended. Read status for '+$chain.childBatchId+'; a further repair must name that unsuccessful child, preserving every attempt.')}
-                if($current -and (Get-Field $current 'repairOf') -ne $Batch){throw ('Another batch is active: '+$current.id+' / '+$current.phase+' / '+(($current.participants|ForEach-Object {$_.id+':'+$_.state}) -join ', ')+'. Read scripts/build.bat status; use one window wait before repair. No registration displaced.')}
+                # Merge gate: all unfrozen editing sources share one barrier.
+                $knownRepairs=@(Find-RepairBatches $state $Batch)
+                if($knownRepairs.Count -gt 1){throw 'Multiple active repairs reference this parent; preserve metadata for diagnosis.'}
+                if($knownRepairs.Count){
+                    if($chain -and $chain.childBatchId -and $chain.childBatchId -ne $knownRepairs[0].id){throw 'Repair mapping differs from active provenance; no registration was changed.'}
+                    $current=$knownRepairs[0]
+                }elseif($chain -and $chain.childBatchId){throw 'Repair mapping exists without active state/result. Preserve metadata and diagnose; no duplicate attempt created.'}
                 if(-not $current){
-                    if($chain -and $chain.childBatchId){throw 'Repair mapping exists without active state/result. Preserve metadata and diagnose; no duplicate attempt created.'}
-                    $members=@()
-                    foreach($old in @($result.participants|Where-Object state -ne 'withdrawn')){
-                        $entry=[pscustomobject]@{id=$old.id;state='finished';editRevision=((Get-EditRevision $old)+1);registeredUtc=[DateTime]::UtcNow.ToString('o');finishedUtc=[DateTime]::UtcNow.ToString('o');withdrawalReason=$null;carriedFrom=$Batch;repairRequested=$false}
-                        $previous=Get-Field $old 'testPlan';if(-not $previous){$previous=Default-TaskPlan $old}
-                        $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
-                        $plan.source='repair-carried';$plan.editRevision=$entry.editRevision;$plan.inputIdentity=$null
-                        # Preserve explicit requirements, including none/manual;
-                        # scope alone never escalates a repair to full coverage.
-                        $plan.requiredFull = $plan.suites -contains 'full'
-                        Set-Field $plan 'originalRequirement' (Get-Field $previous 'originalRequirement' $previous);Set-Field $entry 'testPlan' $plan
-                        Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$entry.editRevision;reason='Prior ready evidence is not reused for repaired inputs.'})
-                        $members += $entry
-                    }
-                    $current=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');protocolVersion=$(if((Get-Field $result 'protocolVersion' 1) -ge 4){4}elseif((Get-Field $result 'protocolVersion' 1) -ge 3){3}else{2});phase='editing';participants=$members;createdUtc=[DateTime]::UtcNow.ToString('o');buildStartedUtc=$null;owner=$null;logPath=$null;inputStart=$null;repairOf=$Batch;logicalBatchId=(Get-Field $result 'logicalBatchId' $Batch);attempt=([int](Get-Field $result 'attempt' 1)+1);repairReason=$Reason}
+                    $current=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');protocolVersion=$(if((Get-Field $result 'protocolVersion' 1) -ge 4){4}elseif((Get-Field $result 'protocolVersion' 1) -ge 3){3}else{2});phase='editing';participants=@();createdUtc=[DateTime]::UtcNow.ToString('o');buildStartedUtc=$null;owner=$null;logPath=$null;inputStart=$null}
                     $state.current=$current
                 }
                 if($current.phase -ne 'editing'){throw 'Repair attempt is frozen. Observe it; no edit permission granted.'}
+                Add-RepairSource $current $result $Batch $Participant $Reason
                 $entry=@($current.participants|Where-Object id -eq $Participant)[0]
                 if(-not (Get-Field $entry 'repairRequested' $false)){
                     Reopen-Entry $entry;Set-Field $entry 'repairRequested' $true
                     $plan=Get-Field $entry 'testPlan';$plan.editRevision=Get-EditRevision $entry;$plan.inputIdentity=$null
                 }
-                # State first: a crash before the mapping is saved is reconciled from repairOf under this same lease.
+                # State first: repairSources reconciles every parent mapping
+                # after a crash, including non-primary merged parents.
                 Write-AtomicJson $state $statePath
-                $chain=[pscustomobject]@{parentBatchId=$Batch;childBatchId=$current.id;logicalBatchId=$current.logicalBatchId;attempt=$current.attempt;abandoned=$false;reason=$Reason;updatedUtc=[DateTime]::UtcNow.ToString('o')}
+                $source=@(Get-RepairSources $current|Where-Object parentBatchId -eq $Batch)[0]
+                $chain=[pscustomobject]@{parentBatchId=$Batch;childBatchId=$current.id;logicalBatchId=$source.logicalBatchId;attempt=$source.attempt;abandoned=$false;reason=$Reason;updatedUtc=[DateTime]::UtcNow.ToString('o')}
                 Write-AtomicJson $chain $chainPath
                 foreach($peer in @($current.participants|Where-Object state -eq 'finished')){[void](Start-ReadyWorker $current $peer)}
                 Write-AtomicJson $state $statePath
-                [pscustomobject]@{participant=$Participant;batchId=$current.id;editRevision=(Get-EditRevision $entry);state=$entry.state;repairOf=$Batch;logicalBatchId=$current.logicalBatchId;attempt=$current.attempt;instruction='Claim files before writing. Prior requests are carried; prior checks/results are not reused. Duplicate repair does not reopen a finished editor.'}|ConvertTo-Json
+                [pscustomobject]@{participant=$Participant;batchId=$current.id;editRevision=(Get-EditRevision $entry);state=$entry.state;repairOf=$Batch;logicalBatchId=$source.logicalBatchId;attempt=$source.attempt;repairSources=@(Get-RepairSources $current);instruction='Claim files before writing. Unfrozen repair sources share the batch; prior checks/results are not reused. Duplicate repair does not reopen a finished editor.'}|ConvertTo-Json -Depth 12
                 exit 0
             }
             elseif ($Command -eq 'begin') {
@@ -758,10 +752,10 @@ try {
                     Write-AtomicJson $state $statePath
                 } else {
                     if ($entry.state -eq 'editing') {
-                        $plan=Get-Field $entry 'testPlan'; if (-not $plan) { $plan=Default-TaskPlan $entry }
+                        $plan=Get-EffectiveTaskPlan $entry
                         if ($plan.editRevision -ne $Revision) { throw 'Plan belongs to an older revision; update it before ready.' }
                         $plan.inputIdentity=Get-TaskIdentity $plan
-                        Set-Field $entry 'testPlan' $plan
+                        Set-Field $entry.testPlan 'inputIdentity' $plan.inputIdentity
                         if(@(Get-Field $entry 'ownedFiles' @()).Count){Set-Field $entry 'commitIdentity' (Get-OwnedCommitIdentity $entry)}
                         $entry.state='finished'; $entry.finishedUtc=[DateTime]::UtcNow.ToString('o')
                         if((Get-Field $current 'protocolVersion' 1) -ge 4){Set-Field $current 'membershipSealed' $true}
@@ -879,7 +873,7 @@ try {
                         Write-AtomicJson $state $statePath
                     }
                     $check=Get-Field $entries[0] 'check'
-                    if($AutoCheck -and @($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and $check -and $check.status -eq 'passed' -and (Get-Field $entries[0] 'testPlan').source -in 'legacy-default','repair-carried' -and (Get-TaskIdentity $entries[0].testPlan).digest -ne $check.inputEnd.digest){$check.status='pending';$check.reason='Global input changed while peers edited; repeat read-only checks.'}
+                    if($AutoCheck -and @($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and $check -and $check.status -eq 'passed' -and (Get-EffectiveTaskPlan $entries[0]).source -in 'legacy-default','repair-carried' -and (Get-TaskIdentity (Get-EffectiveTaskPlan $entries[0])).digest -ne $check.inputEnd.digest){$check.status='pending';$check.reason='Global input changed while peers edited; repeat read-only checks.'}
                     if ($AutoCheck -and $check -and $check.status -eq 'pending' -and ((Get-Field (Get-Field $entries[0] 'testPlan') 'source') -ne 'repair-carried' -or @($current.participants | Where-Object state -eq 'editing').Count -eq 0)) {
                         $checkSelected=Start-CheckRecord $current $entries[0]
                         Write-AtomicJson $state $statePath

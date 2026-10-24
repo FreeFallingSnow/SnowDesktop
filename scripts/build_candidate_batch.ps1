@@ -104,7 +104,7 @@ function Save-CandidateBatchPending([string]$Root,$Request,$Record,$Context) {
     $inputCheck=if($Record.inputStart -and $Record.inputEnd){if($Record.inputStart.digest -eq $Record.inputEnd.digest){'stable'}else{'changed'}}else{'not-run'}
     $outcome=if($Record.status -eq 'passed' -and $batch.testingPlan.mode -eq 'skipped'){'skipped'}else{$Record.status}
     $result=[pscustomobject]@{schemaVersion=1;protocolVersion=4;batchId=$batch.id;repositoryRoot=$Root;
-        logicalBatchId=(Get-Field $batch 'logicalBatchId' $batch.id);attempt=(Get-Field $batch 'attempt' 1);repairOf=(Get-Field $batch 'repairOf');
+        logicalBatchId=(Get-Field $batch 'logicalBatchId' $batch.id);attempt=(Get-Field $batch 'attempt' 1);repairOf=(Get-Field $batch 'repairOf');repairSources=@(Get-RepairSources $batch);
         testingPlan=$batch.testingPlan;outcome=$outcome;exitCode=$Record.exitCode;error=$Record.error;createdUtc=$batch.createdUtc;
         buildStartedUtc=$batch.buildStartedUtc;capturedUtc=(Get-Field $batch 'capturedUtc');completedUtc=[DateTime]::UtcNow.ToString('o');
         participants=@($batch.participants);runId=$Request.id;logPath=$batch.logPath;
