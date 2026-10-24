@@ -568,6 +568,17 @@ scripts\build.bat repair-abandon -Batch FAILED_BATCH -Reason "本次续修明确
 
 续修复用尚未冻结的 `editing` 批次；没有该批次时才创建新的执行批次 ID。不同失败来源的 `repair` 可以合入同一批次，也可以加入普通开发批次，共同编辑后只冻结、构建一次。即使某个成员已先就绪并设置成员封口，只要候选尚未冻结，关联续修仍可加入；普通 `begin` 的封口规则不变。已冻结、执行或排队的候选不能追加成员。
 
+例如两个任务各自有失败结果时，先分别续修登记，再分别修改和就绪，无需先等待另一任务单独构建：
+
+```bat
+scripts\build.bat repair task-A -Batch FAILED_A -Revision REVISION_A -Reason "修复任务 A 的实际失败"
+scripts\build.bat repair task-B -Batch FAILED_B -Revision REVISION_B -Reason "修复任务 B 的实际失败"
+rem 两次回执复用同一尚未冻结的 batchId；各自保存自己的 editRevision。
+rem 各自 claim 实际文件、完成修改并重报 plan，再 ready-and-wait。
+```
+
+第二个任务必须在候选冻结前加入；已冻结候选的输入、成员和结果身份保持不可变。
+
 `repairSources` 逐项记录直接父批次、各自 `logicalBatchId/attempt` 和原因；每个父批次的 `.repair.json` 映射都指向同一子尝试。批次上的旧 `repairOf/logicalBatchId/attempt` 字段是第一个来源的兼容视图，单次 `repair` 回执中的逻辑轮次和次数对应本次传入的父批次。旧单来源记录仍能读取，不修改既存失败证据。较旧的活动协议不能导入较新的失败协议，也不会被自动升级。
 
 重叠成员只保留一个当前登记，已有修订、文件归属和自己的计划不被覆盖；其他来源的需求作为附加验证义务合并，原检查被替换后重新执行。正在处理另一个来源的请求者不能借 repair 重开自己已有登记，应使用当前批次/修订。实际文件冲突继续由 claim 拒绝，不再因父批次不同人为串行等待。
