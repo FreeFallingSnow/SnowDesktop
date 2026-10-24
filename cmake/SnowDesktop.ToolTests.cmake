@@ -204,6 +204,10 @@ if(BUILD_TESTING AND WIN32)
     set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateTests build_candidate
         build_tools/build_candidate_tests.cpp "tools;integration" 180)
+    add_test(NAME build_candidate_compiler_context COMMAND SnowDesktopBuildCandidateTests "${CMAKE_CURRENT_SOURCE_DIR}" --compiler-context)
+    set_tests_properties(build_candidate_compiler_context PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateRecoveryTests build_candidate_recovery
         build_tools/build_candidate_recovery_tests.cpp "tools;integration" 90)
     set_tests_properties(build_candidate PROPERTIES PROCESSORS 4)

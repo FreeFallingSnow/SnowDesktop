@@ -118,10 +118,33 @@ function Get-CandidatePaths([string]$Root,[string]$ExtraInputs='') {
     [string[]]$ordered=@($paths);[Array]::Sort($ordered,[StringComparer]::Ordinal)
     return $ordered
 }
+function Get-CandidateCompilerTools {
+    $resolved=[ordered]@{}
+    foreach($name in @('cl.exe','link.exe','clang-cl.exe','clang.exe','clang++.exe','gcc.exe','g++.exe','cc.exe','c++.exe',
+        'ninja.exe','nmake.exe','make.exe','MSBuild.exe','rc.exe')){
+        $tool=Get-Command $name -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
+        $resolved[$name]=if($tool){[pscustomobject]@{path=$tool.Source;sha256=(Get-FileDigest $tool.Source)}}else{$null}
+    }
+    $pathSensitiveSelectors=[ordered]@{}
+    foreach($name in @('CC','CXX','RC','CMAKE_MAKE_PROGRAM')){
+        $selector=[Environment]::GetEnvironmentVariable($name,'Process')
+        if(-not $selector){continue}
+        $tool=Get-Command $selector -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($tool){$resolved['selector:'+ $name]=[pscustomobject]@{path=$tool.Source;sha256=(Get-FileDigest $tool.Source)}}
+        else {
+            # A wrapper/command with arguments cannot be resolved as one literal
+            # executable. Keep PATH sensitivity until its identity is known.
+            $pathSensitiveSelectors[$name]=Get-VerificationTextDigest ([string][Environment]::GetEnvironmentVariable('PATH','Process'))
+        }
+    }
+    return [pscustomobject]@{schemaVersion=1;resolved=$resolved;pathSensitiveSelectors=$pathSensitiveSelectors}
+}
 function Get-CandidateContext($Files,[string]$Configuration,[string]$CheckoutRoot='') {
     $environment=[ordered]@{}
     foreach($name in @('CMAKE_GENERATOR','CMAKE_GENERATOR_PLATFORM','CMAKE_GENERATOR_TOOLSET','PATH','INCLUDE','LIB','LIBPATH',
-        'SNOWDESKTOP_STEAMWORKS_SDK_ROOT','SNOWDESKTOP_STEAMWORKS_SDK_PATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')){
+        'SNOWDESKTOP_STEAMWORKS_SDK_ROOT','SNOWDESKTOP_STEAMWORKS_SDK_PATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion',
+        'CC','CXX','RC','CFLAGS','CXXFLAGS','RCFLAGS','LDFLAGS','CL','_CL_','LINK','_LINK_',
+        'CMAKE_GENERATOR_INSTANCE','CMAKE_TOOLCHAIN_FILE','CMAKE_MAKE_PROGRAM','CMAKE_PREFIX_PATH','CMAKE_INCLUDE_PATH','CMAKE_LIBRARY_PATH')){
         $environment[$name]=Get-VerificationTextDigest ([string][Environment]::GetEnvironmentVariable($name,'Process'))
     }
     $tools=[ordered]@{}
@@ -132,7 +155,8 @@ function Get-CandidateContext($Files,[string]$Configuration,[string]$CheckoutRoo
     $runtime=Get-BuildPowerShell
     $tools['powershell']=[pscustomobject]@{path=$runtime;sha256=(Get-FileDigest $runtime)}
     $presets=@($Files|Where-Object {$_.path -in 'CMakePresets.json','CMakeUserPresets.json'}|Select-Object path,state,sha256)
-    $binding=[pscustomobject]@{schemaVersion=1;configuration=$Configuration;presets=$presets;environment=$environment;tools=$tools}
+    $binding=[pscustomobject]@{schemaVersion=1;configuration=$Configuration;presets=$presets;environment=$environment;tools=$tools;
+        compilerTools=(Get-CandidateCompilerTools)}
     if($CheckoutRoot){Set-Field $binding 'checkoutRoot' ([IO.Path]::GetFullPath($CheckoutRoot).TrimEnd('\','/').ToLowerInvariant())}
     return [pscustomobject]@{digest=(Get-VerificationTextDigest ($binding|ConvertTo-Json -Depth 10 -Compress));binding=$binding;
         externalDependenciesClosed=$false;scope='Observed configuration, tools and build environment; external SDK/package contents are not yet closed.'}
@@ -145,8 +169,18 @@ function Get-CandidateSourceDigest($Files,[string]$ContextDigest) {
 function Get-CandidateCompilerContextDigest($Context) {
     # Configuration and checkout identity remain in the snapshot, but a
     # multi-config compiler tree does not need a new cache for either alone.
+    # PATH remains part of the complete snapshot identity. Cache invalidation
+    # follows the actual resolved tools; unrelated launcher PATH entries must
+    # not discard configuration. Unknown explicit selectors retain PATH above.
+    $environment=[ordered]@{}
+    $observed=$Context.binding.environment
+    if($observed -is [Collections.IDictionary]){
+        foreach($name in $observed.Keys){if($name -ne 'PATH'){$environment[$name]=$observed[$name]}}
+    }else{
+        foreach($property in $observed.PSObject.Properties){if($property.Name -ne 'PATH'){$environment[$property.Name]=$property.Value}}
+    }
     return Get-VerificationTextDigest ([pscustomobject]@{presets=$Context.binding.presets;
-        environment=$Context.binding.environment;tools=$Context.binding.tools}|ConvertTo-Json -Depth 10 -Compress)
+        environment=$environment;tools=$Context.binding.tools;compilerTools=(Get-Field $Context.binding 'compilerTools')}|ConvertTo-Json -Depth 10 -Compress)
 }
 function New-CandidateSnapshot([string]$Root,[string]$TaskId,[long]$RequirementsRevision,[string]$Configuration,[string]$ExtraInputs,[string]$ExpectedDigest,[scriptblock]$CheckCancellation) {
     Assert-EntryExecutionOwner $Root

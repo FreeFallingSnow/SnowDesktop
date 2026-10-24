@@ -57,8 +57,8 @@ Json finish(Coordinator& c,const std::string& id,int code=0) {
     require(view.at("terminal").boolean&&view.at("stageError").str().empty(),"Snapshot Run did not retain complete terminal observations");
     return view;
 }
-Json capture(Coordinator& c) {
-    const auto view=finish(c,start(c));
+Json capture(Coordinator& c,const Env& env={}) {
+    const auto view=finish(c,start(c,"generated/seed.h",env));
     require(view.at("status").str()=="passed"&&view.at("record").has("candidate"),"Snapshot Run lost its candidate artifact");
     const auto& candidate=view.at("record").at("candidate");
     require(candidate.at("snapshotReady").boolean&&!candidate.at("executionReady").boolean&&!candidate.at("externalDependenciesClosed").boolean,"Snapshot preparation overstated execution or dependency closure");
@@ -67,7 +67,7 @@ Json capture(Coordinator& c) {
     return candidate;
 }
 Json inspect(Coordinator& c,const std::string& id) {return c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","inspect","-Snapshot",id});}
-Json materialize(Coordinator& c,const std::string& id) {return c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","materialize","-Snapshot",id,"-Task","snap","-Slot","release"});}
+Json materialize(Coordinator& c,const std::string& id,const Env& env={}) {return c.bridge->call(c.scripts/L"build_candidate.ps1",{"-Command","materialize","-Snapshot",id,"-Task","snap","-Slot","release"},0,env);}
 const Json& input(const Json& manifest,const std::string& path) {
     for(const auto& file:manifest.at("files").items)if(file.at("path").str()==path)return file;
     require(false,"Snapshot omitted input: "+path);return manifest;
@@ -126,6 +126,63 @@ try {
     require(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)&&RemoveDirectoryW(object.c_str()),"Cannot remove owned object junction");
     fs::rename(retained,object);
     require(inspect(c,id).at("id").str()==id&&read(outside/L"keep.txt")=="foreign content unchanged\n","Object verification did not recover or changed foreign content");
+}
+void compiler_context_scenario(const fs::path& repo) {
+    Coordinator c(repo,"compiler-context",false,fixture_parent(repo));prepare(c,repo,"");
+    const auto a=capture(c);const auto aId=a.at("id").str();const auto first=materialize(c,aId);
+    const auto source=fs::path(wide(first.at("source").str())),output=fs::path(wide(first.at("output").str()));
+    const auto state=source.parent_path()/L"materialization.json",marker=output/L"collaboration/configuration-reset.json";
+    const auto original=Json::parse(read(state)).at("compilerContextDigest").str();
+    const auto configured="{\"schemaVersion\":1,\"compilerContextDigest\":\""+original+"\",\"configured\":[\"preset-output\"]}\n";
+    write(marker,configured);write(output/L"cache-object-sentinel.txt","retained compiled bytes\n");
+    const auto sourceTime=fs::last_write_time(source/L"src/main.cpp"),objectTime=fs::last_write_time(output/L"cache-object-sentinel.txt");
+    const auto launcher=c.root/L".build/launcher-path",shadow=c.root/L".build/compiler-path";
+    fs::create_directories(launcher);fs::create_directories(shadow);
+    const Env pathOnly={{L"PATH",launcher.wstring()+L";"+environment(L"PATH")}};
+    const auto b=capture(c,pathOnly);const auto stable=materialize(c,b.at("id").str(),pathOnly);
+    require(inspect(c,aId).at("context").at("digest").str()!=inspect(c,b.at("id").str()).at("context").at("digest").str(),
+        "Complete candidate identity stopped observing PATH changes");
+    require(Json::parse(read(state)).at("compilerContextDigest").str()==original&&read(marker)==configured&&stable.at("copied").integer()==0,
+        "Unrelated launcher PATH change reset configured compiler state or recopied source");
+    require(fs::last_write_time(source/L"src/main.cpp")==sourceTime&&fs::last_write_time(output/L"cache-object-sentinel.txt")==objectTime,
+        "PATH-only materialization touched source or compiler objects");
+    fs::copy_file(executable(),shadow/L"ninja.exe");
+    const Env changedTool={{L"PATH",shadow.wstring()+L";"+environment(L"PATH")}};
+    const auto tool=capture(c,changedTool);materialize(c,tool.at("id").str(),changedTool);
+    const auto toolDigest=Json::parse(read(state)).at("compilerContextDigest").str();
+    require(toolDigest!=original&&Json::parse(read(marker)).at("configured").items.empty(),
+        "A PATH-shadowed build tool retained the previous compiler configuration");
+    require(inspect(c,tool.at("id").str()).at("context").at("binding").at("compilerTools").at("resolved").at("ninja.exe").at("path").str()==utf8((shadow/L"ninja.exe").wstring()),
+        "Compiler context did not record the actual PATH-resolved executable");
+    write(marker,"{\"schemaVersion\":1,\"compilerContextDigest\":\""+toolDigest+"\",\"configured\":[\"preset-output\"]}\n");
+    const Env flags={{L"PATH",shadow.wstring()+L";"+environment(L"PATH")},{L"CXXFLAGS",environment(L"CXXFLAGS")+L" /DCANDIDATE_CONTEXT_PROBE=1"}};
+    const auto changedFlags=capture(c,flags);materialize(c,changedFlags.at("id").str(),flags);
+    require(Json::parse(read(state)).at("compilerContextDigest").str()!=toolDigest&&Json::parse(read(marker)).at("configured").items.empty(),
+        "An explicit compiler flags change retained the previous compiler identity");
+    const auto probe=c.root/L".build/compiler-projection.ps1";
+    write(probe,R"PS(
+$ErrorActionPreference='Stop'
+$root=Split-Path $PSScriptRoot -Parent
+. $root/scripts/build_entry.ps1
+. $root/scripts/build_protocol.ps1
+. $root/scripts/build_inputs.ps1
+. $root/scripts/build_candidate.ps1
+$context=Get-CandidateContext @() 'Release'
+$roundTrip=$context|ConvertTo-Json -Depth 16|ConvertFrom-Json
+$legacy=$context|ConvertTo-Json -Depth 16|ConvertFrom-Json
+$legacy.binding.PSObject.Properties.Remove('compilerTools')
+$digest=Get-CandidateCompilerContextDigest $context
+$env:CC='unresolved-wrapper --compiler-argument'
+$unresolved=Get-CandidateContext @() 'Release'
+$env:PATH=$env:PATH+';'+(Join-Path $PSScriptRoot 'unused-path')
+$changed=Get-CandidateContext @() 'Release'
+@{roundTripStable=($digest -eq (Get-CandidateCompilerContextDigest $roundTrip));legacyReset=($digest -ne (Get-CandidateCompilerContextDigest $legacy));
+  unknownSelectorReset=((Get-CandidateCompilerContextDigest $unresolved) -ne (Get-CandidateCompilerContextDigest $changed))}|ConvertTo-Json
+)PS",true);
+    const auto identities=c.bridge->call(probe,{});
+    require(identities.at("roundTripStable").boolean&&identities.at("legacyReset").boolean&&identities.at("unknownSelectorReset").boolean,
+        "Compiler identity lost JSON stability, one-time legacy migration or unknown-selector PATH fallback");
+    std::cout<<"PASS PATH remains audited without resetting equal resolved tools; real tool/flags changes reset; legacy migration and unknown selectors stay conservative\n";
 }
 void scenario(const fs::path& repo,const std::string& control) {
     Coordinator c(repo,"s",false,fixture_parent(repo));prepare(c,repo,control);
@@ -224,4 +281,4 @@ try{
     std::cout<<"PASS durable snapshot capture; dirty/new/deleted/ignored inputs; frozen compiled program after live edits; stable incremental output; exclusive slot and corruption/context/manual-edit/reparse rejection; queued cancellation; both legacy controls fail\n";
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){if(argc>2&&std::string(argv[2])=="--compiler-context")compiler_context_scenario(repo);else scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}
