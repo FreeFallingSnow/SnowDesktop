@@ -264,4 +264,170 @@ bool DispatchStatusBarKeyboard(UINT message, WPARAM key, LPARAM bits, bool shift
     }
     return false;
 }
+
+// UI-thread preparation only. Native actions still execute synchronously;
+// nested drawing requests are collected until their latest model is prepared.
+class StatusBarPresentationPreparation
+{
+public:
+    bool Active() const { return active_; }
+    bool Defer() { if (!active_) return false; pending_ = true; return true; }
+    void Consume() { pending_ = false; }
+    bool Pending() const { return pending_; }
+    template<class Update> decltype(auto) Run(Update&& update)
+    {
+        struct Restore
+        {
+            bool& value;
+            bool previous;
+            ~Restore() { value = previous; }
+        } restore{active_, active_};
+        active_ = true;
+        return update();
+    }
+private:
+    bool active_ = false;
+    bool pending_ = false;
+};
+
+// Snapshot the pixels of interaction feedback, rather than only the logical
+// keyboard flag: Windows activation can change whether that flag is visible.
+struct StatusBarInteractionVisualState
+{
+    std::optional<std::size_t> hovered, focused;
+    std::optional<RECT> indicator;
+};
+
+inline StatusBarInteractionVisualState StatusBarInteractionVisual(
+    const StatusBarInteraction& interaction, bool keyboardVisible, bool hasFocus,
+    const std::optional<RECT>& indicator)
+{
+    return {interaction.hovered, keyboardVisible && hasFocus ? interaction.focused : std::nullopt, indicator};
+}
+
+inline void AddStatusBarInteractionDamage(std::vector<RECT>& regions, RECT bounds)
+{
+    if (IsRectEmpty(&bounds)) return;
+    for (auto i = regions.begin(); i != regions.end();)
+    {
+        RECT overlap{};
+        if (IntersectRect(&overlap, &bounds, &*i))
+        {
+            UnionRect(&bounds, &bounds, &*i);
+            regions.erase(i);
+            i = regions.begin();
+        }
+        else ++i;
+    }
+    regions.push_back(bounds);
+}
+inline std::vector<RECT> StatusBarInteractionDamageRegions(const std::vector<StatusBarItem>& items,
+    const StatusBarInteractionVisualState& before, const StatusBarInteractionVisualState& after,
+    UINT width, UINT height)
+{
+    std::vector<RECT> damage;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    const auto add = [&](RECT bounds) {
+        RECT clipped{};
+        if (IntersectRect(&clipped, &bounds, &client)) AddStatusBarInteractionDamage(damage, clipped);
+    };
+    const auto item = [&](std::optional<std::size_t> index) {
+        if (index && *index < items.size() && items[*index].action != StatusBarAction::ShowDesktop)
+            add(items[*index].bounds);
+    };
+    if (before.hovered != after.hovered) { item(before.hovered); item(after.hovered); }
+    if (before.focused != after.focused) { item(before.focused); item(after.focused); }
+    const bool sameIndicator = before.indicator.has_value() == after.indicator.has_value() &&
+        (!before.indicator || EqualRect(&*before.indicator, &*after.indicator));
+    if (!sameIndicator)
+        for (const auto& indicator : {before.indicator, after.indicator}) if (indicator)
+        {
+            auto bounds = *indicator;
+            InflateRect(&bounds, 2, 2); // Existing rounded marker stroke and AA.
+            add(bounds);
+        }
+    return damage;
+}
+inline RECT StatusBarInteractionDamage(const std::vector<StatusBarItem>& items,
+    const StatusBarInteractionVisualState& before, const StatusBarInteractionVisualState& after,
+    UINT width, UINT height)
+{
+    RECT damage{};
+    for (const auto& region : StatusBarInteractionDamageRegions(items, before, after, width, height))
+        UnionRect(&damage, &damage, &region);
+    return damage;
+}
+
+// Preparation owns its new geometry; never overwrite it with the old surface's
+// cells. Compare a copy of the retained layout instead. A changed extent,
+// viewport, identity or degraded measurement requires the complete frame.
+inline bool RetainStatusBarPreparedLayout(const std::vector<StatusBarItem>& items,
+    const std::vector<StatusBarItem>& before, const StatusBarTrayScroll& oldScroll,
+    const StatusBarTrayScroll& scroll, bool merged, bool reusable)
+{
+    if (!reusable || !EqualRect(&oldScroll.viewport, &scroll.viewport) ||
+        oldScroll.contentWidth != scroll.contentWidth) return false;
+    auto retained = items;
+    if (!RestoreStatusBarContentLayout(retained, before, merged, reusable)) return false;
+    if (oldScroll.offset != scroll.offset &&
+        !UpdateStatusBarTrayScrollLayout(retained, oldScroll.offset, scroll, reusable)) return false;
+    for (std::size_t i = 0; i < items.size(); ++i)
+        if (!EqualRect(&retained[i].bounds, &items[i].bounds) ||
+            !EqualRect(&retained[i].contentBounds, &items[i].contentBounds)) return false;
+    return true;
+}
+
+// Production sequence shared with the offscreen regression. Prepare samples,
+// reconciles, lays out and publishes geometry without presenting. As with the
+// former void Paint, a drawing failure may retain geometry and does not cancel
+// native restoration. Prepare/Present own their error reporting. Present gets
+// no native callback, so surface fallback cannot replay restoration/Leave.
+// The result records native restoration.
+template<class Prepare, class Restore, class ClearHover, class Present>
+bool DispatchStatusBarTrayFocusReturn(const std::string& key, bool keyboard,
+    std::vector<StatusBarItem>& items, StatusBarTrayScroll& scroll,
+    StatusBarInteraction& interaction, bool& keyboardVisible,
+    StatusBarPresentationPreparation& preparation, Prepare&& prepare,
+    Restore&& restore, ClearHover&& clearHover, Present&& present)
+{
+    const auto refresh = [&] {
+        // Consume only synchronous requests already made by preparation,
+        // matching the old nested Paint/Replay boundary. No messages are
+        // pumped and no native action is repeated by this observation loop.
+        do { preparation.Consume(); prepare(); } while (preparation.Pending());
+    };
+    bool restored = false;
+    preparation.Run([&] {
+        refresh();
+        bool revealed = false;
+        for (const auto& item : items)
+            if (item.icon && item.icon->key == key)
+            {
+                revealed = scroll.Reveal(item.contentBounds);
+                break;
+            }
+        if (revealed) refresh();
+        const auto index = FindStatusBarTrayFocus(items, key);
+        if (!index) return;
+        const auto target = StatusBarTargetOf(items[*index]);
+        const bool granted = restore();
+        // WM_ACTIVATE used to sample/arrange inside RestoreFocus. Keep that
+        // observation and its fallback recovery opportunity before the final
+        // focus/Leave sample, while collecting its pixels for one presentation.
+        if (preparation.Pending()) refresh();
+        if (!granted) return;
+        restored = true;
+        interaction.focused.reset();
+        for (std::size_t i = 0; i < items.size(); ++i)
+            if (StatusBarTargetOf(items[i]) == target) { interaction.focused = i; break; }
+        keyboardVisible = keyboard;
+        clearHover();
+        refresh(); // The old final focus Paint sampled again too.
+    });
+    // Even a denied restoration can synchronously request a content refresh.
+    if (preparation.Pending())
+        preparation.Run(refresh);
+    present();
+    return restored;
+}
 }
