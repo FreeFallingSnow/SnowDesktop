@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 
 namespace snowdesktop::dock_settings_rules
@@ -34,6 +35,23 @@ inline bool ShouldRevealTaskbarForShellPanel(
     bool taskViewVisible, bool shellPanelVisible, bool onPanelMonitor) noexcept
 {
     return taskViewVisible || (shellPanelVisible && onPanelMonitor);
+}
+
+inline bool ShellPanelVisibility(bool launcherVisible, bool dockStartActive, bool otherPanelVisible) noexcept
+{
+    return otherPanelVisible || (launcherVisible && !dockStartActive);
+}
+
+inline bool ProtectDockStart(bool dockEnabled, bool keepTaskbarHidden, bool hiddenTaskbarMode) noexcept
+{
+    return dockEnabled && keepTaskbarHidden && hiddenTaskbarMode;
+}
+
+inline std::uint64_t StartMenuLeaseDeadline(bool active, std::uint64_t now) noexcept
+{
+    // Let Shell finish hiding the native bar after Start closes. Native edge
+    // and keyboard reveal still release this guard immediately.
+    return now + (active ? 3000 : 500);
 }
 
 inline void NormalizeAlwaysEnabledFeatures(

@@ -1718,7 +1718,8 @@ private:
     /** @brief 打开快速导航面板。 */
     void OpenQuickNavigation(
         QuickNavigationInvocationSource source =
-            QuickNavigationInvocationSource::Pointer);
+            QuickNavigationInvocationSource::Pointer,
+        std::optional<POINT> invocationScreenPoint = std::nullopt);
     /** @brief 关闭快速导航面板。 */
     void CloseQuickNavigation(bool restoreDesktopFocus = true);
     /** @brief 关闭动画完成后执行动作。 */

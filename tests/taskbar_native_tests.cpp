@@ -1,4 +1,5 @@
 #include "../src/taskbar_hook/taskbar_native.h"
+#include "dock/dock_settings_rules.h"
 #include "../src/taskbar_hook/taskbar_classic_surface.h"
 #include "../src/taskbar_hook/taskbar_classic_appearance.h"
 #include "../src/taskbar_hook/taskbar_material_render.h"
@@ -410,7 +411,15 @@ int RunNativeTaskbarTests()
         SendMessageW(window, apply, temporary.ownerProcessId, kStartMenuBeginCommand);
         SendMessageW(secondary, apply, temporary.ownerProcessId, kStartMenuBeginCommand);
         check(cloaked() && secondaryCloaked(), "the next authenticated Dock opening rearms both native taskbar guards");
-        temporary.dockStartMenuUntil = 0;
+        temporary.dockStartMenuUntil = snowdesktop::dock_settings_rules::StartMenuLeaseDeadline(false, GetTickCount64());
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(cloaked() && secondaryCloaked(), "closing Start retains a bounded guard while Shell finishes its native hide");
+        sampleCursor.y = fixtureMonitor.rcMonitor.top;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked(), "manual edge reveal also works during the closing guard");
+        temporary.dockStartMenuUntil = GetTickCount64();
         SendMessageW(window, apply, 0, 0);
         SendMessageW(secondary, apply, 0, 0);
         check(!cloaked() && !secondaryCloaked(), "ending Start restores both bars independently of minimize protection");

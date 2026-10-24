@@ -233,6 +233,9 @@ bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
     return modules::Allowed(modules::Module::Taskbar) &&
         ((generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
          AppearanceRequiresTaskbarHook(settings) ||
+         (modules::Allowed(modules::Module::StartMenu) &&
+          snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
+             settings.startMenuKeepTaskbarHidden, settings.systemTaskbarAutoHide || settings.suppressSystemTaskbar)) ||
          (modules::Allowed(modules::Module::WindowMinimize) &&
           ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled, settings.systemTaskbarAutoHide)));
 }
@@ -427,7 +430,10 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         (taskbarSearchVisibility_ &&
             taskbarSearchVisibility_->IsVisible()) ||
         IsSystemTaskbarShellUiWindow(foreground);
-    systemTaskbarShellUiActive_ = launcherVisible || shellViewVisible;
+    // A Dock-origin Start session owns its taskbar guard. Do not cache Start
+    // as a reason to unhide the bar immediately after that guard is released.
+    systemTaskbarShellUiActive_ = snowdesktop::dock_settings_rules::ShellPanelVisibility(
+        launcherVisible, IsDockStartMenuActive(), shellViewVisible);
     systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
         ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
         : nullptr;
@@ -467,8 +473,13 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             (void)RequestWindowsSystemLightThemeEnabled(*light);
     };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_,
-        generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
+    const bool autoHide = IsSystemTaskbarAutoHideEnabled();
+    const bool protectActivation = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) &&
+        ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize) &&
+            ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled, autoHide)) ||
+        (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu) &&
+         snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
+            dockSettings_.startMenuKeepTaskbarHidden, autoHide || dockSettings_.suppressSystemTaskbar)));
     const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
     const bool hookRequired = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && (appearanceRequired || protectActivation || suppressionRequested);
     if (!hookRequired)

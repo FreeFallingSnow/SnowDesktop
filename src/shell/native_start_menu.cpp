@@ -23,6 +23,20 @@ bool IsVisible(HWND window) noexcept
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
 
+void LogInputState(const wchar_t* phase) noexcept
+{
+    const HWND foreground = GetForegroundWindow();
+    DWORD process = 0;
+    const DWORD thread = GetWindowThreadProcessId(foreground, &process);
+    GUITHREADINFO info{sizeof(info)};
+    const bool known = thread && GetGUIThreadInfo(thread, &info);
+    wchar_t line[320]{};
+    swprintf_s(line, L"[DockStartMenu] input state %ls foreground=%p process=%lu known=%d capture=%p menu=%p flags=%lu winDown=%d",
+        phase, foreground, process, known ? 1 : 0, info.hwndCapture, info.hwndMenuOwner, info.flags,
+        ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) ? 1 : 0);
+    WriteDiagnosticLogEntry(line);
+}
+
 struct Apartment
 {
     HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -70,6 +84,11 @@ struct LauncherClient
         try { return channel.CallWithTimeout<LONG>(500, "start.dismiss"); }
         catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
     }
+    HRESULT Show()
+    {
+        try { return channel.CallWithTimeout<LONG>(500, "start.show"); }
+        catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+    }
 };
 }
 
@@ -105,6 +124,14 @@ std::optional<int> start_menu::TryRunLauncherHelper()
         channel.Bind<LONG>("start.dismiss", [&] {
             const HRESULT result = initialize();
             return FAILED(result) ? result : launcher.Dismiss();
+        });
+        channel.Bind<LONG>("start.show", [&] {
+            const HRESULT result = initialize();
+            if (FAILED(result)) return result;
+            DWORD shellProcess = 0;
+            GetWindowThreadProcessId(GetShellWindow(), &shellProcess);
+            if (shellProcess) AllowSetForegroundWindow(shellProcess);
+            return launcher.Show();
         });
         channel.Bind<void>("start.exit", [] { PostQuitMessage(0); });
         channel.SetDisconnected([] { PostQuitMessage(0); });
@@ -175,7 +202,7 @@ struct NativeStartMenu::Impl
                 do
                 {
                     ++protectionAttempts;
-                    protection = UpdateSystemTaskbarStartMenuProtection(true);
+                    protection = UpdateSystemTaskbarStartMenuProtection(true, true);
                     if (protection || GetTickCount64() - started >= 750) break;
                 } while (Pause(stop, 75));
                 if (!protection && !stop.stop_requested()) failure = ERROR_NOT_READY;
@@ -184,9 +211,9 @@ struct NativeStartMenu::Impl
                 {
                     attempted = true;
                     if (closingExisting) close.Request(GetTickCount64());
-                    const HRESULT dispatched = closingExisting ? launcher.Dismiss() :
-                        NativeStartMenu::Toggle() ? S_OK : E_ACCESSDENIED;
+                    const HRESULT dispatched = closingExisting ? launcher.Dismiss() : launcher.Show();
                     invoked = SUCCEEDED(dispatched);
+                    LogInputState(closingExisting ? L"after dismiss" : L"after show");
                     if (invoked && closingExisting) close.Dispatched(GetTickCount64());
                     if (!invoked) failure = static_cast<DWORD>(dispatched);
                     else
@@ -211,6 +238,7 @@ struct NativeStartMenu::Impl
                             if (!closingExisting && close.Take(visible))
                             {
                                 const HRESULT dismissed = launcher.Dismiss();
+                                LogInputState(L"after dismiss");
                                 if (SUCCEEDED(dismissed)) close.Dispatched(GetTickCount64());
                                 if (FAILED(dismissed))
                                 { failure = static_cast<DWORD>(dismissed); healthy = false; }
@@ -241,6 +269,7 @@ struct NativeStartMenu::Impl
         try
         {
             PublishHitBounds(nullptr);
+            LogInputState(L"session finished");
             if (protection) UpdateSystemTaskbarStartMenuProtection(false);
             wchar_t ended[320]{};
             swprintf_s(ended, L"[DockStartMenu] native session finished; elapsed=%llu invoked=%d cancelled=%d cancelReason=%d dismiss=%d error=%lu protectionAttempts=%u endReason=%d deferredFallback=%d",

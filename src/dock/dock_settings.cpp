@@ -809,7 +809,7 @@ public:
         return applied;
     }
 
-    bool StartMenuProtection(bool active)
+    bool StartMenuProtection(bool active, bool begin)
     {
         using namespace snowdesktop::taskbar_hook;
         std::vector<HWND> taskbars;
@@ -820,12 +820,12 @@ public:
             if (!ReadSharedSnapshot(state_, snapshot) || snapshot.ownerProcessId != GetCurrentProcessId())
                 return false;
             if (active && !HasMinimizeProtection(snapshot)) return false;
-            renewal = active && snapshot.dockStartMenuUntil > GetTickCount64();
+            renewal = active && !begin && snapshot.dockStartMenuUntil > GetTickCount64();
             for (LONG i = 0; i < snapshot.targetCount; ++i)
                 if (snapshot.targets[i].protectAutoHideActivation)
                     taskbars.push_back(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
             InterlockedIncrement(&state_->generation);
-            state_->dockStartMenuUntil = active ? GetTickCount64() + 3000 : 0;
+            state_->dockStartMenuUntil = snowdesktop::dock_settings_rules::StartMenuLeaseDeadline(active, GetTickCount64());
             MemoryBarrier();
             InterlockedIncrement(&state_->generation);
         }
@@ -844,7 +844,7 @@ public:
                 result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
                 GetPropW(taskbar, native::kAttachedProperty) != nullptr;
         }
-        if (active && !applied) StartMenuProtection(false);
+        if (active && !applied) StartMenuProtection(false, false);
         return applied;
     }
 
@@ -1061,9 +1061,9 @@ bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
     return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
 }
 
-bool UpdateSystemTaskbarStartMenuProtection(bool active)
+bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin)
 {
-    return GetTaskbarBackdropController().StartMenuProtection(active);
+    return GetTaskbarBackdropController().StartMenuProtection(active, begin);
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)

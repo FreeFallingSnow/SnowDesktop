@@ -193,8 +193,9 @@ bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
 // Worker-only, bounded acknowledgement before sending the Start invocation.
-// Renewal expires independently in Explorer if the host stops responding.
-bool UpdateSystemTaskbarStartMenuProtection(bool active);
+// Renewal and the 500ms closing hold expire independently in Explorer.
+// A new begin rearms even when the previous closing hold is still alive.
+bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin = false);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

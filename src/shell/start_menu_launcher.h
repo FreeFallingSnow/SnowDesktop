@@ -19,7 +19,7 @@ inline constexpr GUID kLauncherService = {0x6f86e01c, 0xc649, 0x4d61,
 // stay in a supervised helper; unsupported interfaces cause an open fallback.
 MIDL_INTERFACE("d8d60399-a0f1-f987-5551-321fd1b49864") LauncherCurrent : IUnknown
 {
-    virtual HRESULT STDMETHODCALLTYPE ReservedShow(int, int) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Show(int, int) = 0;
     virtual HRESULT STDMETHODCALLTYPE Dismiss(int method) = 0;
     virtual HRESULT STDMETHODCALLTYPE ReservedDismiss2(int) = 0;
     virtual HRESULT STDMETHODCALLTYPE DismissWithoutTransition() = 0;
@@ -27,7 +27,7 @@ MIDL_INTERFACE("d8d60399-a0f1-f987-5551-321fd1b49864") LauncherCurrent : IUnknow
 };
 MIDL_INTERFACE("93f91f5a-a4ca-4205-9beb-ce4d17c708f9") LauncherLegacy : IUnknown
 {
-    virtual HRESULT STDMETHODCALLTYPE ReservedShow(int, int) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Show(int, int) = 0;
     virtual HRESULT STDMETHODCALLTYPE Reserved2() = 0;
     virtual HRESULT STDMETHODCALLTYPE Reserved3() = 0;
     virtual HRESULT STDMETHODCALLTYPE Reserved4() = 0;
@@ -56,6 +56,12 @@ public:
             legacy_ ? legacy_->IsVisible(&visible) : E_NOINTERFACE;
         value = SUCCEEDED(result) && visible;
         return result;
+    }
+    HRESULT Show()
+    {
+        // ILSM_STARTBUTTON / ILSF_IGNORE_SET_FOREGROUND_ERROR, as used by
+        // native replacement taskbars. No synthetic Win-key state is needed.
+        return current_ ? current_->Show(11, 4) : legacy_ ? legacy_->Show(11, 4) : E_NOINTERFACE;
     }
     HRESULT Dismiss()
     {

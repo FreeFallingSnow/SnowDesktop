@@ -2,6 +2,7 @@
 #include "shell/start_menu_session.h"
 #include "shell/start_menu_launcher.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
+#include "dock/dock_settings_rules.h"
 #include <cstdint>
 #include <iostream>
 #include <thread>
@@ -17,7 +18,7 @@ struct LauncherFixture final : snowdesktop::start_menu::LauncherCurrent,
     bool current = true, legacy = true, visible = true;
     HRESULT currentError = S_OK, visibilityError = S_OK, syncError = S_OK;
     unsigned currentQueries = 0, legacyQueries = 0, shows = 0, closes = 0, syncCloses = 0;
-    int closeMethod = 0;
+    int closeMethod = 0, showMethod = 0, showFlags = 0;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override
     {
         if (!result) return E_POINTER;
@@ -47,7 +48,8 @@ struct LauncherFixture final : snowdesktop::start_menu::LauncherCurrent,
         else return E_NOINTERFACE;
         return QueryInterface(iid, result);
     }
-    HRESULT STDMETHODCALLTYPE ReservedShow(int, int) override { ++shows; visible = true; return S_OK; }
+    HRESULT STDMETHODCALLTYPE Show(int method, int flags) override
+    { ++shows; showMethod = method; showFlags = flags; visible = true; return S_OK; }
     HRESULT STDMETHODCALLTYPE Dismiss(int method) override
     { ++closes; closeMethod = method; visible = false; return S_OK; }
     HRESULT STDMETHODCALLTYPE IsVisible(BOOL* value) override
@@ -103,6 +105,15 @@ int RunDockStartMenuTests()
         "cancelling a pending open suppresses new input but still dismisses a pre-existing native menu");
 
     {
+        LauncherFixture server; server.visible = false;
+        Launcher launcher;
+        check(launcher.Bind(&server) == S_OK && launcher.Show() == S_OK &&
+                server.shows == 1 && server.showMethod == 11 && server.showFlags == 4 && server.visible,
+            "Dock opening uses the native Start-button show method without injecting a Win key");
+        check(launcher.Dismiss() == S_OK && !server.visible && server.shows == 1,
+            "a repeated button closes the native opening without a second show");
+    }
+    {
         LauncherFixture server;
         Launcher launcher;
         bool visible = false;
@@ -126,6 +137,8 @@ int RunDockStartMenuTests()
         check(launcher.Bind(&server) == S_OK && server.currentQueries == 1 && server.legacyQueries == 1 &&
                 launcher.Dismiss() == S_OK && server.closes == 1 && server.closeMethod == 7 && server.shows == 0,
             "early Win10 uses legacy one-way nonanimating dismissal, never a toggle");
+        check(launcher.Show() == S_OK && server.shows == 1 && server.showMethod == 11 && server.visible,
+            "early Win10 also opens through its native Start-button interface");
     }
     {
         LauncherFixture server; server.syncError = E_NOTIMPL;
@@ -327,6 +340,14 @@ int RunDockStartMenuTests()
     if (coreAtom) UnregisterClassW(kCoreWindowClass, coreClass.hInstance);
 
     using namespace snowdesktop::taskbar_hook;
+    namespace dockRules = snowdesktop::dock_settings_rules;
+    check(!dockRules::ShellPanelVisibility(true, true, false) &&
+        dockRules::ShellPanelVisibility(true, false, false) &&
+        dockRules::ShellPanelVisibility(true, true, true),
+        "Dock Start cannot leave a stale reveal reason, while keyboard Start and other panels remain accessible");
+    check(dockRules::ProtectDockStart(true, true, true) &&
+        !dockRules::ProtectDockStart(false, true, true) && !dockRules::ProtectDockStart(true, false, true),
+        "automatic-hide Start protection is independent of minimize enhancement");
     Snapshot snapshot;
     snapshot.enabled = true;
     snapshot.targetCount = 1;
@@ -336,6 +357,9 @@ int RunDockStartMenuTests()
     snapshot.dockStartMenuUntil = 4000;
     check(ShouldSuppressTaskbar(snapshot, 42, 2000), "Dock Start lease retains an auto-hidden bar while Start is visible");
     check(!ShouldSuppressTaskbar(snapshot, 42, 4000), "expired Start protection cannot leave a taskbar hidden");
+    snapshot.dockStartMenuUntil = dockRules::StartMenuLeaseDeadline(false, 5000);
+    check(ShouldSuppressTaskbar(snapshot, 42, 5001) && !ShouldSuppressTaskbar(snapshot, 42, 5500),
+        "Start closing suppression lasts through native settling but expires without another host request");
     check(!ShouldSuppressTaskbar(snapshot, 43, 2000), "a stale unknown taskbar does not inherit a lease");
     snapshot.targets[0].protectAutoHideActivation = FALSE;
     check(!ShouldSuppressTaskbar(snapshot, 42, 2000), "always-visible taskbars do not gain Start suppression");

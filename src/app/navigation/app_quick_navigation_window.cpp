@@ -970,7 +970,8 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
  */
 
 void DesktopApp::OpenQuickNavigation(
-    QuickNavigationInvocationSource source)
+    QuickNavigationInvocationSource source,
+    std::optional<POINT> invocationScreenPoint)
 {
     // Hotkeys and Dock search share the same boundary as the status bar.
     if (statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())) return;
@@ -979,8 +980,14 @@ void DesktopApp::OpenQuickNavigation(
         dragDropController_.IsExternalDragActive())
         return;
 
-    if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source] {
-            OpenQuickNavigation(source);
+    if (!invocationScreenPoint)
+    {
+        POINT point{lastMousePoint_.x + virtualLeft_, lastMousePoint_.y + virtualTop_};
+        GetCursorPos(&point);
+        invocationScreenPoint = point;
+    }
+    if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source, invocationScreenPoint] {
+            OpenQuickNavigation(source, invocationScreenPoint);
         })) return;
 
     const auto watchOutside = [this] {
@@ -1024,9 +1031,9 @@ void DesktopApp::OpenQuickNavigation(
     RECT requestedDockRect{};
     float requestedDpiScale = quickNavDpiScale_;
     PersistentDockHost* requestedDockHost = nullptr;
-    POINT cursor{};
-    if (GetCursorPos(&cursor))
+    if (invocationScreenPoint)
     {
+        const POINT cursor = *invocationScreenPoint;
         requestedOpenPoint = {
             cursor.x - virtualLeft_,
             cursor.y - virtualTop_
