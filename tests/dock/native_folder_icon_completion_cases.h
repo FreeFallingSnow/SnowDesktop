@@ -5,7 +5,7 @@
 #include <d3d11.h>
 #include <iostream>
 #include <stdexcept>
-#include <thread>
+#include <cwchar>
 
 struct DockFolderIconCompletionTestAccess
 {
@@ -578,41 +578,101 @@ inline void RunOffscreen()
 
 inline void RunStandalone()
 {
-    std::cerr << "R09 standalone: create inactive desktop\n";
-    const auto name = L"SnowDesktopR09-" + std::to_wstring(GetCurrentProcessId());
-    const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
-    Require(desktop != nullptr, "R09 creates a private desktop without activating it");
-    std::exception_ptr failure;
-    std::thread worker([&] {
-        try
-        {
-            Require(SetThreadDesktop(desktop) != FALSE, "R09 attaches a fresh fixture thread");
-            std::cerr << "R09 standalone: fixture thread attached\n";
-            RunOffscreen();
-        }
-        catch (...) { failure = std::current_exception(); }
-    });
-    // WinUI/TSF initialization may send synchronous messages back to this
-    // process's original thread while private visible HWNDs are destroyed.
-    // Pump only our own queue instead of stranding that request in join().
-    const HANDLE finished = static_cast<HANDLE>(worker.native_handle());
-    bool quit = false;
-    WPARAM quitCode = 0;
-    while (WaitForSingleObject(finished, 0) != WAIT_OBJECT_0)
+    constexpr wchar_t childVariable[] = L"SNOWDESKTOP_TEST_R09_PRIVATE_DESKTOP";
+    wchar_t childDesktop[256]{};
+    const DWORD markerLength = GetEnvironmentVariableW(childVariable, childDesktop,
+        static_cast<DWORD>(std::size(childDesktop)));
+    if (markerLength)
     {
-        (void)MsgWaitForMultipleObjects(1, &finished, FALSE, 1000, QS_ALLINPUT);
-        MSG message{};
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
-        {
-            if (message.message == WM_QUIT) { quit = true; quitCode = message.wParam; continue; }
-            TranslateMessage(&message); DispatchMessageW(&message);
-        }
+        wchar_t actual[256]{};
+        DWORD needed = 0;
+        Require(markerLength < std::size(childDesktop) &&
+            std::wstring_view(childDesktop).starts_with(L"SnowDesktopR09-") &&
+            GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME,
+                actual, sizeof(actual), &needed) && std::wstring_view(actual) == childDesktop,
+            "R09 child starts on its owned inactive desktop");
+        std::cerr << "R09 child: complete process-lifetime fixture on inactive desktop\n";
+        RunOffscreen();
+        std::cerr << "R09 child: all completion and root cases complete\n";
+        return;
     }
-    worker.join();
-    if (quit) PostQuitMessage(static_cast<int>(quitCode));
-    const bool closed = CloseDesktop(desktop) != FALSE;
-    if (failure) std::rethrow_exception(failure);
-    Require(closed, "R09 closes its inactive desktop after owned receivers exit");
-    std::cerr << "R09 standalone: complete\n";
+
+    // The native model deliberately has process-lifetime owners (as do the
+    // other native fixtures). Their WinUI/TSF/GPU workers can retain a desktop
+    // after visible HWNDs exit. Give the whole owned process one initial
+    // private desktop, then close our handle only after that process exits.
+    struct Owned
+    {
+        HDESK desktop = nullptr;
+        HANDLE job = nullptr, process = nullptr, thread = nullptr;
+        bool assigned = false;
+        ~Owned()
+        {
+            if (process && !assigned && WaitForSingleObject(process, 0) == WAIT_TIMEOUT)
+                TerminateProcess(process, 1); // Own suspended child if assignment failed.
+            if (job) CloseHandle(job); // Kill only our child on an error.
+            if (process) { WaitForSingleObject(process, 5000); CloseHandle(process); }
+            if (thread) CloseHandle(thread);
+            if (desktop) CloseDesktop(desktop);
+        }
+    } owned;
+    const auto name = L"SnowDesktopR09-" + std::to_wstring(GetCurrentProcessId()) +
+        L"-" + std::to_wstring(GetTickCount64());
+    owned.desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    Require(owned.desktop != nullptr, "R09 creates a never-activated process fixture desktop");
+    owned.job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    Require(owned.job && SetInformationJobObject(owned.job, JobObjectExtendedLimitInformation,
+        &limits, sizeof(limits)), "R09 bounds its own fixture process lifetime");
+
+    const std::wstring prefix = std::wstring(childVariable) + L"=";
+    std::vector<std::wstring> entries;
+    LPWCH original = GetEnvironmentStringsW();
+    Require(original != nullptr, "R09 reads child environment without mutating the parent");
+    for (const wchar_t* entry = original; *entry; entry += std::wcslen(entry) + 1)
+    {
+        const std::wstring value(entry);
+        if (value.size() < prefix.size() || CompareStringOrdinal(value.c_str(),
+                static_cast<int>(prefix.size()), prefix.c_str(), static_cast<int>(prefix.size()), TRUE) != CSTR_EQUAL)
+            entries.push_back(value);
+    }
+    FreeEnvironmentStringsW(original);
+    entries.push_back(prefix + name);
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    });
+    std::wstring environment;
+    for (const auto& value : entries) { environment += value; environment.push_back(L'\0'); }
+    environment.push_back(L'\0');
+    wchar_t executable[32768]{};
+    Require(GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))) != 0,
+        "R09 resolves the current compiled test program");
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" --dock-folder-icon-completion";
+    STARTUPINFOW startup{sizeof(startup)};
+    startup.lpDesktop = const_cast<wchar_t*>(name.c_str());
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    PROCESS_INFORMATION child{};
+    Require(CreateProcessW(executable, command.data(), nullptr, nullptr, TRUE,
+        CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
+        environment.data(), nullptr, &startup, &child), "R09 starts its owned private-desktop fixture process");
+    owned.process = child.hProcess; owned.thread = child.hThread;
+    Require(AssignProcessToJobObject(owned.job, owned.process) != FALSE,
+        "R09 contains the suspended fixture before executing it");
+    owned.assigned = true;
+    Require(ResumeThread(owned.thread) != static_cast<DWORD>(-1), "R09 resumes its owned fixture");
+    Require(WaitForSingleObject(owned.process, 75000) == WAIT_OBJECT_0,
+        "R09 private fixture completes within the unchanged outer test budget");
+    DWORD exitCode = 1;
+    Require(GetExitCodeProcess(owned.process, &exitCode) && exitCode == 0,
+        "R09 private fixture passes every completion, pixel and root-resource assertion");
+    const bool closed = CloseDesktop(owned.desktop) != FALSE;
+    if (!closed) std::cerr << "R09 parent desktop close error=" << GetLastError() << '\n';
+    if (closed) owned.desktop = nullptr;
+    Require(closed, "R09 closes the owned desktop after its fixture process exits");
+    std::cerr << "R09 standalone: complete, child exited and owned desktop closed\n";
 }
 }
