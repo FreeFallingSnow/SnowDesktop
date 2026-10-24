@@ -1232,6 +1232,8 @@ private:
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
     void PresentPointerInteractionFrame(
         bool dragPreviewAlreadySynced = false);
+    void ResetPointerInteractionDamage();
+    bool CollectPointerInteractionBounds(RECT& bounds);
     void PresentFloatingDockPointerHosts(
         const void* previousHoverOwner, bool presentAll);
     bool CreateDragPreviewWindow();
@@ -4483,6 +4485,12 @@ private:
     int presentedDragNavHoverSide_ = 0;
     int presentedDragNavHintSide_ = 0;
     RECT presentedDragNavHintBounds_{};
+    enum class PointerInteractionKind : std::uint8_t { None, Item, Widget, Marquee };
+    bool presentingPointerInteractionFrame_ = false;
+    PointerInteractionKind presentedPointerInteractionKind_ = PointerInteractionKind::None;
+    RECT presentedPointerInteractionBounds_{};
+    bool presentedPointerInteractionBoundsReliable_ = false;
+    bool presentedPointerInteractionHidden_ = false;
     int dragGroupOriginX_ = 0;
     int dragGroupOriginY_ = 0;
     // ── 拖放预览缓存（避免每帧重建 BuildDropPreviewList） ──

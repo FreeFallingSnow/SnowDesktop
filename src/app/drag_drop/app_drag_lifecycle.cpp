@@ -2,8 +2,185 @@
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Drag-scene invalidation, presentation and session teardown.
+
+void DesktopApp::ResetPointerInteractionDamage()
+{
+    presentedPointerInteractionKind_ = PointerInteractionKind::None;
+    presentedPointerInteractionBounds_ = {};
+    presentedPointerInteractionBoundsReliable_ = false;
+    presentedPointerInteractionHidden_ = false;
+}
+
+bool DesktopApp::CollectPointerInteractionBounds(RECT& result)
+{
+    result = {};
+    RECT client{};
+    if (!hwnd_ || !GetClientRect(hwnd_, &client)) return false;
+    const auto add = [&](RECT bounds, int padding = 4) {
+        if (IsRectEmpty(&bounds)) return;
+        InflateRect(&bounds, padding, padding);
+        if (IsRectEmpty(&result)) result = bounds;
+        else UnionRect(&result, &result, &bounds);
+    };
+    // Popup transforms and source-specific release planners retain their
+    // complete path until their complete old/new footprint is established.
+    if (GetOpenPopupWidget() || ShouldShowFloatingPopupWindow() ||
+        !luaWidgetPanelRequest_.widgetId.empty() || largeIconGesture_ ||
+        IsUsageGuideVisible() ||
+        dockBounceAnimationFrameToken_ || dockRunningAnimationFrameToken_ ||
+        dockMagnificationAnimationFrameToken_ ||
+        (pageNotifyActive_ && !pageNotifyCompositorDriven_)) return false;
+
+    // Resizing affordances are a separate foreground overlay and can change
+    // with the pointer even when their icon is not part of the selection.
+    if (!dragSession_.IsActive() && CanEditLargeIcons())
+        for (const auto& item : items_)
+            if (item.largeIcon && !IsRectEmpty(&item.bounds))
+            {
+                const int padding = static_cast<int>(std::ceil(
+                    8.f * std::max(.5f, GetItemLayoutScale(item.bounds)))) + 2;
+                add(GetLargeIconFrameRect(item), padding);
+                add(GetLargeIconResizeHandleRect(item), padding);
+            }
+
+    const bool widgetPreview = widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize;
+    if ((widgetPreview && marqueeActive_) ||
+        (widgetPreview && dragSession_.IsActive()) ||
+        (marqueeActive_ && dragSession_.IsActive())) return false;
+    if (widgetPreview)
+    {
+        if (mouseDownWidgetIndex_ >= widgets_.size()) return false;
+        const bool pair = (widgetAction_ == WidgetAction::Move || dragSession_.IsActive()) &&
+            widgetPairAction_ !=
+            snowdesktop::widget_pair_drop::Action::None &&
+            widgetPairTargetIndex_ < widgets_.size();
+        const size_t index = pair ? widgetPairTargetIndex_ :
+            widgetCollectionGroupTargetIndex_;
+        const bool group = widgetAction_ == WidgetAction::Move &&
+            index < widgets_.size() &&
+            (widgets_[index].type == DesktopWidgetType::CollectionGroup ||
+             widgets_[index].type == DesktopWidgetType::FileGroup);
+        if (pair || group)
+        {
+            RECT target = widgets_[index].bounds;
+            for (const auto& container : containers_)
+                if (const auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                    widget && widget->GetWidgetData() == &widgets_[index])
+                { target = widget->GetFrameRect(); break; }
+            // The renderer inflates group targets before its empty check.
+            // Missing owner geometry is unknown rather than an empty overlay.
+            if (IsRectEmpty(&target)) return false;
+            add(target, ScaleWidgetCu(6.f, widgets_[index].cellScale) + 2);
+        }
+        else if (widgetDockTarget_)
+        {
+            // Insertion can sit at either end of a scrolled Dock. Cover its
+            // owner rather than approximating an insertion from the pointer.
+            if (widgetDockTargetContainer_ &&
+                IsDockHostedByPersistentHost(widgetDockTargetContainer_)) return false;
+            if (widgetDockTargetContainer_)
+            {
+                const RECT target = widgetDockTargetContainer_->GetInteractiveBounds();
+                if (IsRectEmpty(&target)) return false;
+                add(target, 8);
+            }
+        }
+        else add(GetGridRect(gridPages_, widgetPreviewCell_, widgetPreviewSpan_));
+    }
+    else if (marqueeActive_)
+    {
+        if (marqueeDockFolderPopup_ ||
+            (marqueeWidgetIndex_ < widgets_.size() &&
+             marqueeWidgetIndex_ == popupWidgetIndex_))
+            return false;
+        if (marqueeWidgetIndex_ < widgets_.size())
+        {
+            RECT visible{};
+            RECT line = marqueeRect_;
+            InflateRect(&line, 2, 2);
+            const RECT viewport = GetMarqueeViewportRect();
+            if (IntersectRect(&visible, &line, &viewport)) add(visible);
+        }
+        else
+        {
+            add(marqueeRect_);
+            const auto selectedColumn = [&](RECT bounds) {
+                const auto metrics = GetItemVisualMetrics(bounds);
+                const RECT icon = GetItemIconRect(bounds);
+                const RECT title = GetItemTextRect(bounds, true);
+                bounds.left = std::min({bounds.left, icon.left, title.left});
+                bounds.right = std::max({bounds.right, icon.right, title.right});
+                // Selected titles deliberately have no maximum line count.
+                // A full-height column covers arbitrary text and its centered
+                // newline fallback without a second DirectWrite layout.
+                bounds.top = client.top;
+                bounds.bottom = client.bottom;
+                add(bounds, static_cast<int>(std::ceil(
+                    8.f * std::max({.5f, metrics.fontScale, metrics.layoutScale}))) + 2);
+            };
+            for (const auto& entry : items_oo_)
+            {
+                const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
+                const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                if (!item || !item->selected || IsRectEmpty(&item->bounds)) continue;
+                // The card renderer can project selected content beyond its
+                // static frame. Its existing complete path remains the fallback.
+                if (item->largeIcon) return false;
+                selectedColumn(item->bounds);
+            }
+            for (const auto& widget : widgets_)
+                if (widget.selected && snowdesktop::single_cell_widget::IsIconMode(widget) &&
+                    !IsGroupedWidget(widget) && !IsRectEmpty(&widget.bounds) &&
+                    (!desktopIconsHidden_ || widget.keepWhenDesktopHidden))
+                    selectedColumn(widget.bounds);
+        }
+    }
+    else if (dragSession_.IsActive())
+    {
+        auto* desktop = dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer());
+        if (!desktop || !dynamic_cast<DesktopGrid*>(dragSession_.Source())) return false;
+        if (widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None)
+            return false;
+        const auto region = dragSession_.TargetRegion();
+        Slot* slot = dragSession_.TargetSlot();
+        if (region == HitRegion::Handoff)
+        {
+            if (!slot) return false;
+            add(slot->GetBounds());
+            const auto* icon = HitTestIcon(dragSession_.CurrentPoint());
+            const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+            if (item && item->largeIcon) add(GetLargeIconFrameRect(*item), 8);
+        }
+        else if (region != HitRegion::None)
+        {
+            const auto& preview = GetCachedDesktopDropPreview(true,
+                dragSession_.SourceList(), desktop, slot, region,
+                DropActionToMods(dragSession_.Action()), dragSession_.CurrentPoint());
+            // An empty preview can trigger the distinct blocked-large-icon
+            // renderer in DesktopGrid. Keep its proven full path.
+            if (preview.Empty()) return false;
+            for (const auto& landing : preview.landings)
+            {
+                if (landing.kind != DropLandingKind::DesktopCell) continue;
+                const GridSpan span{std::max(1, landing.span.columns), std::max(1, landing.span.rows)};
+                const RECT cell = GetGridRect(gridPages_, landing.cell, span);
+                if (IsRectEmpty(&cell)) return false;
+                add(cell);
+                DesktopWidget geometry;
+                geometry.bounds = cell;
+                geometry.gridCell = landing.cell;
+                if (const auto* page = FindGridPage(gridPages_, landing.cell.pageId))
+                    geometry.cellScale = GetGridPageCuScale(*page);
+                add(GetStandaloneWidgetFrameRect(geometry), 8);
+            }
+        }
+    }
+    return true;
+}
 
 bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 {
@@ -26,6 +203,7 @@ bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
  */
 void DesktopApp::InvalidateDragStaticScene()
 {
+    ResetPointerInteractionDamage();
     dragSession_.InvalidateStaticScene();
     dragRenderCache_.Reset();
     // 原生毛玻璃面板位于独立的 Composition 视觉树中，不包含在 D2D
@@ -76,6 +254,15 @@ void DesktopApp::PresentOleDragInteractionFrame()
 void DesktopApp::PresentPointerInteractionFrame(
     bool dragPreviewAlreadySynced)
 {
+    const bool previousPointerFrame = presentingPointerInteractionFrame_;
+    presentingPointerInteractionFrame_ = true;
+    struct PointerFrameScope final
+    {
+        bool& active;
+        bool previous;
+        ~PointerFrameScope() { active = previous; }
+    } pointerFrameScope{presentingPointerInteractionFrame_, previousPointerFrame};
+
     // Move the cached compact drag surface before any desktop or Dock paint.
     // This keeps the ghost attached to the input message even when the
     // larger feedback surfaces need more time to redraw.
@@ -168,6 +355,68 @@ void DesktopApp::PresentPointerInteractionFrame(
                 itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
+    const auto pointerInteractionKind = [&] {
+        if (widgetAction_ == WidgetAction::Move || widgetAction_ == WidgetAction::Resize)
+            return PointerInteractionKind::Widget;
+        if (marqueeActive_) return PointerInteractionKind::Marquee;
+        if (dragSession_.IsActive()) return PointerInteractionKind::Item;
+        return PointerInteractionKind::None;
+    };
+    RECT currentInteractionBounds{};
+    PointerInteractionKind currentInteractionKind = PointerInteractionKind::None;
+    bool currentInteractionBoundsReliable = false;
+    bool currentInteractionBoundsCollected = false;
+    bool currentInteractionHidden = false;
+    const auto collectInteractionBounds = [&] {
+        currentInteractionKind = pointerInteractionKind();
+        currentInteractionHidden = desktopIconsHidden_;
+        currentInteractionBoundsReliable = currentInteractionKind != PointerInteractionKind::None &&
+            CollectPointerInteractionBounds(currentInteractionBounds);
+        if (!currentInteractionBoundsReliable) currentInteractionBounds = {};
+        currentInteractionBoundsCollected = true;
+    };
+    const auto presentInteractionForeground = [&] {
+        // Called after the existing synchronous background update, if any.
+        // Pending model/hover paints may have changed geometry or invalidated the
+        // previous footprint. No normal pointer work moves to a later timer.
+        collectInteractionBounds();
+        RECT client{};
+        if (!GetClientRect(hwnd_, &client)) return false;
+        RECT dirty = client;
+        const bool widgetLayerChanged = currentInteractionKind == PointerInteractionKind::Widget &&
+            presentedWidgetDragFeedback_.resize != (widgetAction_ == WidgetAction::Resize);
+        const bool canNarrow =
+            currentInteractionKind != PointerInteractionKind::None &&
+            currentInteractionKind == pointerInteractionKind() &&
+            currentInteractionKind == presentedPointerInteractionKind_ &&
+            currentInteractionHidden == desktopIconsHidden_ &&
+            currentInteractionHidden == presentedPointerInteractionHidden_ &&
+            currentInteractionBoundsReliable && presentedPointerInteractionBoundsReliable_ &&
+            !widgetLayerChanged && startupInitializationComplete_ &&
+            !compositionPaintInProgress_ && !desktopPointerPresentPending_ &&
+            !graphicsDeviceRecovery_.Pending() && !compositionRenderRecoveryPending_ &&
+            !desktopBackdropFullCollectionPending_ && desktopForegroundCompositionSurface_ &&
+            desktopForegroundCompositionWidth_ == static_cast<UINT>(client.right - client.left) &&
+            desktopForegroundCompositionHeight_ == static_cast<UINT>(client.bottom - client.top);
+        if (canNarrow)
+        {
+            dirty = {};
+            const auto addDirty = [&](RECT bounds, int padding = 0) {
+                if (IsRectEmpty(&bounds)) return;
+                InflateRect(&bounds, padding, padding);
+                if (IsRectEmpty(&dirty)) dirty = bounds;
+                else UnionRect(&dirty, &dirty, &bounds);
+            };
+            addDirty(presentedPointerInteractionBounds_);
+            addDirty(currentInteractionBounds);
+            addDirty(presentedDragNavHintBounds_, 4);
+            addDirty(pageNavDragHintBounds, 4);
+        }
+        // A known empty old/new footprint needs no surface update. Unknown old
+        // pixels always keep client above, including initialization and recovery.
+        return IsRectEmpty(&dirty) || PresentDesktopForegroundComposition(dirty);
+    };
+
     bool itemInteractionPresented = false;
     if (itemDragFeedbackChanged && !firstItemDragFeedback &&
         !desktopBackdropFullCollectionPending_ && !desktopIconsHidden_ &&
@@ -182,10 +431,8 @@ void DesktopApp::PresentPointerInteractionFrame(
         // Initial/source-state changes, popup/Dock handoffs and recovery retain
         // the complete background path below. No pointer work is deferred.
         PresentDesktopPointerUpdate();
-        RECT client{};
-        GetClientRect(hwnd_, &client);
         itemInteractionPresented =
-            PresentDesktopForegroundComposition(client);
+            presentInteractionForeground();
     }
     bool widgetInteractionPresented = false;
     if (widgetPreviewActive && hwnd_ && IsWindow(hwnd_))
@@ -195,10 +442,8 @@ void DesktopApp::PresentPointerInteractionFrame(
             // Grid, Dock and group feedback lives on the shared foreground
             // surface. Redraw it only when the logical target changes; plain
             // pointer movement inside one target has no visual work.
-            RECT client{};
-            GetClientRect(hwnd_, &client);
             widgetInteractionPresented =
-                PresentDesktopForegroundComposition(client);
+                presentInteractionForeground();
         }
         else
         {
@@ -213,10 +458,8 @@ void DesktopApp::PresentPointerInteractionFrame(
         // selected icon pixels move from the background to the interaction
         // layer. Later frames change only that layer (and, when applicable,
         // the one widget surface queued by OnMouseMoveAt).
-        RECT client{};
-        GetClientRect(hwnd_, &client);
         marqueeInteractionPresented =
-            PresentDesktopForegroundComposition(client);
+            presentInteractionForeground();
     }
     bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
@@ -292,6 +535,30 @@ void DesktopApp::PresentPointerInteractionFrame(
         presentedWidgetDragFeedback_ =
             std::move(widgetDragFeedback);
     }
+    const bool acceptedBodyDraw = itemInteractionPresented || marqueeInteractionPresented ||
+        (widgetDragFeedbackChanged && widgetInteractionPresented) || desktopFallbackPresented;
+    if (pointerInteractionKind() == PointerInteractionKind::None)
+    {
+        ResetPointerInteractionDamage();
+    }
+    else if (acceptedBodyDraw && startupInitializationComplete_ &&
+        !compositionPaintInProgress_ && !desktopPointerPresentPending_ &&
+        !graphicsDeviceRecovery_.Pending() && !compositionRenderRecoveryPending_ &&
+        !desktopBackdropFullCollectionPending_)
+    {
+        // The first marquee/item migration uses the complete background route,
+        // so its footprint is discovered only after that draw has completed.
+        if (!currentInteractionBoundsCollected) collectInteractionBounds();
+        if (currentInteractionKind == pointerInteractionKind() && currentInteractionHidden == desktopIconsHidden_)
+        {
+            presentedPointerInteractionKind_ = currentInteractionKind;
+            presentedPointerInteractionBounds_ = currentInteractionBounds;
+            presentedPointerInteractionBoundsReliable_ = currentInteractionBoundsReliable;
+            presentedPointerInteractionHidden_ = currentInteractionHidden;
+        }
+        else ResetPointerInteractionDamage();
+    }
+
     const bool immediateFloatingDockPresent =
         immediateDesktopPresent &&
         (!widgetPreviewActive || widgetDragFeedbackChanged);
@@ -483,6 +750,7 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    ResetPointerInteractionDamage();
     externalFileDropPaths_.clear();
     externalOwnedContent_ = false;
     HideDragHintWindow();

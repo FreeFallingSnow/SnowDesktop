@@ -196,6 +196,7 @@ HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()
     desktopForegroundCompositionSurface_ = std::move(surface);
     desktopForegroundCompositionWidth_ = width;
     desktopForegroundCompositionHeight_ = height;
+    ResetPointerInteractionDamage();
     return S_OK;
 }
 
@@ -282,6 +283,10 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             }
         }
         desktopForegroundTooltipDamage_.AcceptDraw();
+        // Another transaction may change interaction pixels on this same
+        // allocation. Only an actual pointer frame can retain its footprint.
+        if (!presentingPointerInteractionFrame_)
+            ResetPointerInteractionDamage();
         return true;
     }
     return false;
