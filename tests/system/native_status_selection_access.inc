@@ -147,7 +147,7 @@
             require(SUCCEEDED(context->EndDraw()), "R13 production drawing must finish successfully");
             return pixels();
         };
-        const auto compare = [&](const std::function<void()>& draw, size_t owner) {
+        const auto compare = [&](const std::function<void()>& draw, size_t owner, bool completeDesktop = false) {
             const auto before = paint(nullptr, draw);
             windows.Validate();
             press();
@@ -157,7 +157,8 @@
             for (size_t i = 0; i < windows.values.size(); ++i)
                 require(i == owner || !windows.Dirty(i), "R13 excludes unchanged presentation owners");
             GetClientRect(windows.values[owner], &client);
-            require(owner != 0 || !EqualRect(&dirty, &client), "desktop selection damage must exclude unrelated background");
+            require(owner != 0 || (EqualRect(&dirty, &client) != FALSE) == completeDesktop,
+                "ordinary selection stays local while projected large icons retain the complete desktop fallback");
             const auto partial = paint(&dirty, draw);
             const auto full = paint(nullptr, draw);
             require(before != full, "R13 fixture must contain real visible selection pixels");
@@ -180,6 +181,18 @@
         compare([&] { app.DrawStaticBackground(context, nullptr, false); }, 0);
         require(!app.items_[0].selected && !app.items_[1].selected,
             "one status click clears all selected desktop objects including overlapping title layers");
+
+        app.items_[0].largeIcon.emplace();
+        auto& large = *app.items_[0].largeIcon;
+        large.effect = 1; large.amplitude = 2; large.shadow = true; large.shadowStrength = 1;
+        large.backgroundStyle = kAppearancePresetCustom; large.material = 0;
+        app.items_[0].bounds = {220, 100, 920, 700}; app.items_[0].selected = true;
+        auto& largeRuntime = app.largeIconRuntime_[app.items_[0].layoutKey];
+        largeRuntime.motion.tiltX = largeRuntime.motion.tiltY = 1;
+        compare([&] { app.DrawLargeIcon(context, app.items_[0], app.items_[0].bounds, app.items_[0].selected ? 2 : 0); }, 0, true);
+        std::cout << "R13 large-icon complete fallback pixel reference; card projection resources="
+            << static_cast<bool>(largeRuntime.cardResources) << '\n';
+        app.items_[0].largeIcon.reset(); app.largeIconRuntime_.clear();
 
         app.dockFolderPopupOpen_ = false;
         auto& group = SeedListTitleScene(app, 3, true, false);
@@ -205,7 +218,11 @@
         dockItem.layoutKey = L"R13-private-dock-item"; dockItem.name = L"Private Dock item";
         dockItem.gridCell = {kDockPageId, 0, 0}; app.items_.push_back(std::move(dockItem));
         app.RefreshDesktopItemIndexCache();
-        app.dockEntries_ = {{DockEntryType::DesktopItem, app.items_[0].layoutKey, true}};
+        DockEntry selectedEntry;
+        selectedEntry.type = DockEntryType::DesktopItem;
+        selectedEntry.reference = app.items_[0].layoutKey;
+        selectedEntry.selected = true;
+        app.dockEntries_ = {std::move(selectedEntry)};
         auto dock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{0, 650, 1200, 800});
         auto* dockView = dock.get(); app.containers_.push_back(std::move(dock));
         (void)dockView->GetSlots();
