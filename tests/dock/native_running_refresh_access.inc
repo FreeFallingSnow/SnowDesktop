@@ -153,7 +153,7 @@
                 for (const auto& item : app.dockUnpinnedRunningApps_) values.push_back(item.identityKey);
                 return values;
             };
-            const auto refresh = [&](bool visualChange, bool layoutChange) {
+            const auto refresh = [&](const char* scenario, bool visualChange, bool layoutChange) {
                 ValidateRect(output, nullptr);
                 const RECT before = dock.GetInteractiveBounds();
                 const auto order = identities();
@@ -175,7 +175,33 @@
                     draw(partial.Get(), &damage);
                 }
                 draw(full.Get(), nullptr);
-                check(read(partial.Get()) == read(full.Get()),
+                const auto actual = read(partial.Get());
+                const auto expected = read(full.Get());
+                RECT difference{1200, 800, 0, 0};
+                unsigned differentPixels = 0, outsideDamage = 0;
+                int maximumDelta = 0;
+                for (int y = 0; y < 800; ++y)
+                    for (int x = 0; x < 1200; ++x)
+                    {
+                        const size_t offset = (static_cast<size_t>(y) * 1200 + x) * 4;
+                        if (std::memcmp(actual.data() + offset, expected.data() + offset, 4) == 0) continue;
+                        ++differentPixels;
+                        if (!invalidated || x < damage.left || x >= damage.right ||
+                            y < damage.top || y >= damage.bottom) ++outsideDamage;
+                        difference.left = std::min(difference.left, static_cast<LONG>(x));
+                        difference.top = std::min(difference.top, static_cast<LONG>(y));
+                        difference.right = std::max(difference.right, static_cast<LONG>(x + 1));
+                        difference.bottom = std::max(difference.bottom, static_cast<LONG>(y + 1));
+                        for (size_t channel = 0; channel < 4; ++channel)
+                            maximumDelta = std::max(maximumDelta,
+                                std::abs(static_cast<int>(actual[offset + channel]) - expected[offset + channel]));
+                    }
+                std::cout << "R07 " << scenario << " damage=" << damage.left << ',' << damage.top << ','
+                    << damage.right << ',' << damage.bottom << " changedPixels=" << differentPixels
+                    << " outsideDamage=" << outsideDamage << " maxDelta=" << maximumDelta
+                    << " difference=" << difference.left << ',' << difference.top << ','
+                    << difference.right << ',' << difference.bottom << '\n';
+                check(actual == expected,
                     "old complete pixels plus actual partial refresh must equal an independent complete Dock draw");
                 if (!layoutChange)
                 {
@@ -187,21 +213,21 @@
                 }
             };
             draw(partial.Get(), nullptr);
-            refresh(false, false);
+            refresh("unchanged", false, false);
             tracked().title = L"stale cached title with a different width";
             draw(partial.Get(), nullptr);
-            refresh(true, false);
+            refresh("title", true, false);
             wchar_t title[512]{}; GetWindowTextW(window, title, 512);
             check(tracked().title == title, "real discovery restores the actual external window title");
             tracked().foreground = !tracked().foreground;
             tracked().minimized = !tracked().minimized;
             draw(partial.Get(), nullptr);
-            refresh(true, false);
+            refresh("window-state", true, false);
             check(!tracked().selected && tracked().minimized == (IsIconic(window) != FALSE),
                 "real state refresh preserves selection and current minimized feedback");
             tracked().selected = true;
             draw(partial.Get(), nullptr);
-            refresh(false, false);
+            refresh("selected-unchanged", false, false);
             check(tracked().selected, "unchanged discovery preserves an actual selected running item");
             DockRunningAppInfo departed;
             departed.identityKey = L"owned-departed-running-fixture";
@@ -209,18 +235,18 @@
             departed.presence.SetVisible(true, 0, false);
             app.dockUnpinnedRunningApps_.push_back(std::move(departed));
             dock.InvalidateSlots(); draw(partial.Get(), nullptr);
-            refresh(true, true);
+            refresh("departed-shrink", true, true);
             check(std::none_of(app.dockUnpinnedRunningApps_.begin(), app.dockUnpinnedRunningApps_.end(),
                 [](const auto& item) { return item.identityKey == L"owned-departed-running-fixture"; }),
                 "departed presentation reaches zero and leaves the actual running model");
-            refresh(false, false);
+            refresh("after-shrink-unchanged", false, false);
             for (auto& item : app.dockUnpinnedRunningApps_)
                 if (item.iconBitmap) { app.EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
             app.dockUnpinnedRunningApps_.clear();
             dock.InvalidateSlots(); draw(partial.Get(), nullptr);
-            refresh(true, true);
+            refresh("arrived-growth", true, true);
             check(tracked().presence.Amount() == 1.0f, "new discovered task reaches its full disabled-motion geometry");
-            refresh(false, false);
+            refresh("after-growth-unchanged", false, false);
             check(IsWindowVisible(output) != FALSE,
                 "Win32 damage receiver must remain visible on the inactive fixture desktop");
             std::cout << "R07 actual discovery, unchanged/title/state/shrink/growth damage, hits and WARP full/partial pixels passed\n";
