@@ -19,11 +19,14 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
     else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
 
     bool refreshDocks = false;
+    bool recollectGlass = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled;
     std::vector<RECT> desktopFrames;
     for (const auto& widget : widgets_)
     {
         if (ToUpperInvariant(widget.id + L"\n" + widget.sourceFolderPath) != iconCacheKey)
             continue;
+        const auto style = ResolveIconAppearance(L"widget:" + widget.id);
+        recollectGlass = recollectGlass || (style.enabled && style.glassEnabled);
         // Only this folder's derived source depends on the completed bitmap.
         // The other appearance images, and their style/glass metadata, stay valid.
         const auto appearanceKey = L"widget:" + widget.id + L":" +
@@ -31,6 +34,8 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
         const auto appearance = dockAppearanceImages_.find(appearanceKey);
         if (appearance != dockAppearanceImages_.end())
         {
+            const auto glass = iconGlassBackdrop_.find(appearance->second.bitmap.Get());
+            recollectGlass = recollectGlass || (glass != iconGlassBackdrop_.end() && glass->second);
             iconGlassBackdrop_.erase(appearance->second.bitmap.Get());
             iconBitmapStyles_.erase(appearance->second.bitmap.Get());
             dockAppearanceImages_.erase(appearance);
@@ -48,7 +53,16 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
             if (!IsRectEmptyRect(frame)) desktopFrames.push_back(frame);
         }
     }
-    InvalidateDragStaticScene();
+    // Bitmap content cannot move the scene. Retire drag snapshots without
+    // forcing unrelated root icons and widget surfaces through a full draw.
+    // Native glass can change when a source gains/loses its own plate; keep
+    // the complete owner recollection for both the old and requested style.
+    if (recollectGlass) InvalidateDragStaticScene();
+    else
+    {
+        dragSession_.InvalidateStaticScene();
+        dragRenderCache_.Reset();
+    }
     // Every mirrored Dock can consume the same entry. Retain the existing
     // persistent-host immediate presentation and desktop-Dock damage route.
     if (refreshDocks) InvalidateDockRects();

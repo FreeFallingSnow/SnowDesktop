@@ -5,6 +5,7 @@
 #include <d3d11.h>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 struct DockFolderIconCompletionTestAccess
 {
@@ -24,6 +25,7 @@ struct DockFolderIconCompletionTestAccess
         app.itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         app.iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
             snowdesktop::IconBeautifyPreset::DefaultBeautify);
+        app.iconBeautifySettings_.glassEnabled = false;
         app.generalSettings_.dockEnabled = true;
         app.dockSettings_.showWindowsButton = false;
         app.dockSettings_.showQuickSearchButton = false;
@@ -71,6 +73,34 @@ struct DockFolderIconCompletionTestAccess
         app.InvalidateDragStaticScene();
         app.InvalidateDockRects();
         if (app.hwnd_) InvalidateRect(app.hwnd_, nullptr, FALSE);
+    }
+    static void SetFolderCollection(DesktopApp& app, bool pending = false)
+    { app.desktopBackdropFullCollectionPending_ = pending; }
+    static bool FolderCollectionPending(const DesktopApp& app)
+    { return app.desktopBackdropFullCollectionPending_; }
+    static void SetFolderGlass(DesktopApp& app, bool enabled)
+    { app.iconBeautifySettings_.enabled = true; app.iconBeautifySettings_.glassEnabled = enabled; }
+    static void AddUnrelatedRootIcon(DesktopApp& app)
+    {
+        for (auto& widget : app.widgets_) widget.bounds = {};
+        DesktopItem item;
+        item.name = L"Unrelated root icon";
+        item.layoutKey = item.parsingName = L"Z:\\r09-unrelated-root";
+        item.bounds = {24, 24, 120, 120};
+        snowdesktop::icon_image::Image image;
+        image.width = image.height = 32; image.pixels.assign(32 * 32, 0xff4090d0);
+        item.iconBitmap = snowdesktop::icon_image::CreateBitmap(image);
+        if (!item.iconBitmap) throw std::runtime_error("R09 creates owned root sentinel pixels");
+        app.items_.push_back(std::move(item));
+        app.items_oo_.push_back(std::make_unique<DesktopIcon>(&app.items_.back(), nullptr, &app));
+    }
+    static void ClearRootProbeResources(DesktopApp& app)
+    { app.ClearStyledIconCache(); app.d2dIconCache_.clear(); }
+    static size_t RootProbeResources(const DesktopApp& app)
+    {
+        const auto source = reinterpret_cast<std::uintptr_t>(app.items_.front().iconBitmap);
+        return static_cast<size_t>(std::count_if(app.styledIconCache_.begin(), app.styledIconCache_.end(),
+            [source](const auto& entry) { return std::get<0>(entry.first) == source; }));
     }
     static std::uint64_t FolderIconSceneRevision(const DesktopApp& app)
     { return app.dragSession_.StaticSceneRevision(); }
@@ -127,7 +157,7 @@ struct DockFolderIconCompletionTestAccess
         return result;
     }
     static std::vector<std::uint32_t> DrawFolderIconScene(DesktopApp& app, ID2D1DeviceContext* context,
-        HRGN damage = nullptr, const std::vector<std::uint32_t>* previous = nullptr)
+        HRGN damage = nullptr, const std::vector<std::uint32_t>* previous = nullptr, bool rootScene = false)
     {
         auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
@@ -139,6 +169,16 @@ struct DockFolderIconCompletionTestAccess
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         const auto draw = [&] {
             context->Clear(D2D1::ColorF(0.12f, 0.21f, 0.27f, 1.0f));
+            if (rootScene)
+            {
+                RECT dirty{};
+                if (damage) GetRgnBox(damage, &dirty);
+                // Match app_paint.cpp's complete-collection routing, then
+                // execute the real root renderer and DesktopIcon::Draw.
+                app.RenderFrame(context, app.desktopBackdropFullCollectionPending_ || !damage
+                    ? nullptr : &dirty, false);
+                return;
+            }
             for (const auto& container : app.containers_)
                 if (auto* dock = dynamic_cast<DockContainer*>(container.get())) dock->DrawContents(context);
             for (auto& widget : app.widgets_)
@@ -187,7 +227,8 @@ struct DockFolderIconCompletionTestAccess
         app.dockIconWork_.Stop(); app.ClearDockAppearanceImages(); app.dockFolderBitmapCache_.Retain([](const auto&) { return false; });
         app.iconGlassBackdrop_.clear(); app.iconBitmapStyles_.clear(); app.d2dContext_.Reset();
         app.itemTextLayoutCache_.clear(); app.itemTextFormat_.Reset(); app.dwriteFactory_.Reset();
-        app.persistentDockHosts_.clear(); app.containers_.clear(); app.hwnd_ = nullptr;
+        app.persistentDockHosts_.clear(); app.containers_.clear(); app.items_oo_.clear();
+        app.ClearStyledIconCache(); app.d2dIconCache_.clear(); app.items_.clear(); app.hwnd_ = nullptr;
     }
 
 };
@@ -225,9 +266,12 @@ struct Window
             return RegisterClassW(&klass);
         }();
         Require(type != 0, "R09 registers isolated fixture class");
-        value = CreateWindowExW(0, L"SnowDesktopR09DamageFixture", L"R09 isolated damage owner", WS_POPUP,
+        // Visible receivers retain Win32 damage on this never-activated desktop.
+        value = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"SnowDesktopR09DamageFixture", L"R09 isolated damage owner", WS_POPUP | WS_VISIBLE,
             0, 0, 800, 600, nullptr, nullptr, GetModuleHandleW(nullptr), this);
-        Require(value != nullptr, "R09 creates hidden fixture HWND, never a desktop host");
+        Require(value != nullptr, "R09 creates a damage receiver on an inactive private desktop");
+        ValidateRect(value, nullptr);
     }
     ~Window() { DestroyWindow(value); }
 };
@@ -265,6 +309,7 @@ void Run(ID2D1DeviceContext* context)
         ValidateRect(currentWindow.value, nullptr); ValidateRect(referenceWindow.value, nullptr);
         const auto geometry = Access::FolderIconGeometry(current);
         const auto oldRevision = Access::FolderIconSceneRevision(current);
+        Access::SetFolderCollection(current); Access::SetFolderCollection(reference);
         Access::DeliverFolderIcon(current, currentKey, currentTicket, source, isRefined, false);
         Access::DeliverFolderIcon(reference, referenceKey, referenceTicket, source, isRefined, true);
         HRGN damage = CreateRectRgn(0, 0, 0, 0);
@@ -276,6 +321,9 @@ void Run(ID2D1DeviceContext* context)
         Require(Access::FolderIconSceneRevision(current) == oldRevision + (expectedAccepted ? 1 : 0),
             "R09 preserves exactly one drag-static invalidation per accepted result");
         Require(Access::FolderIconGeometry(current) == geometry, "R09 leaves real Dock slot geometry and hit ownership unchanged");
+        Require(!Access::FolderCollectionPending(current) &&
+            Access::FolderCollectionPending(reference) == expectedAccepted,
+            "R09 bitmap-only completion leaves full collection pending only on the original path");
         if (expectedAccepted)
         {
             ++accepted;
@@ -405,7 +453,64 @@ void Run(ID2D1DeviceContext* context)
         << "; two Dock mirrors + desktop pixels/hits/state/dirty-region reference comparison passed\n";
 }
 
-inline void RunStandalone()
+inline void RunRootCulling(ID2D1DeviceContext* context)
+{
+    Window currentWindow, referenceWindow;
+    auto& current = Access::FolderIconScene(context, currentWindow.value);
+    auto& reference = Access::FolderIconScene(context, referenceWindow.value);
+    Access::AddUnrelatedRootIcon(current); Access::AddUnrelatedRootIcon(reference);
+    const auto before = Access::DrawFolderIconScene(current, context, nullptr, nullptr, true);
+    Require(before == Access::DrawFolderIconScene(reference, context, nullptr, nullptr, true),
+        "R09 real root renderer starts from identical sentinel pixels");
+    Access::ClearRootProbeResources(current); Access::ClearRootProbeResources(reference);
+    Access::SetFolderCollection(current); Access::SetFolderCollection(reference);
+    ValidateRect(currentWindow.value, nullptr); ValidateRect(referenceWindow.value, nullptr);
+    snowdesktop::icon_image::Image image;
+    image.width = image.height = 32; image.pixels.assign(32 * 32, 0xff80b040);
+    const auto source = snowdesktop::icon_image::CreateBitmap(image);
+    Require(source != nullptr, "R09 creates owned completion source for root routing");
+    const auto ticket = Access::FolderIconRead(current).ticket;
+    const auto oldTicket = Access::FolderIconRead(reference).ticket;
+    Access::DeliverFolderIcon(current, Access::FolderIconKey(current), ticket, source, true, false);
+    Access::DeliverFolderIcon(reference, Access::FolderIconKey(reference), oldTicket, source, true, true);
+    HRGN damage = CreateRectRgn(0, 0, 0, 0);
+    Require(damage && GetUpdateRgn(currentWindow.value, damage, FALSE) != ERROR &&
+        GetUpdateRect(currentWindow.value, nullptr, FALSE), "R09 root probe uses actual completion damage");
+    Require(!PtInRegion(damage, 50, 50) && !Access::FolderCollectionPending(current) &&
+        Access::FolderCollectionPending(reference), "R09 keeps unrelated root icon outside bitmap-only collection");
+    const auto partial = Access::DrawFolderIconScene(current, context, damage, &before, true);
+    const auto complete = Access::DrawFolderIconScene(reference, context, nullptr, nullptr, true);
+    Require(partial == complete, "R09 real root partial update preserves every complete-reference pixel");
+    const auto currentUploads = Access::RootProbeResources(current);
+    const auto referenceUploads = Access::RootProbeResources(reference);
+    const auto requireCulled = [](size_t resources) {
+        Require(resources == 0, "R09 unrelated real DesktopIcon must be culled before bitmap upload");
+    };
+    requireCulled(currentUploads);
+    bool oldRejected = false;
+    try { requireCulled(referenceUploads); }
+    catch (const std::runtime_error& error)
+    {
+        if (std::string_view(error.what()) != "R09 unrelated real DesktopIcon must be culled before bitmap upload") throw;
+        oldRejected = true;
+    }
+    Require(oldRejected && referenceUploads > 0, "R09 original callback fails the same real draw-resource assertion");
+    std::cout << "R09 actual root routing: unrelated styled uploads candidate=" << currentUploads
+        << ", original=" << referenceUploads << ", comparedPixels=" << complete.size() << "; negative control rejected\n";
+    // Existing first-frame/layout/device work remains pending. Native glass
+    // still uses complete owner collection for a bitmap-only callback.
+    Access::SetFolderCollection(current, true);
+    Access::DeliverFolderIcon(current, Access::FolderIconKey(current), ticket, source, true, false);
+    Require(Access::FolderCollectionPending(current), "R09 never clears pre-existing complete-collection work");
+    Access::SetFolderCollection(current);
+    Access::SetFolderGlass(current, true);
+    Access::DeliverFolderIcon(current, Access::FolderIconKey(current), ticket, source, true, false);
+    Require(Access::FolderCollectionPending(current), "R09 preserves complete recollection for native glass");
+    DeleteObject(damage); DeleteObject(source);
+    Access::StopFolderIconScene(current); Access::StopFolderIconScene(reference);
+}
+
+inline void RunOffscreen()
 {
     Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "R09 initializes isolated COM scope");
     struct ComScope { ~ComScope() { CoUninitialize(); } } comScope;
@@ -424,5 +529,26 @@ inline void RunStandalone()
     Require(SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)),
         "R09 creates isolated D2D context");
     Run(context.Get());
+    RunRootCulling(context.Get());
+}
+
+inline void RunStandalone()
+{
+    const auto name = L"SnowDesktopR09-" + std::to_wstring(GetCurrentProcessId());
+    const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    Require(desktop != nullptr, "R09 creates a private desktop without activating it");
+    std::exception_ptr failure;
+    std::thread worker([&] {
+        try
+        {
+            Require(SetThreadDesktop(desktop) != FALSE, "R09 attaches a fresh fixture thread");
+            RunOffscreen();
+        }
+        catch (...) { failure = std::current_exception(); }
+    });
+    worker.join();
+    const bool closed = CloseDesktop(desktop) != FALSE;
+    if (failure) std::rethrow_exception(failure);
+    Require(closed, "R09 closes its inactive desktop after owned receivers exit");
 }
 }
