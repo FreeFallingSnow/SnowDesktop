@@ -8,6 +8,9 @@ inline constexpr wchar_t kTargetProperty[] = L"SnowDesktop.Dock.MinimizeTarget.v
 inline constexpr wchar_t kOwnerProperty[] = L"SnowDesktop.Dock.MinimizeOwner.v1";
 inline constexpr wchar_t kRevisionProperty[] = L"SnowDesktop.Dock.MinimizeRevision.v1";
 inline constexpr wchar_t kReadyProperty[] = L"SnowDesktop.Dock.MinimizeReady.v1";
+// A live transition HWND holds the original CBT request only until its first
+// frame is acknowledged. Older hosts/hooks simply keep their existing path.
+inline constexpr wchar_t kPresentationPendingProperty[] = L"SnowDesktop.Dock.MinimizePresentation.v1";
 inline constexpr wchar_t kRequestMessage[] = L"SnowDesktop.Dock.BeforeMinimize.v1";
 inline constexpr wchar_t kCancelMessage[] = L"SnowDesktop.Dock.CancelMinimize.v1";
 inline constexpr DWORD kRequestTimeoutMs = 180;

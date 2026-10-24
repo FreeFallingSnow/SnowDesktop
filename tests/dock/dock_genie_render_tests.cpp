@@ -19,6 +19,30 @@
 
 struct DockWindowTransitionTestAccess
 {
+    static bool AwaitingMinimize(const DockWindowTransition& transition)
+    {
+        return transition.awaitingMinimizePresentation_;
+    }
+    static void ExpirePresentation(DockWindowTransition& transition)
+    {
+        transition.presentationBarrierDeadlineMs_ = 1.0;
+    }
+    // Existing pixel/timeline checks begin at the acknowledged first frame.
+    // Pump the real scheduler to that boundary, leaving production asynchronous.
+    static bool StartPresented(DockWindowTransition& transition, HWND source, RECT dock, HWND below = nullptr)
+    {
+        if (!transition.StartMinimize(source, dock, below)) return false;
+        const ULONGLONG deadline = GetTickCount64() + 1500;
+        while (transition.awaitingMinimizePresentation_ && GetTickCount64() < deadline)
+        {
+            transition.animationScheduler_->DispatchDue();
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+            const HANDLE wake = transition.animationScheduler_->WaitHandle();
+            MsgWaitForMultipleObjects(1, &wake, FALSE, 5, QS_ALLINPUT);
+        }
+        return transition.IsActive() && !transition.awaitingMinimizePresentation_;
+    }
     static RECT ImageHost(int effect, RECT window, RECT dock, std::vector<RECT> monitors)
     {
         DockWindowTransition transition;
@@ -1058,7 +1082,7 @@ void CheckFramePixelAlignment()
                 host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
             UpdateWindow(backing);
             const ULONGLONG prepareStarted = GetTickCount64();
-            const bool started = transition.StartMinimize(source, displacedDock);
+            const bool started = DockWindowTransitionTestAccess::StartPresented(transition, source, displacedDock);
             std::cout << "Genie compositor preparation: " << GetTickCount64() - prepareStarted << "ms\n";
             Check(started && DockWindowTransitionTestAccess::TimelineActive(transition) &&
                 scheduler.Metrics().activeAnimations == 0 && scheduler.Metrics().activeTimers == 1,
@@ -1113,7 +1137,7 @@ void CheckFramePixelAlignment()
                 // Interrupt the reversal again before it completes. This must
                 // retain the same full envelope through another native rebind.
                 DockWindowTransitionTestAccess::SeekProgress(transition, 0.25);
-                Check(transition.StartMinimize(source, displacedDock),
+                Check(DockWindowTransitionTestAccess::StartPresented(transition, source, displacedDock),
                     "a prepared Genie restore can immediately reverse to minimize");
                 ShowWindow(source, SW_MINIMIZE);
                 Check(DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
@@ -1210,7 +1234,7 @@ void CheckFramePixelAlignment()
             ShowWindow(source, SW_SHOWNOACTIVATE);
             CheckAttractionSeamPixels(type.hInstance, composition.Get(), backing);
             const ULONGLONG attractionStarted = GetTickCount64();
-            const bool attractionStart = transition.StartMinimize(source, displacedDock);
+            const bool attractionStart = DockWindowTransitionTestAccess::StartPresented(transition, source, displacedDock);
             std::cout << "Attraction compositor preparation: " << GetTickCount64() - attractionStarted << "ms\n";
             Check(attractionStart && DockWindowTransitionTestAccess::TimelineActive(transition) &&
                       scheduler.Metrics().activeAnimations == 0 && scheduler.Metrics().activeTimers == 1,
@@ -1246,7 +1270,7 @@ void CheckFramePixelAlignment()
                 Check(transition.StartRestore(source, displacedDock, restore), "attraction reverses to restore");
                 const double held = DockWindowTransitionTestAccess::Collapse(transition);
                 DockWindowTransitionTestAccess::SeekProgress(transition, 0.85);
-                Check(transition.StartMinimize(source, displacedDock) &&
+                Check(DockWindowTransitionTestAccess::StartPresented(transition, source, displacedDock) &&
                           std::abs(held - DockWindowTransitionTestAccess::Collapse(transition)) < 0.0001,
                       "interrupting native restore preparation preserves the held deformation phase");
                 ShowWindow(source, SW_MINIMIZE);
@@ -1383,7 +1407,7 @@ void CheckRetainedWindowImage()
                     });
                     const RECT fallbackDock{-19720, -19720, -19656, -19656};
                     ShowWindow(source, SW_SHOWNOACTIVATE);
-                    Check(!unavailable.StartMinimize(source, fallbackDock) &&
+                    Check(!DockWindowTransitionTestAccess::StartPresented(unavailable, source, fallbackDock) &&
                         unavailable.RequiresNativeAnimationFallback() && !unavailable.IsActive() &&
                         !unavailable.GetPresentationWindow() && !IsIconic(source) &&
                         failurePresentation.find(L"fallback=native-system-animation") != std::wstring::npos,
@@ -1770,6 +1794,180 @@ void CheckRetainedWindowImage()
                         if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
                     });
                 }
+                // Real minimize entry: only the compositor acknowledgement is
+                // held. Native HWND state, cloak, scheduling and retirement are
+                // production paths and must retain the first-frame ordering.
+                for (const int effect : {1, 2, 3, 4})
+                {
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int nativeRequests = 0, heartbeats = 0;
+                    const HWND foreground = GetForegroundWindow();
+                    bool ordered = false;
+                    Check(transition.StartMinimize(source, dock, nullptr, [&](HWND window) {
+                        ++nativeRequests;
+                        ordered = WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0 &&
+                            appCloaked(window) && GetForegroundWindow() == foreground &&
+                            DockWindowTransitionTestAccess::TimelineActive(transition);
+                        ShowWindow(window, SW_MINIMIZE);
+                    }), "asynchronous minimize starts through its production entry");
+                    Check(transition.IsActive() && !appCloaked(source) && !IsIconic(source) &&
+                        nativeRequests == 0 && !DockWindowTransitionTestAccess::TimelineActive(transition),
+                        "pending minimize retains its real source and freezes the exact first frame");
+                    const auto heartbeat = scheduler.ScheduleInterval(8, [&](snowdesktop::UiScheduleToken) {
+                        if (WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0 &&
+                            WaitForSingleObject(wait->finished, 0) == WAIT_TIMEOUT)
+                        {
+                            Check(!appCloaked(source) && !IsIconic(source) && nativeRequests == 0 &&
+                                DockWindowTransitionTestAccess::Collapse(transition) == 0.0,
+                                "independent UI deadlines observe no source suppression or moving duplicate before acknowledgement");
+                            if (++heartbeats >= 3) SetEvent(wait->release);
+                        }
+                    });
+                    drain();
+                    scheduler.Cancel(heartbeat);
+                    Check(heartbeats >= 3 && !wait->ranOnUiThread.load() && ordered && nativeRequests == 1 &&
+                        IsIconic(source) && !appCloaked(source),
+                        "all four effects acknowledge off UI before one native minimize and clean retirement");
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                // Timeout/failure fallback removes the overlay before issuing
+                // the same native action; an old worker cannot replay it.
+                for (const bool timeout : {false, true})
+                {
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                        [wait, timeout](IDCompositionDesktopDevice* device) {
+                            return timeout ? wait->Wait(device) : E_FAIL;
+                        });
+                    int requests = 0;
+                    Check(transition.StartMinimize(source, dock, nullptr, [&](HWND window) {
+                        ++requests;
+                        Check(!transition.IsActive() && !transition.GetPresentationWindow() && !appCloaked(window),
+                            "failed first-frame presentation retires before native fallback");
+                        ShowWindow(window, SW_MINIMIZE);
+                    }), "failed-presentation minimize reserves its bounded fallback");
+                    if (timeout)
+                    {
+                        Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 300),
+                            "timeout fixture reaches the actual pending worker");
+                        DockWindowTransitionTestAccess::ExpirePresentation(transition);
+                    }
+                    Check(pumpUntil([&] { return requests == 1; }, 500) && IsIconic(source),
+                        "presentation failure or deadline preserves exactly one native action");
+                    SetEvent(wait->release);
+                    if (timeout) Check(pumpUntil([&] {
+                        return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0;
+                    }, 500), "timed-out worker completes after its transition has retired");
+                    Check(requests == 1, "late failed-attempt completion cannot repeat native fallback");
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                for (const int action : {0, 1, 2, 3})
+                {
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    auto pending = std::make_unique<DockWindowTransition>();
+                    Check(pending->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get()),
+                        "pending minimize lifetime fixture initializes");
+                    DockWindowTransitionTestAccess::SetPresentationWait(*pending,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int requests = 0, activations = 0;
+                    Check(pending->StartMinimize(source, dock, nullptr, [&](HWND window) {
+                        ++requests;
+                        ShowWindow(window, SW_MINIMIZE);
+                    }), "lifetime fixture starts an asynchronous minimize");
+                    Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 300),
+                        "lifetime fixture holds a real pending acknowledgement");
+                    if (action == 0) pending->Cancel();
+                    else if (action == 1)
+                    {
+                        Check(pending->StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            Check(window == source && phase == DockWindowRestoreTransitionPhase::ActivateRestored &&
+                                !appCloaked(window), "reversal activates the still-visible source after retiring its duplicate");
+                            ++activations;
+                        }), "restore reverses a pending minimize without sending a native minimize first");
+                    }
+                    else if (action == 2) pending.reset();
+                    else pending->CompleteImmediately();
+                    SetEvent(wait->release);
+                    Check(pumpUntil([&] { return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0; }, 500),
+                        "cancelled first-frame worker completes independently of owner lifetime");
+                    Check(requests == (action == 3 ? 1 : 0) && activations == (action == 1 ? 1 : 0) &&
+                        !appCloaked(source) && IsIconic(source) == (action == 3),
+                        "cancel, reverse, destroy and explicit completion retain their own native-action semantics");
+                    pending.reset();
+                }
+                for (const bool destroy : {false, true})
+                {
+                    const HWND changed = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                        type.lpszClassName, L"", WS_POPUP, -20000, -20000, 320, 200,
+                        nullptr, nullptr, type.hInstance, nullptr);
+                    Check(changed != nullptr, "source-change fixture creates its own HWND");
+                    ShowWindow(changed, SW_SHOWNOACTIVATE);
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int requests = 0;
+                    Check(transition.StartMinimize(changed, dock, nullptr, [&](HWND window) {
+                        ++requests;
+                        Check(window == changed && !transition.GetPresentationWindow() && !appCloaked(window),
+                            "changed geometry takes native fallback after removing the stale aligned image");
+                    }), "source-change fixture starts a pending presentation");
+                    if (destroy) DestroyWindow(changed);
+                    else SetWindowPos(changed, nullptr, -19980, -20000, 320, 200, SWP_NOZORDER | SWP_NOACTIVATE);
+                    Check(pumpUntil([&] { return !transition.IsActive(); }, 300) && requests == (destroy ? 0 : 1),
+                        "moved sources retire promptly and destroyed sources never receive a late native request");
+                    SetEvent(wait->release);
+                    Check(pumpUntil([&] { return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0; }, 500),
+                        "source-change acknowledgement finishes safely after its scene has gone away");
+                    if (!destroy) DestroyWindow(changed);
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                // A pending external minimize still belongs to the original
+                // source-thread operation. Reverse after observing that action,
+                // retaining its first image and source cloak through handoff.
+                for (const bool reverseAgain : {false, true})
+                {
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int restores = 0, activations = 0, extraMinimizes = 0;
+                    Check(transition.StartExternalMinimize(source, dock,
+                        GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs),
+                        "external pending-reverse fixture starts within its original request");
+                    Check(transition.StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                        if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                        {
+                            Check(IsIconic(window) && appCloaked(window),
+                                "external reversal waits for the original native minimize under its retained cloak");
+                            ++restores;
+                            ShowWindow(window, SW_SHOWNOACTIVATE);
+                        }
+                        else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activations;
+                    }) && transition.GetDirection() == DockWindowTransitionDirection::Restore,
+                        "external pending reversal retains the restore intent while presentation is outstanding");
+                    if (reverseAgain)
+                        Check(transition.StartMinimize(source, dock, nullptr, [&](HWND) { ++extraMinimizes; }) &&
+                            transition.GetDirection() == DockWindowTransitionDirection::Minimize,
+                            "a second reversal keeps the original external action without adding another minimize");
+                    SetEvent(wait->release);
+                    Check(pumpUntil([&] { return !DockWindowTransitionTestAccess::AwaitingMinimize(transition); }, 150) &&
+                        transition.IsActive() && appCloaked(source) && restores == 0,
+                        "external presentation acknowledgement precedes release of the original native action");
+                    ShowWindow(source, SW_MINIMIZE); // Original CBT action; never synthesized by the transition.
+                    drain();
+                    Check(extraMinimizes == 0 && restores == (reverseAgain ? 0 : 1) &&
+                        activations == (reverseAgain ? 0 : 1) && IsIconic(source) == reverseAgain && !appCloaked(source),
+                        "external reversal and repeated reversal preserve native ordering and retire the correct image");
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                ShowWindow(source, SW_SHOWNOACTIVATE);
                 // Real restore entry with a controlled slow presentation wait:
                 // the source stays cloaked while independent UI work progresses.
                 for (const int effect : {1, 2, 3, 4})
@@ -1901,7 +2099,7 @@ void CheckRetainedWindowImage()
                     DockWindowTransitionTestAccess::SetCleanupWait(*retiring,
                         [cleanup](IDCompositionDesktopDevice* device) { return cleanup->Wait(device); });
                     ShowWindow(source, SW_SHOWNOACTIVATE);
-                    Check(retiring->StartMinimize(source, dock), "stalled cleanup fixture acquires a real shared scene");
+                    Check(DockWindowTransitionTestAccess::StartPresented(*retiring, source, dock), "stalled cleanup fixture acquires a real shared scene");
                     const HWND oldWindow = retiring->GetPresentationWindow();
                     HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
                     std::atomic<bool> responsive{false};
@@ -1920,7 +2118,7 @@ void CheckRetainedWindowImage()
                         GetWindowLongPtrW(oldWindow, GWLP_USERDATA) == 0,
                         "pending cleanup retains a hidden old scene window without a host pointer");
                     DockWindowTransitionTestAccess::SetCleanupWait(*retiring, {});
-                    Check(retiring->StartMinimize(source, dock) &&
+                    Check(DockWindowTransitionTestAccess::StartPresented(*retiring, source, dock) &&
                         retiring->GetPresentationWindow() != oldWindow,
                         "a new animation owns a separate scene while the old cleanup remains pending");
                     SetEvent(cleanup->release);
@@ -1940,7 +2138,7 @@ void CheckRetainedWindowImage()
                     DockWindowTransitionTestAccess::SetCleanupWait(*owner,
                         [cleanup](IDCompositionDesktopDevice* device) { return cleanup->Wait(device); });
                     ShowWindow(source, SW_SHOWNOACTIVATE);
-                    Check(owner->StartMinimize(source, dock), "early-window-destruction scene starts");
+                    Check(DockWindowTransitionTestAccess::StartPresented(*owner, source, dock), "early-window-destruction scene starts");
                     const HWND oldWindow = owner->GetPresentationWindow();
                     owner.reset();
                     Check(DestroyWindow(oldWindow) && !IsWindow(oldWindow) &&
@@ -1969,14 +2167,14 @@ void CheckRetainedWindowImage()
                                 return PostMessageW(window, message, wp, lp);
                             });
                         ShowWindow(source, SW_SHOWNOACTIVATE);
-                        const bool started = owner->StartMinimize(source, dock);
+                        const bool started = DockWindowTransitionTestAccess::StartPresented(*owner, source, dock);
                         allStarted = allStarted && started;
                         oldWindows[index] = owner->GetPresentationWindow();
                         owner.reset(); // Destruction must not wait for the cleanup acknowledgement.
                     }
                     Check(allStarted, "four stalled retired scenes retain their own resources after owner destruction");
                     ShowWindow(source, SW_SHOWNOACTIVATE);
-                    Check(!transition.StartMinimize(source, dock) && !appCloaked(source) && !transition.IsActive(),
+                    Check(!DockWindowTransitionTestAccess::StartPresented(transition, source, dock) && !appCloaked(source) && !transition.IsActive(),
                         "exhausted retirement budget falls back before acquiring another scene or source lease");
                     for (const auto& wait : waits) SetEvent(wait->release);
                     const auto withoutDispatch = [&](const auto& predicate) {
@@ -1986,7 +2184,7 @@ void CheckRetainedWindowImage()
                     };
                     Check(withoutDispatch([&] { return failedPosts->load() >= waits.size(); }),
                         "completed cleanup retains retry ownership when its UI notification fails");
-                    Check(!transition.StartMinimize(source, dock) &&
+                    Check(!DockWindowTransitionTestAccess::StartPresented(transition, source, dock) &&
                         std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return IsWindow(window); }),
                         "failed retirement notifications keep all four window budget slots occupied");
                     allowPost->store(true);
@@ -1996,13 +2194,13 @@ void CheckRetainedWindowImage()
                             return PeekMessageW(&message, window, WM_APP, 0xBFFF, PM_NOREMOVE) != FALSE;
                         });
                     }), "retirement notifications are retried and queued without dispatching their destruction");
-                    Check(!transition.StartMinimize(source, dock) &&
+                    Check(!DockWindowTransitionTestAccess::StartPresented(transition, source, dock) &&
                         std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return IsWindow(window); }),
                         "worker completion cannot return the four slots before the UI destroys their old windows");
                     Check(pumpUntil([&] {
                         return std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return !IsWindow(window); });
                     }, 1500), "completed retired scenes release their windows and restore the bounded resource budget");
-                    Check(transition.StartMinimize(source, dock), "animation resumes after stalled retirement slots are released");
+                    Check(DockWindowTransitionTestAccess::StartPresented(transition, source, dock), "animation resumes after stalled retirement slots are released");
                     transition.Cancel();
                 }
                 snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
@@ -2026,6 +2224,9 @@ void CheckRetainedWindowImage()
                 std::cout << "Shared Genie preparation: " << GetTickCount() - preparationStart << " ms\n";
                 if (minimizing)
                 {
+                    Check(pumpUntil([&] { return !DockWindowTransitionTestAccess::AwaitingMinimize(transition); },
+                        snowdesktop::dock_minimize::kRequestTimeoutMs),
+                        "external first frame acknowledges before the original Hook deadline");
                     Check(minimizeCompletions == 0, "preparing an external minimize cannot cancel a Dock summon");
                     Check(appCloaked(source), "native minimize keeps the real source out of the composition scene");
                     ShowWindow(source, SW_MINIMIZE);
@@ -2047,7 +2248,7 @@ void CheckRetainedWindowImage()
                     DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED, &enabled, sizeof(enabled));
                     struct LateMinimize { DockWindowTransition* transition; bool retained = false; } late{&transition};
                     SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&late));
-                    const bool delayed = transition.StartMinimize(source, dock);
+                    const bool delayed = DockWindowTransitionTestAccess::StartPresented(transition, source, dock);
                     Check(delayed, "Dock minimize begins for a delayed toolkit state change");
                     if (delayed)
                     {
@@ -2074,7 +2275,7 @@ void CheckRetainedWindowImage()
                 }
                 ShowWindow(source, SW_SHOWNOACTIVATE);
                 const unsigned beforeCanceledMinimize = minimizeCompletions;
-                Check(transition.StartMinimize(source, dock), "owned cancel fixture starts its transition");
+                Check(DockWindowTransitionTestAccess::StartPresented(transition, source, dock), "owned cancel fixture starts its transition");
                 transition.Cancel();
                 Check(!appCloaked(source) && !IsIconic(source), "cancelling an animation immediately reveals its unminimized source");
                 pumpUntil([] { return false; }, 40);
@@ -2083,7 +2284,7 @@ void CheckRetainedWindowImage()
                 transition.SetMinimizeCompletionCallbacks({}, {});
                 const BOOL cloaked = TRUE;
                 DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloaked, sizeof(cloaked));
-                Check(transition.StartMinimize(source, dock), "a precloaked source retains a DWM composition image");
+                Check(DockWindowTransitionTestAccess::StartPresented(transition, source, dock), "a precloaked source retains a DWM composition image");
                 transition.Cancel();
                 Check(appCloaked(source), "animation does not release an application cloak it did not acquire");
                 const BOOL uncloaked = FALSE;

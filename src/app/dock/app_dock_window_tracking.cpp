@@ -15,6 +15,18 @@ namespace
 
 constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
 
+void IssueDockNativeMinimize(HWND target)
+{
+    snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
+    snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
+    const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
+    wchar_t minimizeDiagnostic[128]{};
+    swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
+        minimizeAccepted ? 1 : 0,
+        snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
+    snowdesktop::dock_taskbar_diagnostics::Record(minimizeDiagnostic, target);
+}
+
 bool IsDockConsentActivationProxy(HWND window)
 {
     if (!window || !IsWindow(window)) return false;
@@ -1138,7 +1150,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         !dockWindowTransition_->IsActiveFor(
             target))
     {
-        dockWindowTransition_->Cancel();
+        dockWindowTransition_->CompleteImmediately();
     }
     found->second.window = target;
     found->second.minimized = IsIconic(target) != FALSE;
@@ -1187,31 +1199,24 @@ bool DesktopApp::ActivateOrToggleDockItem(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !IsIconic(target) || reverseRestore;
+        bool transitionStarted = false;
         if (shouldMinimize)
+        {
             PrepareDockWindowMinimize(target, L"dock-minimize");
+            CancelDockWindowActivationObservation(target);
+        }
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            const bool started = dockWindowTransition_->StartMinimize(
+            transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
-                transitionKeepBelowWindow);
-            if (started && !dockSettings_.summonOnAppMinimize)
+                transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
-        if (shouldMinimize)
-        {
-            CancelDockWindowActivationObservation(target);
-            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
-            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
-            wchar_t minimizeDiagnostic[128]{};
-            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
-                minimizeAccepted ? 1 : 0,
-                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
-            snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeDiagnostic, target);
-        }
+        if (shouldMinimize && !transitionStarted)
+            IssueDockNativeMinimize(target);
         found->second.minimized = true;
         found->second.foreground = false;
     }
@@ -1278,7 +1283,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         !dockWindowTransition_->IsActiveFor(
             target))
     {
-        dockWindowTransition_->Cancel();
+        dockWindowTransition_->CompleteImmediately();
     }
 
     using snowdesktop::dock_window_rules::DockClickAction;
@@ -1331,31 +1336,24 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !minimized || reverseRestore;
+        bool transitionStarted = false;
         if (shouldMinimize)
+        {
             PrepareDockWindowMinimize(target, L"dock-minimize");
+            CancelDockWindowActivationObservation(target);
+        }
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            const bool started = dockWindowTransition_->StartMinimize(
+            transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
-                transitionKeepBelowWindow);
-            if (started && !dockSettings_.summonOnAppMinimize)
+                transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
-        if (shouldMinimize)
-        {
-            CancelDockWindowActivationObservation(target);
-            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
-            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
-            wchar_t minimizeDiagnostic[128]{};
-            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
-                minimizeAccepted ? 1 : 0,
-                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
-            snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeDiagnostic, target);
-        }
+        if (shouldMinimize && !transitionStarted)
+            IssueDockNativeMinimize(target);
         nowMinimized = true;
     }
     else

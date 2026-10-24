@@ -49,12 +49,30 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(
         const UINT message = snowdesktop::dock_minimize::RequestMessage();
         const DWORD deadline = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
         DWORD_PTR result = 0;
-        if (message && !SendMessageTimeoutW(receiver, message, wParam,
+        const bool sent = message && SendMessageTimeoutW(receiver, message, wParam,
                 // Allow the host's bounded source-cloak command back into this
                 // thread while it prepares the image. notifying prevents a
                 // reentrant minimize from creating another host request.
                 static_cast<LPARAM>(deadline), SMTO_ABORTIFHUNG,
-                snowdesktop::dock_minimize::kRequestTimeoutMs, &result))
+                snowdesktop::dock_minimize::kRequestTimeoutMs, &result);
+        const HANDLE pending = sent && result ?
+            GetPropW(window, snowdesktop::dock_minimize::kPresentationPendingProperty) : nullptr;
+        while (pending && GetPropW(window, snowdesktop::dock_minimize::kPresentationPendingProperty) == pending &&
+            GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) == receiver &&
+            snowdesktop::dock_minimize::HasLiveOwner(receiver) &&
+            IsWindow(reinterpret_cast<HWND>(pending)) &&
+            snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+        {
+            // Preserve the original request on this source thread and its
+            // original timeout. Pump only sent messages, as SendMessageTimeout
+            // already did, so the host can apply its bounded source cloak.
+            // Never remove posted input, timers or another minimize command.
+            MSG ignored{};
+            PeekMessageW(&ignored, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 2, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
+        }
+        if (!sent || (pending &&
+            GetPropW(window, snowdesktop::dock_minimize::kPresentationPendingProperty) == pending))
         {
             const UINT cancel = snowdesktop::dock_minimize::CancelMessage();
             if (cancel)

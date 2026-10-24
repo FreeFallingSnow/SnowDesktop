@@ -128,7 +128,8 @@ public:
         IDCompositionDesktopDevice* compositionDevice);
     bool StartMinimize(
         HWND sourceWindow, RECT dockRect,
-        HWND keepBelowWindow = nullptr);
+        HWND keepBelowWindow = nullptr,
+        std::function<void(HWND)> minimizeRequest = {});
     bool StartRestore(
         HWND sourceWindow, RECT dockRect,
         RestoreCallback restoreCallback,
@@ -161,7 +162,7 @@ public:
     }
     void RefreshOcclusion();
     void Cancel();
-    // Settings changes must not abandon an in-flight restore request.
+    // Settings changes must preserve pending native minimize/restore intent.
     void CompleteImmediately();
     bool IsActive() const;
     bool RequiresNativeAnimationFallback() const noexcept { return nativeFallbackRequested_; }
@@ -226,6 +227,10 @@ private:
     void RequestRestoreForAnimation();
     bool PrepareRestoredWindow(double nowMilliseconds);
     bool BeginPresentationBarrier(RestorePresentationPhase phase);
+    bool AcquireSourceCloak();
+    bool PrepareMinimizePresentation(double nowMilliseconds);
+    void ClearExternalPresentationWait();
+    bool SourceIdentityCurrent() const;
     std::optional<HRESULT> PresentationBarrierResult(double nowMilliseconds) const;
     static void CALLBACK RunPresentationBarrier(PTP_CALLBACK_INSTANCE instance, void* context);
     static void CALLBACK RunRetiredScene(PTP_CALLBACK_INSTANCE, void*, PTP_WORK);
@@ -259,6 +264,8 @@ private:
     const wchar_t* imageSource_ = L"none";
     HRESULT imageResult_ = S_OK;
     HWND sourceWindow_ = nullptr;
+    DWORD sourceProcess_ = 0;
+    DWORD sourceThread_ = 0;
     Microsoft::WRL::ComPtr<IDCompositionDesktopDevice>
         compositionDevice_;
     Microsoft::WRL::ComPtr<IDCompositionTarget>
@@ -298,6 +305,10 @@ private:
     std::vector<RECT> animationMonitorRects_;
     bool nativeFallbackRequested_ = false;
     bool externalMinimize_ = false;
+    bool awaitingMinimizePresentation_ = false;
+    bool pendingExternalRestore_ = false;
+    RECT minimizeSourceWindowRect_{};
+    std::function<void(HWND)> minimizeRequest_;
     bool externalMinimizeObserved_ = false;
     DWORD externalMinimizeDeadline_ = 0;
     DWORD externalMinimizeObservationDeadline_ = 0;
