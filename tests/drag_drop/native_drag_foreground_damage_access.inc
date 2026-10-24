@@ -100,9 +100,19 @@
             {
                 app.marqueeActive_ = false; app.widgetAction_ = DesktopApp::WidgetAction::None;
                 app.EndDragSession();
-                app.dcompSurface_.Reset(); app.desktopForegroundCompositionSurface_.Reset();
-                app.dcompTarget_.Reset();
+                app.items_oo_.clear(); app.containers_.clear();
+                app.ResetDesktopForegroundComposition();
+                app.CancelUiAnimationFrame();
                 app.uiAnimationScheduler_.Shutdown();
+                app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
+                app.iconGlassBackdrop_.clear(); app.iconBitmapStyles_.clear();
+                app.d2dIconCache_.clear(); app.itemTextLayoutCache_.clear();
+                app.itemTextEffectContext_.Reset(); app.itemTextFormat_.Reset();
+                app.dcompSurface_.Reset(); app.dcompTarget_.Reset();
+                app.dcompVisual_.Reset(); app.dcompDevice_.Reset();
+                app.d2dContext_.Reset(); app.d2dDevice_.Reset();
+                app.d2dFactory_.Reset(); app.d3dDevice_.Reset();
+                app.dwriteFactory_.Reset();
                 app.hwnd_ = saved; DestroyWindow(window);
             }
         } cleanup{app, savedWindow, window};
@@ -472,6 +482,6 @@
         app.InvalidateDragStaticScene();
         check(app.presentedPointerInteractionKind_ == DesktopApp::PointerInteractionKind::None,
             "global static invalidation discards any unreliable old pointer envelope");
-        check(!app.dragPreviewHwnd_ && !app.inputHwnd_ && !app.controlHwnd_,
-            "foreground checks never initialize desktop input, control or drag preview windows");
+        check(!app.dragPreviewHwnd_ && !app.inputHwnd_ && !app.controlHwnd_ && !app.hintHwnd_,
+            "foreground checks never initialize desktop input, control, hint or drag preview windows");
     }
