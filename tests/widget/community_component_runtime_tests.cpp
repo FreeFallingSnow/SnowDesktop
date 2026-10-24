@@ -214,6 +214,9 @@ struct Host
         lua_pushinteger(state,100);return 1;
     }
     static int Image(lua_State* state) { lua_pushliteral(state,"fixture-image");return 1; }
+    // Storage scenarios keep audio allocation/playback outside the fixture;
+    // wooden-fish still resolves its declared sound while loading real Lua.
+    static int Audio(lua_State* state) { luaL_checkstring(state,1);lua_pushliteral(state,"fixture-audio");return 1; }
     static int Subscribe(lua_State* state)
     {
         auto& host=Get(state);Subscription subscription;
@@ -283,7 +286,7 @@ struct Host
         Library("module",{{"require",RequireModule}});Library("storage",{{"get",ReadStorage},{"set",WriteStorage},{"remove",Noop}});
         Library("time",{{"now",Now},{"monotonic",Now},{"parts",Parts}});Library("l10n",{{"tr",Translate},{"formatNumber",Identity},{"language",Language}});
         Library("layout",{{"contentWidth",Width},{"contentHeight",Height}});Library("ui",{{"metrics",Metrics}});
-        Library("resource",{{"image",Image}});Library("data",{{"subscribe",Subscribe}});Library("task",{{"start",Task},{"cancel",Noop}});
+        Library("resource",{{"image",Image},{"audio",Audio}});Library("data",{{"subscribe",Subscribe}});Library("task",{{"start",Task},{"cancel",Noop}});
         Library("interaction",{{"region",Noop},{"isPressed",False},{"isHovered",False},{"isFocused",False}});
         Library("animation",{{"requestFrame",Frame},{"cancelFrame",CancelFrame}});
         Library("draw",{{"text",DrawText},{"measureText",Measure},{"circle",Noop},{"line",Noop},{"rect",Noop},{"arc",Noop},{"path",Noop},{"strokeRect",Noop},{"imageFit",Noop},{"shadow",Noop},{"gradientRect",Noop}});
