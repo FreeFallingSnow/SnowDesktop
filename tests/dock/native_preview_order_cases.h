@@ -115,6 +115,12 @@ struct Fixture
             "start owned preview fixture process");
         process = child.hProcess;
         CloseHandle(child.hThread);
+        // Process identity uses the resolved image path, including when the
+        // fixture was launched through a build-directory junction.
+        DWORD imagePathSize = static_cast<DWORD>(std::size(path));
+        Require(QueryFullProcessImageNameW(process, 0, path, &imagePathSize) != FALSE,
+            "resolve the actual owned preview fixture image path");
+        executable.assign(path, imagePathSize);
         const HANDLE waits[]{ready, process};
         Require(WaitForMultipleObjects(2, waits, FALSE, 10000) == WAIT_OBJECT_0,
             "owned preview fixture must signal readiness before exiting");

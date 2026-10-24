@@ -21,13 +21,23 @@ inline std::string Read(const std::filesystem::path& path)
 inline snowdesktop::LayoutSaveQueue::Write Writer(const std::filesystem::path& path, int column)
 {
     const auto document = "{\"pages\":[{\"id\":\"page\",\"columns\":8,\"rows\":8}],"
-        "\"items\":[{\"key\":\"file\",\"page\":\"page\",\"column\":" +
-        std::to_string(column) + ",\"row\":0}]}";
+        "\"items\":[{\"key\":\"file\",\"page\":\"page\",\"x\":" +
+        std::to_string(column) + ",\"y\":0,\"w\":1,\"h\":1}]}";
     return [path, document] {
         snowdesktop::LayoutSaveQueue::Result result;
         result.saved = snowdesktop::layout_storage::SaveDocument(path, document, &result.error);
         return result;
     };
+}
+inline int ReadColumn(const std::filesystem::path& path)
+{
+    std::string error;
+    snowdesktop::layout_storage::Document document;
+    if (!snowdesktop::layout_storage::ParseDocument(Read(path), document, &error))
+        throw std::runtime_error("parse persisted layout: " + error);
+    Require(document.items.size() == 1 && document.items.front().column.has_value(),
+        "persisted layout contains the positioned fixture item");
+    return *document.items.front().column;
 }
 inline void Run(const std::filesystem::path& root)
 {
@@ -44,7 +54,8 @@ inline void Run(const std::filesystem::path& root)
     Require(!snowdesktop::InteractiveLayoutSave::Consume(&owner), "gesture scope does not leak into later transactions");
     const auto path = root / L"async-layout" / L"layout.json";
     std::filesystem::create_directories(path.parent_path());
-    Require(Writer(path, 0)().saved, "initialize real layout before asynchronous writes");
+    const auto initial = Writer(path, 0)();
+    if (!initial.saved) throw std::runtime_error("initialize real layout: " + initial.error);
     Queue queue;
     std::promise<void> started, release;
     auto released = release.get_future().share();
@@ -67,17 +78,13 @@ inline void Run(const std::filesystem::path& root)
     const auto result = queue.Flush();
     Require(result && result->saved && intermediate == 0,
         "flush writes the latest snapshot and coalesces the superseded pending layout");
-    Require(Read(path).find("\"column\":3") != std::string::npos,
+    Require(ReadColumn(path) == 3,
         "real persisted layout contains the latest accepted position");
-    std::string error;
-    snowdesktop::layout_storage::Document document;
-    Require(snowdesktop::layout_storage::ParseDocument(Read(path), document, &error),
-        "asynchronous output remains a valid typed layout document");
 
     Require(queue.Submit(Writer(path, 4), [](auto) {}, nullptr, 0), "queue older snapshot before synchronous save");
     Require(queue.SaveNow(Writer(path, 5)).saved, "synchronous boundary supersedes and waits for earlier work");
     queue.Drain();
-    Require(Read(path).find("\"column\":5") != std::string::npos,
+    Require(ReadColumn(path) == 5,
         "an older queued or running save cannot overwrite the synchronous final layout");
     const auto good = Read(path);
     Require(queue.Submit([path] {
@@ -92,7 +99,7 @@ inline void Run(const std::filesystem::path& root)
         Queue exiting;
         Require(exiting.Submit(Writer(path, 6), [](auto) {}, nullptr, 0), "queue final document before writer teardown");
     }
-    Require(Read(path).find("\"column\":6") != std::string::npos,
+    Require(ReadColumn(path) == 6,
         "writer teardown flushes the accepted final snapshot before releasing ownership");
 }
 }
