@@ -5348,7 +5348,11 @@ void TestViewLayoutCacheEvaluationAndInvalidation()
         [](auto& root) { root.children[1].tooltip = "Current tooltip"; },
         [](auto& root) { root.children[1].events.at("click").value.object.at("sequence").integer = 2; },
         [](auto& root) { root.children[2].inputValue = "new draft"; },
-        [](auto& root) { root.children[2].textSelection = ViewTextSelection{ 1, 2 }; },
+        [](auto& root) {
+            auto& control = root.children[2];
+            control.textSelection = ViewTextSelection{ 1, 2 };
+            control.events["selectionChange"].id = "draft.selection";
+        },
         [](auto& root) { root.children[2].readOnly = true; },
         [](auto& root) {
             root.children[1].transition = ViewTransition{
@@ -5357,17 +5361,24 @@ void TestViewLayoutCacheEvaluationAndInvalidation()
         },
         [](auto& root) { root.children[0].overflowText = ViewTextOverflow::Clip; },
     };
+    std::size_t changeIndex = 0;
     for (const auto& change : changes)
     {
+        ++changeIndex;
         auto baseline = descriptor;
         Check(cache.ValidateAndLayout(baseline, 240, 180, error),
             "each independent input change needs the same baseline");
         auto candidate = descriptor;
         change(candidate);
         reference = candidate;
-        Check(ValidateAndLayoutViewTree(reference, 240, 180, error) &&
+        const bool equivalent =
+            ValidateAndLayoutViewTree(reference, 240, 180, error) &&
                 cache.ValidateAndLayout(candidate, 240, 180, error, &reused) &&
-                !reused && candidate == reference,
+                !reused && candidate == reference;
+        if (!equivalent)
+            std::cerr << "Layout cache change " << changeIndex << ": "
+                << error << " (reused=" << reused << ")\n";
+        Check(equivalent,
             "resource/theme/interaction/input/animation descriptor changes must retain fresh layout output");
     }
 
