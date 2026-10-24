@@ -2,6 +2,7 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
+#include "platform/window_peek_policy.h"
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -22,6 +23,7 @@ bool DesktopApp::CreateFloatingDockWindow(
         nullptr, nullptr, instance_, &host);
     if (!host.hwnd)
         return false;
+    snowdesktop::ExcludeDesktopWindowFromPeek(host.hwnd);
 
     OleDragDropAdapter* oleAdapter = EnsureOleDragDropAdapter();
     host.dropTargetRegistered = oleAdapter &&

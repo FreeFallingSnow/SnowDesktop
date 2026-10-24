@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "platform/window_peek_policy.h"
 #include "status_bar_activation.h"
 #include "status_bar_appearance.h"
 #include "status_bar_view.h"
@@ -1871,6 +1872,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 continue;
             }
             liveBars.emplace(window->hwnd, &self.fullscreenRequest);
+            ExcludeDesktopWindowFromPeek(window->hwnd);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             window->clockTimerActive = SetTimer(window->hwnd, kClockTimer, 1000, nullptr) != 0;
         }

@@ -123,7 +123,14 @@ public:
         HWND dockLayerOwner = nullptr);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
-    void SetPeekActivateCallback(ActivateCallback callback) { peekActivateCallback_ = std::move(callback); }
+    void SetPeekActivateCallback(ActivateCallback callback)
+    {
+        if (!callback) { peekActivateCallback_ = {}; return; }
+        peekActivateCallback_ = [this, callback = std::move(callback)](HWND window) {
+            windowPeek_.PrepareActivation();
+            callback(window);
+        };
+    }
     void Hide();
     void ScheduleHide();
     void KeepVisible();

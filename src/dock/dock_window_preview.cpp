@@ -1328,9 +1328,14 @@ void DockWindowPreview::CancelPeek(bool suppressUntilLeave)
     if (peekTimerWindow_) KillTimer(peekTimerWindow_, kPeekTimerId);
     peekTimerWindow_ = nullptr;
     // Even an invisible panel retains its cleanup timer after a rejected stop.
-    if (!stopped && hwnd_ && IsWindow(hwnd_) &&
-        SetTimer(hwnd_, kPeekTimerId, kPeekTimerIntervalMs, nullptr))
-        peekTimerWindow_ = hwnd_;
+    if (!stopped)
+    {
+        const auto live = std::find_if(windows_.begin(), windows_.end(),
+            [](HWND window) { return window && IsWindow(window); });
+        if (live != windows_.end() &&
+            SetTimer(*live, kPeekTimerId, kPeekTimerIntervalMs, nullptr))
+            peekTimerWindow_ = *live;
+    }
 }
 
 void DockWindowPreview::UpdatePeekTarget(HWND target)
@@ -1652,7 +1657,6 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         }
         break;
     case WM_NCDESTROY:
-        preview->CancelPeek();
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         for (HWND& popup : preview->windows_)
             if (popup == window) popup = nullptr;
@@ -1662,6 +1666,9 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
             preview->hideTimerArmed_ = false;
             preview->peekTimerWindow_ = nullptr;
         }
+        // Remove the dying HWND before choosing a cleanup timer destination.
+        // A surviving card can retry a temporarily rejected DWM stop.
+        preview->CancelPeek();
         break;
     default:
         break;

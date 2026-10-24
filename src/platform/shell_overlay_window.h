@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include "window_peek_policy.h"
 
 namespace snowdesktop
 {
@@ -30,6 +31,7 @@ inline HWND CreateShellOverlayWindowEx(
         SetLastError(error ? error : ERROR_GEN_FAILURE);
         return nullptr;
     }
+    if ((style & WS_CHILD) == 0) ExcludeDesktopWindowFromPeek(window);
     return window;
 }
 

@@ -1,14 +1,32 @@
 #include "platform/shell_overlay_window.h"
 #include "dock/dock_window_rules.h"
+#include "native_import_patch.h"
 
 #include <initializer_list>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace
 {
 int failures = 0;
+using SetDwmAttribute = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+SetDwmAttribute originalDwmAttribute = nullptr;
+std::unordered_map<HWND, bool> peekExclusions;
+
+// Private-desktop windows, creation and show messages stay native. Substitute
+// only the owned executable's DWM setter: that desktop has no visible DWM
+// scene, and these assertions cover policy delivery before first show.
+HRESULT WINAPI ObserveDwmAttribute(HWND window, DWORD attribute, LPCVOID value, DWORD size)
+{
+    if (attribute == DWMWA_EXCLUDED_FROM_PEEK && value && size == sizeof(BOOL))
+    {
+        peekExclusions[window] = *static_cast<const BOOL*>(value) != FALSE;
+        return S_OK;
+    }
+    return originalDwmAttribute(window, attribute, value, size);
+}
 
 bool Check(bool value, const char* message)
 {
@@ -25,12 +43,14 @@ struct Observation
     bool visibleDuringCreate = false;
     unsigned shows = 0;
     unsigned unmarkedShows = 0;
+    unsigned unexcludedShows = 0;
 };
 
 LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
     if (message == WM_NCCREATE)
     {
+        peekExclusions.erase(window);
         const auto* creation = reinterpret_cast<const CREATESTRUCTW*>(lp);
         auto* observation = static_cast<Observation*>(creation->lpCreateParams);
         SetWindowLongPtrW(window, GWLP_USERDATA,
@@ -48,6 +68,8 @@ LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wp, LPARAM lp)
         ++observation->shows;
         if (GetPropW(window, L"NonRudeHWND") != reinterpret_cast<HANDLE>(TRUE))
             ++observation->unmarkedShows;
+        if ((GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD) == 0 &&
+            !peekExclusions[window]) ++observation->unexcludedShows;
     }
     return DefWindowProcW(window, message, wp, lp);
 }
@@ -60,6 +82,9 @@ struct Window
 
 void CheckOnPrivateDesktop()
 {
+    snowdesktop::test::NativeImportPatch attribute("DwmSetWindowAttribute",
+        reinterpret_cast<ULONG_PTR>(&ObserveDwmAttribute));
+    originalDwmAttribute = reinterpret_cast<SetDwmAttribute>(attribute.original);
     constexpr wchar_t className[] = L"SnowDesktop.ShellOverlay.Test";
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     WNDCLASSEXW windowClass{};
@@ -79,6 +104,8 @@ void CheckOnPrivateDesktop()
         {
             Check(legacy.visibleDuringCreate && legacy.unmarkedShows > 0,
                 "the pre-change path reproduces a first show without a Shell exclusion");
+            Check(legacy.unexcludedShows > 0,
+                "the pre-change path also shows without a Peek exemption");
         }
 
         Observation ownerObservation;
@@ -108,6 +135,8 @@ void CheckOnPrivateDesktop()
                     "the caller controls the first show even if it supplies WS_VISIBLE");
                 Check(GetPropW(overlay.handle, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
                     "the Shell exclusion exists on the hidden HWND");
+                Check(child || peekExclusions[overlay.handle],
+                    "a top-level backdrop or desktop overlay receives Peek exclusion before its first show");
                 Check((GetWindowLongPtrW(overlay.handle, GWL_STYLE) &
                         (WS_POPUP | WS_CHILD | WS_CLIPCHILDREN)) == style &&
                         GetWindowLongPtrW(overlay.handle, GWL_EXSTYLE) == extendedStyle,
@@ -122,12 +151,13 @@ void CheckOnPrivateDesktop()
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE,
                     "the existing no-activation placement path can show the overlay");
                 Check(IsWindowVisible(overlay.handle) && observation.shows > 0 &&
-                        observation.unmarkedShows == 0,
+                        observation.unmarkedShows == 0 && observation.unexcludedShows == 0,
                     "the first SetWindowPos show is observed with the Shell exclusion already present");
                 const unsigned firstShows = observation.shows;
                 ShowWindow(overlay.handle, SW_HIDE);
                 ShowWindow(overlay.handle, SW_SHOWNOACTIVATE);
-                Check(observation.shows > firstShows && observation.unmarkedShows == 0,
+                Check(observation.shows > firstShows && observation.unmarkedShows == 0 &&
+                        observation.unexcludedShows == 0,
                     "first show and later hide/show cycles retain the Shell exclusion");
                 if (!child && !parent)
                 {
@@ -147,7 +177,8 @@ void CheckOnPrivateDesktop()
             WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"replacement", WS_POPUP,
             0, 0, 1280, 720, nullptr, nullptr, instance, &replacementObservation)};
         Check(replacement.handle &&
-                GetPropW(replacement.handle, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+                GetPropW(replacement.handle, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE) &&
+                peekExclusions[replacement.handle],
             "a newly recreated overlay receives its own Shell exclusion");
         SetLastError(ERROR_SUCCESS);
         Window invalid{snowdesktop::CreateShellOverlayWindowEx(0,

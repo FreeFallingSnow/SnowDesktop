@@ -57,6 +57,14 @@ inline bool Peeking(HWND window)
     return !calls.empty() && calls.back().active && calls.back().target == window;
 }
 
+inline LPARAM ContentPoint(HWND popup)
+{
+    RECT card{};
+    if (!GetClientRect(popup, &card) || IsRectEmpty(&card))
+        throw std::runtime_error("Peek input requires a live card");
+    return MAKELPARAM(card.right / 2, card.bottom * 2 / 3);
+}
+
 template<class Check>
 void Run(Check report)
 {
@@ -96,8 +104,12 @@ void Run(Check report)
             failStop = false;
             check(session.Stop() && !session.Active(), "cleanup can retry without losing the old session");
         }
-        check(nativeForeground() == actualForeground && IsIconic(second.window),
-            "session operations preserve actual foreground and source minimization");
+        const auto sourceHasFocus = [&] {
+            const HWND current = nativeForeground();
+            return current == first.window || current == second.window;
+        };
+        check(!sourceHasFocus() && IsIconic(second.window),
+            "session operations never activate an owned source or restore its minimization");
 
         calls.clear();
         HWND activated = nullptr, closed = nullptr;
@@ -157,8 +169,10 @@ void Run(Check report)
                 "moving to a second thumbnail switches immediately without restoring its source");
             SendMessageW(preview.GetWindows()[0], WM_MOUSELEAVE, 0, 0);
             check(Peeking(second.window), "a late leave from the previous popup cannot cancel its successor");
-            check(!activated && !closed && nativeForeground() == actualForeground,
-                "hover and switching never invoke click callbacks or change actual foreground");
+            const auto& popups = preview.GetWindows();
+            check(!activated && !closed && !sourceHasFocus() &&
+                std::find(popups.begin(), popups.end(), nativeForeground()) == popups.end(),
+                "hover and switching never invoke click callbacks or give an owned source or popup foreground");
             SendMessageW(preview.GetWindows()[1], WM_MOUSELEAVE, 0, 0);
             check(Wait([&] { return !calls.back().active; }), "leaving the active thumbnail restores the desktop");
             show();
@@ -228,9 +242,9 @@ void Run(Check report)
             calls.clear();
             show();
             hover(0);
-            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
             Wait([] { return false; }, 450);
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(calls.empty() && activated == first.window && !activatedFromPeek,
                 "clicking before the delay cancels pending Peek and preserves the original click path");
             activated = nullptr;
@@ -238,9 +252,9 @@ void Run(Check report)
             show();
             hover(0);
             check(Wait([&] { return Peeking(first.window); }), "click fixture begins Peek");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
             check(Peeking(first.window), "left-button down retains the preview for a seamless click handoff");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(activatedFromPeek == first.window && !activated && !closed && peekHeldForHandoff &&
                     Peeking(first.window) && !preview.IsVisible() && IsIconic(first.window),
                 "an active Peek selects the nonanimated callback and remains visible through asynchronous restoration");
@@ -253,7 +267,7 @@ void Run(Check report)
             show();
             hover(0);
             check(Wait([&] { return Peeking(first.window); }), "unresponsive-restore fixture begins Peek");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(Wait([&] { return preview.IsCleared(); }, 2000) && IsIconic(first.window),
                 "an uncompleted activation has a bounded Peek handoff without fabricating restoration");
             ShowWindow(first.window, SW_SHOWNOACTIVATE);
@@ -261,7 +275,7 @@ void Run(Check report)
             hover(1);
             check(Wait([&] { return Peeking(second.window); }), "middle-click fixture begins Peek");
             endedBeforeAction = false;
-            SendMessageW(preview.GetWindows()[1], WM_MBUTTONUP, 0, MAKELPARAM(40, 70));
+            SendMessageW(preview.GetWindows()[1], WM_MBUTTONUP, 0, ContentPoint(preview.GetWindows()[1]));
             check(closed == second.window && endedBeforeAction && preview.IsCleared(),
                 "middle click ends Peek before dispatching the original close callback");
 
@@ -277,8 +291,26 @@ void Run(Check report)
             check(Wait([&] { return Peeking(first.window); }), "destroyed-popup fixture begins Peek");
             DestroyWindow(preview.GetWindow());
             check(!calls.back().active, "destroying the popup dismisses its Peek before native teardown");
+
+            Source survivor;
+            ShowWindow(survivor.window, SW_SHOWNOACTIVATE);
+            preview.Show({{first.window, L"primary"}, {survivor.window, L"survivor"}},
+                {0, 0, 30, 30}, DockPosition::Bottom, false);
+            for (const HWND popup : preview.GetWindows())
+                SetWindowPos(popup, nullptr, -16000, -16000, 0, 0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            hover(1);
+            check(Wait([&] { return Peeking(survivor.window); }), "surviving-card cleanup fixture begins Peek");
+            failStop = true;
+            DestroyWindow(preview.GetWindow());
+            const size_t rejectedStopCalls = calls.size();
+            failStop = false;
+            check(Wait([&] { return calls.size() > rejectedStopCalls && !calls.back().active; }),
+                "a surviving card retries rejected Peek cleanup after the primary popup is destroyed");
+            preview.Hide();
+            check(preview.IsCleared(), "surviving-card cleanup leaves no hidden Peek timer or session");
         }
-        check(nativeForeground() == actualForeground, "preview lifecycle does not change the actual foreground window");
+        check(!sourceHasFocus(), "preview lifecycle never gives an owned source foreground");
 
         calls.clear();
         {
@@ -290,9 +322,9 @@ void Run(Check report)
             unavailable.Show({{first.window, L"fallback"}}, {0, 0, 30, 30}, DockPosition::Bottom, false);
             SetWindowPos(unavailable.GetWindow(), nullptr, -16000, -16000, 0, 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            SendMessageW(unavailable.GetWindow(), WM_MOUSEMOVE, 0, MAKELPARAM(40, 70));
+            SendMessageW(unavailable.GetWindow(), WM_MOUSEMOVE, 0, ContentPoint(unavailable.GetWindow()));
             Wait([] { return false; }, 450);
-            SendMessageW(unavailable.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(40, 70));
+            SendMessageW(unavailable.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(unavailable.GetWindow()));
             check(calls.empty() && fallbackActivated == first.window && unavailable.IsCleared(),
                 "missing Peek support retains ordinary thumbnail activation and cleanup");
         }

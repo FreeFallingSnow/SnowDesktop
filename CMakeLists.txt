@@ -462,6 +462,7 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_cloak_dispatcher.cpp
     src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
+    src/platform/window_peek_policy.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/icons/icon_load_diagnostics.h
@@ -1553,7 +1554,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/platform/shell_overlay_window_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32
+        LINK_LIBRARIES user32 dwmapi
         LABELS core integration window)
 
     add_test(NAME http_network_integration

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include "platform/window_peek_policy.h"
 
 namespace snowdesktop::dock_peek
 {
@@ -68,6 +69,10 @@ public:
     HWND Target() const noexcept { return target_.window; }
     bool TargetIsCurrent() const noexcept { return target_.IsCurrent(); }
     bool ForegroundUnchanged() const noexcept { return GetForegroundWindow() == foreground_; }
+    void PrepareActivation() noexcept
+    {
+        if (Active() && TargetIsCurrent()) transitions_.Suppress(target_.window);
+    }
 
     bool Begin(HWND target, HWND caller) noexcept
     {
@@ -89,8 +94,10 @@ public:
 
     bool Stop() noexcept
     {
-        if (!Active()) return true;
-        if (FAILED(api_.activate(FALSE, nullptr, nullptr, kTaskbarTrigger, nullptr)))
+        if (!Active()) return transitions_.Release();
+        const bool stopped = SUCCEEDED(api_.activate(FALSE, nullptr, nullptr, kTaskbarTrigger, nullptr));
+        const bool released = transitions_.Release();
+        if (!stopped || !released)
             return false; // Keep ownership so the caller's cleanup timer can retry.
         target_ = {};
         foreground_ = nullptr;
@@ -102,5 +109,6 @@ private:
     Api api_;
     WindowIdentity target_;
     HWND foreground_ = nullptr;
+    snowdesktop::ScopedWindowTransitionSuppression transitions_;
 };
 }

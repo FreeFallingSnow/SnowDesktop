@@ -4,6 +4,7 @@
 #include "dock/dock_app_identity_rules.h"
 #include "dock_preview_thumbnail_cases.h"
 #include "dock_window_peek_cases.h"
+#include "dock_window_transition_suppression_cases.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -218,6 +219,7 @@ int RunDockWindowPinTests()
     };
     dock_preview_thumbnail_cases::Run(check);
     dock_window_peek_cases::Run(check);
+    dock_window_transition_suppression_cases::Run(check);
     // Real cross-input-queue calls: a controller always releases the fixture,
     // so the old synchronous implementation fails an assertion, not a timeout.
     {
