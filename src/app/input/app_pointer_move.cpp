@@ -1539,38 +1539,37 @@ void DesktopApp::OnMouseMoveAt(
             {
                 if (dock->ContainsInteractivePoint(point))
                 {
+                    const auto dockLayer =
+                        IsDockHostedByPersistentHost(dock) ||
+                            (desktopIconsHidden_ && !IsRetainedContainer(dock))
+                        ? snowdesktop::widget_composition_layer_rules::PointerVisualLayer::None
+                        : snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground;
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
                         return {
                             dock, entry, 8, entry->GetEntryIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (DockRunningItem* item = dock->RunningItemAtPoint(point))
                         return {
                             dock, item, 12, item->GetRunningIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
                         return {
                             dock, item, 11, item->GetItemIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (dock->IsWindowsButtonPoint(point))
                         return {
                             dock, dock, 13, 0, true, nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (dock->IsSearchPoint(point))
                         return {
                             dock, dock, 9, 0, true, nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     return {
                         dock, dock, 10, 0, true, nullptr, {},
-                        snowdesktop::widget_composition_layer_rules::
-                            PointerVisualLayer::Foreground };
+                        dockLayer };
                 }
             }
 
@@ -1696,6 +1695,7 @@ void DesktopApp::OnMouseMoveAt(
             auto* dock = dynamic_cast<DockContainer*>(
                 container.get());
             if (!dock ||
+                IsDockHostedByPersistentHost(dock) ||
                 (desktopIconsHidden_ &&
                     !IsRetainedContainer(dock)))
             {
@@ -1720,11 +1720,14 @@ void DesktopApp::OnMouseMoveAt(
                 ShouldInvalidateDesktopHover(
                     handlingFloatingDockInput_ ||
                     handlingFloatingPopupInput_);
+        const auto isDesktopDockVisual = [](const MouseHoverVisual& visual) {
+            return visual.kind >= 8 && visual.kind <= 13 &&
+                snowdesktop::widget_composition_layer_rules::
+                    NeedsForegroundPaint(visual.layer);
+        };
         const bool dockHoverActive =
-            (oldVisual.kind >= 8 &&
-                oldVisual.kind <= 13) ||
-            (newVisual.kind >= 8 &&
-                newVisual.kind <= 13) ||
+            isDesktopDockVisual(oldVisual) ||
+            isDesktopDockVisual(newVisual) ||
             dockHoverPresentationTracked;
         if (invalidateDesktopHover &&
             (marqueeActive_ || hoverChanged ||
@@ -1773,7 +1776,16 @@ void DesktopApp::OnMouseMoveAt(
                 {
                     auto* dock = dynamic_cast<DockContainer*>(
                         container.get());
-                    if (!dock)
+                    if (!dock || IsDockHostedByPersistentHost(dock) ||
+                        (desktopIconsHidden_ && !IsRetainedContainer(dock)))
+                        continue;
+                    // The old/current owner and the focus-retention strip can
+                    // need clearing even after the latest hit test moved focus.
+                    // Other live magnification tracks still own their exit pixels.
+                    if (dock != oldVisual.owner && dock != newVisual.owner &&
+                        !dock->IsMagnificationAnimating() &&
+                        !snowdesktop::dock_magnification::ShouldTrackHoverPresentation(
+                            dock->GetInteractiveBounds(), oldMouse, current))
                         continue;
                     // Dock hit-testing updates a hysteresis-backed focus
                     // rect. Reconstructing the old title/panel after resolving

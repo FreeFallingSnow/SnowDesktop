@@ -1111,6 +1111,7 @@ struct NativeDragIntegrationAccess
 #include "../layout/native_list_hover_access.inc"
 #include "native_input_safety_access.inc"
 #include "../render/native_foreground_culling_access.inc"
+#include "../dock/native_dock_hover_access.inc"
 #include "../widget/native_widget_surface_handoff_access.inc"
 #include "../system/native_status_selection_access.inc"
 };
@@ -1152,6 +1153,7 @@ struct NativeDragIntegrationAccess
 #include "../layout/native_popup_display_menu_cases.h"
 #include "native_input_safety_cases.h"
 #include "../render/native_foreground_culling_cases.h"
+#include "../dock/native_dock_hover_cases.h"
 #include "../widget/native_widget_surface_handoff_cases.h"
 #include "../system/native_status_selection_cases.h"
 
@@ -1211,12 +1213,17 @@ int main(int argc, char** argv)
     {
         if (argc == 1) {
             native_foreground_culling_cases::Run();
+            native_dock_hover_cases::Run();
             native_widget_surface_handoff_cases::Run();
             RunTargets();
             native_preview_order_cases::Run();
         }
         else if (argc == 2 && std::string_view(argv[1]) == "--foreground-culling")
             native_foreground_culling_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover")
+            native_dock_hover_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover-legacy")
+            native_dock_hover_cases::Run(true);
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-surface-handoff")
             native_widget_surface_handoff_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
