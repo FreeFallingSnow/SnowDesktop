@@ -241,7 +241,7 @@ struct DockWindowPin::State
             if (cleanup->operation) DestroyWindow(cleanup->operation);
         }
 
-        bool MaintainPin(const BorderAppearance& appearance)
+        bool MaintainPin(const BorderAppearance& appearance, HWND peekTarget)
         {
             if (!OwnsTarget()) return false;
             const ULONGLONG now = GetTickCount64();
@@ -272,13 +272,14 @@ struct DockWindowPin::State
             requestPending = false;
             pinInFlight = false;
             cleanup->pinInFlight = false;
-            UpdateBorder(appearance);
+            UpdateBorder(appearance, peekTarget);
             return true;
         }
 
-        void UpdateBorder(const BorderAppearance& appearance)
+        void UpdateBorder(const BorderAppearance& appearance, HWND peekTarget)
         {
-            if (!appearance.enabled || appearance.opacity <= 0.0f)
+            if (!appearance.enabled || appearance.opacity <= 0.0f ||
+                (peekTarget && target != peekTarget))
             {
                 if (IsWindowVisible(border)) ShowWindow(border, SW_HIDE);
                 return;
@@ -393,6 +394,7 @@ struct DockWindowPin::State
 
     HWND manager = nullptr;
     BorderAppearance appearance;
+    HWND peekTarget = nullptr;
     std::vector<std::unique_ptr<Entry>> entries;
     std::vector<HWINEVENTHOOK> hooks;
     bool refreshQueued = false;
@@ -426,7 +428,7 @@ struct DockWindowPin::State
         refreshing = true;
         if (entry->OwnsTarget())
         {
-            if (!entry->MaintainPin(appearance)) QueueRefresh();
+            if (!entry->MaintainPin(appearance, peekTarget)) QueueRefresh();
         }
         else
             QueueRefresh();
@@ -592,7 +594,7 @@ struct DockWindowPin::State
         if (refreshing) return;
         refreshing = true;
         std::erase_if(entries, [this](const auto& entry) {
-            return !entry->MaintainPin(appearance);
+            return !entry->MaintainPin(appearance, peekTarget);
         });
         if (entries.empty())
         {
@@ -615,6 +617,13 @@ bool DockWindowPin::IsPinned(HWND window)
 void DockWindowPin::Refresh()
 {
     if (state_) state_->Refresh();
+}
+
+void DockWindowPin::SetPeekTarget(HWND window)
+{
+    if (!state_ || state_->peekTarget == window) return;
+    state_->peekTarget = window;
+    state_->Refresh();
 }
 
 void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
@@ -727,7 +736,7 @@ bool DockWindowPin::Toggle(HWND window)
     entry->cleanup->pinInFlight = entry->pinInFlight;
     entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
-    entry->UpdateBorder(state_->appearance);
+    entry->UpdateBorder(state_->appearance, state_->peekTarget);
     state_->entries.push_back(std::move(entry));
     state_->Subscribe();
     return true;

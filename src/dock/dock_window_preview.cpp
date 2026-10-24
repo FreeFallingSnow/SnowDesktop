@@ -647,6 +647,7 @@ void DockPreviewHoverController::Reset()
 
 DockWindowPreview::~DockWindowPreview()
 {
+    CancelPeek();
     UnregisterThumbnails();
     for (const HWND window : windows_)
         if (window) DestroyWindow(window);
@@ -728,6 +729,8 @@ void DockWindowPreview::Show(
     RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
     HWND dockLayerOwner)
 {
+    CancelPeek();
+    peekSurfacesReady_ = false;
     if (!EnsureWindow())
         return;
 
@@ -789,12 +792,23 @@ void DockWindowPreview::Show(
         IsWindow(dockLayerOwner);
     const HWND requestedOwner =
         useDockLayer ? dockLayerOwner : nullptr;
+    // Every card is excluded explicitly. A desktop Dock has no separate
+    // top-level caller; do not bind Peek to a card that is hidden on click.
+    peekOwner_ = requestedOwner;
+    peekSurfacesReady_ = true;
+    const BOOL excludedFromPeek = TRUE;
+    if (requestedOwner && FAILED(DwmSetWindowAttribute(requestedOwner,
+            DWMWA_EXCLUDED_FROM_PEEK, &excludedFromPeek, sizeof(excludedFromPeek))))
+        peekSurfacesReady_ = false;
     // Each card has its own native popup. Prepare owners, geometry and DWM
     // surfaces before revealing any new card, without moving the Dock owner.
     for (size_t index = 0; index < windows_.size(); ++index)
     {
         const HWND window = windows_[index];
         const RECT& card = cardRects_[index];
+        if (FAILED(DwmSetWindowAttribute(window, DWMWA_EXCLUDED_FROM_PEEK,
+                &excludedFromPeek, sizeof(excludedFromPeek))))
+            peekSurfacesReady_ = false;
         DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
             &darkMode, sizeof(darkMode));
         DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -995,6 +1009,9 @@ void DockWindowPreview::Hide()
     if (IsCleared())
         return;
     const bool wasVisible = IsVisible();
+    if (!peekCommitting_) CancelPeek();
+    peekOwner_ = nullptr;
+    peekSurfacesReady_ = false;
     if (hwnd_)
         KillTimer(hwnd_, kHideTimerId);
     for (const HWND window : windows_)
@@ -1077,6 +1094,11 @@ bool DockWindowPreview::IsCleared() const
         thumbnailRects_.empty() &&
         thumbnails_.empty() &&
         measuredThumbnails_.empty() &&
+        !windowPeek_.Active() && !peekCandidate_.window &&
+        !peekTimerWindow_ && !peekSuppressedWindow_ && !peekOwner_ &&
+        !peekPendingForeground_ &&
+        !peekDue_ && !peekLeaveDue_ && !peekSurfacesReady_ &&
+        !peekCommitting_ && !peekCommitDeadline_ &&
         panelSize_.cx == 0 &&
         panelSize_.cy == 0 &&
         hoveredIndex_ == -1 &&
@@ -1291,6 +1313,113 @@ int DockWindowPreview::PinButtonIndexAtPoint(POINT point) const
     return -1;
 }
 
+void DockWindowPreview::CancelPeek(bool suppressUntilLeave)
+{
+    peekCommitting_ = false;
+    peekCommitDeadline_ = 0;
+    peekSuppressedWindow_ = suppressUntilLeave
+        ? (peekCandidate_.window ? peekCandidate_.window : windowPeek_.Target())
+        : nullptr;
+    peekCandidate_ = {};
+    peekPendingForeground_ = nullptr;
+    peekDue_ = peekLeaveDue_ = 0;
+    const bool stopped = windowPeek_.Stop();
+    windowPins_.SetPeekTarget(stopped ? nullptr : windowPeek_.Target());
+    if (peekTimerWindow_) KillTimer(peekTimerWindow_, kPeekTimerId);
+    peekTimerWindow_ = nullptr;
+    // Even an invisible panel retains its cleanup timer after a rejected stop.
+    if (!stopped && hwnd_ && IsWindow(hwnd_) &&
+        SetTimer(hwnd_, kPeekTimerId, kPeekTimerIntervalMs, nullptr))
+        peekTimerWindow_ = hwnd_;
+}
+
+void DockWindowPreview::UpdatePeekTarget(HWND target)
+{
+    if (!target)
+    {
+        CancelPeek();
+        return;
+    }
+    if (!windowPeek_.Available() || !peekSurfacesReady_ || peekSuppressedWindow_ == target)
+        return;
+    peekSuppressedWindow_ = nullptr;
+    if (peekCandidate_.window == target && peekCandidate_.IsCurrent()) return;
+    peekCandidate_ = snowdesktop::dock_peek::WindowIdentity::Capture(target);
+    peekPendingForeground_ = GetForegroundWindow();
+    peekLeaveDue_ = 0;
+    UINT delay = 400;
+    if (!SystemParametersInfoW(SPI_GETMOUSEHOVERTIME, 0, &delay, 0)) delay = 400;
+    // Only the first preview waits. Switching within an existing Peek is immediate.
+    peekDue_ = GetTickCount64() + (windowPeek_.Active() ? 0 : std::clamp<UINT>(delay, 100, 1000));
+    if (!peekTimerWindow_)
+    {
+        if (!hwnd_ || !SetTimer(hwnd_, kPeekTimerId, kPeekTimerIntervalMs, nullptr))
+        {
+            CancelPeek();
+            return;
+        }
+        peekTimerWindow_ = hwnd_;
+    }
+    if (windowPeek_.Active()) OnPeekTimer();
+}
+
+void DockWindowPreview::OnPeekTimer()
+{
+    if (peekCommitting_)
+    {
+        const HWND target = windowPeek_.Target();
+        if (!windowPeek_.TargetIsCurrent() || GetTickCount64() >= peekCommitDeadline_ ||
+            (GetAsyncKeyState(VK_ESCAPE) & 0x8000))
+        {
+            CancelPeek();
+        }
+        else if (!IsIconic(target))
+        {
+            const HWND foreground = GetForegroundWindow();
+            if (foreground == target || (foreground &&
+                GetAncestor(foreground, GA_ROOTOWNER) == GetAncestor(target, GA_ROOTOWNER)))
+            {
+                // Keep the full-sized Peek until the real restored window has
+                // taken over. No icon-to-window animation is submitted here.
+                DwmFlush();
+                CancelPeek();
+            }
+        }
+        return;
+    }
+    if (!IsVisible())
+    {
+        CancelPeek();
+        return;
+    }
+    if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) ||
+        (windowPeek_.Active() && (!windowPeek_.TargetIsCurrent() ||
+            !windowPeek_.ForegroundUnchanged())) ||
+        (!windowPeek_.Active() && peekCandidate_.window &&
+            GetForegroundWindow() != peekPendingForeground_))
+    {
+        CancelPeek(true);
+        return;
+    }
+    if (!peekCandidate_.window)
+    {
+        if (!windowPeek_.Active() || !peekLeaveDue_ || GetTickCount64() >= peekLeaveDue_)
+            CancelPeek();
+        return;
+    }
+    DWORD cloaked = 0;
+    if (!peekCandidate_.IsCurrent() ||
+        (SUCCEEDED(DwmGetWindowAttribute(peekCandidate_.window,
+            DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked))
+    {
+        CancelPeek(true);
+        return;
+    }
+    if (GetTickCount64() < peekDue_) return;
+    windowPins_.SetPeekTarget(peekCandidate_.window);
+    if (!windowPeek_.Begin(peekCandidate_.window, peekOwner_)) CancelPeek(true);
+}
+
 void DockWindowPreview::OnMouseMove(HWND window, POINT point)
 {
     KeepVisible();
@@ -1307,6 +1436,10 @@ void DockWindowPreview::OnMouseMove(HWND window, POINT point)
     const int hoveredClose =
         CloseButtonIndexAtPoint(point);
     const int hoveredPin = PinButtonIndexAtPoint(point);
+    const bool content = hovered >= 0 && static_cast<size_t>(hovered) < thumbnailRects_.size() &&
+        PtInRect(&thumbnailRects_[hovered], point);
+    UpdatePeekTarget(content && hoveredClose < 0 && hoveredPin < 0
+        ? items_[hovered].window : nullptr);
     if (hovered != hoveredIndex_ ||
         hoveredClose != hoveredCloseIndex_ || hoveredPin != hoveredPinIndex_)
     {
@@ -1320,6 +1453,11 @@ void DockWindowPreview::OnMouseMove(HWND window, POINT point)
 void DockWindowPreview::OnMouseLeave(HWND window)
 {
     if (trackingWindow_ != window) return;
+    peekCandidate_ = {};
+    peekDue_ = 0;
+    peekSuppressedWindow_ = nullptr;
+    if (windowPeek_.Active()) peekLeaveDue_ = GetTickCount64() + 60;
+    else CancelPeek();
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
     hoveredIndex_ = -1;
@@ -1334,6 +1472,7 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
     const int pinIndex = PinButtonIndexAtPoint(point);
     if (pinIndex >= 0 && static_cast<size_t>(pinIndex) < items_.size())
     {
+        CancelPeek(true);
         KeepVisible();
         if (windowPins_.Toggle(items_[pinIndex].window))
         {
@@ -1366,13 +1505,29 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
     if (index < 0 || static_cast<size_t>(index) >= items_.size())
         return;
     const HWND target = items_[index].window;
+    const bool commitPeek = windowPeek_.Active() && windowPeek_.Target() == target &&
+        windowPeek_.TargetIsCurrent() && peekActivateCallback_;
+    if (commitPeek)
+    {
+        peekCommitting_ = true;
+        peekCommitDeadline_ = GetTickCount64() + 1500;
+    }
     Hide();
-    if (activateCallback_ && target && IsWindow(target))
-        activateCallback_(target);
+    if (target && IsWindow(target))
+    {
+        if (commitPeek)
+        {
+            peekActivateCallback_(target);
+            OnPeekTimer();
+        }
+        else if (activateCallback_)
+            activateCallback_(target);
+    }
 }
 
 void DockWindowPreview::OnMiddleButtonUp(POINT point)
 {
+    CancelPeek(true);
     const int index = CardIndexAtPoint(point);
     if (index < 0 || static_cast<size_t>(index) >= items_.size()) return;
     const HWND target = items_[index].window;
@@ -1458,6 +1613,22 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
     case WM_MOUSELEAVE:
         preview->OnMouseLeave(window);
         return 0;
+    case WM_LBUTTONDOWN:
+    {
+        const POINT point = preview->ToLayoutPoint(window, {
+            GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        const int index = preview->CardIndexAtPoint(point);
+        if (index < 0 || static_cast<size_t>(index) >= preview->thumbnailRects_.size() ||
+            !PtInRect(&preview->thumbnailRects_[index], point) ||
+            !preview->windowPeek_.Active() ||
+            preview->windowPeek_.Target() != preview->items_[index].window)
+            preview->CancelPeek(true);
+        return 0;
+    }
+    case WM_MBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+        preview->CancelPeek(true);
+        return 0;
     case WM_LBUTTONUP:
         preview->OnLeftButtonUp(preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
@@ -1469,6 +1640,11 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         }));
         return 0;
     case WM_TIMER:
+        if (wParam == kPeekTimerId)
+        {
+            preview->OnPeekTimer();
+            return 0;
+        }
         if (wParam == kHideTimerId)
         {
             preview->HideIfPointerOutside();
@@ -1476,6 +1652,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         }
         break;
     case WM_NCDESTROY:
+        preview->CancelPeek();
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         for (HWND& popup : preview->windows_)
             if (popup == window) popup = nullptr;
@@ -1483,6 +1660,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         {
             preview->hwnd_ = nullptr;
             preview->hideTimerArmed_ = false;
+            preview->peekTimerWindow_ = nullptr;
         }
         break;
     default:

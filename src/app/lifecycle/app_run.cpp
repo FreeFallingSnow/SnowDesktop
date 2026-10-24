@@ -654,6 +654,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }))
         dockWindowPreview_.reset();
     if (dockWindowPreview_)
+        dockWindowPreview_->SetPeekActivateCallback([this](HWND window) {
+            ActivateDockWindowFromPreview(window);
+        });
+    if (dockWindowPreview_)
         dockWindowPreview_->SetPinBorderAppearance(CurrentPersonalization());
     if (!CreateDesktopInputWindow(parent))
     {
