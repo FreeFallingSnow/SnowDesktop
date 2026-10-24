@@ -184,14 +184,33 @@ struct DockFolderIconCompletionTestAccess
             for (auto& widget : app.widgets_)
             {
                 if (IsRectEmpty(&widget.bounds)) continue;
-                // Match the real compact widget child surface's clipping.
+                // Real widgets redraw a complete compact child surface; the
+                // root update rectangle never clips their primitive raster.
+                // Compose that independent surface into the damage receiver.
                 const RECT frame = app.GetStandaloneWidgetFrameRect(widget);
-                context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(frame.left),
-                    static_cast<float>(frame.top), static_cast<float>(frame.right),
-                    static_cast<float>(frame.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+                ComPtr<ID2D1Device> device; context->GetDevice(&device);
+                ComPtr<ID2D1DeviceContext> child;
+                require(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &child));
+                ComPtr<ID2D1Bitmap1> surface;
+                require(child->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(frame.right - frame.left),
+                    static_cast<UINT32>(frame.bottom - frame.top)), nullptr, 0, &properties, &surface));
+                child->SetTarget(surface.Get()); child->BeginDraw();
+                child->SetDpi(96.0f, 96.0f); child->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                child->SetTransform(D2D1::Matrix3x2F::Translation(
+                    -static_cast<float>(frame.left), -static_cast<float>(frame.top)));
+                child->Clear(D2D1::ColorF(0, 0, 0, 0));
+                app.brushCache_.clear(); app.brushCacheContext_ = child.Get();
+                app.desktopWidgetBackdropRequestedDuringDraw_ = false;
+                const bool wasChild = std::exchange(app.desktopWidgetCompositionDrawInProgress_, true);
                 Widget entrance(&widget, &app);
-                entrance.Draw(context, widget.bounds, widget.selected ? 2 : 0);
-                context->PopAxisAlignedClip();
+                entrance.Draw(child.Get(), widget.bounds, widget.selected ? 2 : 0);
+                app.desktopWidgetCompositionDrawInProgress_ = wasChild;
+                app.desktopWidgetBackdropRequestedDuringDraw_ = false;
+                require(child->EndDraw()); child->SetTarget(nullptr);
+                app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
+                context->DrawBitmap(surface.Get(), D2D1::RectF(static_cast<float>(frame.left),
+                    static_cast<float>(frame.top), static_cast<float>(frame.right),
+                    static_cast<float>(frame.bottom)), 1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
             }
         };
         if (!damage) draw();
@@ -313,6 +332,7 @@ void Run(ID2D1DeviceContext* context)
         Access::SetFolderCollection(current); Access::SetFolderCollection(reference);
         Access::DeliverFolderIcon(current, currentKey, currentTicket, source, isRefined, false);
         Access::DeliverFolderIcon(reference, referenceKey, referenceTicket, source, isRefined, true);
+        std::cerr << "R09 transition=" << transition << ", both completion routes returned\n";
         HRGN damage = CreateRectRgn(0, 0, 0, 0);
         Require(damage != nullptr && GetUpdateRgn(currentWindow.value, damage, FALSE) != ERROR,
             "R09 reads actual candidate HWND update region");
@@ -347,6 +367,27 @@ void Run(ID2D1DeviceContext* context)
         Require(next == complete, "R09 complete production rendering matches frozen original callback");
         Require((next != currentPixels) == expectedPixelChange,
             "R09 local/refined/fallback transitions obey independently declared visible changes");
+        if (partial != complete)
+        {
+            size_t differences = 0, outside = 0, first = partial.size();
+            RECT bounds{800, 600, 0, 0}, dirty{};
+            GetRgnBox(damage, &dirty);
+            for (size_t index = 0; index != partial.size(); ++index)
+            {
+                if (partial[index] == complete[index]) continue;
+                const auto x = static_cast<LONG>(index % 800), y = static_cast<LONG>(index / 800);
+                bounds.left = std::min(bounds.left, x); bounds.top = std::min(bounds.top, y);
+                bounds.right = std::max(bounds.right, x + 1); bounds.bottom = std::max(bounds.bottom, y + 1);
+                if (!PtInRegion(damage, x, y)) ++outside;
+                if (first == partial.size()) first = index;
+                ++differences;
+            }
+            std::cerr << "R09 partial mismatch: pixels=" << differences << ", outsideDamage=" << outside
+                << ", bounds=" << bounds.left << ',' << bounds.top << ',' << bounds.right << ',' << bounds.bottom
+                << ", damageBox=" << dirty.left << ',' << dirty.top << ',' << dirty.right << ',' << dirty.bottom
+                << ", first=" << first % 800 << ',' << first / 800 << ", partial/reference="
+                << std::hex << partial[first] << '/' << complete[first] << std::dec << '\n';
+        }
         Require(partial == complete, "R09 updating only actual damage yields every reference pixel with no stale image");
         size_t changedPixels = 0;
         for (size_t index = 0; index != next.size(); ++index)
@@ -551,7 +592,24 @@ inline void RunStandalone()
         }
         catch (...) { failure = std::current_exception(); }
     });
+    // WinUI/TSF initialization may send synchronous messages back to this
+    // process's original thread while private visible HWNDs are destroyed.
+    // Pump only our own queue instead of stranding that request in join().
+    const HANDLE finished = static_cast<HANDLE>(worker.native_handle());
+    bool quit = false;
+    WPARAM quitCode = 0;
+    while (WaitForSingleObject(finished, 0) != WAIT_OBJECT_0)
+    {
+        (void)MsgWaitForMultipleObjects(1, &finished, FALSE, 1000, QS_ALLINPUT);
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (message.message == WM_QUIT) { quit = true; quitCode = message.wParam; continue; }
+            TranslateMessage(&message); DispatchMessageW(&message);
+        }
+    }
     worker.join();
+    if (quit) PostQuitMessage(static_cast<int>(quitCode));
     const bool closed = CloseDesktop(desktop) != FALSE;
     if (failure) std::rethrow_exception(failure);
     Require(closed, "R09 closes its inactive desktop after owned receivers exit");
