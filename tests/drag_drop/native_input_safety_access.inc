@@ -112,6 +112,20 @@
         inputSafetyLogChanged.notify_all();
     }
 
+    static void FinishInputSafetyLayoutSave(DesktopApp& app)
+    {
+        if (!app.layoutSavePending_) return;
+        if (!app.layoutScrollSave_.Pending())
+            throw std::runtime_error("release must schedule its pending layout save");
+        // Supply only the timer deadline. The production timer, background
+        // writer and completion must finish before a reload cancels the timer.
+        DueSaveTimer(app);
+        DispatchSaveTimer(app);
+        FlushSave(app);
+        if (app.layoutSavePending_)
+            throw std::runtime_error("release layout save did not complete");
+    }
+
     static void RunQueuedDragReleaseSafety(const wchar_t* windowClass)
     {
         InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
@@ -154,11 +168,12 @@
                     app.hintHwnd_ = nullptr;
                     ReleaseCapture();
                     for (auto it = windows.rbegin(); it != windows.rend(); ++it) DestroyWindow(*it);
-                    app.hwnd_ = app.floatingPopupHwnd_ = nullptr;
+                    app.hwnd_ = app.controlHwnd_ = app.floatingPopupHwnd_ = nullptr;
                     for (const auto& dock : app.persistentDockHosts_) dock->hwnd = nullptr;
                 }
             } cleanup{app, windows};
             app.hwnd_ = create(mainContext);
+            app.controlHwnd_ = app.hwnd_;
             host->hwnd = create(dockContext);
             const HWND dockWindow = host->hwnd;
             app.persistentDockHosts_.push_back(std::move(host));
@@ -211,6 +226,7 @@
                 if (app.dragSession_.IsActive() || app.mouseDown_ || GetCapture() ||
                     app.items_.front().gridCell.column != 1 || app.items_.front().gridCell.row != 1)
                     throw std::runtime_error("real release did not commit its own point exactly once after the stale move backlog");
+                FinishInputSafetyLayoutSave(app);
                 app.LoadLayoutSlots();
                 const auto stored = app.layoutRecords_.find(ToUpperInvariant(file.wstring()));
                 if (stored == app.layoutRecords_.end() || stored->second.cell.column != 1 || stored->second.cell.row != 1)
@@ -264,6 +280,7 @@
                 nullptr, nullptr, app->instance_, &context);
             if (!window) throw std::runtime_error("create widget release fixture");
             app->hwnd_ = window;
+            app->controlHwnd_ = window;
             app->RebuildContainersAndItems();
             if (!app->SaveLayoutSlots(false)) throw std::runtime_error("save original release fixture");
             app->mouseDown_ = true; app->mouseDownWidgetIndex_ = 0;
@@ -283,6 +300,7 @@
                 "normal widget release commits the final cell instead of cancelling the move");
             check(!app->mouseDown_ && app->widgetAction_ == DesktopApp::WidgetAction::None && !GetCapture(),
                 "completed widget release retires gesture and capture");
+            FinishInputSafetyLayoutSave(*app);
             app->LoadLayoutSlots();
             const auto index = app->FindWidgetIndexById(widget.id);
             check(index < app->widgets_.size() && app->widgets_[index].gridCell.pageId == page.id &&
@@ -291,7 +309,7 @@
             app->HideDragHintWindow();
             if (app->hintHwnd_) DestroyWindow(app->hintHwnd_);
             app->hintHwnd_ = nullptr;
-            ReleaseCapture(); DestroyWindow(window); app->hwnd_ = nullptr;
+            ReleaseCapture(); DestroyWindow(window); app->hwnd_ = app->controlHwnd_ = nullptr;
         }
         if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " widget release assertions failed");
     }
@@ -355,13 +373,14 @@
                 nullptr, nullptr, app->instance_, &context);
             if (!window) throw std::runtime_error("create queued component release window");
             app->hwnd_ = window;
+            app->controlHwnd_ = window;
             struct Cleanup
             {
                 DesktopApp& app; HWND window;
                 ~Cleanup()
                 {
                     app.DestroyDragHintWindow();
-                    ReleaseCapture(); DestroyWindow(window); app.hwnd_ = nullptr;
+                    ReleaseCapture(); DestroyWindow(window); app.hwnd_ = app.controlHwnd_ = nullptr;
                 }
             } cleanup{*app, window};
             app->RebuildContainersAndItems();
@@ -455,6 +474,7 @@
                 "component release or cancellation must retire gesture and capture");
             check(!app->dragTooltip_.Visible() && (!app->hintHwnd_ || !IsWindowVisible(app->hintHwnd_)),
                 "component release or cancellation must hide its drag hint");
+            FinishInputSafetyLayoutSave(*app);
             app->LoadLayoutSlots();
             const auto index = app->FindWidgetIndexById(widget.id);
             check(index < app->widgets_.size() && matches(app->widgets_[index]),
