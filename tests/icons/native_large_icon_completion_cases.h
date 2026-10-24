@@ -15,12 +15,13 @@ struct Region
     bool Contains(int x, int y) const { return PtInRegion(value, x, y) != FALSE; }
     std::vector<RECT> Rectangles() const
     {
-        const auto bytes = GetRegionData(value, 0, nullptr);
-        std::vector<std::byte> storage(bytes);
-        auto* data = reinterpret_cast<RGNDATA*>(storage.data());
-        Require(bytes && GetRegionData(value, bytes, data) == bytes, "read completion damage rectangles");
-        const auto* rects = reinterpret_cast<const RECT*>(data->Buffer);
-        return {rects, rects + data->rdh.nCount};
+        // WM_PAINT passes ps.rcPaint to OnPaint: one bounding rectangle,
+        // including gaps between disjoint invalidations in the same batch.
+        RECT rectangle{};
+        const int kind = GetRgnBox(value, &rectangle);
+        Require(kind != ERROR, "read the actual WM_PAINT damage envelope");
+        if (kind == NULLREGION) return {};
+        return {rectangle};
     }
 };
 
@@ -143,6 +144,9 @@ inline void Run()
     Require(Access::LargeCompletionState(app).asset && Access::LargeCompletionState(app, 1).asset,
         "real requests install both initial desktop assets");
     Surface surface; surface.Draw(app, surface.partial.Get(), {}, true);
+    const auto initialPixels = surface.Read(surface.partial.Get());
+    Require(std::find(initialPixels.begin(), initialPixels.end(), 0xffcc3311u) != initialPixels.end(),
+        "the complete production draw must consume the independently specified red source pixels");
     clean();
 
     // Preview chooser completions are consumed by EditLargeIcon's existing
@@ -152,7 +156,8 @@ inline void Run()
     Require(Access::LargeCompletionState(app).previewGenerations[0] == 0 &&
         Access::LargeCompletionState(app).previews[0] && !Access::LargeCompletionState(app).pending,
         "preview acceptance installs chooser pixels and clears its own loading state only");
-    quiet(revision, "preview-only completion must not touch desktop damage or drag/backdrop state");
+    const char* previewContract = "preview-only completion must not touch desktop damage or drag/backdrop state";
+    quiet(revision, previewContract);
     const auto settings = Access::ReadLargeCompletionSettings(app);
     Require(settings.available && settings.error == "largeIcon.locked" &&
         !settings.landscapePath.empty() && !settings.landscapeSource.empty(),
@@ -165,6 +170,12 @@ inline void Run()
     { Region old(window.value); Require(old.Contains(490, 300) &&
         Access::LargeCompletionSceneRevision(app) != revision && Access::LargeCompletionFullCollection(app),
         "negative control executes and detects the original full-desktop/backdrop submission fault"); }
+    bool legacyRejected = false;
+    try { quiet(revision, previewContract); }
+    catch (const std::runtime_error& failure)
+    { legacyRejected = std::string_view(failure.what()).starts_with(previewContract); }
+    Require(legacyRejected, "the same preview-only business assertion must reject the actual legacy tail");
+    std::cout << "R04 legacy full-refresh tail rejected by the same preview-only completion assertion\n";
     clean();
 
     auto previewBefore = notifications->load(); Access::QueueLargeCompletion(app, 0, false, 2);
@@ -214,7 +225,11 @@ inline void Run()
     Require(notifications->load() >= before + 2, "both distinct batch assets finish before the single production drain");
     Access::DrainLargeCompletion(app);
     { Region damage(window.value); Require(damage.Contains(80, 80) && damage.Contains(320, 80) && !damage.Contains(490, 300),
-        "batched main completion covers both changed frames without unrelated background"); surface.Equivalent(app, damage); }
+        "batched main completion covers both changed frames without unrelated background"); surface.Equivalent(app, damage);
+        const auto replacedPixels = surface.Read(surface.partial.Get());
+        Require(std::find(replacedPixels.begin(), replacedPixels.end(), 0xff1144ddu) != replacedPixels.end() &&
+            std::find(replacedPixels.begin(), replacedPixels.end(), 0xff229944u) != replacedPixels.end(),
+            "the actual single-envelope batch draw must consume both independent replacement colors"); }
     Require(Access::LargeCompletionSceneRevision(app) == revision + 1 && !Access::LargeCompletionFullCollection(app),
         "one accepted batch invalidates drag pixels once without changing glass topology");
 
