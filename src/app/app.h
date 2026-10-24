@@ -25,6 +25,7 @@
 #include "data/layout_save_queue.h"
 #include "ui/render/scroll_content_clip.h"
 #include "app/render/widget_icon_backdrops.h"
+#include "app/render/item_text_layout_cache.h"
 #include "platform/operation_feedback.h"
 #include "shell/native_start_menu.h"
 #include "ui/render/graphics_device_recovery.h"
@@ -3786,7 +3787,7 @@ private:
     UiCompositionAnimationOverlay pageNotifyAnimationOverlay_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
-    std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> itemTextLayoutCache_;
+    std::unordered_map<std::wstring, snowdesktop::ItemTextLayoutCacheEntry> itemTextLayoutCache_;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
     std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>>
         componentListTextLayoutCache_;

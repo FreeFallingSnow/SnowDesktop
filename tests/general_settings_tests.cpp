@@ -9,6 +9,7 @@
 #include "system/status_bar/status_bar_appearance.h"
 #include "widget/view/widget_appearance_presets.h"
 #include "layout/item_title_layout.h"
+#include "app/render/item_text_layout_cache.h"
 #include "ui/render/native_tooltip_content.h"
 #include "ui/render/icon_font_glyphs.h"
 #include "../src/winui/font_picker_search.h"
@@ -240,6 +241,112 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 }
 
 int RunThemeLibraryTests();
+void TestItemTextFullWidthCache()
+{
+    using Microsoft::WRL::ComPtr;
+    using snowdesktop::ItemTextFullWidthCache;
+    ComPtr<IDWriteFactory> factory;
+    Check(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED, __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(factory.GetAddressOf()))), "create isolated title measurement factory");
+    if (!factory) return;
+    const auto makeFormat = [&](const wchar_t* family, const wchar_t* locale, bool rtl) {
+        ComPtr<IDWriteTextFormat> format;
+        Check(SUCCEEDED(factory->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24, locale, &format)),
+            "create immutable title measurement format");
+        if (format && rtl) format->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+        return format;
+    };
+    const auto format = makeFormat(L"Segoe UI", L"en-US", false);
+    if (!format) return;
+    // Independent reference: the former uncached production measurement. Keep
+    // its natural-width wrapping and trailing whitespace, including newlines.
+    const auto uncachedWidth = [&](IDWriteTextFormat* selectedFormat, const std::wstring& text,
+        float size, DWRITE_FONT_WEIGHT weight) {
+        ComPtr<IDWriteTextLayout> layout;
+        Check(SUCCEEDED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+            selectedFormat, 10000, 10000, &layout)), "create uncached title reference");
+        if (!layout) return 0.0f;
+        layout->SetFontSize(size, {0, static_cast<UINT32>(text.size())});
+        snowdesktop::app_fonts::SetWeight(layout.Get(), weight, {0, static_cast<UINT32>(text.size())});
+        DWRITE_TEXT_METRICS metrics{};
+        Check(SUCCEEDED(layout->GetMetrics(&metrics)), "measure uncached title reference");
+        return metrics.widthIncludingTrailingWhitespace;
+    };
+    for (const auto* title : {L"Visual Studio Code", L"中文\U0001F600标题  ",
+            L"A\nB", L"A\r\nB\nC", L"مرحبا بالعالم", L"abc אבג xyz"})
+    for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f})
+    for (const auto weight : {DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD})
+    {
+        const float size = 24 * scale;
+        const float width = uncachedWidth(format.Get(), title, size, weight);
+        ItemTextFullWidthCache cache;
+        const auto cold = cache.FitsSingleLine(factory.Get(), format.Get(), title, size, weight, width);
+        Check(cold.fitsSingleLine && !cold.reused, "cold title measurement retains the original fit result");
+        for (const float available : {width - 2.25f, width - 2.0f, width - 1.75f, width + 5.0f})
+        {
+            const auto warm = cache.FitsSingleLine(factory.Get(), format.Get(), title, size, weight, available);
+            Check(warm.reused && warm.fitsSingleLine == (width <= available + 2.0f),
+                "warm title measurement preserves the exact two-DIP boundary for each current width");
+        }
+    }
+
+    ItemTextFullWidthCache cache;
+    std::wstring title = L"Renamed title  ";
+    float size = 24;
+    auto weight = DWRITE_FONT_WEIGHT_NORMAL;
+    auto selectedFormat = format;
+    const auto expectColdThenWarm = [&] {
+        const float width = uncachedWidth(selectedFormat.Get(), title, size, weight);
+        const auto cold = cache.FitsSingleLine(factory.Get(), selectedFormat.Get(), title, size, weight, width - 2.25f);
+        const auto warm = cache.FitsSingleLine(factory.Get(), selectedFormat.Get(), title, size, weight, width - 2.0f);
+        Check(!cold.reused && !cold.fitsSingleLine && warm.reused && warm.fitsSingleLine,
+            "changed measurement inputs rebuild before reusing the exact fit boundary");
+    };
+    expectColdThenWarm();
+    title += L"after rename";
+    expectColdThenWarm();
+    size = 24.0001f; // Below the old main layout key's scale rounding precision.
+    expectColdThenWarm();
+    weight = DWRITE_FONT_WEIGHT_BOLD;
+    expectColdThenWarm();
+    selectedFormat = makeFormat(L"Arial", L"en-US", false);
+    if (selectedFormat) expectColdThenWarm();
+    selectedFormat = makeFormat(L"Segoe UI", L"ar-SA", true);
+    if (selectedFormat) expectColdThenWarm();
+    selectedFormat = makeFormat(L"Segoe UI", L"ar-SA", true);
+    ComPtr<IDWriteTextFormat1> fallbackFormat;
+    if (selectedFormat && SUCCEEDED(selectedFormat.As(&fallbackFormat)))
+    {
+        ComPtr<IDWriteFactory2> factory2;
+        ComPtr<IDWriteFontFallbackBuilder> builder;
+        ComPtr<IDWriteFontFallback> fallback;
+        Check(SUCCEEDED(factory.As(&factory2)) && SUCCEEDED(factory2->CreateFontFallbackBuilder(&builder)) &&
+            SUCCEEDED(builder->CreateFontFallback(&fallback)) && SUCCEEDED(fallbackFormat->SetFontFallback(fallback.Get())),
+            "configure a replacement format's explicit font fallback");
+        // Publish the new immutable format, as RecreateItemTextFormat does.
+        expectColdThenWarm();
+    }
+    ComPtr<IDWriteFactory> replacementFactory;
+    Check(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED, __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(replacementFactory.GetAddressOf()))), "create replacement DirectWrite factory");
+    if (replacementFactory && selectedFormat)
+    {
+        const auto replaced = cache.FitsSingleLine(replacementFactory.Get(), selectedFormat.Get(), title, size, weight, 1000);
+        Check(!replaced.reused, "factory replacement cannot reuse a previous factory's measurement");
+    }
+    if (!selectedFormat) return;
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        Check(!cache.FitsSingleLine(nullptr, selectedFormat.Get(), title, size, weight, 1000).reused,
+            "failed layout creation stays retryable");
+        Check(!cache.FitsSingleLine(factory.Get(), selectedFormat.Get(), title, -1, weight, 1000).reused,
+            "failed font-size configuration stays retryable");
+    }
+    cache = {};
+    expectColdThenWarm();
+}
+
 void TestTooltipPresentation()
 {
     // Production text layout: short page/drag labels must not inherit a fixed
@@ -601,6 +708,7 @@ int main(int argc, char** argv)
         if (probe) DestroyWindow(probe);
         if (owner) DestroyWindow(owner);
     }
+    TestItemTextFullWidthCache();
     TestTooltipPresentation();
     failures += RunThemeLibraryTests();
     using namespace snowdesktop;
