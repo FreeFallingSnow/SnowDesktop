@@ -191,7 +191,8 @@
         return *view;
     }
 
-    static ComPtr<PopupInputSurface> ObservePopupInputSurface(DesktopApp& app)
+    static ComPtr<PopupInputSurface> ObservePopupInputSurface(
+        DesktopApp& app, PopupInputSurface* previous = nullptr)
     {
         // Complete any preceding model/typing layout before measuring pointer
         // work. The actual host remains hidden; its compact client is real.
@@ -208,7 +209,7 @@
             throw std::runtime_error("initialize the real never-shown popup surface");
         ComPtr<PopupInputSurface> observed;
         // Unwrap a previous observer when the client dimensions did not change.
-        if (auto* previous = dynamic_cast<PopupInputSurface*>(app.floatingPopupDcompSurface_.Get()))
+        if (previous && app.floatingPopupDcompSurface_.Get() == previous)
         {
             ComPtr<IDCompositionSurface> actual = previous->Actual();
             app.floatingPopupDcompSurface_ = std::move(actual);

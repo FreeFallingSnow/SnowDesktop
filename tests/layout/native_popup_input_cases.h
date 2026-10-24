@@ -267,7 +267,7 @@ inline void Run(Profile& profile)
             // the next independent gesture with no unrelated recovery pending.
             Access::SetPopupInputFullCollection(app, false);
             view.SetSearchText(L"Wm\u6c49e\u0301\U0001f642Z");
-            surface = Access::ObservePopupInputSurface(app);
+            surface = Access::ObservePopupInputSurface(app, surface.Get());
             Access::PaintPopupInput(app); Access::SyncPopupInputFrame(app, view);
             const RECT search = view.GetSearchBoxRect();
             Require(!IsRectEmpty(&search), "R02 actual categorized search box remains available with a nonempty query");
@@ -318,7 +318,7 @@ inline void Run(Profile& profile)
             CheckPixels(app, *surface.Get());
             Access::CancelPopupInput(app);
             view.ClearSearchText();
-            surface = Access::ObservePopupInputSurface(app);
+            surface = Access::ObservePopupInputSurface(app, surface.Get());
             Access::PaintPopupInput(app);
             Access::SyncPopupInputFrame(app, view);
             Require(view.BeginCategoryTabDrag(Tab(view, L"a")), "R02 begins a final tab gesture before closing");
