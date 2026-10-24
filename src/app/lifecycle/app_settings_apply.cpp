@@ -917,6 +917,8 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
 
     // Dispose writes belong to the current storage file. Retire previews too,
     // before switching the global Lua store to the other data set.
+    CancelDeferredLayoutSave();
+    FlushQueuedLayoutSave();
     if (widgetEngine_)
     {
         std::vector<std::wstring> instances;

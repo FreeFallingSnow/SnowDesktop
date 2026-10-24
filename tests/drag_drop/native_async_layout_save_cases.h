@@ -1,5 +1,6 @@
 #pragma once
 #include "data/layout_storage.h"
+#include "app/layout/interactive_layout_save.h"
 
 namespace native_async_layout_save_cases
 {
@@ -17,9 +18,9 @@ inline void Run()
     Access::UseSaveWindow(app);
     cases::Require(Access::Save(app), "save initial native layout");
     const auto before = cases::Read(Access::LayoutPath(app));
-    Access::Items(app)[0].gridCell.column = 1;
+    Access::SetSaveColumn(app, 1);
     Access::RequestSave(app);
-    Access::Items(app)[0].gridCell.column = 3;
+    Access::SetSaveColumn(app, 3);
     Access::RequestSave(app);
     cases::Require(Access::PendingSave(app) && Access::ScrollSavePending(app) &&
         cases::Read(Access::LayoutPath(app)) == before,
@@ -37,11 +38,11 @@ inline void Run()
     cases::Require(snowdesktop::layout_storage::ParseDocument(cases::Read(Access::LayoutPath(app)), saved) &&
         savedColumn() == 3 && !Access::PendingSave(app),
         "production timer, writer and completion persist the final coalesced native model");
-    Access::Items(app)[0].gridCell.column = 2;
+    Access::SetSaveColumn(app, 2);
     Access::RequestSave(app);
     Access::DueSaveTimer(app);
     Access::DispatchSaveTimer(app);
-    Access::Items(app)[0].gridCell.column = 1;
+    Access::SetSaveColumn(app, 1);
     cases::Require(Access::Save(app), "explicit native save acts as a background persistence barrier");
     Access::DrainSave(app);
     cases::Require(snowdesktop::layout_storage::ParseDocument(cases::Read(Access::LayoutPath(app)), saved) &&
@@ -55,7 +56,7 @@ inline void Run()
     } locked{CreateFileW(Access::LayoutPath(app).c_str(), GENERIC_READ,
         FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
     cases::Require(locked.handle != INVALID_HANDLE_VALUE, "hold a real sharing violation against layout replacement");
-    Access::Items(app)[0].gridCell.column = 0;
+    Access::SetSaveColumn(app, 0);
     Access::RequestSave(app);
     Access::DueSaveTimer(app);
     Access::DispatchSaveTimer(app);
@@ -73,6 +74,15 @@ inline void Run()
         snowdesktop::layout_storage::ParseDocument(cases::Read(Access::LayoutPath(app)), saved) && savedColumn() == 0,
         "a later request retries the retained model after the real filesystem obstruction is removed");
     cases::Require(cases::Read(file) == "unchanged source", "layout persistence never edits source file contents");
+    {
+        snowdesktop::InteractiveLayoutSave gesture(&app);
+        Access::SetSaveGesture(app, true);
+        Access::SetSaveColumn(app, 1);
+        cases::Require(Access::Save(app) && !Access::PendingSave(app) &&
+            snowdesktop::layout_storage::ParseDocument(cases::Read(Access::LayoutPath(app)), saved) && savedColumn() == 1,
+            "the production no-prompt session save remains synchronous inside an armed gesture scope");
+        Access::SetSaveGesture(app, false);
+    }
     std::cout << "native deferred layout timer, ordered writer and synchronous boundary passed\n";
 }
 }

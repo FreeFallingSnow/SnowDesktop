@@ -2,6 +2,7 @@
 
 #include "data/layout_save_queue.h"
 #include "data/layout_storage.h"
+#include "app/layout/interactive_layout_save.h"
 #include <future>
 #include <fstream>
 #include <stdexcept>
@@ -32,6 +33,15 @@ inline void Run(const std::filesystem::path& root)
 {
     using Queue = snowdesktop::LayoutSaveQueue;
     using namespace std::chrono_literals;
+    int owner = 0, other = 0;
+    Require(!snowdesktop::InteractiveLayoutSave::Consume(&owner), "ordinary saves have no implicit gesture token");
+    {
+        snowdesktop::InteractiveLayoutSave gesture(&owner);
+        Require(!snowdesktop::InteractiveLayoutSave::Consume(&other), "a gesture cannot defer another host's save");
+        Require(snowdesktop::InteractiveLayoutSave::Consume(&owner) &&
+            !snowdesktop::InteractiveLayoutSave::Consume(&owner), "only the explicitly scoped next save is deferred");
+    }
+    Require(!snowdesktop::InteractiveLayoutSave::Consume(&owner), "gesture scope does not leak into later transactions");
     const auto path = root / L"async-layout" / L"layout.json";
     std::filesystem::create_directories(path.parent_path());
     Require(Writer(path, 0)().saved, "initialize real layout before asynchronous writes");

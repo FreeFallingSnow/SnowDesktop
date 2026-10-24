@@ -568,6 +568,13 @@ struct NativeDragIntegrationAccess
 
     static void RequestSave(DesktopApp& app) { app.RequestLayoutSave(); }
     static void UseSaveWindow(DesktopApp& app) { app.controlHwnd_ = completionWindow; }
+    static void SetSaveColumn(DesktopApp& app, int column) { app.items_[0].gridCell.column = column; }
+    static void SetSaveGesture(DesktopApp& app, bool active) {
+        if (active)
+            app.largeIconGesture_ = DesktopApp::LargeIconGesture{app.items_[0].layoutKey,
+                {}, app.items_[0].gridCell, false, true, true};
+        else app.largeIconGesture_.reset();
+    }
     static bool PendingSave(const DesktopApp& app) { return app.layoutSavePending_; }
     static bool ScrollSavePending(const DesktopApp& app) { return app.layoutScrollSave_.Pending(); }
     static void DispatchSaveTimer(DesktopApp& app) { app.OnTimer(kLayoutScrollSaveTimerId); }

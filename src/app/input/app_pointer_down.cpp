@@ -5,6 +5,7 @@
 #include "layout/popup_scrollbar_layout.h"
 #include "settings/animation_settings.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "app/layout/interactive_layout_save.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -54,7 +55,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             CloseCollectionPopup(false);
     }
     if (HandleUsageGuidePointerDown(pt)) return;
-    if (HandleLargeIconPointerDown(pt)) return;
+    {
+        snowdesktop::InteractiveLayoutSave save(this);
+        if (HandleLargeIconPointerDown(pt)) return;
+    }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
     {

@@ -2,6 +2,7 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "interactive_layout_save.h"
 #include "icons/large_icon_backup.h"
 #include "icons/icon_appearance_codec.h"
 #include "platform/operation_recovery_dialog.h"
@@ -873,12 +874,12 @@ void DesktopApp::FlushQueuedLayoutSave()
 
 bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
 {
-    // Large-icon placement/resizing shares the rollback-aware settings setter.
-    // Only a live desktop gesture defers persistence; settings and exit retain
-    // the synchronous result required by their transaction boundaries.
-    if (!background && !exitRequested_ && desktopItemsReady_ && !gridPages_.empty() &&
-        !layoutReload_.Pending() && largeIconGesture_ &&
-        (largeIconGesture_->creating || largeIconGesture_->resizing))
+    // Only the explicitly scoped gesture setter may defer its next save.
+    // Session shutdown (notifyFailure=false) and all other transactions keep
+    // their synchronous result, even while a large-icon gesture exists.
+    if (!background && notifyFailure && !exitRequested_ && desktopItemsReady_ &&
+        !gridPages_.empty() && !layoutReload_.Pending() &&
+        snowdesktop::InteractiveLayoutSave::Consume(this))
     {
         RequestLayoutSave();
         return true;
@@ -954,6 +955,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
             if (skippedBackups.contains(identity)) return true;
             const auto key = std::make_tuple(state, data, generation);
             if (largeIconUpgradeBackups_.contains(key)) return true;
+            // A first-time full backup must not copy the live layout while an
+            // earlier accepted snapshot is replacing that same file.
+            FlushQueuedLayoutSave();
             for (;;)
             {
                 const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(

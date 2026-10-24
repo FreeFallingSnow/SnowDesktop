@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "app/layout/interactive_layout_save.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "desktop/desktop_hover_rules.h"
 #include "drag_drop/drag_input_rules.h"
@@ -909,7 +910,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             return;
         }
     if (HandleUsageGuidePointerUp(upPoint)) return;
-    if (HandleLargeIconPointerUp()) return;
+    {
+        snowdesktop::InteractiveLayoutSave save(this);
+        if (HandleLargeIconPointerUp()) return;
+    }
     if (middleButtonWidgetMove_) return;
     (void)wp;
     int dropPreviewMods = 0;
