@@ -304,14 +304,16 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     const std::array styles{
         snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, false)),
         snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, true))};
-    const auto preparePixels = [styles](const std::shared_ptr<IconLoadResult>& result) {
+    const auto preparePixels = [styles, preparation = preparedIconPixels_.Preparation()](const std::shared_ptr<IconLoadResult>& result) {
         if (!result->bitmap) return;
         try
         {
-            auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
-            if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap,
-                    styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared))
-                result->preparedPixels = std::move(prepared);
+            preparation->Run([&] {
+                auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
+                if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap,
+                        styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared))
+                    result->preparedPixels = std::move(prepared);
+            });
         }
         catch (...)
         {
@@ -672,6 +674,7 @@ void DesktopApp::RefreshIconBitmapResolution()
 
 void DesktopApp::StopIconLoader()
 {
+    preparedIconPixels_.Preparation()->Close();
     iconWork_.Stop();
     dockIconWork_.Stop();
     dockIdentityWork_.Stop();
