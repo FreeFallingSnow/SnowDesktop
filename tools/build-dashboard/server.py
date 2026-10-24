@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -998,6 +999,17 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_POST
     do_PATCH = do_POST
 
+class DashboardHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR permits two live listeners to bind the same port.
+    # Reserve it before bind so a concurrent launch cannot replace our receipt.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
@@ -1014,7 +1026,7 @@ def main():
             parser.error("State directory must not be a reparse point")
     nonce = secrets.token_hex(16)
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = DashboardHTTPServer(("127.0.0.1", args.port), Handler)
     except OSError:
         parser.exit(3, "Port unavailable; no existing listener was stopped.\n")
     server.daemon_threads = True

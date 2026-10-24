@@ -37,6 +37,42 @@ public:
     void reload(){auto previous=evaluate("performance.timeOrigin").number;send("Page.reload");until([&]{try{return evaluate("performance.timeOrigin").number!=previous&&evaluate("document.readyState").str()=="complete";}catch(...){return false;}},15);connected();}
 };
 void refresh(){std::this_thread::sleep_for(std::chrono::milliseconds(2100));}
+void dashboard_listener(const fs::path& repo,bool formerBehavior=false){
+    const auto root=temporary("dashboard-listener");
+    copy(repo,root,{"tools/build-dashboard/server.py"});
+    const auto serverFile=root/L"tools/build-dashboard/server.py";
+    if(formerBehavior){auto source=read(serverFile);replace(source,"server = DashboardHTTPServer((","server = ThreadingHTTPServer((");write(serverFile,source);}
+    write(root/L".build/collaboration/state.json","{}");
+    const int port=free_port();
+    const auto receiptPath=root/L".build/dashboard"/wide("server-"+std::to_string(port)+".json");
+    const std::vector<std::wstring> command={production_python().wstring(),serverFile.wstring(),L"--fixture-root",root.wstring(),L"--port",std::to_wstring(port)};
+    Child first(command,root);
+    until([&]{try{return http(port,"/api/health").code==200;}catch(...){return false;}},10);
+    const auto before=read(receiptPath),nonce=Json::parse(before).at("instance").str();
+    {
+        Child duplicate(command,root);
+        until([&]{return !duplicate.running()||read(receiptPath)!=before;},5);
+        require(!duplicate.running(),"Duplicate dashboard listener replaced the live instance receipt");
+        const auto rejected=duplicate.wait(2);
+        require(rejected.code==3&&rejected.err.find("Port unavailable")!=std::string::npos,
+            "Duplicate listener did not report a bounded port conflict");
+        require(read(receiptPath)==before&&Json::parse(http(port,"/api/health").body).at("instance").str()==nonce,
+            "Rejected duplicate changed the original listener identity");
+    }
+    write(root/L".build/dashboard"/wide("stop-"+nonce+".request"),nonce);
+    require(first.wait(5).code==0,"Dashboard did not stop through its normal request");
+    Child restarted(command,root);
+    until([&]{try{return http(port,"/api/health").code==200;}catch(...){return false;}},10);
+    const auto after=Json::parse(read(receiptPath));
+    require(after.at("instance").str()!=nonce&&Json::parse(http(port,"/api/health").body).at("instance").str()==after.at("instance").str(),
+        "Normal restart did not publish the new listener identity");
+    if(!formerBehavior){
+        const auto control=run({executable().wstring(),repo.wstring(),L"--old-dashboard-listener"},root,15);
+        require(control.code==1&&control.err.find("Duplicate dashboard listener replaced the live instance receipt")!=std::string::npos,
+            "Former Windows socket reuse escaped the duplicate-listener business assertion: "+control.out+control.err);
+    }
+    std::cout<<"PASS duplicate listener rejects without replacing identity, normal restart reconnects; former listener fails\n";
+}
 void dashboard_startup(const fs::path& repo,bool formerBehavior=false,bool formerLaunch=false){
     auto root=temporary("dashboard-startup");
     copy(repo,root,{"scripts/build_runtime.ps1","tools/build-dashboard/manage.py","tools/build-dashboard/server.py"});
@@ -505,7 +541,8 @@ int main(int argc,char** argv){try{
     const auto repo=fs::path(wide(argv[1]));const std::string mode=argc==3?argv[2]:"";
     if(mode=="--old-dashboard-startup"||mode=="--old-dashboard-lifetime"){
         dashboard_startup(repo,mode=="--old-dashboard-startup",mode=="--old-dashboard-lifetime");
-    }else if(mode=="--startup")dashboard_startup(repo);
+    }else if(mode=="--startup"){dashboard_startup(repo);dashboard_listener(repo);}
+    else if(mode=="--old-dashboard-listener")dashboard_listener(repo,true);
     else if(mode=="--references")dashboard_references(repo);
     else if(mode.empty()||mode=="--browser")dashboard(repo,mode=="--browser");
     else if(mode=="--all"){dashboard_startup(repo);dashboard(repo,false);dashboard_references(repo);}
