@@ -1,5 +1,6 @@
 #include "widget/tasks/widget_filesystem_watch_service.h"
 #include "widget/tasks/widget_filesystem_watch_origin.h"
+#include "widget/widget_script_read_ahead_cases.h"
 
 #include <windows.h>
 #include <winioctl.h>
@@ -276,6 +277,10 @@ int RunWatchTests()
 
 int main()
 {
-    try { return RunWatchTests(); }
+    try
+    {
+        widget_script_read_ahead_tests::Run();
+        return RunWatchTests();
+    }
     catch (const std::exception& error) { std::cerr << "FAILED: " << error.what() << '\n'; return 1; }
 }

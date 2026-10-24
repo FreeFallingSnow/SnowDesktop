@@ -15,6 +15,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_script_read_ahead.h"
 #include "widget/tasks/widget_audio_playback_lua.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/input/text_input_accessibility.h"
@@ -660,6 +661,7 @@ struct D2DState
     snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
     snowdesktop::widget_runtime::WidgetImageSamplingCache imageSamplingCache;
     snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
+    snowdesktop::widget_runtime::WidgetScriptReadAhead scriptReadAhead;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
@@ -15850,6 +15852,7 @@ void WidgetEngine::ResetGraphicsResources(ID2D1DeviceContext* context)
 
 void WidgetEngine::Shutdown()
 {
+    if (d2dState_) d2dState_->scriptReadAhead.Stop();
     focusedHostInput_ = {};
     if (taskBroker_)
         taskBroker_->Shutdown();
@@ -15952,6 +15955,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
+    if (d2dState_) d2dState_->scriptReadAhead.Forget(widgetId);
     RemoveNotificationSchedules(widgetId);
     PreviewExecutionScope previewScope(
         widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
@@ -17009,6 +17013,18 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         return false;
     }
     widgetHostFailures_.erase(widgetId);
+
+    if (!preview && !snowdesktop::widget_runtime::IsDryLoad() && d2dState_)
+    {
+        // Only warm the filesystem cache. RenderWidget still checks the current
+        // script synchronously, including deletion and failed-reload recovery.
+        try
+        {
+            (void)d2dState_->scriptReadAhead.Track(widgetId, path,
+                (widgets_.back().packageRoot / L"widget.json").wstring());
+        }
+        catch (...) { /* Optional path preparation must not fail the VM load. */ }
+    }
 
     auto& loadedStorage = ActiveStorage();
     const std::string staleErrorKey =
