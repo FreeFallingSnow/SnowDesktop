@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_minimize_hook_threads.h"
+#include "dock_minimize_process_cache.h"
 #include <unordered_map>
 
 // Owns only the HWND properties and thread hooks installed by this host.
@@ -22,8 +23,10 @@ public:
 
 private:
     void StartHelper();
+    DWORD OwnedTargetThread(HWND window) const noexcept;
     HWND receiver_ = nullptr;
     snowdesktop::dock_minimize::ThreadHooks hooks_;
+    snowdesktop::dock_minimize::ProcessBitnessCache processBitness_;
     std::unordered_map<HWND, DWORD> targets_;
     std::wstring helperExecutable_;
     std::wstring helperDll_;
