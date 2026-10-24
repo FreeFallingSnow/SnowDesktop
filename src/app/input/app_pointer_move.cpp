@@ -1222,7 +1222,7 @@ void DesktopApp::OnMouseMoveAt(
                                 });
                         }
                     }
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                 }
 
                 if (!dragDropController_.SelfDragReturned())
@@ -1233,7 +1233,7 @@ void DesktopApp::OnMouseMoveAt(
                 }
                 else
                 {
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);

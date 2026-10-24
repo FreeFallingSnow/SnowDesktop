@@ -566,6 +566,17 @@ struct NativeDragIntegrationAccess
         app.dragSession_.End();
     }
 
+    static void RequestSave(DesktopApp& app) { app.RequestLayoutSave(); }
+    static void UseSaveWindow(DesktopApp& app) { app.controlHwnd_ = completionWindow; }
+    static bool PendingSave(const DesktopApp& app) { return app.layoutSavePending_; }
+    static bool ScrollSavePending(const DesktopApp& app) { return app.layoutScrollSave_.Pending(); }
+    static void DispatchSaveTimer(DesktopApp& app) { app.OnTimer(kLayoutScrollSaveTimerId); }
+    static void DueSaveTimer(DesktopApp& app) {
+        app.layoutScrollSave_.Request(snowdesktop::LayoutScrollSave::Clock::now() - std::chrono::seconds(2));
+    }
+    static void FlushSave(DesktopApp& app) { app.FlushQueuedLayoutSave(); }
+    static void DrainSave(DesktopApp& app) { app.layoutSaveQueue_.Drain(); }
+    static std::uint64_t LayoutRevision(const DesktopApp& app) { return app.layoutPassRevision_; }
     static bool Save(DesktopApp& app) { return app.SaveLayoutSlots(false); }
     static WidgetContainer* MemberContainer(DesktopApp& app, const std::wstring& id)
     {
@@ -1063,6 +1074,8 @@ struct NativeDragIntegrationAccess
     }
     static void StopModel(DesktopApp& app)
     {
+        app.FlushQueuedLayoutSave();
+        app.CancelDeferredLayoutSave();
         app.StopShellFileOperationWorker();
         app.StopUrlDropDownloadWorker();
         UnbindAsync(app);
@@ -1073,6 +1086,7 @@ struct NativeDragIntegrationAccess
         if (app.largeIconAssets_) app.largeIconAssets_->Stop();
         app.items_oo_.clear(); app.containers_.clear(); app.items_.clear(); app.widgets_.clear();
         app.hwnd_ = nullptr;
+        app.controlHwnd_ = nullptr;
     }
 #include "native_group_surface_access.inc"
 #include "native_ole_sequence_access.inc"
@@ -1091,6 +1105,7 @@ struct NativeDragIntegrationAccess
 };
 
 #include "native_drag_commit_cases.h"
+#include "native_async_layout_save_cases.h"
 #include "native_drag_reload_cases.h"
 #include "native_drag_async_reload_cases.h"
 #include "native_ole_file_cases.h"
@@ -1185,6 +1200,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order-proxy") native_preview_order_cases::Run(1);
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--async-layout-save") native_async_layout_save_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);

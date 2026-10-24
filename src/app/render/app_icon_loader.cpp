@@ -259,6 +259,7 @@ void DesktopApp::StartIconLoader() {}
 
 void DesktopApp::DrainBackgroundShellWork()
 {
+    layoutSaveQueue_.Drain();
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
         HasActiveContextMenuSession() || renameController_.IsActive() ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||

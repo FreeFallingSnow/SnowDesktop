@@ -259,7 +259,7 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
         int hit = app_->HitTestItem(app_->dragSession_.CurrentPoint());
         if (hit >= 0 && !(*items_)[hit].selected)
             app_->DropSelectedItemsOnTarget(hit);
-        app_->SaveLayoutSlots();
+        app_->RequestLayoutSave();
         app_->ClearSelection();
         app_->ReloadItems();
         return;

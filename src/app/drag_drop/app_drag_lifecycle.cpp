@@ -648,7 +648,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     if (commitDockFolderPopupResize)
         CommitDockFolderPopupStateToSource();
     else if (layoutNeedsSave)
-        SaveLayoutSlots();
+        RequestLayoutSave();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);

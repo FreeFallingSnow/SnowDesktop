@@ -158,6 +158,7 @@ inline void Run()
                 Access::DropModel(app);
                 context = scenario + " phase=committed";
                 CheckModel(app, keys, observed, source, count);
+                Require(Access::Save(app), "explicit synchronous boundary flushes the committed native layout");
                 const auto saved = Read(Access::LayoutPath(app));
                 for (const int guard : {0, 1, 2})
                 {

@@ -631,6 +631,13 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     if (!flushed.Succeeded())
         return flushed;
 
+    // Finish every queued layout write before replacing the live file with a
+    // backup. No earlier snapshot may race the restore or its rollback.
+    if (layoutSavePending_ && !SaveLayoutSlots())
+        return SettingsActionResult::Failure(_LW("settings.backup.restoreLayout.commitFailed"));
+    CancelDeferredLayoutSave();
+    FlushQueuedLayoutSave();
+
     std::string validationError;
     if (!snowdesktop::layout_storage::ValidateDocument(
             payload.layoutDocument, &validationError))

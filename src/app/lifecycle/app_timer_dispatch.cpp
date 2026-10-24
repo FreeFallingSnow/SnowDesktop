@@ -405,7 +405,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             }
             return;
         }
-        SaveLayoutSlots();
+        SaveLayoutSlots(true, true);
         return;
     }
     if (timerId == kRenameClickTimerId)

@@ -93,8 +93,8 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         std::shared_ptr<Widget> view(CreateWidget(widget, this));
         return snowdesktop::drop_pipeline::ConvertedView{view, dynamic_cast<WidgetContainer*>(view.get())};
     };
-    services.saveLayout = [this] { SaveLayoutSlots(); };
-    services.convertedLayout = [this] { LayoutItems(); SaveLayoutSlots(); InvalidateRect(hwnd_, nullptr, FALSE); };
+    services.saveLayout = [this] { RequestLayoutSave(); };
+    services.convertedLayout = [this] { LayoutItems(); RequestLayoutSave(); InvalidateRect(hwnd_, nullptr, FALSE); };
     services.programsEnabled = [this] { return categorySettings_.collectProgramsEnabled; };
     services.enablePrograms = [this] {
         CategorySettings enabled = categorySettings_;
@@ -129,7 +129,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     services.normalize = ToUpperInvariant;
     services.refreshCollectedKeys = [this] { RefreshCollectedKeysCache(); };
     services.dockChanged = [this] {
-        SaveLayoutSlots(); RebuildContainersAndItems(); LayoutItems(); InvalidateRect(hwnd_, nullptr, FALSE);
+        RequestLayoutSave(); LayoutItems(); InvalidateRect(hwnd_, nullptr, FALSE);
     };
     services.files = [this](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
         return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs));
@@ -184,7 +184,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         services.mapPages = [this] { ApplyPageMapping(); };
         services.committed = [this] {
             LayoutItems();
-            SaveLayoutSlots();
+            RequestLayoutSave();
             InvalidateRect(hwnd_, nullptr, TRUE);
         };
         return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_,
@@ -253,7 +253,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             RefreshCollectedKeysCache();
             EnsureNavTabOrder();
             LayoutItems();
-            SaveLayoutSlots();
+            RequestLayoutSave();
             InvalidateRect(hwnd_, nullptr, TRUE);
             return true;
         }
@@ -376,7 +376,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 collectionGroupProxy->InvalidateFilterCache();
                 RefreshCollectedKeysCache();
                 RefreshOpenCollectionPopupGeometry();
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 InvalidateRect(hwnd_, nullptr, TRUE);
                 return true;
             }
@@ -449,7 +449,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (GetDesktopGrid()) GetDesktopGrid()->InvalidateSlots();
         RefreshCollectedKeysCache();
         RefreshOpenCollectionPopupGeometry();
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return true;
     }
@@ -597,7 +597,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         return MaterializeFilesToFolder(sources, path, action, std::move(done), sync, std::move(outputs));
     };
     services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
-    services.savePins = [this] { SaveLayoutSlots(); };
+    services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
     services.refresh = [this] { RequestShellRefresh(); };
     return snowdesktop::file_drop_execution::Execute(sourceList, preview, pendingLandingCaches_,

@@ -885,7 +885,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
                 }
             }
-            SaveLayoutSlots();
+            RequestLayoutSave();
         }
         else view->EndSearchPointerSelection();
         mouseDown_ = false;
@@ -980,7 +980,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         ReleaseCapture();
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -1004,7 +1004,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (dockFolderPopupResize)
             CommitDockFolderPopupStateToSource();
         else
-            SaveLayoutSlots();
+            RequestLayoutSave();
         if (popupResize)
         {
             if (DesktopWidget* popupWidget = GetOpenPopupWidget())
@@ -1265,7 +1265,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
                     CommitDockDrop({ &dockSource }, nullptr, dock,
                         widgetDockInsertIndex_, mods);
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     LayoutItems();
                 }
                 else
@@ -1463,8 +1463,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         EndDragSession();
         if (removed)
         {
-            SaveLayoutSlots();
-            RebuildContainersAndItems();
+            RequestLayoutSave();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -1548,8 +1547,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 {
                     ClearSelection();
                     EndDragSession();
-                    SaveLayoutSlots();
-                    RebuildContainersAndItems();
+                    RequestLayoutSave();
                     LayoutItems();
                     InvalidateRect(
                         hwnd_, nullptr, FALSE);
@@ -1559,12 +1557,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     EndDragSession();
                     if (executed)
                     {
-                        RebuildContainersAndItems();
                         LayoutItems();
                         InvalidateRect(hwnd_, nullptr, FALSE);
                     }
@@ -1582,7 +1579,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     ResolveDesktopRequestCell(
                         dragSession_.SourceList(),
                         dragSession_.CurrentPoint()));
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 ClearSelection();
                 EndDragSession();
                 goto cleanup;
@@ -1633,7 +1630,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         fileSources, targetPath, action,
                         std::move(finished)))
                 {
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     EndDragSession();
                     goto cleanup;
@@ -1667,7 +1664,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                             RefreshDockFolderPopup();
                     }))
             {
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 ClearSelection();
                 EndDragSession();
                 goto cleanup;
@@ -1715,7 +1712,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     }
                 }
             }
-            SaveLayoutSlots();
+            RequestLayoutSave();
             ClearSelection();
             EndDragSession();
             if (dockFolderPopupTarget ||
@@ -1727,6 +1724,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
 
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+        const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
+        const auto layoutBeforeDrop = layoutPassRevision_;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 targetContainer,
@@ -1740,7 +1739,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
             dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
-        SaveLayoutSlots();
+        RequestLayoutSave();
         ClearSelection();
         EndDragSession();
         if (dockFolderPopupTarget ||
@@ -1755,8 +1754,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
             // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            ApplyPageMapping();
-            LayoutItems();
+            if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
+            {
+                ApplyPageMapping();
+                LayoutItems();
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }

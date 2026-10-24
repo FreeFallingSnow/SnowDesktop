@@ -917,8 +917,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             EndDragSession();
             if (removed)
             {
-                SaveLayoutSlots();
-                RebuildContainersAndItems();
+                RequestLayoutSave();
                 LayoutItems();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
@@ -939,12 +938,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget,
                         dropPreviewMods);
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     EndDragSession();
                     if (executed)
                     {
-                        RebuildContainersAndItems();
                         LayoutItems();
                         refreshDockFolderPopup();
                         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -964,7 +962,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     dragSession_.Items(),
                     ResolveDesktopRequestCell(
                         dragSession_.SourceList(), clientPoint));
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 ClearSelection();
                 EndDragSession();
                 *effect = DROPEFFECT_MOVE;
@@ -1138,11 +1136,13 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         {
             Container* targetContainer = dragSession_.TargetContainer();
             bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+            const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
+            const auto layoutBeforeDrop = layoutPassRevision_;
             targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
                 dragSession_.TargetSlot(), dragSession_.TargetRegion(),
                 dropPreviewMods);
 
-            SaveLayoutSlots();
+            RequestLayoutSave();
             ClearSelection();
             EndDragSession();
             if (needsReload)
@@ -1152,9 +1152,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             }
             else
             {
-                ApplyPageMapping();
-                RebuildContainersAndItems();
-                LayoutItems();
+                if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
+                {
+                    ApplyPageMapping();
+                    LayoutItems();
+                }
             }
             refreshDockFolderPopup();
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -2506,7 +2508,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 const auto mappingEffect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect);
                 const bool pinned = mappingEffect != DROPEFFECT_NONE &&
                     AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true);
-                if (pinned) { SaveLayoutSlots(); RequestShellRefresh(); }
+                if (pinned) { RequestLayoutSave(); RequestShellRefresh(); }
                 EndDragSession();
                 *effect = pinned ? mappingEffect : DROPEFFECT_NONE;
                 return S_OK;
@@ -2609,7 +2611,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         {
             if (dockFolderPopupTarget)
                 RefreshDockFolderPopup();
-            SaveLayoutSlots();
+            RequestLayoutSave();
             EndDragSession();
             RebuildContainersAndItems();
             InvalidateRect(hwnd_, nullptr, FALSE);

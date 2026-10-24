@@ -9,6 +9,7 @@
 
 void DesktopApp::LayoutItems()
 {
+    ++layoutPassRevision_;
     snowdesktop::startup_diagnostics::Scope startup(L"LayoutItems");
     RefreshCollectedKeysCache();
     // Guide is a temporary empty-page placeholder. Do not mutate the model

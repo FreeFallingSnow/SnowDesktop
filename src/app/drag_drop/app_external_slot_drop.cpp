@@ -208,7 +208,7 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         const auto* dock = GetDockContainer();
         return dock && dock->HasCapacity(count);
     };
-    services.afterPin = [this] { SaveLayoutSlots(); RequestShellRefresh(); };
+    services.afterPin = [this] { RequestLayoutSave(); RequestShellRefresh(); };
     services.fileName = FileNameFromPath;
     services.execute = [this](const DragSourceList& sources, const DropPreviewList& preview,
         FileOperationCompletion done, bool sync, auto outputs) {
@@ -392,7 +392,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
                             if (auto* collections = dynamic_cast<CollectionGroup*>(view)) collections->InvalidateFilterCache();
                             else if (auto* files = dynamic_cast<FileGroup*>(view)) files->InvalidateHostedView();
                         }
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
             if (finished) finished(succeeded);

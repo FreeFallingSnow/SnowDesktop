@@ -13,7 +13,7 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
         // Finish page mapping before runtime pointers and persistence are rebuilt.
         ApplyPageMapping();
         LayoutItems();
-        SaveLayoutSlots();
+        RequestLayoutSave();
     };
     (void)snowdesktop::widget_displacement::Place(
         {widgets_, items_, gridPages_, order, savedPageIds_, savedPageColumns_, savedPageRows_},

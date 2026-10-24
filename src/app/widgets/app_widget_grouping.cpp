@@ -428,7 +428,7 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     widgets_.push_back(std::move(widget));
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -725,8 +725,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
                 {DockEntryTypeForWidget(created.type), groupId, false});
             NormalizeDockRecycleBinPosition();
             LayoutItems();
-            RebuildContainersAndItems();
-            SaveLayoutSlots();
+            RequestLayoutSave();
         }
         else PlaceWidgetWithDisplacement(widgets_.size() - 1, landing, span, true);
     }
@@ -735,7 +734,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
         EnsureNavTabOrder();
         ApplyPageMapping();
         LayoutItems();
-        SaveLayoutSlots();
+        RequestLayoutSave();
     }
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
@@ -893,7 +892,7 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
     EnsureNavTabOrder();
     ApplyPageMapping();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -1008,7 +1007,7 @@ bool DesktopApp::AddWidgetToFileGroup(
     group.scrollOffset = 0;
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1142,8 +1141,7 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
     RefreshCollectedKeysCache();
     EnsureNavTabOrder();
     LayoutItems();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
@@ -1162,8 +1160,7 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
         })) return false;
     EnsureNavTabOrder();
     LayoutItems();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1249,7 +1246,7 @@ bool DesktopApp::AddCollectionToGroup(
         group.scrollOffset, 0, INT_MAX);
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1277,7 +1274,7 @@ bool DesktopApp::ReleaseCollectionFromGroup(
         })) return false;
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }

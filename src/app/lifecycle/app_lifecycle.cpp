@@ -20,6 +20,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    FlushQueuedLayoutSave();
     snowdesktop::EmergencyRestartHotkey().Stop();
     StopRecycleBinWatcher();
     dockExternalMinimize_.reset();

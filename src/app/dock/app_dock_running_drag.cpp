@@ -270,7 +270,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
         if (!folder && std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
                 return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(key);
             })) AdoptDockRunningPresentation(state->running.identityKey, desktop);
-        SaveLayoutSlots(); ApplyPageMapping(); LayoutItems(); InvalidateDockRects();
+        RequestLayoutSave(); ApplyPageMapping(); LayoutItems(); InvalidateDockRects();
     };
     // An Explorer folder target names that exact directory. Its launcher may
     // also resolve to Explorer.exe; application matching must not substitute
@@ -396,7 +396,7 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
             ApplyPageMapping();
             LayoutItems();
             return true;
-        }, [](const std::wstring& path) { DeleteFileW(path.c_str()); }, [this] { SaveLayoutSlots(); });
+        }, [](const std::wstring& path) { DeleteFileW(path.c_str()); }, [this] { RequestLayoutSave(); });
     if (pinned)
     {
         RequestShellRefresh();

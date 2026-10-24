@@ -22,6 +22,7 @@
 #include "ui/input/text_input_window.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
+#include "data/layout_save_queue.h"
 #include "ui/render/scroll_content_clip.h"
 #include "app/render/widget_icon_backdrops.h"
 #include "platform/operation_feedback.h"
@@ -97,6 +98,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "icons/icon_customization_lifecycle.h"
 #include <tuple>
 #include <map>
+#include <set>
 #include "icons/icon_image_codec.h"
 #include "platform/demo_collection_rules.h"
 #include "platform/demo_asset_paths.h"
@@ -1900,12 +1902,21 @@ private:
     /** @brief 从磁盘文件加载布局信息（槽位记录、页面配置等）。 */
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
-    bool SaveLayoutSlots(bool notifyFailure = true);
+    bool SaveLayoutSlots(bool notifyFailure = true, bool background = false);
+    void RequestLayoutSave();
+    bool FinishLayoutSave(const snowdesktop::LayoutSaveQueue::Result& result,
+        std::uint64_t revision, bool notifyFailure);
+    void FlushQueuedLayoutSave();
     void DeferScrollLayoutSave();
     void CancelDeferredLayoutSave();
     snowdesktop::LayoutScrollSave layoutScrollSave_;
     bool layoutSavePending_ = false;
     bool layoutSaveFailureNotified_ = false;
+    snowdesktop::LayoutSaveQueue layoutSaveQueue_;
+    std::uint64_t layoutSaveRevision_ = 0;
+    std::uint64_t queuedLayoutSaveRevision_ = 0;
+    std::set<std::tuple<std::filesystem::path, std::filesystem::path, int>> largeIconUpgradeBackups_;
+    std::uint64_t layoutPassRevision_ = 0;
     bool CanEditLargeIcons() const;
     snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);

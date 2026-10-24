@@ -2777,6 +2777,11 @@ if (BUILD_TESTING)
     set_tests_properties(native_drag_commit_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
+    add_test(NAME native_async_layout_save
+        COMMAND SnowDesktopNativeDragIntegrationTests --async-layout-save)
+    set_tests_properties(native_async_layout_save PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
     add_test(NAME native_drag_reload_storage
         COMMAND SnowDesktopNativeDragIntegrationTests --reload-storage)
     set_tests_properties(native_drag_reload_storage PROPERTIES
