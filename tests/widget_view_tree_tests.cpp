@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -5338,18 +5339,22 @@ void TestViewLayoutCacheEvaluationAndInvalidation()
     const auto descriptor = evaluate();
     // All of these can change while a script's state revision stays unchanged.
     const std::vector<std::function<void(ViewNode&)>> changes = {
-        [](auto& root) { root.children[0].fontSize = 22; },
+        [](auto& root) { root.children[0].fontSize = 22.0f; },
         [](auto& root) { root.children[0].fontResourceName = "new-font"; },
         [](auto& root) { root.children[0].style.foregroundToken = ViewThemeColorToken::Warning; },
         [](auto& root) { root.children[1].enabled = false; },
         [](auto& root) { root.children[1].hoverStyle.opacity = 0.4f; },
-        [](auto& root) { root.children[1].focusStyle.borderWidth = 4; },
+        [](auto& root) { root.children[1].focusStyle.borderWidth = 4.0f; },
         [](auto& root) { root.children[1].tooltip = "Current tooltip"; },
         [](auto& root) { root.children[1].events.at("click").value.object.at("sequence").integer = 2; },
         [](auto& root) { root.children[2].inputValue = "new draft"; },
         [](auto& root) { root.children[2].textSelection = ViewTextSelection{ 1, 2 }; },
         [](auto& root) { root.children[2].readOnly = true; },
-        [](auto& root) { root.children[1].transition = ViewTransition{}; },
+        [](auto& root) {
+            root.children[1].transition = ViewTransition{
+                120u, ViewTransitionEasing::EaseOut,
+                { ViewTransitionProperty::Opacity } };
+        },
         [](auto& root) { root.children[0].overflowText = ViewTextOverflow::Clip; },
     };
     for (const auto& change : changes)
@@ -5440,7 +5445,7 @@ void TestViewLayoutCacheScrollAndHostValidation()
     virtualList.height = { ViewLengthKind::Fixed, 40 };
     virtualList.itemCount = 5;
     virtualList.firstIndex = 2;
-    virtualList.estimatedItemSize = 20;
+    virtualList.estimatedItemSize = 20.0f;
     virtualList.overscan = 0;
     ViewNode item;
     item.type = ViewNodeType::ListItem;
@@ -5456,7 +5461,7 @@ void TestViewLayoutCacheScrollAndHostValidation()
     auto measured = virtualList;
     Check(cache.ValidateAndLayout(measured, 200, 40, error),
         "virtual list fixture must initially lay out");
-    virtualList.virtualMeasurements = { { 1, 35 } };
+    virtualList.virtualMeasurements = { { 1, 35.0f } };
     auto reference = virtualList;
     measured = virtualList;
     Check(ValidateAndLayoutViewTree(reference, 200, 40, error) &&
