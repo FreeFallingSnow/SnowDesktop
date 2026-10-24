@@ -2,7 +2,11 @@
         ID2D1Device* device, ID2D1DeviceContext* context, ID2D1Bitmap1* target)
     {
         const auto require = [](bool value, const char* message) {
-            if (!value) throw std::runtime_error(message);
+            if (!value)
+            {
+                std::cerr << "R13 assertion: " << message << std::endl;
+                throw std::runtime_error(message);
+            }
         };
         // Only test-owned windows on an inactive desktop receive invalidations.
         // No DesktopApp::Run, Shell host, real status bar or physical input.
@@ -147,7 +151,8 @@
             require(SUCCEEDED(context->EndDraw()), "R13 production drawing must finish successfully");
             return pixels();
         };
-        const auto compare = [&](const std::function<void()>& draw, size_t owner, bool completeDesktop = false) {
+        const auto compare = [&](const char* scenario, const std::function<void()>& draw,
+            size_t owner, bool completeDesktop = false) {
             const auto before = paint(nullptr, draw);
             windows.Validate();
             press();
@@ -158,14 +163,32 @@
                 require(i == owner || !windows.Dirty(i), "R13 excludes unchanged presentation owners");
             GetClientRect(windows.values[owner], &client);
             require(owner != 0 || (EqualRect(&dirty, &client) != FALSE) == completeDesktop,
-                "ordinary selection stays local while projected large icons retain the complete desktop fallback");
+                "desktop icons retain their full fallback while widget and Dock selection stay local");
             const auto partial = paint(&dirty, draw);
             const auto full = paint(nullptr, draw);
             require(before != full, "R13 fixture must contain real visible selection pixels");
+            if (partial != full)
+            {
+                RECT different{LONG_MAX, LONG_MAX, 0, 0};
+                size_t count = 0;
+                const auto width = target->GetPixelSize().width;
+                for (size_t i = 0; i < partial.size(); ++i)
+                {
+                    if (partial[i] == full[i]) continue;
+                    const LONG x = static_cast<LONG>(i % width), y = static_cast<LONG>(i / width);
+                    different.left = std::min(different.left, x); different.top = std::min(different.top, y);
+                    different.right = std::max(different.right, x + 1); different.bottom = std::max(different.bottom, y + 1);
+                    ++count;
+                }
+                std::cout << "R13 mismatch " << scenario << ": pixels=" << count
+                    << " bounds=" << different.left << ',' << different.top << ',' << different.right << ',' << different.bottom
+                    << " dirty=" << dirty.left << ',' << dirty.top << ',' << dirty.right << ',' << dirty.bottom << std::endl;
+            }
             require(partial == full, "R13 local update must equal the complete production pixel reference including old titles");
             windows.Validate(); press();
             require(!windows.Dirty(0) && !windows.Dirty(1) && !windows.Dirty(2) && !windows.Dirty(3),
                 "second status Press after clearing must perform zero extra host updates");
+            std::cout << "R13 pixel reference passed: " << scenario << std::endl;
         };
 
         app.items_[0].name = L"A deliberately long selected desktop title that extends across several lines below its cell";
@@ -173,12 +196,12 @@
         app.items_[1].bounds = {40, 180, 140, 280};
         app.items_[0].selected = true;
         const RECT originalBounds = app.items_[0].bounds;
-        compare([&] { app.DrawStaticBackground(context, nullptr, false); }, 0);
+        compare("desktop long title full fallback", [&] { app.DrawStaticBackground(context, nullptr, false); }, 0, true);
         require(EqualRect(&originalBounds, &app.items_[0].bounds) && !app.items_[0].selected,
             "desktop selection refresh preserves geometry while clearing the original item");
         require(app.dockFolderPopupWidget_.folderEntries[0].selected, "unrelated popup selection remains untouched");
         app.items_[0].selected = app.items_[1].selected = true;
-        compare([&] { app.DrawStaticBackground(context, nullptr, false); }, 0);
+        compare("desktop multi-selection full fallback", [&] { app.DrawStaticBackground(context, nullptr, false); }, 0, true);
         require(!app.items_[0].selected && !app.items_[1].selected,
             "one status click clears all selected desktop objects including overlapping title layers");
 
@@ -189,7 +212,7 @@
         app.items_[0].bounds = {220, 100, 920, 700}; app.items_[0].selected = true;
         auto& largeRuntime = app.largeIconRuntime_[app.items_[0].layoutKey];
         largeRuntime.motion.tiltX = largeRuntime.motion.tiltY = 1;
-        compare([&] { app.DrawLargeIcon(context, app.items_[0], app.items_[0].bounds, app.items_[0].selected ? 2 : 0); }, 0, true);
+        compare("projected large icon full fallback", [&] { app.DrawLargeIcon(context, app.items_[0], app.items_[0].bounds, app.items_[0].selected ? 2 : 0); }, 0, true);
         std::cout << "R13 large-icon complete fallback pixel reference; card projection resources="
             << static_cast<bool>(largeRuntime.cardResources) << '\n';
         app.items_[0].largeIcon.reset(); app.largeIconRuntime_.clear();
@@ -198,7 +221,7 @@
         auto& group = SeedListTitleScene(app, 3, true, false);
         app.widgets_[0].folderEntries[1].selected = true;
         const RECT groupFrame = group.GetFrameRect();
-        compare([&] { group.DrawContent(context, group.GetBodyRect()); }, 0);
+        compare("grouped file selection", [&] { group.DrawContent(context, group.GetBodyRect()); }, 0);
         const RECT afterGroupFrame = group.GetFrameRect();
         require(!app.widgets_[0].folderEntries[1].selected && EqualRect(&groupFrame, &afterGroupFrame),
             "grouped source selection clears through its real parent without changing geometry");
@@ -227,18 +250,23 @@
         auto* dockView = dock.get(); app.containers_.push_back(std::move(dock));
         (void)dockView->GetSlots();
         const RECT dockFrame = dockView->GetBounds();
-        compare([&] { dockView->DrawChrome(context, app.lastMousePoint_); dockView->DrawContents(context); }, 0);
+        compare("desktop Dock selection", [&] { dockView->DrawChrome(context, app.lastMousePoint_); dockView->DrawContents(context); }, 0);
         const RECT afterDockFrame = dockView->GetBounds();
         require(EqualRect(&dockFrame, &afterDockFrame), "status click preserves final Dock hit geometry");
         app.persistentDockHosts_[0]->container = dockView;
         app.dockEntries_[0].selected = true;
-        compare([&] { dockView->DrawChrome(context, app.lastMousePoint_); dockView->DrawContents(context); }, 1);
+        compare("persistent Dock selection", [&] { dockView->DrawChrome(context, app.lastMousePoint_); dockView->DrawContents(context); }, 1);
 
-        app.dockFolderPopupOpen_ = true;
-        app.dockFolderPopupWidget_.type = DesktopWidgetType::Collection;
+        // A shared DesktopItem popup is a regular Collection popup. The
+        // temporary Dock-folder route intentionally enumerates folderEntries.
+        app.dockFolderPopupOpen_ = false;
+        DesktopWidget collection;
+        collection.id = L"R13-shared-popup"; collection.type = DesktopWidgetType::Collection;
+        app.widgets_.push_back(std::move(collection));
+        app.popupWidgetIndex_ = 0;
         DesktopItem shared; shared.layoutKey = L"R13-shared-popup-item"; shared.name = L"Shared"; shared.selected = true;
         app.items_.push_back(std::move(shared)); app.RefreshDesktopItemIndexCache();
-        app.dockFolderPopupWidget_.itemKeys = {app.items_.back().layoutKey};
+        app.widgets_[0].itemKeys = {app.items_.back().layoutKey};
         windows.Validate(); press();
         require(!windows.Dirty(0) && !windows.Dirty(1) && !windows.Dirty(2) && windows.Dirty(3) && !app.items_.back().selected,
             "popup's shared desktop selection refreshes its real floating host alone");

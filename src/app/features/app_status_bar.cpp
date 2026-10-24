@@ -1045,18 +1045,12 @@ void DesktopApp::HandleStatusBarPointerPressed()
             const auto* icon = dynamic_cast<const DesktopIcon*>(object.get());
             const auto* item = icon ? icon->GetDesktopItem() : nullptr;
             if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
-            // Card projection, dynamic titles and their shadows can extend
-            // outside the untransformed frame. Keep the original complete
-            // desktop path until a shared renderer damage contract covers it.
-            if (item->largeIcon)
-            {
-                completeDesktopDamage = true;
-                continue;
-            }
-            RECT bounds = item->bounds;
-            const RECT title = GetItemTextRect(bounds, true);
-            UnionRect(&bounds, &bounds, &title);
-            addDesktop(bounds, std::max(8, static_cast<int>(std::ceil(8.f * GetItemLayoutScale(item->bounds)))));
+            // DrawItemText expands selected titles to their measured line
+            // count, beyond GetItemTextRect's initial height, and can move the
+            // origin for explicit newlines. Large cards also project outside
+            // their frame. Keep the original complete desktop path until a
+            // shared renderer damage contract covers all those old pixels.
+            completeDesktopDamage = true;
         }
 
         std::unordered_set<size_t> widgetOwners;
