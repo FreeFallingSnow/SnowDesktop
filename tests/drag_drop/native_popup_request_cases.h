@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../layout/native_popup_input_cases.h"
+
 namespace native_popup_request_cases
 {
 using namespace native_drag_commit_cases;
@@ -18,6 +20,7 @@ inline void Run()
         auto& app = profile.Model(false, profile.root / L"lua-popup-reuse");
         Access::CheckLuaPopupReuse(app);
     }
+    native_popup_input_cases::Run(profile);
     std::size_t scenes = 0;
     for (const bool multiple : {false, true})
     for (const int sequence : {0, 1, 2, 3, 4})

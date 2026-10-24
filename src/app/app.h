@@ -1397,7 +1397,10 @@ private:
     void RecoverFloatingPopupCompositionFailure(
         const wchar_t* stage, HRESULT hr);
     void UpdateFloatingPopupWindowBounds(
-        bool immediatePresent = true);
+        bool immediatePresent = true,
+        bool refreshStableContent = true);
+    void PresentFloatingPopupPointerFrame(
+        bool dragPreviewAlreadySynced);
     void ApplyFloatingPopupLayerPolicy();
     /** @brief 创建、同步或移除集合弹窗窗口下方的原生毛玻璃层。 */
     void UpdateCollectionPopupBackdrop();

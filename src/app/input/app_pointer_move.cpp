@@ -5,6 +5,7 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/drag_input_rules.h"
@@ -297,19 +298,57 @@ void DesktopApp::OnMouseMoveAt(
         GetSystemMetrics(SM_CYDRAG));
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
+    const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
+        DesktopWidget* data = view->GetWidgetData();
+        // Single-cell thumbnails read the unfiltered source list, not tab
+        // order or search editing state. Dock popups edit a separate copy.
+        if (!data || IsRectEmptyRect(data->bounds) ||
+            snowdesktop::single_cell_widget::IsDesktopSingleCell(*data))
+            return;
+        const size_t index = FindWidgetIndexById(data->id);
+        if (index >= widgets_.size() || &widgets_[index] != data)
+            return;
+        // A pending complete scene already owns the source update. Let it
+        // establish the layers and backdrop owners before submitting a child.
+        if (desktopBackdropFullCollectionPending_)
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        (void)QueueDesktopWidgetComposition(data->id);
+    };
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
-        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
-        if (view->HasCategoryTabPress()) view->UpdateCategoryTabDrag(current);
-        else view->UpdateSearchPointerSelection(current);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        bool changed = false;
+        const bool tabPress = view->HasCategoryTabPress();
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+            if (tabPress) view->UpdateCategoryTabDrag(current, &changed);
+            else changed = view->UpdateSearchPointerSelection(current);
+        }
+        if (changed)
+        {
+            queueCategorizedDesktopOwner(view);
+            if (IsCollectionPopupHostedByFloatingWindow() &&
+                floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
+                InvalidateFloatingPopupWindow(false);
+            else
+                InvalidateCollectionPopupAnimation(false);
+        }
         return;
     }
     for (auto& container : containers_)
         if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get());
-            categorized && categorized->UpdateCategoryTabDrag(current)) return;
+            categorized && categorized->HasCategoryTabPress())
+        {
+            bool changed = false;
+            categorized->UpdateCategoryTabDrag(current, &changed);
+            if (changed) queueCategorizedDesktopOwner(categorized);
+            return;
+        }
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);
@@ -508,10 +547,9 @@ void DesktopApp::OnMouseMoveAt(
         if (!searchable ||
             !searchable->IsSearchPointerSelecting())
             continue;
-        searchable->UpdateSearchPointerSelection(current);
+        const bool changed = searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
-        if (DesktopWidget* data = searchable->GetWidgetData())
-            (void)QueueDesktopWidgetComposition(data->id);
+        if (changed) queueCategorizedDesktopOwner(searchable);
         return;
     }
 

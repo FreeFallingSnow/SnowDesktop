@@ -703,3 +703,4 @@
         app.luaWidgetPanelAnimation_.ResetHidden();
         ctx->SetTarget(nullptr);
     }
+#include "../layout/native_popup_input_access.inc"

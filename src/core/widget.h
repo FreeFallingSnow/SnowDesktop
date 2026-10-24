@@ -387,7 +387,7 @@ public:
     bool HandleSearchKey(WPARAM key);
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
-    void UpdateSearchPointerSelection(POINT point);
+    bool UpdateSearchPointerSelection(POINT point);
     void EndSearchPointerSelection();
     bool IsSearchPointerSelecting() const
     {
@@ -456,7 +456,7 @@ public:
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
     std::vector<std::wstring> GetCategoryTabOrder() const;
     bool BeginCategoryTabDrag(POINT point);
-    bool UpdateCategoryTabDrag(POINT point);
+    bool UpdateCategoryTabDrag(POINT point, bool* orderChanged = nullptr);
     bool EndCategoryTabDrag(bool commit);
     bool HasCategoryTabPress() const { return !pressedCategoryTab_.empty(); }
     virtual bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) { (void)pt; (void)delta; if (changed) *changed = false; return false; }

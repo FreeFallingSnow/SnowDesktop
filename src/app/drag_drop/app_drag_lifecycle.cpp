@@ -397,7 +397,20 @@ void DesktopApp::PresentPointerInteractionFrame(
          itemDragFeedbackChanged) &&
         (!widgetPreviewActive ||
          widgetDragFeedbackChanged))
-        InvalidateFloatingPopupWindow(true);
+    {
+        if (auto* view = GetCategorizedPopupView();
+            !itemDragActive && !dragDropController_.IsTransportActive() &&
+            !widgetPreviewActive && !marqueeActive_ && view &&
+            (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
+        {
+            // Categorized input invalidates only on a visual change. Preserve
+            // this synchronous boundary without creating another dirty frame.
+            if (floatingPopupHwnd_ && !floatingPopupCompositionPaintInProgress_)
+                UpdateWindow(floatingPopupHwnd_);
+        }
+        else
+            InvalidateFloatingPopupWindow(true);
+    }
 }
 
 void DesktopApp::PresentFloatingDockPointerHosts(

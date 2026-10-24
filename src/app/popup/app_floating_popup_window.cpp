@@ -914,6 +914,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
 
 void DesktopApp::UpdateCollectionPopupBackdrop()
 {
+    snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const DesktopWidget* popup = GetOpenPopupWidget();
     if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
     {
@@ -983,7 +984,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 }
 
 void DesktopApp::UpdateFloatingPopupWindowBounds(
-    bool immediatePresent)
+    bool immediatePresent, bool refreshStableContent)
 {
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
@@ -1114,7 +1115,16 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         ApplyFloatingPopupLayerPolicy();
     }
 
-    UpdateCollectionPopupBackdrop();
+    const DesktopWidget* collection = GetOpenPopupWidget();
+    const bool backdropRecovery = collectionPopupGlassTheme_ && collection &&
+        !UsesCollectionPopupFan(*collection) &&
+        !collectionPopupBackdropCompositor_.IsAvailable();
+    const bool refreshContent = refreshStableContent || !wasVisible ||
+        boundsChanged || regionChanged || backdropRecovery ||
+        !floatingPopupDcompSurface_ || !floatingPopupDcompVisual_ ||
+        graphicsDeviceRecovery_.Pending();
+    if (refreshContent)
+        UpdateCollectionPopupBackdrop();
 
     if (!wasVisible || boundsChanged || regionChanged)
     {
@@ -1159,7 +1169,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     const bool rendered = immediatePresent
         ? PresentFloatingPopupComposition()
         : false;
-    if (!rendered)
+    if (!rendered && refreshContent)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
         if (immediatePresent)
@@ -1215,6 +1225,22 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
     ApplyDragPreviewLayerPolicy();
     SyncPopupMouseLeaveTimer();
+}
+
+void DesktopApp::PresentFloatingPopupPointerFrame(
+    bool dragPreviewAlreadySynced)
+{
+    const auto* view = GetCategorizedPopupView();
+    const bool stableCategorizedInput = view &&
+        (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()) &&
+        !dragSession_.IsActive() && !dragDropController_.IsTransportActive() &&
+        widgetAction_ != WidgetAction::Move && widgetAction_ != WidgetAction::Resize &&
+        !marqueeActive_ && !popupAnimation_.IsAnimating() &&
+        !luaWidgetPanelAnimation_.IsAnimating();
+    // Pointer mutation already queued any changed content. Still reconcile
+    // geometry, native regions and layer policy before the synchronous paint.
+    UpdateFloatingPopupWindowBounds(false, !stableCategorizedInput);
+    PresentPointerInteractionFrame(dragPreviewAlreadySynced);
 }
 
 void DesktopApp::SyncPopupMouseLeaveTimer()
@@ -1386,8 +1412,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             &dragPreviewSynced);
         handlingFloatingPopupInput_ = false;
         if (!pointerUpdated) return 0;
-        UpdateFloatingPopupWindowBounds(false);
-        PresentPointerInteractionFrame(
+        PresentFloatingPopupPointerFrame(
             dragPreviewSynced);
         return 0;
     }

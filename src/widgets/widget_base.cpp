@@ -97,8 +97,9 @@ bool ScrollingItemWidget::BeginCategoryTabDrag(POINT point)
     return true;
 }
 
-bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
+bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point, bool* orderChanged)
 {
+    if (orderChanged) *orderChanged = false;
     if (!HasCategoryTabPress()) return false;
     auto* source = CategoryTabSource(this);
     if (!source || !source->GetWidgetData() ||
@@ -116,7 +117,7 @@ bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
     {
         source->GetWidgetData()->categoryTabOrder = std::move(order);
         InvalidateCategoryTabSource(this);
-        if (app_) InvalidateRect(app_->hwnd_, nullptr, FALSE);
+        if (orderChanged) *orderChanged = true;
     }
     return true;
 }
@@ -1796,13 +1797,16 @@ void ScrollingItemWidget::BeginSearchPointerSelection(
     searchPointerSelecting_ = true;
 }
 
-void ScrollingItemWidget::UpdateSearchPointerSelection(
+bool ScrollingItemWidget::UpdateSearchPointerSelection(
     POINT point)
 {
     if (!searchPointerSelecting_)
-        return;
-    searchCursorPos_ =
-        HitTestSearchTextPosition(point);
+        return false;
+    const size_t position = HitTestSearchTextPosition(point);
+    if (position == searchCursorPos_)
+        return false;
+    searchCursorPos_ = position;
+    return true;
 }
 
 void ScrollingItemWidget::EndSearchPointerSelection()
