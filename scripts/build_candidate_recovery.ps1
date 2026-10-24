@@ -47,7 +47,8 @@ function Get-CandidateRecoveryInventory([string]$Source,[string]$Output,$Opened)
                 $pending.Push($path);$records.Add([pscustomobject]@{path=$relative;kind='directory'})
                 if($records.Count -gt 32768){throw 'Recovery source entry budget exceeded.'};continue
             }
-            # Deny writes while permitting the single directory rename below.
+            # Deny writes during inspection. These streams are closed before
+            # renaming the source directory; the workspace lease stays held.
             $stream=[IO.File]::Open($path,'Open','Read',([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
             $Opened.Add($stream)
             $bytes+=$stream.Length;if($bytes -gt 4GB){throw 'Recovery source byte budget exceeded.'}
@@ -82,6 +83,11 @@ function Repair-CandidateWorkspace($Snapshot,$Lease,[scriptblock]$CheckCancellat
             }catch{}
         }
         & $CheckCancellation 'before-archive'
+        # Windows can deny the parent directory rename while child files are
+        # open, even with FILE_SHARE_DELETE. Inspection is complete and the
+        # actual workspace lease still excludes other materializers/executors.
+        foreach($stream in $opened){$stream.Dispose()}
+        $opened.Clear()
         $archive=Resolve-CandidatePath $Lease.directory ('recovery/'+[Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($archive)
         $journal=Resolve-CandidatePath $archive 'recovery.json'
