@@ -439,7 +439,22 @@ console.log(JSON.stringify(result));
         for(const auto& phase:{"duplicate","unloaded"})require(wake.at(phase).at("acks").integer()==0&&wake.at(phase).at("notices").integer()==0,"Repeated polling or unloaded plugin delivered an event");
         require(wake.at("errors").items.empty(),"Production delivery reported an unexpected error");
     }
-    write(c.root/L"cold-recovery.mjs",R"JS(import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+    // Setup still calls the production coordinator, but one PowerShell owner
+    // avoids twelve process startups per cold mode inside the shared budget.
+    write(c.root/L"prepare-cold.ps1",R"PS(param([string]$Coordinator,[string]$TaskData)
+$ErrorActionPreference='Stop'
+foreach($task in @([IO.File]::ReadAllText($TaskData)|ConvertFrom-Json)){
+    & $Coordinator task-open $task.id -TaskName $task.name -Adapter dsh | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Cold fixture task registration failed.'}
+    if($task.join){
+        & $Coordinator begin $task.id -WaitSeconds 1 | Out-Null
+        if($LASTEXITCODE -ne 0){throw 'Cold fixture batch registration failed.'}
+    }
+}
+& $Coordinator task-open synthetic-peer -TaskName 'Isolated cold-session sender' | Out-Null
+if($LASTEXITCODE -ne 0){throw 'Cold fixture sender registration failed.'}
+)PS");
+    write(c.root/L"cold-recovery.mjs",R"JS(import fs from 'node:fs';import path from 'node:path';import {pathToFileURL,fileURLToPath} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
 const [moduleFile,root,mode]=process.argv.slice(2),{apply}=await import(pathToFileURL(moduleFile));
 const {CollaborationBridge,taskId}=await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')));
 const bridge=new CollaborationBridge(root),hooks=new Map(),services={},disposers=[],notices=[],errors=[],resumed=[];let poll,listCalls=0,releaseResume;
@@ -449,7 +464,7 @@ const turn=()=>new Promise(resolve=>setImmediate(resolve));
 const wait=async predicate=>{const until=Date.now()+10000;while(!predicate()){if(Date.now()>until)throw new Error('Cold recovery carrier deadline');await new Promise(resolve=>setTimeout(resolve,5));}};
 const make=(name,cwd=root)=>({id:'cold-'+mode+'-'+name,session:{cwd},status:'idle',inject:message=>notices.push({name,method:'inject',message}),followup:message=>notices.push({name,method:'followup',message})});
 const main=make('main'),failed=make('failed'),closed=make('closed'),outside=make('outside',root+'-outside'),released=make('released'),child=make('child'),unknown=make('unknown');
-for(const agent of [main,failed,closed,outside,released,child])await bridge.open(agent.id);
+
 const controller={list:async(_request,signal)=>{signal.throwIfAborted();listCalls++;return {items:[main,failed,closed,outside,released,child,unknown].map(agent=>({sessionId:agent.id,cwd:agent.session.cwd,...(agent===child?{origin:'subagent'}:{})}))};},resolveAgent:async id=>{resumed.push(id);if(mode==='unload')return await new Promise(resolve=>{releaseResume=resolve;});if(id===failed.id)return {error:new Error('Controlled session restoration failure')};return {agent:main};}};
 const ctx={services,logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect()),inject:(_deps,apply)=>{if(mode!=='missing')apply({...ctx,sessionController:controller});}};
 const command=(action,id,args=[])=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,action,id,...args],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
@@ -458,8 +473,10 @@ const command=(action,id,args=[])=>promisify(execFile)(bridge.powershell,['-NoPr
 const dispose=()=>{while(disposers.length){const disposer=disposers.pop();if(typeof disposer==='function')disposer();}};
 let result;
 try{
- await command('task-open','synthetic-peer',['-TaskName','Isolated cold-session sender']);
-  for(const agent of [main,failed,outside,released,child])batchId=(await bridge.call('begin',taskId(agent.id))).batchId;
+ const dataFile=path.join(root,'cold-tasks.json');
+  fs.writeFileSync(dataFile,JSON.stringify([main,failed,closed,outside,released,child].map(agent=>({id:taskId(agent.id),name:'DSH '+agent.id,join:agent!==closed}))));
+  await promisify(execFile)(bridge.powershell,['-NoProfile','-File',path.join(path.dirname(fileURLToPath(import.meta.url)),'prepare-cold.ps1'),'-Coordinator',bridge.script,'-TaskData',dataFile],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+  batchId=bridge.state().current.id;
  apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:mode!=='disabled'});
  await hooks.get('tools/pre-execute')({agent:released,name:'read'},()=>null);hooks.get('agent/disposed')({agent:released});
  const registered=notices.length,currentBefore=JSON.stringify(bridge.state().current);
