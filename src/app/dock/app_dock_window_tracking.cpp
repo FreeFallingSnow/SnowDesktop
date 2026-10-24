@@ -1150,7 +1150,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         !dockWindowTransition_->IsActiveFor(
             target))
     {
-        dockWindowTransition_->CompleteImmediately();
+        dockWindowTransition_->Cancel();
     }
     found->second.window = target;
     found->second.minimized = IsIconic(target) != FALSE;
@@ -1283,7 +1283,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         !dockWindowTransition_->IsActiveFor(
             target))
     {
-        dockWindowTransition_->CompleteImmediately();
+        dockWindowTransition_->Cancel();
     }
 
     using snowdesktop::dock_window_rules::DockClickAction;

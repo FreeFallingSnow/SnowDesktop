@@ -889,8 +889,7 @@ bool DockWindowTransition::Start(
             return false;
     }
 
-    if (awaitingMinimizePresentation_ && minimizeRequest_) CompleteImmediately();
-    else Cancel();
+    Cancel();
     if (sourceCloaked_) return false;
     sourceWindow_ = sourceWindow;
     sourceThread_ = GetWindowThreadProcessId(sourceWindow_, &sourceProcess_);
@@ -2754,7 +2753,11 @@ void DockWindowTransition::Finish()
 
 void DockWindowTransition::Cancel()
 {
-    Finish();
+    // Cancellation used to run after the caller had already dispatched its
+    // native minimize. Preserve that accepted operation when only its first
+    // frame is pending; explicit reversal uses Finish to withdraw that intent.
+    if ((awaitingMinimizePresentation_ && minimizeRequest_) || pendingExternalRestore_) CompleteImmediately();
+    else Finish();
 }
 
 void DockWindowTransition::CompleteImmediately()
@@ -2777,8 +2780,9 @@ void DockWindowTransition::CompleteImmediately()
     if (minimize && source) minimize(source);
     if (externalRestore && source)
     {
-        // Queued behind the original CBT operation on its source thread.
-        PostMessageW(source, WM_SYSCOMMAND, SC_RESTORE, 0);
+        // The host's existing asynchronous restore route queues behind the
+        // original CBT operation, retaining maximized placement and fallbacks.
+        externalRestore(source, DockWindowRestoreTransitionPhase::RequestRestore);
         externalRestore(source, DockWindowRestoreTransitionPhase::ActivateRestored);
     }
 }

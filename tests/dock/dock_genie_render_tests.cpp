@@ -1802,6 +1802,7 @@ void CheckRetainedWindowImage()
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                         2, 0, 60, false, false, effect);
                     ShowWindow(source, SW_SHOWNOACTIVATE);
+                    DwmFlush();
                     auto wait = std::make_shared<ControlledPresentationWait>();
                     DockWindowTransitionTestAccess::SetPresentationWait(transition,
                         [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
@@ -1840,6 +1841,7 @@ void CheckRetainedWindowImage()
                 for (const bool timeout : {false, true})
                 {
                     ShowWindow(source, SW_SHOWNOACTIVATE);
+                    DwmFlush();
                     auto wait = std::make_shared<ControlledPresentationWait>();
                     DockWindowTransitionTestAccess::SetPresentationWait(transition,
                         [wait, timeout](IDCompositionDesktopDevice* device) {
@@ -1852,6 +1854,7 @@ void CheckRetainedWindowImage()
                             "failed first-frame presentation retires before native fallback");
                         ShowWindow(window, SW_MINIMIZE);
                     }), "failed-presentation minimize reserves its bounded fallback");
+                    const HWND failedScene = transition.GetPresentationWindow();
                     if (timeout)
                     {
                         Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 300),
@@ -1865,31 +1868,34 @@ void CheckRetainedWindowImage()
                         return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0;
                     }, 500), "timed-out worker completes after its transition has retired");
                     Check(requests == 1, "late failed-attempt completion cannot repeat native fallback");
+                    DrainWindowRetirement(failedScene);
                     DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
                 }
                 for (const int action : {0, 1, 2, 3})
                 {
                     ShowWindow(source, SW_SHOWNOACTIVATE);
+                    DwmFlush();
                     auto wait = std::make_shared<ControlledPresentationWait>();
                     auto pending = std::make_unique<DockWindowTransition>();
                     Check(pending->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get()),
                         "pending minimize lifetime fixture initializes");
                     DockWindowTransitionTestAccess::SetPresentationWait(*pending,
                         [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
-                    int requests = 0, activations = 0;
+                    int requests = 0, lifetimeActivations = 0;
                     Check(pending->StartMinimize(source, dock, nullptr, [&](HWND window) {
                         ++requests;
                         ShowWindow(window, SW_MINIMIZE);
                     }), "lifetime fixture starts an asynchronous minimize");
                     Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 300),
                         "lifetime fixture holds a real pending acknowledgement");
+                    const HWND retiringWindow = pending->GetPresentationWindow();
                     if (action == 0) pending->Cancel();
                     else if (action == 1)
                     {
                         Check(pending->StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
                             Check(window == source && phase == DockWindowRestoreTransitionPhase::ActivateRestored &&
                                 !appCloaked(window), "reversal activates the still-visible source after retiring its duplicate");
-                            ++activations;
+                            ++lifetimeActivations;
                         }), "restore reverses a pending minimize without sending a native minimize first");
                     }
                     else if (action == 2) pending.reset();
@@ -1897,10 +1903,11 @@ void CheckRetainedWindowImage()
                     SetEvent(wait->release);
                     Check(pumpUntil([&] { return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0; }, 500),
                         "cancelled first-frame worker completes independently of owner lifetime");
-                    Check(requests == (action == 3 ? 1 : 0) && activations == (action == 1 ? 1 : 0) &&
-                        !appCloaked(source) && IsIconic(source) == (action == 3),
+                    Check(requests == (action == 1 ? 0 : 1) && lifetimeActivations == (action == 1 ? 1 : 0) &&
+                        !appCloaked(source) && (IsIconic(source) != FALSE) == (action != 1),
                         "cancel, reverse, destroy and explicit completion retain their own native-action semantics");
                     pending.reset();
+                    DrainWindowRetirement(retiringWindow);
                 }
                 for (const bool destroy : {false, true})
                 {
@@ -1909,6 +1916,7 @@ void CheckRetainedWindowImage()
                         nullptr, nullptr, type.hInstance, nullptr);
                     Check(changed != nullptr, "source-change fixture creates its own HWND");
                     ShowWindow(changed, SW_SHOWNOACTIVATE);
+                    DwmFlush();
                     auto wait = std::make_shared<ControlledPresentationWait>();
                     DockWindowTransitionTestAccess::SetPresentationWait(transition,
                         [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
@@ -1918,6 +1926,7 @@ void CheckRetainedWindowImage()
                         Check(window == changed && !transition.GetPresentationWindow() && !appCloaked(window),
                             "changed geometry takes native fallback after removing the stale aligned image");
                     }), "source-change fixture starts a pending presentation");
+                    const HWND changedScene = transition.GetPresentationWindow();
                     if (destroy) DestroyWindow(changed);
                     else SetWindowPos(changed, nullptr, -19980, -20000, 320, 200, SWP_NOZORDER | SWP_NOACTIVATE);
                     Check(pumpUntil([&] { return !transition.IsActive(); }, 300) && requests == (destroy ? 0 : 1),
@@ -1926,6 +1935,7 @@ void CheckRetainedWindowImage()
                     Check(pumpUntil([&] { return WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0; }, 500),
                         "source-change acknowledgement finishes safely after its scene has gone away");
                     if (!destroy) DestroyWindow(changed);
+                    DrainWindowRetirement(changedScene);
                     DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
                 }
                 // A pending external minimize still belongs to the original
@@ -1934,10 +1944,11 @@ void CheckRetainedWindowImage()
                 for (const bool reverseAgain : {false, true})
                 {
                     ShowWindow(source, SW_SHOWNOACTIVATE);
+                    DwmFlush();
                     auto wait = std::make_shared<ControlledPresentationWait>();
                     DockWindowTransitionTestAccess::SetPresentationWait(transition,
                         [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
-                    int restores = 0, activations = 0, extraMinimizes = 0;
+                    int reverseRequests = 0, reverseActivations = 0, extraMinimizes = 0;
                     Check(transition.StartExternalMinimize(source, dock,
                         GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs),
                         "external pending-reverse fixture starts within its original request");
@@ -1946,10 +1957,10 @@ void CheckRetainedWindowImage()
                         {
                             Check(IsIconic(window) && appCloaked(window),
                                 "external reversal waits for the original native minimize under its retained cloak");
-                            ++restores;
+                            ++reverseRequests;
                             ShowWindow(window, SW_SHOWNOACTIVATE);
                         }
-                        else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activations;
+                        else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++reverseActivations;
                     }) && transition.GetDirection() == DockWindowTransitionDirection::Restore,
                         "external pending reversal retains the restore intent while presentation is outstanding");
                     if (reverseAgain)
@@ -1958,14 +1969,53 @@ void CheckRetainedWindowImage()
                             "a second reversal keeps the original external action without adding another minimize");
                     SetEvent(wait->release);
                     Check(pumpUntil([&] { return !DockWindowTransitionTestAccess::AwaitingMinimize(transition); }, 150) &&
-                        transition.IsActive() && appCloaked(source) && restores == 0,
+                        transition.IsActive() && appCloaked(source) && reverseRequests == 0,
                         "external presentation acknowledgement precedes release of the original native action");
                     ShowWindow(source, SW_MINIMIZE); // Original CBT action; never synthesized by the transition.
                     drain();
-                    Check(extraMinimizes == 0 && restores == (reverseAgain ? 0 : 1) &&
-                        activations == (reverseAgain ? 0 : 1) && IsIconic(source) == reverseAgain && !appCloaked(source),
+                    Check(extraMinimizes == 0 && reverseRequests == (reverseAgain ? 0 : 1) &&
+                        reverseActivations == (reverseAgain ? 0 : 1) && (IsIconic(source) != FALSE) == reverseAgain && !appCloaked(source),
                         "external reversal and repeated reversal preserve native ordering and retire the correct image");
                     DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                for (const bool destroyOwner : {false, true})
+                {
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    DwmFlush();
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    auto owner = std::make_unique<DockWindowTransition>();
+                    owner->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get());
+                    DockWindowTransitionTestAccess::SetPresentationWait(*owner,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int restoreIntent = 0, restoreActivation = 0;
+                    Check(owner->StartExternalMinimize(source, dock,
+                        GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs),
+                        "cancelled external reversal starts before its native operation is released");
+                    const HWND retiringWindow = owner->GetPresentationWindow();
+                    Check(owner->StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                        if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                        {
+                            ++restoreIntent;
+                            // Model the host's asynchronous native restore
+                            // boundary. The original CBT operation is retained
+                            // and executes before this posted restore is pumped.
+                            PostMessageW(window, WM_SYSCOMMAND, SC_RESTORE, 0);
+                        }
+                        else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++restoreActivation;
+                    }), "external reversal records its last accepted restore intent");
+                    if (destroyOwner) owner.reset();
+                    else owner->Cancel();
+                    ShowWindow(source, SW_MINIMIZE); // Original source-thread operation, never replaced.
+                    Check(IsIconic(source) && restoreIntent == 1 && restoreActivation == 1 && !appCloaked(source),
+                        "cancel/destruction retains both the original minimize and one queued restore through existing callbacks");
+                    SetEvent(wait->release);
+                    Check(pumpUntil([&] { return !IsIconic(source) &&
+                        WaitForSingleObject(wait->finished, 0) == WAIT_OBJECT_0; }, 500),
+                        "queued restore follows the retained native minimize after the transition owner has retired");
+                    owner.reset();
+                    DrainWindowRetirement(retiringWindow);
+                    Check(restoreIntent == 1 && restoreActivation == 1,
+                        "late acknowledgement cannot replay a cancelled external restore");
                 }
                 ShowWindow(source, SW_SHOWNOACTIVATE);
                 // Real restore entry with a controlled slow presentation wait:
