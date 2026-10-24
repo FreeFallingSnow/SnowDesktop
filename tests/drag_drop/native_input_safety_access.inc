@@ -360,14 +360,34 @@
                 DesktopApp& app; HWND window;
                 ~Cleanup()
                 {
-                    app.HideDragHintWindow();
-                    if (app.hintHwnd_) DestroyWindow(app.hintHwnd_);
-                    app.hintHwnd_ = nullptr;
+                    app.DestroyDragHintWindow();
                     ReleaseCapture(); DestroyWindow(window); app.hwnd_ = nullptr;
                 }
             } cleanup{*app, window};
             app->RebuildContainersAndItems();
             if (!app->SaveLayoutSlots(false)) throw std::runtime_error("save queued component layout");
+            // A data-only app has no tooltip window, so a hidden-window
+            // assertion alone would be vacuous. One active resize uses real
+            // WARP/DComp text feedback on this inactive private desktop.
+            const bool observeTooltip = resize && !pending && !swapped &&
+                type == DesktopWidgetType::Collection;
+            if (observeTooltip)
+            {
+                ComPtr<IDXGIDevice> dxgi;
+                if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                        &app->d3dDevice_, nullptr, nullptr)) ||
+                    FAILED(app->d3dDevice_.As(&dxgi)) ||
+                    FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                        IID_PPV_ARGS(&app->d2dFactory_))) ||
+                    FAILED(app->d2dFactory_->CreateDevice(dxgi.Get(), &app->d2dDevice_)) ||
+                    FAILED(DCompositionCreateDevice2(app->d2dDevice_.Get(),
+                        IID_PPV_ARGS(&app->dcompDevice_))) ||
+                    FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                        reinterpret_cast<IUnknown**>(app->dwriteFactory_.GetAddressOf()))))
+                    throw std::runtime_error("initialize isolated drag hint graphics");
+                ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
             app->mouseDown_ = true; app->mouseDownWidgetIndex_ = 0;
             app->widgetAction_ = action;
             app->middleButtonWidgetMove_ = button == VK_MBUTTON;
@@ -391,6 +411,9 @@
             check(resize ? app->widgetPreviewSpan_.columns == 4 && app->widgetPreviewSpan_.rows == 3 :
                 app->widgetPreviewCell_.column == 1 && app->widgetPreviewCell_.row == 1,
                 "held component gesture must update its visible geometry");
+            if (observeTooltip)
+                check(app->dragTooltip_.Visible() && app->hintHwnd_ && IsWindowVisible(app->hintHwnd_),
+                    "isolated active resize must display real drag feedback before release");
             if (pending) app->widgetAction_ = action;
             const auto beforeCell = app->widgetPreviewCell_;
             const auto beforeSpan = app->widgetPreviewSpan_;
@@ -430,6 +453,8 @@
             check(matches(app->widgets_.front()), "component release must commit its release geometry; pending/lost release must not commit");
             check(!app->mouseDown_ && app->widgetAction_ == DesktopApp::WidgetAction::None && !GetCapture(),
                 "component release or cancellation must retire gesture and capture");
+            check(!app->dragTooltip_.Visible() && (!app->hintHwnd_ || !IsWindowVisible(app->hintHwnd_)),
+                "component release or cancellation must hide its drag hint");
             app->LoadLayoutSlots();
             const auto index = app->FindWidgetIndexById(widget.id);
             check(index < app->widgets_.size() && matches(app->widgets_[index]),

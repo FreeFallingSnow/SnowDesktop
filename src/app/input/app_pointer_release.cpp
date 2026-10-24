@@ -1282,7 +1282,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             // release. Resize, like Move above, must resolve its final geometry
             // from this real button-up rather than the last preview sample.
             if (completedWidgetAction == WidgetAction::Resize)
+            {
                 OnMouseMoveAt(wp, upPoint);
+                HideDragHintWindow();
+            }
             widgetAction_ = WidgetAction::None;
             if (completedWidgetAction == WidgetAction::Resize)
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
