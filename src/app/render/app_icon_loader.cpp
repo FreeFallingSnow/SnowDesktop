@@ -298,6 +298,27 @@ void DesktopApp::DrainBackgroundShellWork()
 void DesktopApp::QueueIconTask(IconLoadTask value)
 {
     auto input = std::make_shared<IconLoadTask>(std::move(value));
+    const auto& identity = input->isDesktopItem ? input->layoutKey : input->folderPath;
+    // Resolve UI-owned appearance/preview state before entering the worker.
+    // Thumbnail classification is only known after extraction.
+    const std::array styles{
+        snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, false)),
+        snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, true))};
+    const auto preparePixels = [styles](const std::shared_ptr<IconLoadResult>& result) {
+        if (!result->bitmap) return;
+        try
+        {
+            auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
+            if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap,
+                    styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared))
+                result->preparedPixels = std::move(prepared);
+        }
+        catch (...)
+        {
+            // Prewarming is optional: retain the successfully extracted image
+            // and its normal delivery/fallback even if CPU preparation fails.
+        }
+    };
     const auto key = input->requestKey;
     const auto queuedAt = GetTickCount64();
     // Share first pixels across desktop/mapping/popup consumers, independent of
@@ -327,7 +348,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         result->folderPath = input->folderPath;
         return result;
     };
-    auto image = [input, queuedAt, makeResult, cache, cacheKey] {
+    auto image = [input, queuedAt, makeResult, cache, cacheKey, preparePixels] {
         auto& task = *input;
         const auto& tracePath = task.parsingName.empty() ? task.folderPath : task.parsingName;
         shellCalls::Context trace(
@@ -408,6 +429,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             iconIsThumbnail, shellFolder);
         if (!result->iconIsMediaThumbnail)
             cache->Put(cacheKey, result->bitmap, result->bitmapSize, task.phase == IconLoadPhase::Phase2);
+        preparePixels(result);
         const auto finished = GetTickCount64();
         snowdesktop::icon_diagnostics::LogShellIconLoadTiming({
             task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
@@ -436,7 +458,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     bool submitted = false;
     if (input->phase == IconLoadPhase::Phase1)
     {
-        auto localImage = [input, queuedAt, makeResult, cache, cacheKey] {
+        auto localImage = [input, queuedAt, makeResult, cache, cacheKey, preparePixels] {
             const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
             shellCalls::Context trace(L"icon.local", path);
             const auto started = GetTickCount64();
@@ -450,6 +472,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             else result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
             if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            preparePixels(result);
             if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Icons))
             {
                 wchar_t timing[256]{};

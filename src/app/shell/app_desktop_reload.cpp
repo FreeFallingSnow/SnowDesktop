@@ -1162,9 +1162,13 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
                 snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
+                const auto incomingBitmap = result->bitmap;
                 snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
                     result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
                     [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                if (incomingBitmap && item.iconBitmap == incomingBitmap)
+                    WarmStyledIconBitmap(incomingBitmap, result->preparedPixels,
+                        ResolveIconAppearance(item.layoutKey, item.iconIsMediaThumbnail));
                 matched = true;
                 if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
@@ -1205,9 +1209,13 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
                     snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
+                    const auto incomingBitmap = result->bitmap;
                     snowdesktop::shell_icon_request::ApplyBitmap(entry, result->phase,
                         result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
                         [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                    if (incomingBitmap && entry.iconBitmap == incomingBitmap)
+                        WarmStyledIconBitmap(incomingBitmap, result->preparedPixels,
+                            ResolveIconAppearance(entry.fullPath, entry.iconIsMediaThumbnail));
                     matched = true;
                     if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;

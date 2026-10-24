@@ -305,15 +305,30 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
         const auto ticket = state.bitmaps.Begin(key, id, target, pinned, release);
         const auto path = snowdesktop::IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), id);
         const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
-        const bool queued = state.images.Submit(Utf8ToWide(key), [path, edge] {
+        const auto style = snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity));
+        const bool queued = state.images.Submit(Utf8ToWide(key), [path, edge, style] {
             auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
             if (snowdesktop::icon_image::Decode(path, edge, image, error) && snowdesktop::icon_image::PadSquare(image))
             { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
-            return result;
-        }, [this, weak, key, ticket](auto bitmap) {
+            std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared> pixels;
+            if (result->bitmap)
+            {
+                try
+                {
+                    auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
+                    if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap, style, true, false, *prepared))
+                        pixels = std::move(prepared);
+                }
+                catch (...) { /* Keep the decoded image and synchronous fallback. */ }
+            }
+            return std::pair{std::move(result), std::move(pixels)};
+        }, [this, weak, key, ticket, ownerIdentity = std::wstring(identity)](auto loaded) {
             if (auto current = weak.lock())
             {
-                if (!current->bitmaps.Publish(key, ticket, std::move(bitmap))) return;
+                const auto source = loaded.first;
+                if (!current->bitmaps.Publish(key, ticket, std::move(loaded.first))) return;
+                if (source && source->bitmap)
+                    WarmStyledIconBitmap(source->bitmap, loaded.second, ResolveIconAppearance(ownerIdentity), true);
                 ClearDockAppearanceImages();
                 InvalidateDragStaticScene(); InvalidateDockRects();
                 if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);

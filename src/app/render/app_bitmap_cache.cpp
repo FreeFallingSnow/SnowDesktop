@@ -471,6 +471,7 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    preparedIconPixels_.Erase(hbm);
     ClearDockAppearanceImages();
     for (auto it = styledIconCache_.begin(); it != styledIconCache_.end();)
         if (std::get<0>(it->first) == reinterpret_cast<std::uintptr_t>(hbm))
@@ -498,24 +499,17 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
     if (!hbm || !d2dContext_)
         return nullptr;
 
-    snowdesktop::icon_bitmap_pixels::Buffer buffer;
-    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer, !managedAlpha))
+    snowdesktop::icon_styled_pixels::Prepared prepared;
+    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared))
         return nullptr;
+    return UploadStyledIconPixels(prepared);
+}
 
-    bool needsGlassBackdrop = false;
-    if (style.enabled)
-    {
-        if (!snowdesktop::icon_beautify::PrepareCanvas(buffer.pixels, buffer.width, buffer.height, true)) return nullptr;
-        const auto edgeFill = style.mode == 0
-            ? snowdesktop::icon_beautify::DetectPlateFill(buffer.pixels, buffer.width, buffer.height)
-            : std::nullopt;
-        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
-        buffer.pixels = snowdesktop::icon_beautify::Render(
-            buffer.pixels, buffer.width, buffer.height,
-            style, edgeFill, nativeControlSource ? snowdesktop::icon_beautify::SourceKind::NativeControl :
-                snowdesktop::icon_beautify::SourceKind::Image);
-    }
-
+ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
+    const snowdesktop::icon_styled_pixels::Prepared& prepared)
+{
+    if (!d2dContext_) return nullptr;
+    const auto& buffer = prepared.buffer;
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
@@ -531,9 +525,28 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
         return nullptr;
     }
 
-    iconGlassBackdrop_[bitmap.Get()] = needsGlassBackdrop;
-    iconBitmapStyles_[bitmap.Get()] = style;
+    iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
+    iconBitmapStyles_[bitmap.Get()] = prepared.style;
     return bitmap;
+}
+
+void DesktopApp::WarmStyledIconBitmap(HBITMAP bitmap,
+    const std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared>& prepared,
+    const snowdesktop::IconBeautifySettings& currentStyle,
+    bool managedAlpha, bool nativeControlSource)
+{
+    if (!bitmap || !prepared || prepared->source != bitmap ||
+        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource)
+        return;
+    try
+    {
+        const auto token = iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(currentStyle));
+        // StyleIdentities compares every normalized field exactly. Equal's float
+        // tolerance would admit pixels from a slightly older preview.
+        if (iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token)
+            preparedIconPixels_.Put(prepared);
+    }
+    catch (...) { /* Optional prewarming must not interrupt model acceptance. */ }
 }
 
 /**
@@ -662,6 +675,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
 
 void DesktopApp::ClearStyledIconCache()
 {
+    preparedIconPixels_.Clear();
     for (const auto& [key, bitmap] : styledIconCache_)
     { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }
     ClearDockAppearanceImages();
@@ -676,7 +690,12 @@ ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP 
     const auto key = std::tuple{reinterpret_cast<std::uintptr_t>(bitmap), token, managedAlpha, nativeControlSource};
     const auto found = styledIconCache_.find(key);
     if (found != styledIconCache_.end()) return found->second.Get();
-    auto uploaded = CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
+    const auto prepared = preparedIconPixels_.Take(bitmap);
+    const bool preparedMatches = prepared && prepared->source == bitmap &&
+        prepared->managedAlpha == managedAlpha && prepared->nativeControlSource == nativeControlSource &&
+        iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token;
+    auto uploaded = preparedMatches ? UploadStyledIconPixels(*prepared) :
+        CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
     if (!uploaded) return nullptr;
     auto* result = uploaded.Get(); styledIconCache_[key] = std::move(uploaded); return result;
 }

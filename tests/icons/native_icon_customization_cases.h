@@ -1,6 +1,7 @@
 #pragma once
 #include "theme/theme_library_settings.h"
 #include "data/layout_storage.h"
+#include "native_icon_cold_pixels_cases.h"
 
 namespace native_icon_customization_cases
 {
@@ -137,6 +138,7 @@ inline void Run()
         "actual host upload renders the reported tiny thumbnail theme at full resolution while opt-out preserves its source size");
     Require(beautified.width == 96 && beautified.height == 96 && original.width == 96 && original.height == 40,
         "the actual host upload uses a square selected shape only while beautification is enabled");
+    native_icon_cold_pixels_cases::Run(app, renderContext.Get(), profile.root);
     Require(Access::NoPresentationWindows(app), "icon lifecycle and upload regression never starts a desktop presentation host");
     Access::StopModel(app);
     std::cout << "Native icon customization lifecycle, storage, usage and non-square upload passed\n";

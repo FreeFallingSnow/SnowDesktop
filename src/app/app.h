@@ -34,6 +34,7 @@
 #include "platform/single_instance.h"
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
+#include "icons/icon_styled_pixels.h"
 #include "dock/dock_refresh_cache.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "dock/dock_running_animation.h"
@@ -395,6 +396,7 @@ struct IconLoadResult {
     std::wstring layoutKey;
     std::wstring widgetId;
     HBITMAP bitmap = nullptr;
+    std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared> preparedPixels;
     SIZE bitmapSize{};
     bool shortcutArrow = false;
     bool isShortcut = false;
@@ -3145,7 +3147,13 @@ private:
         const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false, bool nativeControlSource = false);
     ComPtr<ID2D1Bitmap1> CreateStyledD2DBitmap(HBITMAP bitmap,
         const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false, bool nativeControlSource = false);
+    ComPtr<ID2D1Bitmap1> UploadStyledIconPixels(const snowdesktop::icon_styled_pixels::Prepared& prepared);
+    void WarmStyledIconBitmap(HBITMAP bitmap,
+        const std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared>& prepared,
+        const snowdesktop::IconBeautifySettings& currentStyle,
+        bool managedAlpha = false, bool nativeControlSource = false);
     snowdesktop::icon_appearance::StyleIdentities iconStyleCache_;
+    snowdesktop::icon_styled_pixels::Cache preparedIconPixels_;
     std::map<std::tuple<std::uintptr_t, size_t, bool, bool>, ComPtr<ID2D1Bitmap1>> styledIconCache_;
     std::unordered_map<ID2D1Bitmap*, snowdesktop::IconBeautifySettings> iconBitmapStyles_;
     void ClearStyledIconCache();
