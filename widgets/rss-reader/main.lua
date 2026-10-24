@@ -282,6 +282,8 @@ local function render(context, model)
     local metrics = componentMetrics()
     local unit = metrics.strokeWidth
     local pad = metrics.spacingMd
+    local listInset = metrics.spacingXs
+    local listWidth = math.max(unit, width - listInset * 2)
     local headerFont = metrics.titleFontSize
     local countFont = metrics.controlFontSize
     local bodyFont = metrics.bodyFontSize * cfg.rowScale
@@ -324,10 +326,10 @@ local function render(context, model)
         headerBottom + metrics.spacingXs + errorHeight)
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
-    local viewport = { type = "rect", x = pad, y = listTop,
-        width = width - pad * 2, height = viewportHeight }
-    local scrollViewport = { type = "rect", x = pad, y = listTop,
-        width = width - pad, height = viewportHeight }
+    local viewport = { type = "rect", x = listInset, y = listTop,
+        width = listWidth, height = viewportHeight }
+    local scrollViewport = { type = "rect", x = listInset, y = listTop,
+        width = width - listInset, height = viewportHeight }
     interaction.region({
         key = "rss.surface", shape = viewport,
         events = { contextMenu = {
@@ -361,6 +363,7 @@ local function render(context, model)
     end
 
     local rowPadding = metrics.spacingXs * cfg.rowScale
+    local rowRadius = metrics.controlRadius * 0.5
     local rowTextGap = math.max(unit,
         metrics.spacingXs * 0.5 * cfg.rowScale)
     local bodyMetrics = draw.measureText("Ag", bodyFont, 0, false)
@@ -381,21 +384,21 @@ local function render(context, model)
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
     local textX = pad
     local textWidth = math.max(unit, width - pad * 2)
-    draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
+    draw.pushClip(viewport.x, listTop, viewport.width, viewportHeight)
     for index = first, last do
         local article = model.articles[index]
         local y = listTop + (index - 1) * rowHeight - scroll.offset
         local key = "rss.article." .. tostring(index)
         local hovered = interaction.isHovered(key)
         if hovered then
-            draw.rect(pad, y, width - pad * 2,
+            draw.rect(viewport.x, y, viewport.width,
                 itemHeight,
-                colors.card, metrics.controlRadius, 0.07)
+                colors.card, rowRadius, 0.07)
         end
-        registerRegion(key, { type = "roundedRect", x = pad, y = y,
-            width = width - pad * 2,
+        registerRegion(key, { type = "roundedRect", x = viewport.x, y = y,
+            width = viewport.width,
             height = itemHeight,
-            radius = metrics.controlRadius }, {
+            radius = rowRadius }, {
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
         }, article.title, article.link ~= "", scrollViewport)
