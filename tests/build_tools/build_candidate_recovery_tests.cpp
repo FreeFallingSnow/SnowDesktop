@@ -30,6 +30,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'scripts/build_candidate.ps1')
 . (Join-Path $PSScriptRoot 'scripts/build_candidate_recovery.ps1')
 $snapshot=Read-CandidateManifest $PSScriptRoot $Id -VerifyObjects
+if($Mode -eq 'snapshot-descriptor'){$snapshot.digest=('f'*64)}
 $slot=Enter-CandidateSlot $snapshot 'ignored-recovery-name'
 try {
  if($Mode -eq 'no-lease'){$slot.lease.Dispose();$slot.lease=$null}
@@ -46,6 +47,11 @@ try {
         require(rejected.code==2&&(rejected.err.find("lease is required")!=std::string::npos||rejected.err.find("workspace path changed")!=std::string::npos),"Recovery accepted a foreign/shared output lease or escaped source: "+rejected.out+rejected.err);
         require(read(source/L"manual-note.txt")=="human notes to retain\n"&&read(sentinel)=="existing compiler object\n","Rejected recovery changed source or compiler output");
     }
+    const auto badDescriptor=invoke("snapshot-descriptor");
+    require(badDescriptor.code==2&&badDescriptor.err.find("Recovery snapshot identity changed")!=std::string::npos,
+        "Recovery accepted a changed snapshot descriptor: "+badDescriptor.out+badDescriptor.err);
+    require(read(source/L"manual-note.txt")=="human notes to retain\n"&&read(sentinel)=="existing compiler object\n",
+        "Descriptor rejection archived human files or modified compiler output");
     const auto repaired=invoke();require(repaired.code==0,"Source recovery failed: "+repaired.out+repaired.err);
     const auto receipt=Json::parse(repaired.out);const auto archive=fs::path(wide(receipt.at("archive").str()));
     require(receipt.at("recovered").boolean&&receipt.at("source").str()==initial.at("source").str()&&receipt.at("output").str()==initial.at("output").str(),"Recovery created another working source/output directory");

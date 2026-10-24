@@ -61,9 +61,12 @@ function Get-CandidateRecoveryInventory([string]$Source,[string]$Output,$Opened)
 }
 
 function Repair-CandidateWorkspace($Snapshot,$Lease,[scriptblock]$CheckCancellation={param($Phase)}) {
+    # PowerShell variables are case-insensitive: keep the supplied identity
+    # before assigning the independently re-read snapshot below.
+    $expectedPath=[string]$Snapshot.path;$expectedDigest=[string]$Snapshot.digest
     $store=Assert-CandidateRecoveryLease $Snapshot $Lease
     $snapshot=Read-CandidateManifest $Snapshot.manifest.sourceRoot $Snapshot.manifest.id -VerifyObjects -StoreContext $store
-    if($snapshot.path -ne $Snapshot.path -or $snapshot.digest -ne $Snapshot.digest){throw 'Recovery snapshot identity changed.'}
+    if($snapshot.path -ne $expectedPath -or $snapshot.digest -ne $expectedDigest){throw 'Recovery snapshot identity changed.'}
     $manifest=$snapshot.manifest
     $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
     if($actual.digest -ne $manifest.context.digest){throw 'Recovery tools/environment changed; capture a new snapshot.'}
