@@ -20,11 +20,14 @@
 // Production glyph lookup, outlines, drawing, layout and hit testing stay real.
 Microsoft::WRL::ComPtr<IDWriteFontCollection1> fluentTestCollection;
 unsigned fluentFormatCreations = 0;
+Microsoft::WRL::ComPtr<IDWriteFontCollection1> fluentFallbackCollection;
+bool fluentFallbackForControl = false;
 IDWriteTextFormat* CreateFluentTextFormat(IDWriteFactory* factory, float size)
 {
     ++fluentFormatCreations;
     IDWriteTextFormat* format = nullptr;
-    if (FAILED(factory->CreateTextFormat(L"FluentSystemIcons-Regular", fluentTestCollection.Get(), DWRITE_FONT_WEIGHT_NORMAL,
+    if (FAILED(factory->CreateTextFormat(L"FluentSystemIcons-Regular",
+        fluentFallbackForControl ? fluentFallbackCollection.Get() : fluentTestCollection.Get(), DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return nullptr;
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -195,9 +198,10 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             height = static_cast<UINT>((merged ? 64.f : 32.f) * scale);
         const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        ComPtr<ID2D1Bitmap1> retained, reference, readable;
+        ComPtr<ID2D1Bitmap1> retained, reference, legacy, readable;
         Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &retained)) &&
             SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &reference)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &legacy)) &&
             SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0,
                 D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
                     properties.pixelFormat), &readable)), "hover comparison bitmaps initialize");
@@ -231,11 +235,17 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             readable->Unmap(); return result;
         };
         fullPaint(retained.Get(), items, {}, scrolling, &resources);
+        auto legacyItems = BuildStatusBarItems(settings, data);
+        StatusBarTrayScroll legacyScroll;
+        fullPaint(legacy.Get(), legacyItems, {}, legacyScroll);
         // Retain a partially scrolled icon at the viewport edge as well as
         // complete controls; fading/clipping must match a full redraw exactly.
         scrolling.Move(scrolling.Maximum() / 2 + (scrolling.Maximum() ? 7 : 0));
+        legacyScroll.Move(legacyScroll.Maximum() / 2 + (legacyScroll.Maximum() ? 7 : 0));
         fullPaint(retained.Get(), items, {}, scrolling, &resources);
+        fullPaint(legacy.Get(), legacyItems, {}, legacyScroll);
         ComPtr<AtlasSurface> surface; surface.Attach(new AtlasSurface(context, retained.Get()));
+        ComPtr<AtlasSurface> legacySurface; legacySurface.Attach(new AtlasSurface(context, legacy.Get()));
         std::vector<std::optional<std::size_t>> sequence;
         const auto add = [&](std::string_view key) {
             const auto* item = Find(items, key);
@@ -256,6 +266,9 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             const auto damage = StatusBarHoverDamage(items, previous, hover, width, height);
             Check(SUCCEEDED(DrawStatusBarHoverUpdate(surface.Get(), text, items, damage, width, height, scale,
                 appearance, palette, hover, true, 0, merged, scrolling, &resources)), "production hover update renders both damage regions");
+            const auto legacyDamage = StatusBarHoverDamage(legacyItems, previous, hover, width, height);
+            Check(SUCCEEDED(DrawStatusBarHoverUpdate(legacySurface.Get(), text, legacyItems, legacyDamage, width, height, scale,
+                appearance, palette, hover, true, 0, merged, legacyScroll)), "original uncached hover route renders the same atlas offsets");
             for (std::size_t index = 0; index < items.size(); ++index)
                 Check(EqualRect(&items[index].bounds, &boundsBefore[index].bounds) &&
                     EqualRect(&items[index].contentBounds, &boundsBefore[index].contentBounds), "hover retains arranged hit geometry");
@@ -264,6 +277,8 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             auto expected = BuildStatusBarItems(settings, data); auto expectedScroll = scrollBefore;
             fullPaint(reference.Get(), expected, hover, expectedScroll);
             const auto observed = pixels(retained.Get()), wanted = pixels(reference.Get());
+            const auto uncached = pixels(legacy.Get());
+            Check(observed == uncached, "cached hover pixels differ from the original uncached hover route at identical atlas offsets");
             bool equivalent = true;
             for (std::size_t pixel = 0; pixel < observed.size(); ++pixel)
             {
@@ -280,9 +295,25 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             }
             if (!equivalent)
             {
+                std::size_t mismatchCount = 0;
+                unsigned maximumDelta = 0;
+                RECT mismatchBounds{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
+                for (std::size_t pixel = 0; pixel < observed.size(); ++pixel)
+                {
+                    if (observed[pixel] == wanted[pixel]) continue;
+                    ++mismatchCount;
+                    const auto x = static_cast<LONG>(pixel % width), y = static_cast<LONG>(pixel / width);
+                    mismatchBounds.left = std::min(mismatchBounds.left, x); mismatchBounds.top = std::min(mismatchBounds.top, y);
+                    mismatchBounds.right = std::max(mismatchBounds.right, x + 1); mismatchBounds.bottom = std::max(mismatchBounds.bottom, y + 1);
+                    for (unsigned shift = 0; shift < 32; shift += 8)
+                        maximumDelta = std::max(maximumDelta, static_cast<unsigned>(std::abs(
+                            static_cast<int>((observed[pixel] >> shift) & 255) - static_cast<int>((wanted[pixel] >> shift) & 255))));
+                }
                 std::cerr << "hover mismatch merged=" << merged << " hc=" << highContrast << " light=" << lightTheme << " scale=" << scale
                     << " width=" << width << " previous=" << previous.value_or(items.size())
-                    << " hover=" << hover.value_or(items.size()) << '\n';
+                    << " hover=" << hover.value_or(items.size()) << " uncached-same-offset-equal=" << (observed == uncached)
+                    << " full-different-pixels=" << mismatchCount << " max-channel-delta=" << maximumDelta
+                    << " bounds=" << mismatchBounds.left << ',' << mismatchBounds.top << ',' << mismatchBounds.right << ',' << mismatchBounds.bottom << '\n';
                 Check(false, "incremental enter/switch/leave pixels differ from a complete reference frame");
             }
             for (std::size_t index = updateStart; index < surface->updates.size(); ++index)
@@ -354,6 +385,16 @@ int main(int argc, char** argv)
         SUCCEEDED(fontBuilder->CreateFontSet(&fontSet)) &&
         SUCCEEDED(fontFactory->CreateFontCollectionFromFontSet(fontSet.Get(), &fluentTestCollection)),
         "load the original bundled Fluent glyphs for resource/pixel regression");
+    // Model a first font-resource collection without Fluent, then restore the
+    // real collection. Its absence is deterministic even on a system that
+    // also has a copy of Fluent installed globally.
+    fontFile.Reset(); fontBuilder.Reset(); fontSet.Reset();
+    const auto fallbackPath = std::filesystem::path(argv[1]) / L"assets/fonts/HarmonyOS-Sans/HarmonyOS_Sans_SC_Regular.ttf";
+    Check(SUCCEEDED(fontFactory->CreateFontFileReference(fallbackPath.c_str(), nullptr, &fontFile)) &&
+        SUCCEEDED(fontFactory->CreateFontSetBuilder(&fontBuilder)) && SUCCEEDED(fontBuilder->AddFontFile(fontFile.Get())) &&
+        SUCCEEDED(fontBuilder->CreateFontSet(&fontSet)) &&
+        SUCCEEDED(fontFactory->CreateFontCollectionFromFontSet(fontSet.Get(), &fluentFallbackCollection)),
+        "load a deterministic non-Fluent collection for resource recovery");
     CheckResourceReuse(factory.Get(), dxgi.Get(), context.Get(), text.Get(), argc == 3);
     StatusBarSnapshot data; data.clock = L"2026/10/23   16:25";
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;

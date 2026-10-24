@@ -160,6 +160,16 @@ void CheckResourceReuse(ID2D1Factory1* factory, IDXGIDevice* dxgi, ID2D1DeviceCo
     Check(!resources.device && !resources.factory && resources.bitmaps.empty() && !resources.iconFace && !resources.format,
         "explicit graphics-loss/window cleanup releases all retained device and font resources");
     compare();
+    resources.Reset();
+    fluentFallbackForControl = true;
+    compare();
+    Check(!resources.iconFace && resources.TextMatches(text, scale),
+        "the first collection has no Fluent face while factory/revision/scale keys are valid");
+    fluentFallbackForControl = false;
+    fontBuilds = resources.fontBuilds;
+    compare();
+    Check(resources.iconFace && resources.fontBuilds == fontBuilds + 1,
+        "a later requested draw refreshes stale formats and recovers the Fluent face without a key change");
     source.clear(); scale = 1;
     for (std::size_t index = 0; index < StatusBarDrawResources::MaximumBitmaps + 32; ++index)
     {

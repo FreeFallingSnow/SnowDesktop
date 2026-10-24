@@ -407,7 +407,7 @@ HRESULT StatusBarDrawResources::Prepare(ID2D1DeviceContext* context, IDWriteFact
         bitmaps.clear();
     device = nextDevice; dpiX = nextDpiX; dpiY = nextDpiY;
     RetainIcons(items);
-    if (!TextMatches(text, value))
+    if (!TextMatches(text, value) || !iconFace)
     {
         // Capture before creation. If the selection changes concurrently,
         // the next draw detects it instead of blessing an older format.
@@ -427,8 +427,9 @@ HRESULT StatusBarDrawResources::Prepare(ID2D1DeviceContext* context, IDWriteFact
         fontRevision = nextRevision; fontSelection = nextSelection;
         ++fontBuilds;
     }
-    // Do not cache an unsuccessful font lookup; retain the original fallback
-    // and permit recovery on the next draw.
+    // A missing face also refreshes formats above: the shared Fluent
+    // collection may have recovered since the previous fallback format.
+    // Preserve fallback drawing and retry on the next requested draw.
     if (!iconFace)
     {
         ++faceLookups;
