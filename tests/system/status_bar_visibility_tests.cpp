@@ -150,8 +150,11 @@ public:
     ULONG STDMETHODCALLTYPE Release() override { const auto count = --references_; if (!count) delete this; return count; }
     HRESULT STDMETHODCALLTYPE BeginDraw(const RECT* region, REFIID iid, void** value, POINT* offset) override
     {
-        if (!region || !value || !offset || drawing_) return E_INVALIDARG;
+        if (!value || !offset || drawing_) return E_INVALIDARG;
         const auto size = retained_->GetPixelSize();
+        const RECT full{0, 0, static_cast<LONG>(size.width), static_cast<LONG>(size.height)};
+        const bool complete = !region;
+        if (!region) region = &full;
         if (region->left < 0 || region->top < 0 || region->right > static_cast<LONG>(size.width) ||
             region->bottom > static_cast<LONG>(size.height) || IsRectEmpty(region)) return E_INVALIDARG;
         region_ = *region;
@@ -161,7 +164,7 @@ public:
         *offset = origin_;
         const auto result = context_->QueryInterface(iid, value);
         if (FAILED(result)) return result;
-        updates.push_back(*region); drawing_ = true;
+        updates.push_back(*region); if (complete) ++completeUpdates; drawing_ = true;
         context_->SetTarget(atlas_.Get()); context_->SetTransform(D2D1::Matrix3x2F::Identity());
         context_->BeginDraw(); context_->Clear(D2D1::ColorF(0xff00ff));
         return S_OK;
@@ -182,6 +185,7 @@ public:
     HRESULT STDMETHODCALLTYPE ResumeDraw() override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE Scroll(const RECT*, const RECT*, int, int) override { return E_NOTIMPL; }
     std::vector<RECT> updates;
+    std::size_t completeUpdates = 0;
 private:
     ULONG references_ = 1;
     bool drawing_ = false;
@@ -375,11 +379,12 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
         << " equivalent full-frame pixels=" << fullPixels << '\n';
 }
 #include "status_bar_resources_cases.h"
+#include "status_bar_scroll_cases.h"
 }
 int main(int argc, char** argv)
 {
     const std::string_view control = argc == 3 ? argv[2] : "";
-    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control")),
+    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control")),
         "expected repository root and optional resource/atlas control");
     CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
@@ -435,8 +440,14 @@ int main(int argc, char** argv)
         CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, true);
         return 0;
     }
+    if (control == "--full-scroll-control")
+    {
+        CheckTrayScrollUpdates(device.Get(), context.Get(), text.Get(), data, pinned, true);
+        return 0;
+    }
     CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, true, true);
     CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, false);
+    CheckTrayScrollUpdates(device.Get(), context.Get(), text.Get(), data, pinned);
     for (const int mode : {0, 1, 2}) for (const bool clock : {false, true})
     for (const bool notifications : {false, true}) for (const bool merged : {false, true})
     for (const bool rightAligned : {false, true}) for (const float scale : {1.f, 2.f})

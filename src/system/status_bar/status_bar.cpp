@@ -179,6 +179,7 @@ struct StatusBar::Impl
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
         bool partialHoverUpdates = true;
+        bool retainedFrameValid = false;
         RECT adjacentDockBounds{};
         bool dockQuickSearch = false;
         PersonalizationSettings appearance;
@@ -202,6 +203,27 @@ struct StatusBar::Impl
         std::optional<RECT> dropIndicator;
         StatusBarTrayScroll trayScroll;
         std::string scrollDragKey;
+        bool preparingTrayScroll = false;
+        bool deferredTrayPaint = false;
+        struct TrayScrollPaintScope
+        {
+            bool& flag;
+            bool active;
+            TrayScrollPaintScope(bool& value, bool enabled) : flag(value), active(enabled) { if (active) flag = true; }
+            void Release() { if (active) { flag = false; active = false; } }
+            ~TrayScrollPaintScope() { Release(); }
+        };
+        struct TrayScrollFrame
+        {
+            LONG previousOffset = 0;
+            std::optional<std::size_t> previousHover;
+            std::optional<RECT> previousIndicator;
+            std::string previewKey;
+            POINT previewPoint{};
+            bool previewUpdated = false;
+            bool presented = false;
+            bool resolvePreviewKey = false;
+        };
         float TrayScale() const { return dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale); }
         void StopTrayScroll()
         {
@@ -216,17 +238,33 @@ struct StatusBar::Impl
             if (scrollDragKey.empty()) SetTimer(hwnd, kTrayScrollTimer, 30, nullptr);
             scrollDragKey = key;
         }
-        bool ScrollTray(LONG distance)
+        bool ScrollTray(LONG distance, std::optional<POINT> previewPoint = {}, std::string_view key = {})
         {
+            TrayScrollFrame frame{trayScroll.offset, interaction.hovered, dropIndicator, {}, previewPoint.value_or(POINT{})};
             if (!trayScroll.Move(distance)) return false;
-            ClearHover(); interaction.hovered.reset();
-            if (!trayDragging)
+            // ReleaseCapture can synchronously request Paint. Keep its actual
+            // cancellation/Leave notifications here and present once below.
             {
-                interaction.CancelPointer();
-                if (!pressedTray.empty())
-                { pressedTray.clear(); if (GetCapture() == hwnd) ReleaseCapture(); }
+                TrayScrollPaintScope preparation(preparingTrayScroll, true);
+                ClearHover(); interaction.hovered.reset();
+                if (!trayDragging)
+                {
+                    interaction.CancelPointer();
+                    if (!pressedTray.empty())
+                    { pressedTray.clear(); if (GetCapture() == hwnd) ReleaseCapture(); }
+                }
             }
-            paintDirty = true; Paint(); return true;
+            frame.resolvePreviewKey = previewPoint.has_value() && key.empty();
+            if (previewPoint && !key.empty()) frame.previewKey = key;
+            Paint(false, false, &frame);
+            // Hidden/failed/empty surfaces can skip Paint. The original input
+            // route still updated cross-window preview state in that case.
+            if (!frame.previewUpdated || !frame.presented)
+            {
+                if (frame.resolvePreviewKey) frame.previewKey = trayDragging ? pressedTray : owner.previewDragKey;
+                if (!frame.previewKey.empty()) owner.PreviewDrop(frame.previewKey, frame.previewPoint);
+            }
+            return true;
         }
         void TickTrayScroll()
         {
@@ -242,9 +280,7 @@ struct StatusBar::Impl
             const auto direction = trayScroll.EdgeDirection(point, static_cast<LONG>(std::ceil(18 * TrayScale())));
             if (!direction) { StopTrayScroll(); return; }
             const auto key = scrollDragKey;
-            if (ScrollTray(direction * static_cast<LONG>(std::ceil(4 * TrayScale()))))
-                owner.PreviewDrop(key, screen); // Recompute ordering against the newly scrolled cells.
-            else StopTrayScroll();
+            if (!ScrollTray(direction * static_cast<LONG>(std::ceil(4 * TrayScale())), screen, key)) StopTrayScroll();
         }
         StatusBarActivationQueue activation;
         void EndDragFeedback()
@@ -605,10 +641,30 @@ struct StatusBar::Impl
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
-        void Paint(bool prepareHidden = false, bool trayOnly = false)
+        bool ReplayTrayScrollPaint(bool prepareHidden, bool trayOnly, TrayScrollFrame* frame, TrayScrollPaintScope& scope)
         {
+            if (!frame || !deferredTrayPaint) return false;
+            scope.Release();
+            Paint(prepareHidden, trayOnly, frame);
+            return true;
+        }
+        void PublishTrayGeometry()
+        {
+            for (const auto& item : items) if (item.icon && owner.tray)
+            {
+                RECT screen = item.bounds;
+                if (!IsRectEmpty(&screen)) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
+                owner.tray->SetGeometry(item.icon->key, screen);
+            }
+        }
+        void Paint(bool prepareHidden = false, bool trayOnly = false, TrayScrollFrame* scrollFrame = nullptr)
+        {
+            if (preparingTrayScroll) { paintDirty = true; deferredTrayPaint = true; return; }
             if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
                 !owner.composition || !owner.text) return;
+            TrayScrollPaintScope presentation(preparingTrayScroll, scrollFrame != nullptr);
+            if (scrollFrame) deferredTrayPaint = false;
+            const auto paintError = [&](HRESULT result) { presentation.Release(); this->PaintError(result); };
             const auto dockState = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
             const bool nextDockSearch = mergedDockHeight > 0 && dockState.quickSearch;
             if (dockQuickSearch != nextDockSearch) { dockQuickSearch = nextDockSearch; paintDirty = true; }
@@ -637,33 +693,71 @@ struct StatusBar::Impl
                 interaction.CancelPointer();
             }
             drawResources.RetainIcons(items);
+            // Wheel preview originally selected its key after reconciliation;
+            // a removed pressed icon must not resurrect stale drag feedback.
+            if (scrollFrame && scrollFrame->resolvePreviewKey)
+                scrollFrame->previewKey = trayDragging ? pressedTray : owner.previewDragKey;
+            if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
             const bool same = SameStatusBarContent(items, previousItems);
-            if (same && !paintDirty && drawResources.TextMatches(owner.text.Get(), TrayScale()))
-            {
+            if (same)
                 for (std::size_t i = 0; i < items.size(); ++i)
                 { items[i].bounds = previousItems[i].bounds; items[i].contentBounds = previousItems[i].contentBounds; }
-                SyncTooltip();
-                return;
-            }
+            if (same && !paintDirty && !scrollFrame && drawResources.TextMatches(owner.text.Get(), TrayScale()))
+            { SyncTooltip(); return; }
             performance::Scope paintScope("status_bar", "content.paint");
             RECT client{};
             GetClientRect(hwnd, &client);
             if (IsRectEmpty(&client)) return;
             const UINT w = static_cast<UINT>(client.right), h = static_cast<UINT>(client.bottom);
-            if (!target) { const auto hr=owner.composition->CreateTargetForHwnd(hwnd,FALSE,&target);if(FAILED(hr)){PaintError(hr);return;} }
+            if (scrollFrame && same && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
+                surface && backgroundSurface && width == w && height == h && drawResources.iconFace &&
+                drawResources.TextMatches(owner.text.Get(), TrayScale()) &&
+                UpdateStatusBarTrayScrollLayout(items, scrollFrame->previousOffset, trayScroll, retainedFrameValid))
+            {
+                paintDirty = true;
+                PublishTrayGeometry();
+                if (!scrollFrame->previewKey.empty())
+                { scrollFrame->previewUpdated = true; owner.PreviewDrop(scrollFrame->previewKey, scrollFrame->previewPoint, this); }
+                if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
+                const auto damage = StatusBarTrayScrollDamage(items, scrollFrame->previousHover, trayScroll.viewport,
+                    scrollFrame->previousIndicator, dropIndicator, w, h);
+                const StatusBarPalette palette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
+                    SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+                painting = true;
+                const auto result = DrawStatusBarContentUpdate(surface.Get(), owner.text.Get(), items, damage, w, h,
+                    TrayScale(), appearance, palette, interaction.hovered,
+                    keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
+                    interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll, dropIndicator, dpi, &drawResources, &retainedFrameValid);
+                painting = false;
+                if (SUCCEEDED(result) && ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
+                if (result == E_INVALIDARG)
+                { partialHoverUpdates = false; presentation.Release(); Paint(prepareHidden, trayOnly, scrollFrame); return; }
+                if (FAILED(result)) { paintError(result); return; }
+                const auto commit = owner.composition->Commit();
+                if (FAILED(commit)) paintError(commit);
+                else
+                {
+                    if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
+                    paintDirty = false; lastPaintError = S_OK;
+                    if (scrollFrame) scrollFrame->presented = true;
+                    presentation.Release(); SyncTooltip();
+                }
+                return;
+            }
+            if (!target) { const auto hr=owner.composition->CreateTargetForHwnd(hwnd,FALSE,&target);if(FAILED(hr)){paintError(hr);return;} }
             if (!visual)
             {
                 auto hr=owner.composition->CreateVisual(&visual);
                 if (SUCCEEDED(hr)) hr=owner.composition->CreateVisual(&contentVisual);
                 if (SUCCEEDED(hr)) hr=visual->AddVisual(contentVisual.Get(),TRUE,nullptr);
                 if (SUCCEEDED(hr)) hr=target->SetRoot(visual.Get());
-                if (FAILED(hr)) { visual.Reset();contentVisual.Reset();PaintError(hr);return; }
+                if (FAILED(hr)) { visual.Reset();contentVisual.Reset();paintError(hr);return; }
             }
             if (!surface || width != w || height != h)
             {
                 surface.Reset();
                 const auto hr=owner.composition->CreateSurface(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_ALPHA_MODE_PREMULTIPLIED,&surface);
-                if(FAILED(hr)){PaintError(hr);return;}
+                if(FAILED(hr)){paintError(hr);return;}
                 width = w; height = h;
                 backgroundDirty = true;
             }
@@ -673,11 +767,11 @@ struct StatusBar::Impl
             {
                 backgroundSurface.Reset();
                 const auto hr=owner.composition->CreateSurface(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_ALPHA_MODE_PREMULTIPLIED,&backgroundSurface);
-                if(FAILED(hr)){PaintError(hr);return;}
+                if(FAILED(hr)){paintError(hr);return;}
                 POINT origin{};
                 ComPtr<ID2D1DeviceContext> background;
                 const auto beginBackground = backgroundSurface->BeginDraw(nullptr, IID_PPV_ARGS(&background), &origin);
-                if (FAILED(beginBackground)) { PaintError(beginBackground); return; }
+                if (FAILED(beginBackground)) { paintError(beginBackground); return; }
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
                 background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));
@@ -693,14 +787,27 @@ struct StatusBar::Impl
                 }
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
-                if (FAILED(drawn)) { PaintError(drawn); return; }
+                if (FAILED(drawn)) { paintError(drawn); return; }
                 visual->SetContent(backgroundSurface.Get());
                 backgroundDirty = false;
+            }
+            if (scrollFrame)
+            {
+                auto arranged = drawResources.PrepareText(owner.text.Get(), TrayScale());
+                if (SUCCEEDED(arranged)) arranged = ArrangeStatusBarContent(owner.text.Get(), drawResources.format.Get(),
+                    items, w, h, TrayScale(), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned,
+                    trayScroll, dockQuickSearch, &retainedFrameValid);
+                if (FAILED(arranged)) { paintError(arranged); return; }
+                PublishTrayGeometry();
+                // Preview may paint another monitor; no surface draw is active.
+                if (!scrollFrame->previewKey.empty())
+                { scrollFrame->previewUpdated = true; owner.PreviewDrop(scrollFrame->previewKey, scrollFrame->previewPoint, this); }
+                if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
             }
             POINT offset{};
             ComPtr<ID2D1DeviceContext> context;
             const auto begin = surface->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset);
-            if (FAILED(begin)) { PaintError(begin); return; }
+            if (FAILED(begin)) { paintError(begin); return; }
             painting = true;
             context->SetDpi(96, 96);
             context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
@@ -713,42 +820,33 @@ struct StatusBar::Impl
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
                 interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
-                dockQuickSearch, nullptr, &drawResources);
-            if (dropIndicator)
-            {
-                ComPtr<ID2D1SolidColorBrush> brush;
-                if (SUCCEEDED(context->CreateSolidColorBrush(hc ? palette.highlight :
-                    D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4), &brush)))
-                {
-                    const auto& r = *dropIndicator;
-                    const auto rect = D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top),
-                        static_cast<float>(r.right), static_cast<float>(r.bottom));
-                    if (r.right-r.left <= MulDiv(3,static_cast<int>(dpi),96)) context->FillRectangle(rect,brush.Get());
-                    else context->DrawRoundedRectangle(D2D1::RoundedRect(rect,4.f,4.f),brush.Get(),2.f);
-                }
-            }
-            for (const auto& item : items) if (item.icon && owner.tray)
-            {
-                RECT screen = item.bounds;
-                if (!IsRectEmpty(&screen)) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
-                owner.tray->SetGeometry(item.icon->key, screen);
-            }
+                dockQuickSearch, scrollFrame ? &client : nullptr, &drawResources, scrollFrame != nullptr, &retainedFrameValid);
+            DrawStatusBarDropIndicator(context.Get(), dropIndicator, a, palette, dpi);
+            if (!scrollFrame) PublishTrayGeometry();
             context.Reset();
             const auto surfaceResult = surface->EndDraw();
             const auto result = FAILED(contentResult) ? contentResult : surfaceResult;
             painting = false;
             if (SUCCEEDED(result))
             {
+                if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                 contentVisual->SetContent(surface.Get());
                 ApplyDockPose(mergedPresentation);
                 const auto commit = owner.composition->Commit();
-                if (FAILED(commit)) PaintError(commit);
-                else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
+                if (FAILED(commit)) paintError(commit);
+                else
+                {
+                    if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
+                    paintDirty = false; lastPaintError = S_OK;
+                    if (scrollFrame) scrollFrame->presented = true;
+                    presentation.Release(); SyncTooltip();
+                }
             }
-            else PaintError(result);
+            else paintError(result);
         }
         void PaintHover(std::optional<std::size_t> previous)
         {
+            if (preparingTrayScroll) { paintDirty = true; deferredTrayPaint = true; return; }
             if (closing || painting || failed || fullscreen || !IsWindowVisible(hwnd) ||
                 !owner.composition || !owner.text) return;
             RECT client{};
@@ -775,7 +873,7 @@ struct StatusBar::Impl
             const auto result = DrawStatusBarHoverUpdate(surface.Get(), owner.text.Get(), items, damage,
                 width, height, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), appearance, palette,
                 interaction.hovered, keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll, &drawResources);
+                interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll, &drawResources, &retainedFrameValid);
             painting = false;
             // A backend rejecting incremental draws retains the existing full
             // frame path. Do not retry an unsupported update on every move.
@@ -796,6 +894,7 @@ struct StatusBar::Impl
                 lastPaintError = result;
             }
             paintDirty = true;
+            retainedFrameValid = false;
             surface.Reset();
             drawResources.Reset();
             if (owner.graphicsFailure) owner.graphicsFailure(result);
@@ -1251,10 +1350,12 @@ struct StatusBar::Impl
                         static_cast<LONG>(std::ceil(56 * self->TrayScale())));
                     const LONG distance = self->trayScroll.offset - previous;
                     self->trayScroll.offset = previous;
-                    self->ScrollTray(distance);
-                    const auto dragKey = self->trayDragging ? self->pressedTray : self->owner.previewDragKey;
-                    if (!dragKey.empty())
-                    { POINT screen = point; ClientToScreen(window, &screen); self->owner.PreviewDrop(dragKey, screen); }
+                    POINT screen = point; ClientToScreen(window, &screen);
+                    if (!self->ScrollTray(distance, screen))
+                    {
+                        const auto dragKey = self->trayDragging ? self->pressedTray : self->owner.previewDragKey;
+                        if (!dragKey.empty()) self->owner.PreviewDrop(dragKey, screen);
+                    }
                     return 0;
                 }
                 if (message == WM_MOUSEHWHEEL) break;
@@ -1408,7 +1509,7 @@ struct StatusBar::Impl
         }
         return {};
     }
-    bool PreviewDrop(std::string_view key,POINT point)
+    bool PreviewDrop(std::string_view key,POINT point,Window* deferred = nullptr)
     {
         if(removingWindows)return false;
         previewDragKey = key;
@@ -1420,7 +1521,7 @@ struct StatusBar::Impl
             const std::optional<RECT> next=target&&target->window==window.get()?std::optional(target->indicator):std::nullopt;
             if(next.has_value()!=window->dropIndicator.has_value() ||
                 (next&&!EqualRect(&*next,&*window->dropIndicator)))
-            {window->dropIndicator=next;window->paintDirty=true;window->Paint();}
+            {window->dropIndicator=next;window->paintDirty=true;if(window.get()!=deferred)window->Paint();}
         }
         return target.has_value();
     }
