@@ -101,7 +101,8 @@ std::string ExecutableIdentity() { return FileIdentity(ExecutablePath()); }
 
 void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
 {
-    if (childCommand != L"--settings-ui" && childCommand != L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui" && childCommand != L"--shell-menu-helper" &&
+        childCommand != L"--start-menu-helper")
         throw ProtocolError("invalid private child mode");
     if (Running()) throw ProtocolError("settings process is already running");
     impl_->Stop();
@@ -138,7 +139,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     } attributeGuard{attributes};
     std::vector<HANDLE> inherited{childRead.value, childWrite.value, inheritedParent.value};
     Handle nullStream;
-    if (childCommand == L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui")
     {
         // Extensions may retain or pass standard handles to another process.
         // The helper talks through its private IPC only; never lend it the
@@ -164,7 +165,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     // Background menu queries must not trigger Windows' startup busy cursor.
     // This controls this helper's launch feedback; third-party subprocesses
     // still need the query-session lifetime bound in the Shell menu host.
-    if (childCommand == L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui")
         startup.StartupInfo.dwFlags |= STARTF_FORCEOFFFEEDBACK;
     if (nullStream.value)
     {

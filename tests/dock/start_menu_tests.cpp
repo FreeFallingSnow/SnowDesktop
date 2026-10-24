@@ -1,9 +1,66 @@
 #include "shell/start_menu_window.h"
 #include "shell/start_menu_session.h"
+#include "shell/start_menu_launcher.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include <cstdint>
 #include <iostream>
 #include <thread>
+
+namespace
+{
+// Replace only the external COM server. Production version negotiation and
+// vtable calls remain real; closing must never call the Show slot.
+struct LauncherFixture final : snowdesktop::start_menu::LauncherCurrent,
+    snowdesktop::start_menu::LauncherLegacy, IServiceProvider
+{
+    ULONG references = 1;
+    bool current = true, legacy = true, visible = true;
+    HRESULT currentError = S_OK, visibilityError = S_OK;
+    unsigned currentQueries = 0, legacyQueries = 0, shows = 0, closes = 0;
+    int closeMethod = 0;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (iid == IID_IUnknown || iid == __uuidof(snowdesktop::start_menu::LauncherCurrent))
+            *result = static_cast<snowdesktop::start_menu::LauncherCurrent*>(this);
+        else if (iid == __uuidof(snowdesktop::start_menu::LauncherLegacy))
+            *result = static_cast<snowdesktop::start_menu::LauncherLegacy*>(this);
+        else if (iid == IID_IServiceProvider) *result = static_cast<IServiceProvider*>(this);
+        if (!*result) return E_NOINTERFACE;
+        AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
+    ULONG STDMETHODCALLTYPE Release() override { return --references; }
+    HRESULT STDMETHODCALLTYPE QueryService(REFGUID service, REFIID iid, void** result) override
+    {
+        *result = nullptr;
+        if (service != snowdesktop::start_menu::kLauncherService) return E_NOINTERFACE;
+        if (iid == __uuidof(snowdesktop::start_menu::LauncherCurrent))
+        {
+            ++currentQueries;
+            if (FAILED(currentError)) return currentError;
+            if (!current) return E_NOINTERFACE;
+        }
+        else if (iid == __uuidof(snowdesktop::start_menu::LauncherLegacy))
+        { ++legacyQueries; if (!legacy) return E_NOINTERFACE; }
+        else return E_NOINTERFACE;
+        return QueryInterface(iid, result);
+    }
+    HRESULT STDMETHODCALLTYPE ReservedShow(int, int) override { ++shows; visible = true; return S_OK; }
+    HRESULT STDMETHODCALLTYPE Dismiss(int method) override
+    { ++closes; closeMethod = method; visible = false; return S_OK; }
+    HRESULT STDMETHODCALLTYPE IsVisible(BOOL* value) override
+    { *value = visible ? TRUE : FALSE; return visibilityError; }
+    HRESULT STDMETHODCALLTYPE ReservedDismiss2(int) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ReservedDismissSync() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Reserved2() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Reserved3() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Reserved4() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Reserved5() override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Reserved7() override { return E_NOTIMPL; }
+};
+}
 
 int RunDockStartMenuTests()
 {
@@ -24,16 +81,49 @@ int RunDockStartMenuTests()
 
     CloseRequest close;
     close.Request(1000);
-    check(!close.Take(false, false), "a hidden menu cannot be reopened by a close request");
-    check(!close.Take(true, false), "an activating click must not receive a second Win toggle");
+    check(!close.Take(false), "a hidden menu does not need another close request");
     close.Request(1100);
-    check(!close.Take(true, false),
-        "a stale visible native HWND cannot reopen Start after a replacement surface took foreground");
-    check(close.Take(true, true), "a no-activate Dock/bar click closes Start while it still owns foreground");
-    check(!close.Take(true, true), "repeated clicks cannot send a second Win key while native close is pending");
+    check(close.Take(true), "a visible Start dispatches one-way dismissal without a foreground-process gate");
+    check(!close.Take(true), "repeat clicks cannot duplicate the pending native dismissal");
     check(!close.Expired(2499) && close.Expired(2500), "a close that never completes has a bounded deadline");
     close.Reset(); close.Request(100);
-    check(close.Take(true, true), "a nonactivating click can immediately close the foreground native menu");
+    check(close.Take(true), "a nonactivating click dispatches native dismissal immediately");
+
+    {
+        LauncherFixture server;
+        Launcher launcher;
+        bool visible = false;
+        check(launcher.Bind(&server) == S_OK && server.currentQueries == 1 && server.legacyQueries == 0,
+            "Win10RS1/Win11 launcher is selected without probing another ABI");
+        check(launcher.Visible(visible) == S_OK && visible, "Shell visibility is read from the native launcher");
+        close.Reset(); close.Request(1);
+        if (close.Take(visible)) check(launcher.Dismiss() == S_OK, "owned-area dismissal reaches the native COM close method");
+        check(server.closes == 1 && server.shows == 0 && server.closeMethod == 4 &&
+                launcher.Visible(visible) == S_OK && !visible,
+            "second click closes Start without opening anything or requiring its process to own foreground");
+        check(launcher.Dismiss() == S_OK && !server.visible && server.shows == 0,
+            "one-way native dismissal cannot reopen an already closed menu");
+        server.visible = true; server.visibilityError = E_FAIL;
+        check(launcher.Visible(visible) == E_FAIL && !visible,
+            "a failed Shell visibility query is not a successful stale observation");
+    }
+    {
+        LauncherFixture server; server.current = false;
+        Launcher launcher;
+        check(launcher.Bind(&server) == S_OK && server.currentQueries == 1 && server.legacyQueries == 1 &&
+                launcher.Dismiss() == S_OK && server.closes == 1 && server.shows == 0,
+            "early Win10 falls back to the legacy Dismiss slot, never a toggle");
+    }
+    {
+        LauncherFixture server; server.currentError = E_ACCESSDENIED;
+        Launcher launcher;
+        check(launcher.Bind(&server) == E_ACCESSDENIED && server.legacyQueries == 0 &&
+                launcher.Dismiss() == E_NOINTERFACE && server.closes == 0 && server.shows == 0,
+            "a non-ABI Shell error cannot dispatch a guessed method or open fallback during close");
+        server.currentError = E_NOINTERFACE; server.legacy = false;
+        check(launcher.Bind(&server) == E_NOINTERFACE && server.shows == 0,
+            "unsupported Shell interfaces are reported before a protected menu is opened");
+    }
     // Production worker/UI handoff, with only the Shell input and Dock window
     // callbacks replaced. Completion cannot permit another open until the old
     // promotion has been released, even if a click arrives before the UI timer.
@@ -149,19 +239,19 @@ int RunDockStartMenuTests()
         "cancellation exits the native hold without waiting for another native action");
 
     // Run the production close decision inside the production visibility loop.
-    // A replacement surface can already own foreground while the native HWND
-    // still reports visible. Only Win input/clock are substituted here.
+    // A replacement surface can already own foreground while Start is visible.
+    // Only the one-way close operation and clock are substituted here.
     now = 0; renewals = 0; close.Reset();
     unsigned closeInputs = 0;
     const auto closeResult = WaitForDismissal(false, [&] {
         if (now == 200) close.Request(now);
         const bool visible = now < 500;
-        if (close.Take(visible, false)) ++closeInputs;
+        if (close.Take(visible)) ++closeInputs;
         check(now < leaseUntil, "the close request cannot release protection before native Start disappears");
         return visible;
     }, renew, wait, clock);
-    check(closeResult == Dismissal::Closed && now == 550 && closeInputs == 0 && renewals == 2,
-        "a changed foreground cannot receive a late close toggle that reopens Start");
+    check(closeResult == Dismissal::Closed && now == 550 && closeInputs == 1 && renewals == 2,
+        "the close request sends one native dismissal and retains protection until Shell confirms it closed");
 
     // Exercise the production traversal against a private hidden parent;
     // never enumerate or open the user's actual Start menu for this test.

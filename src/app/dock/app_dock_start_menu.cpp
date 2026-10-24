@@ -18,7 +18,7 @@ void DesktopApp::ToggleWindowsStartMenu(DockContainer* dock)
     if (dockStartMenu_ && dockStartMenu_->Active())
     {
         // The physical down may already have dismissed the native window.
-        // Cancel never sends a second Win press unless Start still owns focus.
+        // A close request uses one-way Shell dismissal, never another Win key.
         dockStartMenu_->DismissThen({});
         UpdateDockStartMenu();
         return;

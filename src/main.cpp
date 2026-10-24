@@ -18,6 +18,7 @@
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
 #include "shell/shell_start_pin.h"
+#include "shell/start_menu_launcher.h"
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
@@ -357,6 +358,7 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
+    if (const auto result = snowdesktop::start_menu::TryRunLauncherHelper()) return *result;
     if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
     // Normalize login-task privileges before the Steam startup channel, data
     // discovery and the single-instance mutex acquire any process identity.

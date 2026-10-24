@@ -34,12 +34,12 @@ public:
         requested_.compare_exchange_strong(empty, now + 1);
     }
     bool Requested() const noexcept { return requested_.load() != 0; }
-    bool Take(bool visible, bool foreground) noexcept
+    bool Take(bool visible) noexcept
     {
         const auto request = requested_.load();
-        // Win is a toggle, so never send it after another surface has taken
-        // foreground. The native HWND can remain visible during dismissal.
-        if (!request || sent_ || !visible || !foreground) return false;
+        // This dispatches a one-way Shell dismissal, never a toggle. Start can
+        // be visible even when its HWND's process does not own foreground.
+        if (!request || sent_ || !visible) return false;
         sent_ = true;
         return true;
     }

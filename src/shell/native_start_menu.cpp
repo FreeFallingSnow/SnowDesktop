@@ -1,6 +1,8 @@
 #include "native_start_menu.h"
 #include "start_menu_window.h"
 #include "start_menu_session.h"
+#include "start_menu_launcher.h"
+#include "settings/settings_process.h"
 #include "dock/dock_settings.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/runtime_module_policy.h"
@@ -21,13 +23,94 @@ bool IsVisible(HWND window) noexcept
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
 
-bool IsStartForeground(HWND window) noexcept
+struct Apartment
 {
-    DWORD foregroundProcess = 0, startProcess = 0;
-    GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-    GetWindowThreadProcessId(window, &startProcess);
-    return foregroundProcess && foregroundProcess == startProcess;
+    HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
+};
+
+struct LauncherClient
+{
+    Apartment apartment;
+    settings_ipc::Channel channel;
+    settings_ipc::SettingsProcess process;
+    ~LauncherClient() { process.Stop(); channel.Close(); }
+    HRESULT Start(bool& visible)
+    {
+        if (FAILED(apartment.result)) return apartment.result;
+        try
+        {
+            process.Start(channel, start_menu::kHelperCommand);
+            return State(visible, 1500);
+        }
+        catch (...) { return HRESULT_FROM_WIN32(ERROR_PROCESS_ABORTED); }
+    }
+    HRESULT State(bool& visible, DWORD timeout = 500)
+    {
+        try
+        {
+            const auto state = channel.CallWithTimeout<std::pair<LONG, bool>>(timeout, "start.state");
+            visible = state.second;
+            return state.first;
+        }
+        catch (...) { return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+    }
+    HRESULT Dismiss()
+    {
+        try { return channel.CallWithTimeout<LONG>(500, "start.dismiss"); }
+        catch (...) { return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+    }
+};
 }
+
+std::optional<int> start_menu::TryRunLauncherHelper()
+{
+    if (!settings_ipc::IsSettingsProcessCommand(kHelperCommand)) return {};
+    Apartment apartment;
+    if (FAILED(apartment.result)) return static_cast<int>(apartment.result);
+    try
+    {
+        settings_ipc::Channel channel;
+        settings_ipc::OpenInheritedSettingsChannel(channel, kHelperCommand);
+        Microsoft::WRL::ComPtr<IServiceProvider> provider;
+        Launcher launcher;
+        HRESULT ready = E_PENDING;
+        ULONGLONG touched = GetTickCount64();
+        const auto initialize = [&] {
+            touched = GetTickCount64();
+            if (ready == E_PENDING)
+            {
+                ready = CoCreateInstance(kImmersiveShell, nullptr, CLSCTX_LOCAL_SERVER,
+                    IID_PPV_ARGS(&provider));
+                if (SUCCEEDED(ready)) ready = launcher.Bind(provider.Get());
+            }
+            return ready;
+        };
+        channel.Bind<std::pair<LONG, bool>>("start.state", [&] {
+            bool visible = false;
+            HRESULT result = initialize();
+            if (SUCCEEDED(result)) result = launcher.Visible(visible);
+            return std::pair<LONG, bool>{result, visible};
+        });
+        channel.Bind<LONG>("start.dismiss", [&] {
+            const HRESULT result = initialize();
+            return FAILED(result) ? result : launcher.Dismiss();
+        });
+        channel.SetDisconnected([] { PostQuitMessage(0); });
+        MSG message{};
+        while (GetTickCount64() - touched < 30000)
+        {
+            MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                if (message.message == WM_QUIT) return 0;
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        return 0;
+    }
+    catch (...) { return ERROR_INVALID_DATA; }
 }
 
 struct NativeStartMenu::Impl
@@ -63,7 +146,7 @@ struct NativeStartMenu::Impl
         using namespace start_menu;
         const runtime_modules::Activity activity{runtime_modules::Module::StartMenu};
         HWND window = nullptr;
-        bool invoked = false, protection = false;
+        bool invoked = false, attempted = false, protection = false;
         const ULONGLONG started = GetTickCount64();
         unsigned protectionAttempts = 0;
         DWORD failure = ERROR_SUCCESS;
@@ -71,9 +154,11 @@ struct NativeStartMenu::Impl
         WindowDiscovery discovery;
         try
         {
-            window = FindVisibleStartWindow(discovery);
-            const bool closingExisting = window && IsStartForeground(window);
-            if (!stop.stop_requested())
+            LauncherClient launcher;
+            bool closingExisting = false;
+            const HRESULT connected = launcher.Start(closingExisting);
+            if (FAILED(connected)) failure = static_cast<DWORD>(connected);
+            else if (!stop.stop_requested())
             {
                 // Establish the taskbar cloak before sending Win. Attachment
                 // may still be finishing; only this worker waits for it.
@@ -86,29 +171,38 @@ struct NativeStartMenu::Impl
                 if (!protection && !stop.stop_requested()) failure = ERROR_NOT_READY;
                 if (protection && !stop.stop_requested() && !close.Requested())
                 {
-                    invoked = NativeStartMenu::Toggle();
-                    if (!invoked) failure = ERROR_ACCESS_DENIED;
+                    attempted = true;
+                    const HRESULT dispatched = closingExisting ? launcher.Dismiss() :
+                        NativeStartMenu::Toggle() ? S_OK : E_ACCESSDENIED;
+                    invoked = SUCCEEDED(dispatched);
+                    if (!invoked) failure = static_cast<DWORD>(dispatched);
                     else
                     {
                         WriteDiagnosticLogEntry(closingExisting ?
                             L"[DockStartMenu] closing existing native menu with taskbar protection" :
                             L"[DockStartMenu] opened native menu with taskbar protection");
-                        // Only observe the native host's visibility. No Hook,
-                        // XAML access, relocation or foreign UI message.
+                        bool healthy = true;
+                        // Shell state is authoritative; foreground-process
+                        // ownership and the host HWND's cloak can lag or differ.
                         result = WaitForDismissal(closingExisting, [&] {
-                            if (!window || !IsWindow(window) || !IsVisible(window))
-                                window = FindVisibleStartWindow(discovery);
-                            // Visibility may lag behind native focus loss. A
-                            // stale visible HWND must not cause another Win
-                            // toggle after a replacement surface is activated.
-                            const bool visible = IsVisible(window);
-                            const bool foreground = visible && IsStartForeground(window);
-                            if (!closingExisting && close.Take(visible, foreground))
+                            bool visible = false;
+                            HRESULT state = launcher.State(visible);
+                            if (FAILED(state))
                             {
-                                const bool sent = NativeStartMenu::Toggle();
-                                if (!sent) failure = ERROR_ACCESS_DENIED;
-                                WriteDiagnosticLogEntry(sent ? L"[DockStartMenu] native close sent; retaining protection until dismissal" :
-                                    L"[DockStartMenu] native close input failed");
+                                failure = static_cast<DWORD>(state);
+                                healthy = false;
+                                return true; // Transport failure is not confirmed dismissal.
+                            }
+                            if (visible && (!window || !IsWindow(window) || !IsVisible(window)))
+                                window = FindVisibleStartWindow(discovery);
+                            if (!closingExisting && close.Take(visible))
+                            {
+                                const HRESULT dismissed = launcher.Dismiss();
+                                if (FAILED(dismissed))
+                                { failure = static_cast<DWORD>(dismissed); healthy = false; }
+                                WriteDiagnosticLogEntry(SUCCEEDED(dismissed) ?
+                                    L"[DockStartMenu] Shell dismiss acknowledged; retaining protection until dismissal" :
+                                    L"[DockStartMenu] Shell dismiss failed; no toggle fallback");
                             }
                             PublishHitBounds(visible ? window : nullptr);
                             return visible;
@@ -118,6 +212,7 @@ struct NativeStartMenu::Impl
                                 UpdateSystemTaskbarStartMenuProtection(true);
                         },
                             [&](int ms) {
+                                if (!healthy) return false;
                                 if (close.Expired(GetTickCount64()))
                                 { failure = ERROR_TIMEOUT; return false; }
                                 return Pause(stop, ms);
@@ -137,12 +232,12 @@ struct NativeStartMenu::Impl
             swprintf_s(ended, L"[DockStartMenu] native session finished; elapsed=%llu invoked=%d cancelled=%d cancelReason=%d dismiss=%d error=%lu protectionAttempts=%u endReason=%d deferredFallback=%d",
                 GetTickCount64() - started, invoked ? 1 : 0, stop.stop_requested() ? 1 : 0,
                 static_cast<int>(cancelReason.load()), close.Requested() ? 1 : 0, failure,
-                protectionAttempts, static_cast<int>(result), !invoked && !stop.stop_requested() ? 1 : 0);
+                protectionAttempts, static_cast<int>(result), !attempted && !stop.stop_requested() ? 1 : 0);
             WriteDiagnosticLogEntry(ended);
         }
         catch (...) {} // The lease also expires if a cleanup boundary fails.
-        invocation.Complete(!invoked && !stop.stop_requested(),
-            !stop.stop_requested() && (!invoked || result == Dismissal::Closed));
+        invocation.Complete(!attempted && !stop.stop_requested(),
+            !stop.stop_requested() && (!attempted || result == Dismissal::Closed));
     }
 };
 

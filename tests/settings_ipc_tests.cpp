@@ -1246,15 +1246,30 @@ void TestProcessLifecycle()
 void TestMenuHelperStartupFeedback()
 {
     using namespace snowdesktop::settings_ipc;
-    for (const auto command : {L"--settings-ui", L"--shell-menu-helper"})
+    for (const auto command : {L"--settings-ui", L"--shell-menu-helper", L"--start-menu-helper"})
     {
         Channel channel;
         SettingsProcess process;
         process.Start(channel, command);
         const auto flags = channel.Call<DWORD>("test.startup-flags");
-        const bool menuHelper = std::wstring_view(command) == L"--shell-menu-helper";
+        const bool menuHelper = std::wstring_view(command) != L"--settings-ui";
         Check(((flags & STARTF_FORCEOFFFEEDBACK) != 0) == menuHelper,
-            "the real launcher suppresses startup cursor feedback only for background menu helpers");
+            "the real launcher suppresses startup cursor feedback for both private background menu modes");
+        if (std::wstring_view(command) == L"--start-menu-helper")
+        {
+            Check(channel.CallWithTimeout<std::pair<LONG, bool>>(500, "start.state") == std::pair<LONG, bool>{S_OK, true},
+                "the Start helper exchanges launcher state through the real inherited process channel");
+            Check(channel.CallWithTimeout<LONG>(500, "start.dismiss") == S_OK &&
+                    channel.CallWithTimeout<std::pair<LONG, bool>>(500, "start.state") == std::pair<LONG, bool>{S_OK, false},
+                "the Start helper can acknowledge one-way dismissal and report closed state");
+            HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, process.ProcessId());
+            Reject([&] { (void)channel.CallWithTimeout<LONG>(100, "start.stall"); },
+                "a stuck Start Shell operation has a bounded host IPC deadline");
+            process.Stop();
+            Check(child && WaitForSingleObject(child, 3000) == WAIT_OBJECT_0,
+                "retiring a stalled Start helper terminates only the supervised child");
+            if (child) CloseHandle(child);
+        }
         channel.Close();
         process.Stop();
     }
@@ -1264,11 +1279,17 @@ int RunSettingsIpcChildIfRequested()
 {
     using namespace snowdesktop::settings_ipc;
     const bool menuHelper = IsSettingsProcessCommand(L"--shell-menu-helper");
-    if (!menuHelper && !IsSettingsProcessCommand()) return -1;
+    const bool startHelper = IsSettingsProcessCommand(L"--start-menu-helper");
+    if (!menuHelper && !startHelper && !IsSettingsProcessCommand()) return -1;
     try
     {
         Channel channel;
-        OpenInheritedSettingsChannel(channel, menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        OpenInheritedSettingsChannel(channel, startHelper ? L"--start-menu-helper" :
+            menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        bool startVisible = true;
+        channel.Bind<std::pair<LONG, bool>>("start.state", [&] { return std::pair<LONG, bool>{S_OK, startVisible}; });
+        channel.Bind<LONG>("start.dismiss", [&] { startVisible = false; return S_OK; });
+        channel.Bind<LONG>("start.stall", [] { Sleep(10000); return S_OK; });
         channel.Bind<DWORD>("test.startup-flags", [] {
             STARTUPINFOW startup{};
             startup.cb = sizeof(startup);
