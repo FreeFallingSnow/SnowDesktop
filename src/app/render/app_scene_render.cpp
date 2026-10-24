@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "foreground_paint_region.h"
 #include "diagnostics/performance_trace.h"
 #include "app/layout/grid_geometry.h"
 #include "layout/item_render_layer_rules.h"
@@ -210,7 +211,8 @@ void DesktopApp::DrawStaticBackground(
 
 void DesktopApp::DrawDesktopForeground(
     ID2D1DeviceContext* ctx,
-    bool hiddenMode)
+    bool hiddenMode,
+    const RECT* updateRect)
 {
     if (hiddenMode)
         navHotEdgeHintBackdrop_.Clear([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
@@ -226,15 +228,56 @@ void DesktopApp::DrawDesktopForeground(
         {
             continue;
         }
+        if (updateRect && !dock->IsMagnificationAnimating())
+        {
+            // Keep focused/animating Docks on their original reconciliation
+            // order; the culling discovery below is only for resting owners.
+            const RECT focus = dock->CapturePresentationState().focusRect;
+            // Icon attention dots can extend outside the icon's nominal frame.
+            // Half the Dock thickness conservatively covers their configurable
+            // size/offset at every Dock scale, in addition to launch/hover bounds.
+            const RECT dockBounds = dock->GetBounds();
+            const int overdraw = static_cast<int>(std::max<LONG>(8,
+                std::min(dockBounds.right - dockBounds.left,
+                    dockBounds.bottom - dockBounds.top) / 2));
+            const RECT visual = dock->GetAnimationVisualBounds();
+            RECT pointerEnvelope = visual;
+            InflateRect(&pointerEnvelope, overdraw, overdraw);
+            if (IsRectEmpty(&focus) && !PtInRect(&pointerEnvelope, lastMousePoint_) &&
+                !snowdesktop::foreground_paint_region::Intersects(updateRect, visual, overdraw))
+            {
+                // Tooltip discovery must run even outside the requested pixels:
+                // popup dismissal can expose text without another pointer message.
+                const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
+                const RECT panel = dock->GetVisualPanelBounds(lastMousePoint_);
+                if (IsRectEmpty(&title) &&
+                    !snowdesktop::foreground_paint_region::Intersects(updateRect, panel, overdraw))
+                {
+                    dock->ClearTitleTooltipBackdrop();
+                    // Reconcile the same stable owner/material as DrawChrome.
+                    // AddPanel restores a missing target, while retaining only by
+                    // rectangle could keep a retired Container's glass owner.
+                    if (!dock->SharesStatusBarAppearance())
+                    {
+                        const auto appearance = CurrentDockAppearance();
+                        if (appearance.glassEnabled)
+                            (void)desktopBackdropCompositor_.AddPanel(panel,
+                                dockSettings_.edgeAttached ? 0.0f : appearance.cornerRadius,
+                                appearance.glassBlurRadius, reinterpret_cast<std::uintptr_t>(dock), true);
+                    }
+                    continue;
+                }
+            }
+        }
         dock->DrawChrome(ctx, lastMousePoint_);
         dock->DrawContents(ctx);
     }
 
-    DrawDynamicOverlays(ctx, hiddenMode);
-    DrawLargeIconInteractionOverlay(ctx);
-    DrawHiddenHintOverlay(ctx);
-    DrawWidgetAddedHintOverlay(ctx);
-    DrawUsageGuideHintOverlay(ctx);
+    DrawDynamicOverlays(ctx, hiddenMode, updateRect);
+    DrawLargeIconInteractionOverlay(ctx, updateRect);
+    DrawHiddenHintOverlay(ctx, updateRect);
+    DrawWidgetAddedHintOverlay(ctx, updateRect);
+    DrawUsageGuideHintOverlay(ctx, updateRect);
     // Independent Dock content and backdrop HWNDs must expose the guide's
     // desktop hit area as well as its pixels. Native menus stay above both.
     for (const auto& host : persistentDockHosts_)
@@ -248,7 +291,8 @@ void DesktopApp::DrawDesktopForeground(
 
 void DesktopApp::DrawDynamicOverlays(
     ID2D1DeviceContext* ctx,
-    bool hiddenMode)
+    bool hiddenMode,
+    const RECT* updateRect)
 {
     snowdesktop::performance::Scope performanceScope("desktop", "overlays");
     auto beginPopupAnimationTransform =
@@ -339,7 +383,9 @@ void DesktopApp::DrawDynamicOverlays(
                 ScaleWidgetCu(3.0f, cellScale);
             InflateRect(
                 &target, targetPadding, targetPadding);
-            DrawD2DRoundedRectangle(
+            if (snowdesktop::foreground_paint_region::Intersects(
+                    updateRect, target, ScaleWidgetCu(2.5f, cellScale) + 2))
+                DrawD2DRoundedRectangle(
                 ctx, target,
                 static_cast<float>(
                     ScaleWidgetCu(10.0f, cellScale)),
@@ -384,7 +430,8 @@ void DesktopApp::DrawDynamicOverlays(
         D2D1::ColorF border = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.75f)
                                  : D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f);
 
-        DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
+        if (snowdesktop::foreground_paint_region::Intersects(updateRect, previewBounds))
+            DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
         }
     }
 
@@ -721,7 +768,8 @@ void DesktopApp::DrawDynamicOverlays(
                     marqueePreviousTransform);
             ctx->PushAxisAlignedClip(ToD2DRect(viewport),
                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            DrawD2DFilledRectangle(ctx, marqueeRect_,
+            if (popupMarquee || snowdesktop::foreground_paint_region::Intersects(updateRect, marqueeRect_))
+                DrawD2DFilledRectangle(ctx, marqueeRect_,
                 D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
                 D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
             ctx->PopAxisAlignedClip();
@@ -731,7 +779,8 @@ void DesktopApp::DrawDynamicOverlays(
         }
         else
         {
-            DrawD2DFilledRectangle(ctx, marqueeRect_,
+            if (snowdesktop::foreground_paint_region::Intersects(updateRect, marqueeRect_))
+                DrawD2DFilledRectangle(ctx, marqueeRect_,
                 D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
                 D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
         }
@@ -740,8 +789,8 @@ void DesktopApp::DrawDynamicOverlays(
     if (!hiddenMode && !renderingFloatingDock_ &&
         !renderingFloatingPopup_)
     {
-        DrawPageNavHotEdgeHint(ctx);
-        DrawPageNotify(ctx);
+        DrawPageNavHotEdgeHint(ctx, updateRect);
+        DrawPageNotify(ctx, true, updateRect);
     }
 }
 

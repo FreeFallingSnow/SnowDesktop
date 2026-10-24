@@ -1033,18 +1033,21 @@ private:
     /** @brief 绘制动态叠加层（拖拽图标、放置预览、选择框等）。 @param ctx D2D 设备上下文 */
     void DrawDynamicOverlays(
         ID2D1DeviceContext* ctx,
-        bool hiddenMode = false);
+        bool hiddenMode = false,
+        const RECT* updateRect = nullptr);
     /** @brief 绘制位于所有组件之上的桌面前景内容。 */
     void DrawDesktopForeground(
         ID2D1DeviceContext* ctx,
-        bool hiddenMode = false);
+        bool hiddenMode = false,
+        const RECT* updateRect = nullptr);
     /** @brief 绘制全高翻页热边的悬停提示。 */
-    void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx);
+    void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     std::wstring GetPageNavHotEdgeHintText(int side) const;
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
     void DrawPageNotify(
         ID2D1DeviceContext* ctx,
-        bool applyAnimation = true);
+        bool applyAnimation = true,
+        const RECT* updateRect = nullptr);
     void PreparePageNotifyTextCache();
     void ResetPageNotifyTextCache();
     void PreparePageNotifyAnimationCache();
@@ -1053,15 +1056,15 @@ private:
         float opacity, bool commit = true);
     RECT GetPageNotifyBounds() const;
     /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
-    void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
+    void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     /** @brief 绘制添加组件操作提示。 */
-    void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
+    void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     bool DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
         const snowdesktop::NativeTooltipTextLayout& measured, float scale,
-        snowdesktop::InlineTooltipBackdrop& backdrop);
+        snowdesktop::InlineTooltipBackdrop& backdrop, const RECT* updateRect = nullptr);
     void ClearInlineTooltipBackdrop(std::uintptr_t ownerKey);
     bool DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message,
-        snowdesktop::InlineTooltipBackdrop& backdrop);
+        snowdesktop::InlineTooltipBackdrop& backdrop, const RECT* updateRect = nullptr);
     /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
@@ -1948,7 +1951,7 @@ private:
     bool HandleLargeIconPointerUp();
     void CancelLargeIconGesture();
     void BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config);
-    void DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context);
+    void DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context, const RECT* updateRect = nullptr);
     /** @brief 记住已保存的页面 ID，用于维护页面顺序。 @param pageId 页面标识 */
     void RememberSavedPageId(const std::wstring& pageId);
 
@@ -4129,7 +4132,7 @@ private:
     bool IsUsageGuideVisible() const;
     bool IsPointInUsageGuide(POINT point) const;
     bool HandleUsageGuidePointerMove(POINT point);
-    void DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx);
+    void DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     bool HandleUsageGuidePointerDown(POINT point);
     bool HandleUsageGuidePointerUp(POINT point);
     void LoadUsageGuidePreferences();

@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "foreground_paint_region.h"
 #include "layout/page_navigation_rules.h"
 
 // Desktop page-navigation layout and rendering.
@@ -185,7 +186,7 @@ void DesktopApp::RefreshPageNavHotEdgeHoverAt(POINT point)
 }
 
 void DesktopApp::DrawPageNavHotEdgeHint(
-    ID2D1DeviceContext* ctx)
+    ID2D1DeviceContext* ctx, const RECT* updateRect)
 {
     auto tooltipPaint = navHotEdgeHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     if (!ctx) return;
@@ -217,15 +218,19 @@ void DesktopApp::DrawPageNavHotEdgeHint(
     GetNavHotEdgeRects(previousEdge, nextEdge);
 
     ComPtr<ID2D1SolidColorBrush> accentBrush;
-    ctx->CreateSolidColorBrush(
+    const bool drawPrevious = rails.previous &&
+        snowdesktop::foreground_paint_region::Intersects(updateRect, previousEdge);
+    const bool drawNext = rails.next &&
+        snowdesktop::foreground_paint_region::Intersects(updateRect, nextEdge);
+    if (drawPrevious || drawNext) ctx->CreateSolidColorBrush(
         D2D1::ColorF(0.18f, 0.45f, 0.90f, 0.72f),
         &accentBrush);
     if (accentBrush)
     {
-        if (rails.previous)
+        if (drawPrevious)
             ctx->FillRectangle(
                 ToD2DRect(previousEdge), accentBrush.Get());
-        if (rails.next)
+        if (drawNext)
             ctx->FillRectangle(
                 ToD2DRect(nextEdge), accentBrush.Get());
     }
@@ -249,5 +254,5 @@ void DesktopApp::DrawPageNavHotEdgeHint(
     if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
         static_cast<float>(hint.right - hint.left), static_cast<float>(hint.bottom - hint.top), measured, options)))
         return;
-    tooltipPaint.Keep(DrawInlineTooltip(ctx, hint, measured, scale, navHotEdgeHintBackdrop_));
+    tooltipPaint.Keep(DrawInlineTooltip(ctx, hint, measured, scale, navHotEdgeHintBackdrop_, updateRect));
 }
