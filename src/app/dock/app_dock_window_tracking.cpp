@@ -582,6 +582,22 @@ void DesktopApp::RefreshDockRunningWindows(
         return;
     }
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
+    // GetBounds reads the running model directly. Retain the currently
+    // displayed envelope before replacing it, including the old title chip.
+    const auto visualBounds = [this](DockContainer& dock) {
+        RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+            dock.GetAnimationVisualBounds(), dockSettings_.position);
+        const RECT title = dock.GetHoveredTitleBounds(lastMousePoint_);
+        if (!IsRectEmpty(&title)) UnionRect(&bounds, &bounds, &title);
+        if (!IsRectEmpty(&bounds)) InflateRect(&bounds, 4, 4);
+        return bounds;
+    };
+    std::vector<std::pair<DockContainer*, RECT>> desktopDocks;
+    if (invalidateChanged && hwnd_)
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get());
+                dock && !IsDockHostedByPersistentHost(dock))
+                desktopDocks.emplace_back(dock, visualBounds(*dock));
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
     snowdesktop::dock_window_order::Current().Prune();
@@ -1059,9 +1075,18 @@ void DesktopApp::RefreshDockRunningWindows(
         UpdateFloatingDockWindowBounds(false);
     }
 
-    if ((changed || runningVisualChanged) && invalidateChanged && hwnd_)
+    if ((changed || runningVisualChanged || runningLayoutChanged) && invalidateChanged && hwnd_)
     {
-        InvalidateRect(hwnd_, nullptr, runningLayoutChanged ? TRUE : FALSE);
+        // Titles also change the host's input/visible region. Preserve its
+        // existing asynchronous content presentation even at identical bounds.
+        if (!runningLayoutChanged) UpdateFloatingDockWindowBounds(false);
+        for (const auto& [dock, previous] : desktopDocks)
+        {
+            const RECT current = visualBounds(*dock);
+            const BOOL erase = runningLayoutChanged ? TRUE : FALSE;
+            if (!IsRectEmpty(&previous)) InvalidateRect(hwnd_, &previous, erase);
+            if (!IsRectEmpty(&current)) InvalidateRect(hwnd_, &current, erase);
+        }
     }
     dockRunningWindowsForegroundTick_ =
         dockForegroundChangedTick_.load();
