@@ -82,6 +82,8 @@ void DesktopApp::ProcessLargeIconAssets()
     auto completed = largeIconAssets_->TakeCompleted();
     if (completed.empty()) return;
     bool persist = false;
+    bool desktopAssetsChanged = false, fullRepaint = false;
+    std::vector<RECT> dirtyFrames;
     for (auto& result : completed)
     {
         const auto index = FindItemIndexByKey(result.request.itemKey);
@@ -100,6 +102,25 @@ void DesktopApp::ProcessLargeIconAssets()
             continue;
         }
         if (state.generation != result.request.generation) continue;
+        const RECT oldFrame = GetLargeIconFrameRect(items_[index]);
+        const RECT oldBackdrop = state.backdropFrame;
+        const auto changedDesktopAsset = [&] {
+            desktopAssetsChanged = true;
+            const auto& item = items_[index];
+            if (!IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_)) return;
+            const RECT frame = GetLargeIconFrameRect(item);
+            // The static renderer culls untransformed frames. Keep its complete
+            // path for 3D cards, including fallback from a failed 3D draw.
+            if (EffectiveLargeIconConfig(item).effect == 1 || IsRectEmptyRect(oldFrame) || IsRectEmptyRect(frame))
+            { fullRepaint = true; return; }
+            RECT dirty{};
+            UnionRect(&dirty, &oldFrame, &frame);
+            if (!IsRectEmptyRect(oldBackdrop)) UnionRect(&dirty, &dirty, &oldBackdrop);
+            // Asset aspect, inner title geometry and automatic color may change;
+            // all ordinary card effects remain clipped inside this fixed frame.
+            InflateRect(&dirty, 8, 8);
+            dirtyFrames.push_back(dirty);
+        };
         state.pending = false; state.error = result.error;
         state.retryAt = result.error.empty() ? 0 : snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 120000;
         if (state.retryAt) SetTimer(controlHwnd_, kLargeIconRetryTimerId, 120000, nullptr);
@@ -107,7 +128,7 @@ void DesktopApp::ProcessLargeIconAssets()
         {
             if (result.request.importPath.empty() && state.asset &&
                 (state.sourceContent != result.request.content || state.sourceReference != result.request.reference))
-            { EraseD2DIconCacheForBitmap(state.asset->bitmap); state.asset.reset(); }
+            { EraseD2DIconCacheForBitmap(state.asset->bitmap); state.asset.reset(); changedDesktopAsset(); }
             continue;
         }
         if (!result.request.importPath.empty())
@@ -128,9 +149,11 @@ void DesktopApp::ProcessLargeIconAssets()
             }
             if (changes.size() != keys.size() || !SetLargeIconConfigs(changes)) { state.error = "largeIcon.saveFailed"; continue; }
         }
-        if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
+        const bool assetChanged = state.asset != result.asset;
+        if (state.asset && assetChanged) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
         state.sourceContent = result.request.content; state.sourceReference = result.request.reference;
+        if (assetChanged) changedDesktopAsset();
         if (snowdesktop::IsLargeIconFill(*items_[index].largeIcon) && items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
             items_[index].largeIcon->cachedCover != state.asset->reference)
         {
@@ -140,8 +163,18 @@ void DesktopApp::ProcessLargeIconAssets()
     }
     if (persist) SaveLayoutSlots();
     SynchronizeLargeIconAssets();
-    InvalidateDragStaticScene();
-    if (hwnd_ && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, FALSE);
+    // Chooser previews and status/error changes are consumed by the existing
+    // settings read/status route; stale or unchanged assets have no new pixels.
+    if (!desktopAssetsChanged) return;
+    dragSession_.InvalidateStaticScene();
+    dragRenderCache_.Reset();
+    // Replacing pixels does not change native glass ownership or layout. Keep
+    // any already pending full collection, without requesting another one.
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        if (fullRepaint) InvalidateRect(hwnd_, nullptr, FALSE);
+        else for (const auto& frame : dirtyFrames) InvalidateRect(hwnd_, &frame, FALSE);
+    }
 }
 
 bool DesktopApp::CanEditLargeIcons() const
