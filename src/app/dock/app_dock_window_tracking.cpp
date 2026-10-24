@@ -8,6 +8,8 @@
 #include "settings/animation_settings.h"
 #include "diagnostics/performance_trace.h"
 
+#include <cmath>
+
 // Running-window discovery, visual state and activation behavior.
 
 namespace
@@ -585,8 +587,29 @@ void DesktopApp::RefreshDockRunningWindows(
     // GetBounds reads the running model directly. Retain the currently
     // displayed envelope before replacing it, including the old title chip.
     const auto visualBounds = [this](DockContainer& dock) {
+        const RECT content = dock.GetAnimationVisualBounds();
         RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-            dock.GetAnimationVisualBounds(), dockSettings_.position);
+            content, dockSettings_.position);
+        // A constrained reserved area can be thinner than its actual icons.
+        // Include their paint and the largest running/selection indicator,
+        // while excluding scroll slots far outside the displayed Dock.
+        for (const auto& slot : dock.GetSlots())
+        {
+            const RECT base = slot->GetBounds();
+            const RECT visual = dock.GetElementVisualRect(base, lastMousePoint_);
+            const int size = dock.GetElementIconSize(base, visual);
+            RECT icon{
+                visual.left + (visual.right - visual.left - size) / 2,
+                visual.top + (visual.bottom - visual.top - size) / 2,
+                visual.left + (visual.right - visual.left + size) / 2,
+                visual.top + (visual.bottom - visual.top + size) / 2};
+            const int indicatorPadding = static_cast<int>(std::ceil(
+                std::max(3.0f, size * 0.06f) + std::max(6.0f, size * 0.14f)));
+            InflateRect(&icon, indicatorPadding, indicatorPadding);
+            RECT intersection{};
+            if (IntersectRect(&intersection, &icon, &content))
+                UnionRect(&bounds, &bounds, &icon);
+        }
         const RECT title = dock.GetHoveredTitleBounds(lastMousePoint_);
         if (!IsRectEmpty(&title)) UnionRect(&bounds, &bounds, &title);
         if (!IsRectEmpty(&bounds)) InflateRect(&bounds, 4, 4);

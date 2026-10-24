@@ -14,7 +14,6 @@ inline void RunRunningRefresh()
             Fixture fixture;
             fixture.Start(name.c_str());
             const HWND window = fixture.Create(7, false);
-            auto& app = profile.Model(false, profile.root / L"running-refresh");
             ComPtr<ID3D11Device> d3d;
             Require(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
@@ -29,7 +28,13 @@ inline void RunRunningRefresh()
             ComPtr<ID2D1DeviceContext> context;
             Require(SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)),
                 "create reference draw context");
-            Access::CheckRunningRefresh(app, window, context.Get());
+            for (const auto position : {DockPosition::Bottom, DockPosition::Top,
+                DockPosition::Left, DockPosition::Right})
+            {
+                auto& app = profile.Model(false, profile.root /
+                    (L"running-refresh-" + std::to_wstring(static_cast<int>(position))));
+                Access::CheckRunningRefresh(app, window, context.Get(), false, position);
+            }
             wchar_t legacyFlag[2]{};
             if (!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_R07_LEGACY_DAMAGE", legacyFlag, 2))
             {

@@ -14,7 +14,8 @@
     // OS discovery and Win32 damage are production paths. The fixture owns
     // the input HWND and replaces only icon pixels and the output surface.
     static void CheckRunningRefresh(DesktopApp& app, HWND window,
-        ID2D1DeviceContext* context, bool forceLegacy = false)
+        ID2D1DeviceContext* context, bool forceLegacy = false,
+        DockPosition position = DockPosition::Bottom)
     {
         const auto check = [](bool ok, const char* text) {
             if (!ok) throw std::runtime_error(text);
@@ -64,7 +65,7 @@
             app.dockSettings_.hoverEffect = 0;
             app.dockSettings_.showOnlyWhenSummoned = false;
             app.dockSettings_.edgeAttached = false;
-            app.dockSettings_.position = DockPosition::Bottom;
+            app.dockSettings_.position = position;
             app.dockEntries_.clear();
             app.gridPages_.front().bounds = app.gridPages_.front().workArea =
                 app.gridPages_.front().visualWorkArea = RECT{0, 0, 1200, 800};
@@ -73,8 +74,12 @@
             check(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                 reinterpret_cast<IUnknown**>(app.dwriteFactory_.ReleaseAndGetAddressOf()))),
                 "create real title measurement and glyph renderer");
+            const RECT reserved = position == DockPosition::Top ? RECT{100, 300, 1100, 400}
+                : position == DockPosition::Left ? RECT{450, 200, 550, 700}
+                : position == DockPosition::Right ? RECT{650, 200, 750, 700}
+                : RECT{100, 600, 1100, 700};
             app.containers_.push_back(std::make_unique<DockContainer>(&app,
-                &app.dockEntries_, RECT{100, 600, 1100, 700}));
+                &app.dockEntries_, reserved));
             auto& dock = *static_cast<DockContainer*>(app.containers_.back().get());
             app.RefreshDockRunningWindows(false);
             const auto tracked = [&]() -> DockRunningAppInfo& {
@@ -196,7 +201,8 @@
                             maximumDelta = std::max(maximumDelta,
                                 std::abs(static_cast<int>(actual[offset + channel]) - expected[offset + channel]));
                     }
-                std::cout << "R07 " << scenario << " damage=" << damage.left << ',' << damage.top << ','
+                std::cout << "R07 position=" << static_cast<int>(position) << ' ' << scenario
+                    << " damage=" << damage.left << ',' << damage.top << ','
                     << damage.right << ',' << damage.bottom << " changedPixels=" << differentPixels
                     << " outsideDamage=" << outsideDamage << " maxDelta=" << maximumDelta
                     << " difference=" << difference.left << ',' << difference.top << ','
@@ -249,7 +255,8 @@
             refresh("after-growth-unchanged", false, false);
             check(IsWindowVisible(output) != FALSE,
                 "Win32 damage receiver must remain visible on the inactive fixture desktop");
-            std::cout << "R07 actual discovery, unchanged/title/state/shrink/growth damage, hits and WARP full/partial pixels passed\n";
+            std::cout << "R07 position=" << static_cast<int>(position)
+                << " actual discovery, unchanged/title/state/shrink/growth damage, hits and WARP full/partial pixels passed\n";
         }
         catch (...) { cleanup(); throw; }
         cleanup();
