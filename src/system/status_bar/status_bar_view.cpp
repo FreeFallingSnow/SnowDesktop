@@ -357,37 +357,169 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
             a.batteryPercentageText == b.batteryPercentageText;
     });
 }
+namespace
+{
+bool SameResourceIcon(const StatusBarDrawResources::Entry& entry, const StatusBarItem& item)
+{
+    if (entry.key != (item.icon ? item.icon->key : item.key) || entry.identity.has_value() != item.icon.has_value()) return false;
+    if (item.icon)
+    {
+        const auto& a = *entry.identity;
+        const auto& b = item.icon->identity;
+        // Compare the registration owner as well as the Shell GUID: a GUID
+        // can survive process replacement and must not retain an old resource.
+        if (a.guid != b.guid || a.window != b.window || a.id != b.id || a.process != b.process) return false;
+    }
+    if (!item.icon && !item.inputIcon) return false;
+    const auto width = item.icon ? item.icon->width : item.inputIcon->width;
+    const auto height = item.icon ? item.icon->height : item.inputIcon->height;
+    const auto& pixels = item.icon ? item.icon->pixels : item.inputIcon->pixels;
+    // Snapshots have no independent pixel revision. Exact equality avoids
+    // stale images from pointer reuse, hash collisions or metadata-only edits.
+    return entry.width == width && entry.height == height && entry.pixels == pixels;
+}
+}
+bool StatusBarDrawResources::TextMatches(IDWriteFactory* text, float value) const
+{
+    return format && iconFormat && batteryFormat && factory.Get() == text && scale == value &&
+        fontRevision == app_fonts::revision.load() && fontSelection == app_fonts::current.load();
+}
+void StatusBarDrawResources::Reset()
+{
+    factory.Reset(); format.Reset(); iconFormat.Reset(); batteryFormat.Reset(); iconFace.Reset();
+    fontSelection.reset(); device.Reset(); bitmaps.clear();
+    scale = dpiX = dpiY = 0;
+}
+void StatusBarDrawResources::RetainIcons(const std::vector<StatusBarItem>& items)
+{
+    std::erase_if(bitmaps, [&](const Entry& entry) {
+        return std::none_of(items.begin(), items.end(), [&](const auto& item) { return SameResourceIcon(entry, item); });
+    });
+}
+HRESULT StatusBarDrawResources::Prepare(ID2D1DeviceContext* context, IDWriteFactory* text,
+    float value, const std::vector<StatusBarItem>& items)
+{
+    ComPtr<ID2D1Device> nextDevice;
+    context->GetDevice(&nextDevice);
+    float nextDpiX = 0, nextDpiY = 0;
+    context->GetDpi(&nextDpiX, &nextDpiY);
+    if (device != nextDevice || scale != value || dpiX != nextDpiX || dpiY != nextDpiY)
+        bitmaps.clear();
+    device = nextDevice; dpiX = nextDpiX; dpiY = nextDpiY;
+    RetainIcons(items);
+    if (!TextMatches(text, value))
+    {
+        // Capture before creation. If the selection changes concurrently,
+        // the next draw detects it instead of blessing an older format.
+        const auto nextRevision = app_fonts::revision.load();
+        const auto nextSelection = app_fonts::current.load();
+        ComPtr<IDWriteTextFormat> nextFormat, nextIconFormat, nextBatteryFormat;
+        app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * value, L"", &nextFormat);
+        nextIconFormat.Attach(CreateFluentTextFormat(text, 18.f * value));
+        nextBatteryFormat.Attach(CreateFluentTextFormat(text, 20.f * value));
+        if (!nextFormat || !nextIconFormat || !nextBatteryFormat) return E_FAIL;
+        nextFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        nextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        nextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format = nextFormat; iconFormat = nextIconFormat; batteryFormat = nextBatteryFormat;
+        iconFace.Reset(); factory = text; scale = value;
+        fontRevision = nextRevision; fontSelection = nextSelection;
+        ++fontBuilds;
+    }
+    // Do not cache an unsuccessful font lookup; retain the original fallback
+    // and permit recovery on the next draw.
+    if (!iconFace)
+    {
+        ++faceLookups;
+        ComPtr<IDWriteFontCollection> fonts;
+        UINT32 index = 0; BOOL exists = FALSE;
+        if (SUCCEEDED(iconFormat->GetFontCollection(&fonts)) && fonts &&
+            SUCCEEDED(fonts->FindFamilyName(L"FluentSystemIcons-Regular", &index, &exists)) && exists)
+        {
+            ComPtr<IDWriteFontFamily> family; ComPtr<IDWriteFont> font;
+            if (SUCCEEDED(fonts->GetFontFamily(index, &family)) &&
+                SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
+        }
+    }
+    return S_OK;
+}
+StatusBarDrawResources::Bitmap StatusBarDrawResources::BitmapFor(ID2D1DeviceContext* context, const StatusBarItem& item)
+{
+    const auto found = std::find_if(bitmaps.begin(), bitmaps.end(),
+        [&](const Entry& entry) { return SameResourceIcon(entry, item); });
+    if (found != bitmaps.end()) return found->bitmap;
+    const auto width = item.icon ? item.icon->width : item.inputIcon->width;
+    const auto height = item.icon ? item.icon->height : item.inputIcon->height;
+    const auto& pixels = item.icon ? item.icon->pixels : item.inputIcon->pixels;
+    Bitmap result;
+    if (!width || !height || width > 64 || height > 64 || pixels.size() != static_cast<std::size_t>(width) * height)
+        return result;
+    if (FAILED(context->CreateBitmap(D2D1::SizeU(width, height), pixels.data(), width * 4,
+        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &result.image)))
+        return result; // Retry failures; never retain a blank result.
+    ++bitmapBuilds; ++inkScans;
+    result.ink = {static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
+    for (DWORD y = 0; y < height; ++y)
+        for (DWORD x = 0; x < width; ++x)
+            if ((pixels[static_cast<std::size_t>(y) * width + x] >> 24) >= 16)
+            {
+                result.ink.left = std::min(result.ink.left, static_cast<LONG>(x));
+                result.ink.top = std::min(result.ink.top, static_cast<LONG>(y));
+                result.ink.right = std::max(result.ink.right, static_cast<LONG>(x + 1));
+                result.ink.bottom = std::max(result.ink.bottom, static_cast<LONG>(y + 1));
+            }
+    if (IsRectEmpty(&result.ink)) result.ink = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    if (bitmaps.size() == MaximumBitmaps) bitmaps.erase(bitmaps.begin());
+    bitmaps.push_back({item.icon ? item.icon->key : item.key, item.icon ? std::optional(item.icon->identity) : std::nullopt,
+        width, height, pixels, result});
+    return result;
+}
+
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
-    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll, bool dockQuickSearch, const RECT* updateBounds)
+    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll, bool dockQuickSearch, const RECT* updateBounds,
+    StatusBarDrawResources* resources)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
     if (updateBounds && !trayScroll) return E_INVALIDARG;
+    if (resources)
+    {
+        const auto prepared = resources->Prepare(context, text, scale, items);
+        if (FAILED(prepared)) return prepared;
+    }
     const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock);
     const bool hc = palette.highContrast;
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(hc ? palette.foreground :
         D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4), &brush);
-    ComPtr<IDWriteTextFormat> format;
-
-    snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &format);
-    ComPtr<IDWriteTextFormat> iconFormat;
-    iconFormat.Attach(CreateFluentTextFormat(text, 18.f * scale));
-    ComPtr<IDWriteTextFormat> batteryFormat;
-    batteryFormat.Attach(CreateFluentTextFormat(text, 20.f * scale));
-    if (!format || !brush || !iconFormat || !batteryFormat) return E_FAIL;
+    if (!brush) return E_FAIL;
+    ComPtr<IDWriteTextFormat> format, iconFormat, batteryFormat;
     ComPtr<IDWriteFontFace> iconFace;
-    ComPtr<IDWriteFontCollection> iconFonts;
-    UINT32 familyIndex = 0; BOOL familyExists = FALSE;
-    if (SUCCEEDED(iconFormat->GetFontCollection(&iconFonts)) && iconFonts &&
-        SUCCEEDED(iconFonts->FindFamilyName(L"FluentSystemIcons-Regular", &familyIndex, &familyExists)) && familyExists)
+    if (resources)
     {
-        ComPtr<IDWriteFontFamily> family; ComPtr<IDWriteFont> font;
-        if (SUCCEEDED(iconFonts->GetFontFamily(familyIndex, &family)) &&
-            SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
+        format = resources->format; iconFormat = resources->iconFormat;
+        batteryFormat = resources->batteryFormat; iconFace = resources->iconFace;
+    }
+    else
+    {
+        snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &format);
+        iconFormat.Attach(CreateFluentTextFormat(text, 18.f * scale));
+        batteryFormat.Attach(CreateFluentTextFormat(text, 20.f * scale));
+        if (!format || !iconFormat || !batteryFormat) return E_FAIL;
+        ComPtr<IDWriteFontCollection> iconFonts;
+        UINT32 familyIndex = 0; BOOL familyExists = FALSE;
+        if (SUCCEEDED(iconFormat->GetFontCollection(&iconFonts)) && iconFonts &&
+            SUCCEEDED(iconFonts->FindFamilyName(L"FluentSystemIcons-Regular", &familyIndex, &familyExists)) && familyExists)
+        {
+            ComPtr<IDWriteFontFamily> family; ComPtr<IDWriteFont> font;
+            if (SUCCEEDED(iconFonts->GetFontFamily(familyIndex, &family)) &&
+                SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
+        }
     }
     const auto drawGlyph = [&](std::wstring_view glyph, IDWriteTextFormat* glyphFormat, D2D1_RECT_F bounds,
         std::wstring_view reference = {}) {
@@ -610,27 +742,43 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 const auto width = item.icon ? item.icon->width : item.inputIcon->width;
                 const auto height = item.icon ? item.icon->height : item.inputIcon->height;
                 const auto& pixels = item.icon ? item.icon->pixels : item.inputIcon->pixels;
-                ComPtr<ID2D1Bitmap> bitmap;
-                if (width > 0 && height > 0 && width <= 64 && height <= 64 && pixels.size() == static_cast<std::size_t>(width) * height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height),
-                        pixels.data(), width * 4,
-                        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
+                if (resources)
                 {
-                    const float pixelScale = (item.inputIcon ? 14.f : 18.f) * scale /
-                        static_cast<float>(std::max(width, height));
-                    LONG inkLeft = static_cast<LONG>(width), inkTop = static_cast<LONG>(height), inkRight = 0, inkBottom = 0;
-                    for (DWORD y = 0; y < height; ++y)
-                        for (DWORD x = 0; x < width; ++x)
-                            if ((pixels[static_cast<std::size_t>(y) * width + x] >> 24) >= 16)
-                            {
-                                inkLeft = std::min(inkLeft, static_cast<LONG>(x)); inkTop = std::min(inkTop, static_cast<LONG>(y));
-                                inkRight = std::max(inkRight, static_cast<LONG>(x + 1)); inkBottom = std::max(inkBottom, static_cast<LONG>(y + 1));
-                            }
-                    if (inkRight <= inkLeft || inkBottom <= inkTop)
-                    { inkLeft = inkTop = 0; inkRight = static_cast<LONG>(width); inkBottom = static_cast<LONG>(height); }
-                    const float iconLeft = (rect.left + rect.right - static_cast<float>(inkLeft + inkRight) * pixelScale) / 2;
-                    const float iconTop = (rect.top + rect.bottom - static_cast<float>(inkTop + inkBottom) * pixelScale) / 2;
-                    context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop,
-                        iconLeft + static_cast<float>(width) * pixelScale, iconTop + static_cast<float>(height) * pixelScale));
+                    const auto cached = resources->BitmapFor(context, item);
+                    if (cached.image)
+                    {
+                        const float pixelScale = (item.inputIcon ? 14.f : 18.f) * scale /
+                            static_cast<float>(std::max(width, height));
+                        const float iconLeft = (rect.left + rect.right - static_cast<float>(cached.ink.left + cached.ink.right) * pixelScale) / 2;
+                        const float iconTop = (rect.top + rect.bottom - static_cast<float>(cached.ink.top + cached.ink.bottom) * pixelScale) / 2;
+                        context->DrawBitmap(cached.image.Get(), D2D1::RectF(iconLeft, iconTop,
+                            iconLeft + static_cast<float>(width) * pixelScale, iconTop + static_cast<float>(height) * pixelScale));
+                    }
+                }
+                else
+                {
+                    ComPtr<ID2D1Bitmap> bitmap;
+                    if (width > 0 && height > 0 && width <= 64 && height <= 64 && pixels.size() == static_cast<std::size_t>(width) * height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height),
+                            pixels.data(), width * 4,
+                            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
+                    {
+                        const float pixelScale = (item.inputIcon ? 14.f : 18.f) * scale /
+                            static_cast<float>(std::max(width, height));
+                        LONG inkLeft = static_cast<LONG>(width), inkTop = static_cast<LONG>(height), inkRight = 0, inkBottom = 0;
+                        for (DWORD y = 0; y < height; ++y)
+                            for (DWORD x = 0; x < width; ++x)
+                                if ((pixels[static_cast<std::size_t>(y) * width + x] >> 24) >= 16)
+                                {
+                                    inkLeft = std::min(inkLeft, static_cast<LONG>(x)); inkTop = std::min(inkTop, static_cast<LONG>(y));
+                                    inkRight = std::max(inkRight, static_cast<LONG>(x + 1)); inkBottom = std::max(inkBottom, static_cast<LONG>(y + 1));
+                                }
+                        if (inkRight <= inkLeft || inkBottom <= inkTop)
+                        { inkLeft = inkTop = 0; inkRight = static_cast<LONG>(width); inkBottom = static_cast<LONG>(height); }
+                        const float iconLeft = (rect.left + rect.right - static_cast<float>(inkLeft + inkRight) * pixelScale) / 2;
+                        const float iconTop = (rect.top + rect.bottom - static_cast<float>(inkTop + inkBottom) * pixelScale) / 2;
+                        context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop,
+                            iconLeft + static_cast<float>(width) * pixelScale, iconTop + static_cast<float>(height) * pixelScale));
+                    }
                 }
 
             }
@@ -749,7 +897,8 @@ HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface* surface, IDWriteFactory* 
     std::vector<StatusBarItem>& items, const std::array<RECT, 2>& damage,
     UINT width, UINT height, float scale, const PersonalizationSettings& appearance,
     const StatusBarPalette& palette, std::optional<std::size_t> hovered,
-    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll& trayScroll)
+    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll& trayScroll,
+    StatusBarDrawResources* resources)
 {
     if (!surface) return E_INVALIDARG;
     for (const RECT& region : damage)
@@ -770,7 +919,7 @@ HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface* surface, IDWriteFactory* 
             static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
         context->Clear(D2D1::ColorF(0, 0.f));
         const auto result = DrawStatusBarContent(context.Get(), text, items, width, height, scale,
-            appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region);
+            appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources);
         context->PopAxisAlignedClip();
         context.Reset();
         const auto ended = surface->EndDraw();

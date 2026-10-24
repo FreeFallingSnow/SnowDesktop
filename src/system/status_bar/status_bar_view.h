@@ -9,6 +9,9 @@
 #include <d2d1_1.h>
 #include <optional>
 #include <array>
+#include <memory>
+#include <dwrite.h>
+#include <wrl/client.h>
 
 struct IDCompositionSurface;
 
@@ -67,13 +70,51 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
         if (PtInRect(&items[index].bounds, point)) return index;
     return {};
 }
+// Owned by one status-bar window, on its drawing thread. A null resources
+// argument below retains the complete uncached reference/fallback path.
+struct StatusBarDrawResources
+{
+    struct Bitmap
+    {
+        Microsoft::WRL::ComPtr<ID2D1Bitmap> image;
+        RECT ink{};
+    };
+    struct Entry
+    {
+        std::string key;
+        std::optional<tray::Identity> identity;
+        DWORD width = 0, height = 0;
+        std::vector<std::uint32_t> pixels;
+        Bitmap bitmap;
+    };
+    static constexpr std::size_t MaximumBitmaps = 128;
+    Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> format, iconFormat, batteryFormat;
+    Microsoft::WRL::ComPtr<IDWriteFontFace> iconFace;
+    std::shared_ptr<const void> fontSelection;
+    std::uint64_t fontRevision = 0;
+    float scale = 0, dpiX = 0, dpiY = 0;
+    Microsoft::WRL::ComPtr<ID2D1Device> device;
+    std::vector<Entry> bitmaps;
+    // Cumulative resource operations, also observable by offscreen regression.
+    std::uint64_t fontBuilds = 0, faceLookups = 0, bitmapBuilds = 0, inkScans = 0;
+    ~StatusBarDrawResources() { Reset(); }
+    bool TextMatches(IDWriteFactory*, float) const;
+    void RetainIcons(const std::vector<StatusBarItem>&);
+    // Prepare the complete item set before reading images, including on a
+    // partial draw; resource ownership follows items rather than dirty bounds.
+    HRESULT Prepare(ID2D1DeviceContext*, IDWriteFactory*, float, const std::vector<StatusBarItem>&);
+    Bitmap BitmapFor(ID2D1DeviceContext*, const StatusBarItem&);
+    void Reset();
+};
+
 // updateBounds limits drawing to intersecting items and retains their existing
 // geometry. Only use it with a tray viewport from a successful full draw.
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
     bool mergedDock = false, bool timeNotificationRightAligned = false, StatusBarTrayScroll* trayScroll = nullptr,
-    bool dockQuickSearch = true, const RECT* updateBounds = nullptr);
+    bool dockQuickSearch = true, const RECT* updateBounds = nullptr, StatusBarDrawResources* resources = nullptr);
 // A hover-only update reuses the last successful full layout and tray viewport.
 // Empty/noninteractive targets (including Show Desktop) have no painted hover.
 std::array<RECT, 2> StatusBarHoverDamage(const std::vector<StatusBarItem>&,
@@ -83,7 +124,8 @@ std::array<RECT, 2> StatusBarHoverDamage(const std::vector<StatusBarItem>&,
 HRESULT DrawStatusBarHoverUpdate(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
     const std::array<RECT, 2>& damage, UINT width, UINT height, float scale,
     const PersonalizationSettings&, const StatusBarPalette&, std::optional<std::size_t> hovered,
-    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll&);
+    bool keyboardFocusVisible, std::size_t focused, bool mergedDock, StatusBarTrayScroll&,
+    StatusBarDrawResources* resources = nullptr);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});

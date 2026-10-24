@@ -164,6 +164,7 @@ struct StatusBar::Impl
         StatusBarDockPresentation mergedPresentation;
         ComPtr<IDCompositionSurface> backgroundSurface;
         ComPtr<IDCompositionSurface> surface;
+        StatusBarDrawResources drawResources;
         UINT width = 0, height = 0, dpi = 96;
         int mergedDockHeight = 0;
         bool reserveSpace = true, positioned = false;
@@ -635,8 +636,9 @@ struct StatusBar::Impl
                 if (GetCapture() == hwnd) ReleaseCapture();
                 interaction.CancelPointer();
             }
+            drawResources.RetainIcons(items);
             const bool same = SameStatusBarContent(items, previousItems);
-            if (same && !paintDirty)
+            if (same && !paintDirty && drawResources.TextMatches(owner.text.Get(), TrayScale()))
             {
                 for (std::size_t i = 0; i < items.size(); ++i)
                 { items[i].bounds = previousItems[i].bounds; items[i].contentBounds = previousItems[i].contentBounds; }
@@ -711,7 +713,7 @@ struct StatusBar::Impl
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
                 interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
-                dockQuickSearch);
+                dockQuickSearch, nullptr, &drawResources);
             if (dropIndicator)
             {
                 ComPtr<ID2D1SolidColorBrush> brush;
@@ -752,6 +754,7 @@ struct StatusBar::Impl
             RECT client{};
             GetClientRect(hwnd, &client);
             if (!partialHoverUpdates || paintDirty || backgroundDirty || appearanceDirty || !surface ||
+                !drawResources.TextMatches(owner.text.Get(), TrayScale()) ||
                 client.right != static_cast<LONG>(width) || client.bottom != static_cast<LONG>(height) || dropIndicator)
             { paintDirty = true; Paint(); return; }
             const auto damage = StatusBarHoverDamage(items, previous, interaction.hovered, width, height);
@@ -772,7 +775,7 @@ struct StatusBar::Impl
             const auto result = DrawStatusBarHoverUpdate(surface.Get(), owner.text.Get(), items, damage,
                 width, height, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), appearance, palette,
                 interaction.hovered, keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll);
+                interaction.focused.value_or(0), mergedDockHeight > 0, trayScroll, &drawResources);
             painting = false;
             // A backend rejecting incremental draws retains the existing full
             // frame path. Do not retry an unsupported update on every move.
@@ -794,6 +797,7 @@ struct StatusBar::Impl
             }
             paintDirty = true;
             surface.Reset();
+            drawResources.Reset();
             if (owner.graphicsFailure) owner.graphicsFailure(result);
         }
         bool CancelTrayMenu()
@@ -1470,6 +1474,7 @@ void StatusBar::ReleaseGraphicsResources()
         window->backdrop.Reset();
         if (window->target) (void)window->target->SetRoot(nullptr);
         window->surface.Reset(); window->backgroundSurface.Reset();
+        window->drawResources.Reset();
         window->partialHoverUpdates = true;
         window->contentVisual.Reset(); window->visual.Reset(); window->mergedOpacity.Reset(); window->target.Reset();
         window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;

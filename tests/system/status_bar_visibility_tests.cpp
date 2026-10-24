@@ -3,6 +3,7 @@
 #include "system/status_bar/status_bar_interaction.h"
 #include "system/status_bar/status_bar_fullscreen.h"
 #include "common/l10n.h"
+#include "ui/render/app_font.h"
 #include <d3d11.h>
 #include <dwrite.h>
 #include <dcomp.h>
@@ -13,17 +14,21 @@
 #include <cstring>
 #include <array>
 #include <initializer_list>
+#include <string_view>
 
-// Replace only the embedded icon-font resource boundary. Production item
-// construction, DirectWrite measurement, drawing, hit testing and invocation
-// remain real. These assertions validate geometry/actions, not icon artwork.
+// Replace only the embedded resource loader with its original bundled TTF.
+// Production glyph lookup, outlines, drawing, layout and hit testing stay real.
+Microsoft::WRL::ComPtr<IDWriteFontCollection1> fluentTestCollection;
+unsigned fluentFormatCreations = 0;
 IDWriteTextFormat* CreateFluentTextFormat(IDWriteFactory* factory, float size)
 {
+    ++fluentFormatCreations;
     IDWriteTextFormat* format = nullptr;
-    if (FAILED(factory->CreateTextFormat(L"Segoe UI Symbol", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+    if (FAILED(factory->CreateTextFormat(L"FluentSystemIcons-Regular", fluentTestCollection.Get(), DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return nullptr;
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     return format;
 }
 namespace
@@ -202,15 +207,16 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
         const StatusBarPalette palette{highContrast, D2D1::ColorF(0xffffff), D2D1::ColorF(0x000000),
             D2D1::ColorF(0x003399), D2D1::ColorF(0xffffff)};
         StatusBarTrayScroll scrolling;
+        StatusBarDrawResources resources;
         const auto fullPaint = [&](ID2D1Bitmap1* target, std::vector<StatusBarItem>& content,
-            std::optional<std::size_t> hover, StatusBarTrayScroll& scroll) {
+            std::optional<std::size_t> hover, StatusBarTrayScroll& scroll, StatusBarDrawResources* cache = nullptr) {
             context->SetTarget(target); context->SetDpi(96, 96);
             context->SetTransform(D2D1::Matrix3x2F::Identity());
             context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
             const auto result = DrawStatusBarContent(context, text, content, width, height, scale,
-                appearance, palette, hover, true, 0, merged, true, &scroll);
+                appearance, palette, hover, true, 0, merged, true, &scroll, true, nullptr, cache);
             const auto ended = context->EndDraw(); context->SetTarget(nullptr);
             Check(SUCCEEDED(result) && SUCCEEDED(ended), "full reference frame renders");
         };
@@ -224,11 +230,11 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
                     mapped.bits + static_cast<std::size_t>(row) * mapped.pitch, static_cast<std::size_t>(width) * 4);
             readable->Unmap(); return result;
         };
-        fullPaint(retained.Get(), items, {}, scrolling);
+        fullPaint(retained.Get(), items, {}, scrolling, &resources);
         // Retain a partially scrolled icon at the viewport edge as well as
         // complete controls; fading/clipping must match a full redraw exactly.
         scrolling.Move(scrolling.Maximum() / 2 + (scrolling.Maximum() ? 7 : 0));
-        fullPaint(retained.Get(), items, {}, scrolling);
+        fullPaint(retained.Get(), items, {}, scrolling, &resources);
         ComPtr<AtlasSurface> surface; surface.Attach(new AtlasSurface(context, retained.Get()));
         std::vector<std::optional<std::size_t>> sequence;
         const auto add = [&](std::string_view key) {
@@ -249,7 +255,7 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             const auto updateStart = surface->updates.size();
             const auto damage = StatusBarHoverDamage(items, previous, hover, width, height);
             Check(SUCCEEDED(DrawStatusBarHoverUpdate(surface.Get(), text, items, damage, width, height, scale,
-                appearance, palette, hover, true, 0, merged, scrolling)), "production hover update renders both damage regions");
+                appearance, palette, hover, true, 0, merged, scrolling, &resources)), "production hover update renders both damage regions");
             for (std::size_t index = 0; index < items.size(); ++index)
                 Check(EqualRect(&items[index].bounds, &boundsBefore[index].bounds) &&
                     EqualRect(&items[index].contentBounds, &boundsBefore[index].contentBounds), "hover retains arranged hit geometry");
@@ -320,10 +326,11 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
     std::cout << "Hover pixel equivalence and native DComp passed; updated pixels=" << updatedPixels
         << " equivalent full-frame pixels=" << fullPixels << '\n';
 }
+#include "status_bar_resources_cases.h"
 }
 int main(int argc, char** argv)
 {
-    Check(argc == 2, "expected repository root");
+    Check(argc == 2 || (argc == 3 && std::string_view(argv[2]) == "--uncached-resource-control"), "expected repository root and optional uncached control");
     CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
     Locale::Instance().SetLanguage("en-US");
@@ -337,6 +344,17 @@ int main(int argc, char** argv)
         SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) &&
         SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(text.GetAddressOf()))), "offscreen production renderer initializes");
+    ComPtr<IDWriteFactory5> fontFactory;
+    ComPtr<IDWriteFontFile> fontFile; ComPtr<IDWriteFontSetBuilder1> fontBuilder;
+    ComPtr<IDWriteFontSet> fontSet;
+    const auto fluentPath = std::filesystem::path(argv[1]) / L"assets/fonts/FluentSystemIcons-Regular.ttf";
+    Check(SUCCEEDED(text.As(&fontFactory)) &&
+        SUCCEEDED(fontFactory->CreateFontFileReference(fluentPath.c_str(), nullptr, &fontFile)) &&
+        SUCCEEDED(fontFactory->CreateFontSetBuilder(&fontBuilder)) && SUCCEEDED(fontBuilder->AddFontFile(fontFile.Get())) &&
+        SUCCEEDED(fontBuilder->CreateFontSet(&fontSet)) &&
+        SUCCEEDED(fontFactory->CreateFontCollectionFromFontSet(fontSet.Get(), &fluentTestCollection)),
+        "load the original bundled Fluent glyphs for resource/pixel regression");
+    CheckResourceReuse(factory.Get(), dxgi.Get(), context.Get(), text.Get(), argc == 3);
     StatusBarSnapshot data; data.clock = L"2026/10/23   16:25";
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
     std::vector<std::string> pinned;
