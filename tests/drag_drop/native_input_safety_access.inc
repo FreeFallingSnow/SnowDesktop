@@ -296,6 +296,148 @@
         if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " widget release assertions failed");
     }
 
+    static void RunQueuedWidgetReleaseSafety(const wchar_t* windowClass)
+    {
+        std::vector<std::string> failures;
+        InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+        InputSafetyImport queuedButtons("GetQueueStatus", reinterpret_cast<ULONG_PTR>(&InputSafetyQueueStatus));
+        inputSafetyOriginalMetrics = &GetSystemMetrics;
+        InputSafetyImport metrics("GetSystemMetrics", reinterpret_cast<ULONG_PTR>(&InputSafetyMetrics));
+        snowdesktop::test::TemporaryDirectory temporary;
+        for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::LuaScript})
+        for (const bool swapped : {false, true})
+        for (const auto action : {DesktopApp::WidgetAction::Move, DesktopApp::WidgetAction::PendingMove,
+            DesktopApp::WidgetAction::Resize, DesktopApp::WidgetAction::PendingResize})
+        for (const int button : {VK_LBUTTON, VK_MBUTTON, VK_RBUTTON})
+        {
+            const bool resize = action == DesktopApp::WidgetAction::Resize ||
+                action == DesktopApp::WidgetAction::PendingResize;
+            if (resize && button != VK_LBUTTON) continue;
+            const bool pending = action == DesktopApp::WidgetAction::PendingMove ||
+                action == DesktopApp::WidgetAction::PendingResize;
+            const auto check = [&](bool value, const char* message) {
+                if (value) return;
+                failures.emplace_back(message);
+                std::cerr << "FAIL: " << message << " type=" << static_cast<int>(type)
+                    << " action=" << static_cast<int>(action) << " button=" << button
+                    << " swapped=" << swapped << '\n';
+            };
+            // Seed only the established component gesture. Native messages,
+            // final geometry, displacement and persistence use production code;
+            // only physical button/queue state and the OS button map are supplied.
+            auto* app = new DesktopApp;
+            app->instance_ = GetModuleHandleW(nullptr);
+            app->initializationExperimentDirectory_ = temporary.path /
+                (std::to_wstring(static_cast<int>(type)) + L"-" + std::to_wstring(swapped) + L"-" +
+                    std::to_wstring(static_cast<int>(action)) + L"-" + std::to_wstring(button));
+            std::filesystem::create_directories(app->initializationExperimentDirectory_);
+            app->generalSettings_.dockEnabled = false;
+            app->generalSettings_.statusBar.enabled = false;
+            GridPage page;
+            page.id = L"__page:1"; page.monitorId = L"backlog-monitor";
+            page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
+            page.columns = 12; page.rows = 8;
+            page.cellWidth = page.cellHeight = 80;
+            page.itemPitchWidth = page.itemPitchHeight = 100;
+            page.gapX = page.gapY = 20; page.marginX = page.marginY = 10;
+            app->gridPages_ = {page}; app->savedPageIds_ = {page.id};
+            app->savedPageColumns_[page.id] = page.columns;
+            app->savedPageRows_[page.id] = page.rows;
+            DesktopWidget widget;
+            widget.id = L"backlog-component"; widget.type = type;
+            if (type == DesktopWidgetType::LuaScript) widget.packageId = L"test.release.backlog";
+            widget.gridCell = {page.id, 0, 0}; widget.gridSpan = {3, 2};
+            widget.bounds = {10, 10, 290, 190}; widget.selected = true; widget.autoCollect = false;
+            app->widgets_ = {widget}; app->desktopItemsReady_ = true;
+            InputSafetyWindowContext context{app};
+            const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                windowClass, L"Queued component release", WS_POPUP, 0, 0, 1200, 800,
+                nullptr, nullptr, app->instance_, &context);
+            if (!window) throw std::runtime_error("create queued component release window");
+            app->hwnd_ = window;
+            struct Cleanup
+            {
+                DesktopApp& app; HWND window;
+                ~Cleanup()
+                {
+                    app.HideDragHintWindow();
+                    if (app.hintHwnd_) DestroyWindow(app.hintHwnd_);
+                    app.hintHwnd_ = nullptr;
+                    ReleaseCapture(); DestroyWindow(window); app.hwnd_ = nullptr;
+                }
+            } cleanup{*app, window};
+            app->RebuildContainersAndItems();
+            if (!app->SaveLayoutSlots(false)) throw std::runtime_error("save queued component layout");
+            app->mouseDown_ = true; app->mouseDownWidgetIndex_ = 0;
+            app->widgetAction_ = action;
+            app->middleButtonWidgetMove_ = button == VK_MBUTTON;
+            app->rightButtonItemDrag_ = button == VK_RBUTTON;
+            app->mouseDownPoint_ = app->lastMousePoint_ = {50, 50};
+            app->widgetDragOriginalCell_ = widget.gridCell;
+            app->widgetDragOriginalSpan_ = widget.gridSpan;
+            app->widgetPreviewCell_ = widget.gridCell; app->widgetPreviewSpan_ = widget.gridSpan;
+            app->widgetDragAnchor_ = CaptureGridDragAnchor(widget.bounds, {50, 50});
+            SetCapture(window);
+            if (GetCapture() != window) throw std::runtime_error("capture queued component release window");
+            const WPARAM held = button == VK_LBUTTON ? MK_LBUTTON :
+                button == VK_RBUTTON ? MK_RBUTTON : MK_MBUTTON;
+            inputSafetySwappedButtons = swapped;
+            inputSafetyPhysicalButton = button == VK_MBUTTON ? VK_MBUTTON :
+                swapped ? (button == VK_LBUTTON ? VK_RBUTTON : VK_LBUTTON) : button;
+            inputSafetyQueuedButtons = 0;
+            check(app->OnNativeMouseMoveAt(held, {150, 150}) &&
+                app->widgetAction_ == (resize ? DesktopApp::WidgetAction::Resize : DesktopApp::WidgetAction::Move) &&
+                !app->dragSession_.IsActive(), "held component gesture must update without a DragSession");
+            check(resize ? app->widgetPreviewSpan_.columns == 4 && app->widgetPreviewSpan_.rows == 3 :
+                app->widgetPreviewCell_.column == 1 && app->widgetPreviewCell_.row == 1,
+                "held component gesture must update its visible geometry");
+            if (pending) app->widgetAction_ = action;
+            const auto beforeCell = app->widgetPreviewCell_;
+            const auto beforeSpan = app->widgetPreviewSpan_;
+            const auto beforeFeedback = app->presentedWidgetDragFeedback_;
+            inputSafetyPhysicalButton = 0;
+            inputSafetyQueuedButtons = MAKELONG(0, QS_MOUSEBUTTON);
+            for (int lap = 0; lap < 3; ++lap)
+            for (const POINT point : {POINT{450, 50}, POINT{450, 350}, POINT{50, 350}, POINT{50, 50}})
+                SendMessageW(window, WM_MOUSEMOVE, held, MAKELPARAM(point.x, point.y));
+            check(app->widgetAction_ == (pending ? action :
+                    resize ? DesktopApp::WidgetAction::Resize : DesktopApp::WidgetAction::Move) &&
+                app->lastMousePoint_.x == 150 && app->lastMousePoint_.y == 150 &&
+                app->widgetPreviewCell_.pageId == beforeCell.pageId &&
+                app->widgetPreviewCell_.column == beforeCell.column && app->widgetPreviewCell_.row == beforeCell.row &&
+                app->widgetPreviewSpan_.columns == beforeSpan.columns && app->widgetPreviewSpan_.rows == beforeSpan.rows &&
+                app->presentedWidgetDragFeedback_ == beforeFeedback && GetCapture() == window,
+                "released component must not replay queued movement, present it or start a pending gesture");
+            inputSafetyQueuedButtons = 0;
+            if (button == VK_RBUTTON)
+            {
+                // Existing right-drag suites cover menu decisions. With no
+                // real release left queued, this production move must cancel.
+                SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(350, 250));
+            }
+            else
+                SendMessageW(window, button == VK_MBUTTON ? WM_MBUTTONUP : WM_LBUTTONUP,
+                    0, MAKELPARAM(350, 250));
+            const bool commit = !pending && button != VK_RBUTTON;
+            const int column = commit && !resize ? 3 : 0;
+            const int row = commit && !resize ? 2 : 0;
+            const int columns = commit && resize ? 6 : 3;
+            const int rows = commit && resize ? 4 : 2;
+            const auto matches = [&](const DesktopWidget& value) {
+                return value.gridCell.pageId == page.id && value.gridCell.column == column &&
+                    value.gridCell.row == row && value.gridSpan.columns == columns && value.gridSpan.rows == rows;
+            };
+            check(matches(app->widgets_.front()), "component release must commit its release geometry; pending/lost release must not commit");
+            check(!app->mouseDown_ && app->widgetAction_ == DesktopApp::WidgetAction::None && !GetCapture(),
+                "component release or cancellation must retire gesture and capture");
+            app->LoadLayoutSlots();
+            const auto index = app->FindWidgetIndexById(widget.id);
+            check(index < app->widgets_.size() && matches(app->widgets_[index]),
+                "component release geometry must survive the real layout reload");
+        }
+        if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " component backlog/release assertions failed");
+    }
+
     static void RunWidgetVolumeGestures()
     {
         snowdesktop::test::TemporaryDirectory temporary;
@@ -452,6 +594,7 @@ end})
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
         RunQueuedDragReleaseSafety(cls.lpszClassName);
         RunWidgetReleaseSafety(cls.lpszClassName);
+        RunQueuedWidgetReleaseSafety(cls.lpszClassName);
         RunWidgetDockEdgeRevealSafety();
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
         app->instance_ = cls.hInstance;

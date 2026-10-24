@@ -239,11 +239,15 @@ bool DesktopApp::OnNativeMouseMoveAt(
         return true;
     }
     // Physical release can precede its queued button-up by many old moves.
-    // Keep that real release authoritative without replaying its preceding
-    // coordinates, hit tests or synchronous presentation. Lost-release
-    // recovery above must still retire a button-free captured gesture.
-    if (snowdesktop::drag_input_rules::IsNativeDragActive(
-            dragSession_.IsActive(), dragDropController_.IsTransportActive()) &&
+    // Component handles use WidgetAction rather than DragSession; include
+    // pending gestures so an old move cannot start one after release. Keep
+    // real button-up authoritative and lost-release recovery above active.
+    const bool nativeWidgetGesture = widgetAction_ != WidgetAction::None &&
+        mouseDownWidgetIndex_ < widgets_.size() &&
+        !dragDropController_.IsTransportActive();
+    if ((snowdesktop::drag_input_rules::IsNativeDragActive(
+            dragSession_.IsActive(), dragDropController_.IsTransportActive()) ||
+            nativeWidgetGesture) &&
         (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
         return false;
     OnMouseMoveAt(wp, current, dragPreviewSynced);
