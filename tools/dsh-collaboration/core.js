@@ -28,6 +28,13 @@ function dashboardPortAt(root,configured){
 }
 const allowedCommands=new Set(['task-open','task-stage','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','status']);
 export function taskId(agentId){return 'dsh-'+createHash('sha256').update(agentId).digest('hex').slice(0,24);}
+// Historical broadcasts remain readable, but cannot activate sessions outside
+// their still-active batch. Explicitly addressed events retain their target.
+export function eventInScope(state,event,id){
+ if(event.target!=='*')return true;
+ if(!event.batchId)return false;
+ return [state.current,...(state.activeCandidates||[])].some(batch=>batch?.id===event.batchId&&batch.participants?.some(member=>member.id===id&&member.state!=='withdrawn'));
+}
 export function inside(root,target){const rel=path.relative(root,target);return rel===''||(!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel));}
 export function canonicalTarget(file){
  let cursor=path.resolve(file),tail=[];

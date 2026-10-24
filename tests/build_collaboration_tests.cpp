@@ -57,13 +57,27 @@ void run_progress_notices(const fs::path& repo,bool legacy,bool former=false){
     response=stage(2);
     require(response.at("pendingUrgentCount").integer()==0&&response.at("urgentEvents").kind==Json::Kind::Array&&response.at("urgentEvents").items.empty(),
         "Acknowledged, ordinary or other-recipient events kept the progress alert active");
+    progress.call({"event-post","sender","-EventKey","unscoped-urgent","-Importance","urgent","-Text","No batch"},2);
+    const auto activeBatch=progress.begin("sender").at("batchId").str();progress.begin("receiver");
+    // A recently opened investigation is still unrelated; age never grants
+    // membership. The intended receiver remains eligible even with an old heartbeat.
+    auto state=progress.state();
+    for(auto& task:state["taskLedger"]["tasks"].items)if(task.at("id").str()=="receiver")task["lastHeartbeatUtc"]="2000-01-01T00:00:00Z";
+    atomic(progress.stateRoot/L"state.json",state.dump());
     const auto broadcast=progress.call({"event-post","sender","-EventKey","urgent-broadcast","-Importance","urgent","-Text","Project coordination"});
-    response=stage(3);
+    require(broadcast.at("batchId").str()==activeBatch&&broadcast.at("recipients").dump()==Json::array({"sender","receiver"}).dump(),
+        "Urgent broadcast included an unrelated investigation or dropped an older active batch member");
+    progress.call({"task-open","coordinator"});
+    const auto explicitBatch=progress.call({"event-post","coordinator","-Batch",activeBatch,"-EventKey","explicit-batch","-Importance","urgent","-Text","Explicit batch"});
+    require(explicitBatch.at("recipients").dump()==broadcast.at("recipients").dump(),"Explicit urgent broadcast widened the selected batch");
+    progress.call({"event-ack","receiver","-Sequence",std::to_string(explicitBatch.at("sequence").integer()),"-AckLevel","agent"});
+    progress.call({"event-post","sender","-Batch",std::string(32,'f'),"-EventKey","wrong-batch","-Importance","urgent","-Text","Wrong batch"},2);
+    response=stage(4);
     require(response.at("pendingUrgentCount").integer()==1&&response.at("urgentEvents").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),
         "Active progress missed an addressed urgent broadcast");
     progress.call({"event-ack","receiver","-Sequence",std::to_string(broadcast.at("sequence").integer()),"-AckLevel","agent"});
     for(int index=0;index<9;++index)progress.call({"event-post","sender","-Target","receiver","-EventKey","bounded-"+std::to_string(index),"-Importance","urgent","-Text","Long payload "+std::string(2000,'x')});
-    response=stage(4);
+    response=stage(5);
     require(response.at("pendingUrgentCount").integer()==9&&response.at("urgentEvents").items.size()==8&&response.at("urgentEventsTruncated").boolean&&response.dump().size()<6000,
         "Active progress inlined an unbounded event backlog or hid its remainder");
     for(const auto& notice:response.at("urgentEvents").items)require(!notice.has("text")&&!notice.has("receipts")&&!notice.has("recipients"),

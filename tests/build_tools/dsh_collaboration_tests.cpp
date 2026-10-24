@@ -6,14 +6,14 @@ using namespace build_test;
 namespace {
 void client_tests(const fs::path& repo,const fs::path& root) {
     write(root/L"client.mjs",R"JS(import fs from 'node:fs';import vm from 'node:vm';
-const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
+const events=[],updates=[],componentCleanup=[],timers=new Map();let registration,props,Panel,slotOptions,slotName,stateIndex=0,timerId=0,mounted=false,contribution,dictionaries;
 let response={ok:true,value:JSON.stringify({marker:'known-good',taskPresence:[],events:[]})};
 const remote={snapshot:async()=>{if(!mounted)throw new Error('withdrawn');return await response;}};
 // Only the polling/disposal boundary is exercised by this carrier, never layout.
 const React={createElement:(type,props,...children)=>({type,props,children}),useRef:initial=>({current:initial}),useLayoutEffect(){},useState:initial=>{const index=stateIndex++;return [typeof initial==='function'?initial():initial,value=>updates.push({index,value})];},useEffect:effect=>componentCleanup.push(effect())};
-vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{window:{innerWidth:1024,innerHeight:800,addEventListener(){},removeEventListener(){},__ModuleLoader__:{load:value=>{registration=value;}}},localStorage:{getItem:()=>null,setItem(){}},setTimeout:callback=>{const id=++timerId;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),console});
 const plugin=registration.factory(name=>{if(name==='react')return React;if(name==='zod')return {z:{string:()=>({})}};throw new Error('Unexpected Client import: '+name);});
-function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:(_namespace,value)=>{dictionaries=value;return ()=>{};},bind:()=>key=>dictionaries.en[key]||key},slots:{inject:(name,register)=>{events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{props=options.inject();Panel=component;}}};return {ctx,effects};}
+function context(rejectSlot=false){const effects=[];const ctx={inject:async(_dependencies,apply)=>apply(ctx),remote:{$mount:async value=>{contribution=value;events.push('mount');mounted=true;ctx.remote.snowCollaboration=remote;return async()=>{events.push('unmount');mounted=false;delete ctx.remote.snowCollaboration;};}},effect:effect=>effects.push(effect()),locale:{register:(_namespace,value)=>{dictionaries=value;return ()=>{};},bind:()=>key=>dictionaries.en[key]||key},slots:{inject:(name,register)=>{slotName=name;events.push('slot');if(rejectSlot)throw new Error('controlled slot failure');return register();},register:(options,component)=>{slotOptions=options;props=options.inject();Panel=component;}}};return {ctx,effects};}
 const first=context();const unmount=await plugin.apply(first.ctx);const panel=Panel(props),versions=[];
 function displayedVersions(node){if(typeof node==='string'&&/^0\.\d+\.\d+$/.test(node))versions.push(node);if(node&&typeof node==='object')for(const child of node.children||[])displayedVersions(child);}
 displayedVersions(panel);const rootVersion=panel.props['data-version'];
@@ -22,7 +22,7 @@ displayedVersions(panel);const rootVersion=panel.props['data-version'];
 const originalState=React.useState,originalEffect=React.useEffect;
 const run={id:'a'.repeat(32),task:'budget-owner',status:'queued',resources:{status:'sampling',cpuLimitBasisPoints:2500,committedMemoryLimitBytes:3221225472},admission:{policy:'project-weighted-v1',compatibilityMode:'shared',cpuSlots:2,cpuCapacity:6,memoryMiB:3072,reservedMemoryMiB:3072,memoryCapacityMiB:6144,lastObservation:{occupiedCpuSlots:6,occupiedMemoryMiB:4096,reason:'cpu-capacity'}}};
 let lastRendered;
-function renderBudget(model,lang='en',tab='validation',preferences={},connectionError=''){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;return [index++===0?(model||{snapshot:{runs:[run]}}):index===2?connectionError:index===3?{...value,tab,...preferences}:value,()=>{}];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
+function renderBudget(model,lang='en',tab='validation',preferences={},connectionError='',observations=null){let index=0;React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial,slot=index++;const current=slot===0?(model||{snapshot:{runs:[run]}}):slot===1?connectionError:slot===2?{...value,tab,...preferences}:value;return [current,next=>observations?.push({slot,value:typeof next==='function'?next(current):next})];};const rendered=Panel({...props,t:key=>dictionaries[lang][key]||key}),values=[];lastRendered=rendered;function visit(node){if(typeof node==='string'||typeof node==='number')values.push(String(node));else if(Array.isArray(node))node.forEach(visit);else if(node&&typeof node==='object'&&node.type!=='style')(node.children||[]).forEach(visit);}visit(rendered);return values.join(' ');}
 const budgetText=renderBudget();run.resources={status:'unrecorded'};run.admission={policy:'project-weighted-v1'};const missingBudgetText=renderBudget();
 const rich={id:'b'.repeat(32),test:'Passed with open dependencies',status:'passed',seconds:0.125,identityStatus:'recorded',reuseAllowed:false,binding:{assertionBinary:'c'.repeat(64)},dependencies:{status:'observed',sourceClosure:'unproven',sourceReports:3,issues:[],issueCount:0},runtimeInputs:{status:'stable',runtimeClosure:'unclosed',issues:[],issueCount:0},runtimeModules:{status:'observed',imageCount:23,processCount:2,runtimeClosure:'unclosed',timingComparableToUnobservedRun:false,issues:[],issueCount:0},attempts:[{attempt:1,status:'failed',seconds:0.2},{attempt:2,status:'passed',seconds:0.125}]};
 const legacy={id:'d'.repeat(32),test:'Legacy missing observation',status:'passed',reuseAllowed:false};
@@ -72,12 +72,18 @@ function connectionView(model,error,lang='en'){
 const retainedSnapshot={snapshot:{runs:[],updatedUtc:'2026-09-30T07:08:09.123Z'}},connectionError='controlled offline: ENOENT /private/server.json';
 const offlineView=connectionView(retainedSnapshot,connectionError),offlineZh=connectionView(retainedSnapshot,connectionError,'zh');
 const noSnapshotView=connectionView({snapshot:null},connectionError),unknownTimeView=connectionView({snapshot:{runs:[]}},connectionError),recoveredView=connectionView(retainedSnapshot,'');
+function findNode(node,predicate){if(Array.isArray(node)){for(const item of node){const found=findNode(item,predicate);if(found)return found;}}else if(node&&typeof node==='object'){if(predicate(node))return node;return findNode(node.children||[],predicate);}}
+renderBudget(workspaceModel,'en','activity',{collapsed:true});
+const tabObservation={name:slotName,id:slotOptions.id,order:slotOptions.order,label:slotOptions.label(),workspacePresent:!!findNode(lastRendered,node=>node.props?.className?.startsWith('sc-workspace')),ballPresent:!!findNode(lastRendered,node=>node.props?.className==='sc-ball'),position:lastRendered.props.style?.position||null,fillViewport:lastRendered.props['data-conversation-composer-overlay']===true};
 React.useState=originalState;React.useEffect=originalEffect;
 await new Promise(resolve=>setImmediate(resolve));
 const firstSnapshot=updates.find(value=>value.index===0)?.value?.snapshot;
 async function poll(){const [id,callback]=timers.entries().next().value;timers.delete(id);await callback();}
 response={ok:false,error:{message:'controlled offline'}};await poll();
 const offline=updates.filter(value=>value.index===1).at(-1)?.value;
+let cacheSlot=0,cachedModel,cachedError;
+React.useEffect=()=>{};React.useState=initial=>{const value=typeof initial==='function'?initial():initial;if(cacheSlot===0)cachedModel=value;if(cacheSlot===1)cachedError=value;cacheSlot++;return [value,()=>{}];};
+Panel(props);React.useState=originalState;React.useEffect=originalEffect;
 response={ok:true,value:'invalid JSON'};await poll();
 const malformed=updates.filter(value=>value.index===1).at(-1)?.value;
 let finish;response=new Promise(resolve=>{finish=resolve;});const pending=poll();
@@ -86,11 +92,17 @@ await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pe
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
 const descriptor=contribution.descriptors[0];
-console.log(JSON.stringify({offlineView,offlineZh,noSnapshotView,unknownTimeView,recoveredView,inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
+console.log(JSON.stringify({cachedMarker:cachedModel?.snapshot?.marker,cachedError,tabObservation,offlineView,offlineZh,noSnapshotView,unknownTimeView,recoveredView,inject:plugin.inject,events,firstSnapshot,offline,malformed,lastSnapshot:updates.filter(value=>value.index===0).at(-1)?.value?.snapshot,lateUpdated:updates.length!==beforeLate,timers:timers.size,rejected,rootVersion,versions,budgetText,missingBudgetText,runEvidenceText,batchEvidenceText,batchEvidenceZh,referencesText,referencesZh,mixedText,mixedZh,referenceOnlyText,workspaceParticipants,workspaceActivities,workspaceBuilds,workspaceParticipantsZh,workspaceActivityText,selectedLogText,mergedLogText,deliveryText,deliveryZh,installedText,descriptor:{package:contribution.package,id:descriptor.id,namespace:descriptor.namespace,method:descriptor.method,service:descriptor.service,parameters:descriptor.parameters,resultMode:descriptor.result.mode,resultType:descriptor.result.jsonSchema.type}}));
 )JS");
     const auto client=run({L"node",(root/L"client.mjs").wstring(),(repo/L"tools/dsh-collaboration/client.js").wstring()},root,15);
     require(client.code==0,"Production Client carrier failed: "+client.out+client.err);
     const auto clientObserved=Json::parse(client.out);
+    const auto& tab=clientObserved.at("tabObservation");
+    require(tab.at("name").str()=="conversation.view"&&tab.at("id").str()=="snowdesktop-collaboration"&&tab.at("order").integer()==20&&tab.at("label").str()=="Collaboration",
+        "Collaboration view did not register as a labeled conversation tab after chat and trajectory");
+    require(tab.at("workspacePresent").boolean&&!tab.at("ballPresent").boolean&&tab.at("position").kind==Json::Kind::Null&&tab.at("fillViewport").boolean,
+        "Conversation tab retained the overlay/ball geometry or hid content for an old collapsed preference");
+    require(clientObserved.at("cachedMarker").str()=="known-good"&&clientObserved.at("cachedError").str()=="controlled offline","Remounting the conversation tab discarded its last snapshot or connection state");
     const auto& offlineView=clientObserved.at("offlineView");
     require(offlineView.at("visible").str().find("Data retained from")!=std::string::npos&&offlineView.at("times").items.size()==1&&offlineView.at("times").items[0].at("key").str()=="2026-09-30T07:08:09.123Z",
         "Disconnected overlay omitted the retained snapshot time or replaced it with a current timestamp");
@@ -140,7 +152,7 @@ console.log(JSON.stringify({offlineView,offlineZh,noSnapshotView,unknownTimeView
     require(clientObserved.at("firstSnapshot").at("marker").str()=="known-good"&&clientObserved.at("offline").str()=="controlled offline"&&!clientObserved.at("malformed").str().empty()&&clientObserved.at("lastSnapshot").at("marker").str()=="known-good","Client failed RemoteResult decoding or lost the last snapshot after a carrier/data error");
     require(!clientObserved.at("lateUpdated").boolean&&clientObserved.at("timers").integer()==0&&clientObserved.at("rejected").boolean&&clientObserved.at("events").items.back().str()=="unmount","Client updated after disposal, leaked a timer, or retained a failed mount");
     const auto manifest=Json::parse(read(repo/L"tools/dsh-collaboration/package.json"));
-    require(clientObserved.at("rootVersion").str()==manifest.at("version").str()&&clientObserved.at("versions").items.size()==1&&clientObserved.at("versions").items[0].str()==manifest.at("version").str(),"Loaded overlay identity and displayed version disagreed with the package");
+    require(clientObserved.at("rootVersion").str()==manifest.at("version").str()&&clientObserved.at("versions").items.empty(),"Loaded tab identity disagreed with the package or retained its obsolete version header");
     for(const auto& file:{"index.js","core.js","client.js","typert.host.js","typert.remote-client.js","cordis.patch.yml","locale/en.json","locale/zh.json","icon.svg","README.md"})
         require(fs::is_regular_file(repo/L"tools/dsh-collaboration"/wide(file)),"Plugin package resource missing: "+std::string(file));
     require(!manifest.has("scripts")&&manifest.at("dsh").at("client").at("platform").str()=="web","Plugin added install scripts or changed target surface");
@@ -153,12 +165,16 @@ import path from 'node:path';
 import http from 'node:http';
 import {pathToFileURL} from 'node:url';
 const [moduleFile,root,mode]=process.argv.slice(2);
-const {CollaborationBridge,taskId}=await import(pathToFileURL(moduleFile));
+const {CollaborationBridge,taskId,eventInScope}=await import(pathToFileURL(moduleFile));
 const bridge=new CollaborationBridge(root),agent='fixture-agent',id=taskId(agent);
 const target=path.join(root,'src/a.txt');
 async function attempt(){try{await bridge.verifyWrite(agent,target);fs.writeFileSync(target,'authorized write');return {allowed:true};}catch(error){return {allowed:false,error:String(error.message)};}}
 let result;
-if(mode==='open'){
+if(mode==='scope'){
+ const batchId='1'.repeat(32),candidateId='2'.repeat(32),state={current:{id:batchId,participants:[{id,state:'editing'}]},activeCandidates:[{id:candidateId,participants:[{id:'candidate',state:'finished'},{id:'withdrawn',state:'withdrawn'}]}]};
+ const broadcast={target:'*',batchId};
+ result={active:eventInScope(state,broadcast,id),unrelated:eventInScope(state,broadcast,'unrelated'),candidate:eventInScope(state,{...broadcast,batchId:candidateId},'candidate'),withdrawn:eventInScope(state,{...broadcast,batchId:candidateId},'withdrawn'),ended:eventInScope({current:null,activeCandidates:[]},broadcast,id),legacy:eventInScope(state,{target:'*'},id),targeted:eventInScope(state,{target:id},id)};
+}else if(mode==='open'){
  result={opened:await bridge.open(agent),write:await attempt(),current:bridge.state().current,id};
 }else if(mode==='unicode'){
  const values=[];
@@ -234,6 +250,17 @@ console.log(JSON.stringify(result));
         require(result.code==0,"Node plugin bridge failed: "+result.out+result.err);
         return Json::parse(result.out);
     };
+    const auto requireScope=[](const Json& scope){
+        require(scope.at("active").boolean&&scope.at("candidate").boolean&&scope.at("targeted").boolean,"Active batch or explicit recipient lost its urgent event");
+        require(!scope.at("legacy").boolean&&!scope.at("ended").boolean&&!scope.at("unrelated").boolean&&!scope.at("withdrawn").boolean,"Historical or unrelated broadcast remained eligible for session activation");
+    };
+    requireScope(node("scope"));
+    auto broad=read(repo/L"tools/dsh-collaboration/core.js");replace(broad,"if(!event.batchId)return false;","if(!event.batchId)return true;");
+    write(c.root/L"scope-old.mjs",broad);
+    const auto scopeOld=run({L"node",script.wstring(),(c.root/L"scope-old.mjs").wstring(),c.root.wstring(),L"scope"},c.root,10);
+    require(scopeOld.code==0,"Former broadcast control failed before its activation observation");
+    bool scopeRejected=false;try{requireScope(Json::parse(scopeOld.out));}catch(const std::exception& error){scopeRejected=std::string(error.what())=="Historical or unrelated broadcast remained eligible for session activation";}
+    require(scopeRejected,"Former unscoped broadcast path escaped the same activation assertion");
     const auto preferred=node("dashboard-preferred");
     require(preferred.has("followed")&&preferred.at("followed").str()=="first"&&preferred.has("refreshed")&&preferred.at("refreshed").str()=="second","Default dashboard port did not follow this checkout's updated preference");
     require(preferred.at("explicit").str()=="first"&&preferred.at("defaultMissing").boolean,"Explicit dashboard port or missing-preference compatibility changed");
@@ -363,17 +390,18 @@ const nativeSetInterval=globalThis.setInterval;
 globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
 const record=(agent,method,message)=>{notices.push({agent,method,message});notify?.();};
 const make=(name,status,cwd=root)=>({id:'wake-'+mode+'-'+name,session:{cwd},status,inject:message=>record(name,'inject',message),followup:message=>record(name,'followup',message)});
-const idle=make('idle','idle'),active=make('active','running'),released=make('released','idle'),outside=make('outside','idle',root+'-outside');
-const ctx={services,inject(){},logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+const idle=make('idle','idle'),active=make('active','running'),released=make('released','idle'),outside=make('outside','idle',root+'-outside'),unrelated=make('unrelated','idle');
+const ctx={services,inject(){},logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside,unrelated]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 async function delivered(count){if(notices.length>=count)return;await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Production event delivery did not complete')),10000);notify=()=>{if(notices.length>=count){clearTimeout(timeout);notify=null;resolve();}};notify();});}
 let result;
 try{
  apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:enabled});
- for(const agent of [idle,active,released,outside])await hooks.get('tools/pre-execute')({agent,name:'read'},()=>null);
+ for(const agent of [idle,active,released,outside,unrelated])await hooks.get('tools/pre-execute')({agent,name:'read'},()=>null);
  hooks.get('agent/disposed')({agent:released});
  const bridge=services.snowCollaboration.bridge,call=bridge.call.bind(bridge);
  bridge.call=(...args)=>{if(args[0]==='event-ack')acks++;return call(...args);};
- const post=(key,importance)=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Target','*','-EventKey','wake-'+mode+'-'+key,'-Importance',importance,'-Text','Isolated authorized delivery check'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+ const membership=await bridge.call('begin',taskId(idle.id));await bridge.call('begin',taskId(active.id));
+ const post=(key,importance)=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Batch',membership.batchId,'-Target','*','-EventKey','wake-'+mode+'-'+key,'-Importance',importance,'-Text','Isolated authorized delivery check'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
  const registered=notices.length;
  await post('normal','normal');poll();
  const normal={notices:notices.length-registered,acks};
@@ -395,7 +423,7 @@ console.log(JSON.stringify(result));
         require(execution.code==0,"Production wake delivery carrier failed: "+execution.out+execution.err);
         const auto wake=Json::parse(execution.out);
         require(wake.at("normal").at("notices").integer()==0&&wake.at("normal").at("acks").integer()==0,"Normal progress woke or notified a model");
-        require(wake.at("registered").integer()==3&&!wake.at("outsideRegistered").boolean&&wake.at("deliveries").items.size()==2,"Broadcast reached a released/outside Agent or lost a resident recipient");
+        require(wake.at("registered").integer()==4&&!wake.at("outsideRegistered").boolean&&wake.at("deliveries").items.size()==2,"Broadcast reached an unrelated/released/outside Agent or lost a resident recipient");
         bool idleSeen=false,activeSeen=false;
         for(const auto& delivery:wake.at("deliveries").items){
             const auto name=delivery.at("agent").str();
@@ -423,11 +451,13 @@ for(const agent of [main,failed,closed,outside,released,child])await bridge.open
 const controller={list:async(_request,signal)=>{signal.throwIfAborted();listCalls++;return {items:[main,failed,closed,outside,released,child,unknown].map(agent=>({sessionId:agent.id,cwd:agent.session.cwd,...(agent===child?{origin:'subagent'}:{})}))};},resolveAgent:async id=>{resumed.push(id);if(mode==='unload')return await new Promise(resolve=>{releaseResume=resolve;});if(id===failed.id)return {error:new Error('Controlled session restoration failure')};return {agent:main};}};
 const ctx={services,logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect()),inject:(_deps,apply)=>{if(mode!=='missing')apply({...ctx,sessionController:controller});}};
 const command=(action,id,args=[])=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,action,id,...args],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
-const post=(key,importance)=>command('event-post','synthetic-peer',['-Target','*','-EventKey','cold-'+mode+'-'+key,'-Importance',importance,'-Text','Addressed project coordination data, not new permission']);
+ let batchId;
+ const post=(key,importance)=>command('event-post','synthetic-peer',['-Batch',batchId,'-Target','*','-EventKey','cold-'+mode+'-'+key,'-Importance',importance,'-Text','Addressed project coordination data, not new permission']);
 const dispose=()=>{while(disposers.length){const disposer=disposers.pop();if(typeof disposer==='function')disposer();}};
 let result;
 try{
  await command('task-open','synthetic-peer',['-TaskName','Isolated cold-session sender']);
+  for(const agent of [main,failed,outside,released,child])batchId=(await bridge.call('begin',taskId(agent.id))).batchId;
  apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:mode!=='disabled'});
  await hooks.get('tools/pre-execute')({agent:released,name:'read'},()=>null);hooks.get('agent/disposed')({agent:released});
  const registered=notices.length,currentBefore=JSON.stringify(bridge.state().current);
@@ -457,7 +487,7 @@ console.log(JSON.stringify(result));
         require(execution.code==0,"Production cold-session recovery carrier failed: "+execution.out+execution.err);
         const auto cold=Json::parse(execution.out);
         require(cold.at("normal").at("lists").integer()==0&&cold.at("normal").at("resumes").integer()==0&&cold.at("normal").at("notices").integer()==0,"Normal progress caused cold-session discovery or activation");
-        require(cold.at("currentPreserved").boolean&&cold.at("mainTask").at("revision").integer()==0&&cold.at("mainTask").at("phase").str()=="investigating","Cold recovery changed an editing grant or business task revision");
+        require(cold.at("currentPreserved").boolean&&cold.at("mainTask").at("revision").integer()==1&&cold.at("mainTask").at("phase").str()=="editing","Cold recovery changed an editing grant or business task revision");
         for(const auto& phase:{"duplicate","unloaded"})require(cold.at(phase).at("lists").integer()==0&&cold.at(phase).at("resumes").integer()==0&&cold.at(phase).at("notices").integer()==0,"Repeated poll or disposed plugin repeated cold recovery");
         if(mode==L"enabled"){
             require(cold.at("mainTask").at("capabilities").at("idleWake").boolean,"Available configured Session Controller wake was not declared");

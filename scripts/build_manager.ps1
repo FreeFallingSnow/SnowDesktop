@@ -454,11 +454,23 @@ try {
                     if($existing.Count){
                         $event=$existing[0]
                         if($event.sender -ne $Participant -or $event.target -ne $Target -or $event.kind -ne $EventKind -or $event.importance -ne $Importance -or $event.text -cne $Text -or $event.requirementsRevision -ne $RequirementsRevision){throw 'EventKey already belongs to a different event.'}
+                        if($Batch -and $Target -eq '*' -and $Importance -eq 'urgent' -and (Get-Field $event 'batchId') -ne $Batch){throw 'EventKey belongs to a different batch.'}
                     } else {
                         if(@($ledger.events).Count -ge 4096){throw 'Event ledger is full; preserve unconsumed events and archive through a reviewed migration.'}
-                        $recipients=if($Target -eq '*'){@($ledger.tasks | Where-Object {$_.phase -notin 'completed','cancelled'} | ForEach-Object {$_.id})}else{@((Find-VisibleTask $ledger $Target).id)}
+                        $eventBatchId=$null
+                        $eligible=@($ledger.tasks | Where-Object {$_.phase -notin 'completed','cancelled' -and -not $_.closedUtc} | ForEach-Object {$_.id})
+                        if($Target -eq '*' -and $Importance -eq 'urgent'){
+                            $batches=@($(if($state.current){$state.current});@(Get-Field $state 'activeCandidates' @()))
+                            $matches=@($batches | Where-Object {
+                                if($Batch){$_.id -eq $Batch}else{@($_.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count -gt 0}
+                            })
+                            if($matches.Count -ne 1){throw 'Urgent broadcast requires one active batch. Pass -Batch explicitly or join the intended batch; unrelated investigations are not recipients.'}
+                            $eventBatchId=$matches[0].id
+                            $eligible=@($matches[0].participants | Where-Object {$_.state -ne 'withdrawn' -and $_.id -in $eligible} | ForEach-Object {$_.id})
+                        }
+                        $recipients=if($Target -eq '*'){@($eligible)}else{@((Find-VisibleTask $ledger $Target).id)}
                         $ledger.sequence=[long]$ledger.sequence+1
-                        $event=[pscustomobject]@{sequence=$ledger.sequence;key=$EventKey;sender=$Participant;target=$Target;recipients=@($recipients);kind=$EventKind;importance=$Importance;text=$Text;
+                        $event=[pscustomobject]@{sequence=$ledger.sequence;key=$EventKey;sender=$Participant;target=$Target;batchId=$eventBatchId;recipients=@($recipients);kind=$EventKind;importance=$Importance;text=$Text;
                             requirementsRevision=$RequirementsRevision;createdUtc=[DateTime]::UtcNow.ToString('o');receipts=@();delivery='persisted'}
                         $ledger.events=@($ledger.events)+@($event)
                     }
