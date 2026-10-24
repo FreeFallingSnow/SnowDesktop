@@ -143,8 +143,10 @@ if(BUILD_TESTING AND WIN32)
     # Three independent fixture groups run concurrently within this one test.
     # Reserve their combined budget rather than multiplying hidden parallelism.
     set_tests_properties(build_collaboration PROPERTIES PROCESSORS 9)
+    # The bridge, Host, cold-recovery and Client cases share this total budget;
+    # their individual process deadlines and isolated fixtures remain unchanged.
     snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
-        build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 90)
+        build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 120)
     add_test(NAME dsh_installed_sdk COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --installed-sdk)
     set_tests_properties(dsh_installed_sdk PROPERTIES TIMEOUT 60 LABELS "manual;integration;tools"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
