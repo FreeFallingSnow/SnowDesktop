@@ -693,6 +693,7 @@ struct LuaWidget
     bool viewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    snowdesktop::widget_runtime::ViewLayoutCache viewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
     bool viewIndeterminateProgressActive = false;
@@ -702,6 +703,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::WidgetInteractionRegions
         panelInteractionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    snowdesktop::widget_runtime::ViewLayoutCache panelViewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime panelViewTransitions;
     bool panelViewTransitionFramePending = false;
     bool panelIndeterminateProgressActive = false;

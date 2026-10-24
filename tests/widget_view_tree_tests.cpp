@@ -5266,6 +5266,224 @@ void TestSurfaceScrollbarGutters()
     }
 }
 
+// The cache is below Lua evaluation/parsing, and above host-owned scrolling and
+// slot validation. Compare it with the original pure-layout entry; these checks
+// do not claim to exercise the desktop RenderWidget routing or presentation.
+void TestViewLayoutCacheEvaluationAndInvalidation()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "layout cache fixture needs a Lua state");
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_dostring(state, R"lua(
+        evaluations = 0
+        label = "Ready"
+        function cachedView()
+            evaluations = evaluations + 1
+            return view.column({ key = "root", gap = 6, children = {
+                view.text({ key = "title", text = label, height = 15 }),
+                view.button({ key = "open", label = "Open", height = 32,
+                    action = { id = "open", value = { sequence = 1 } },
+                    hoverStyle = { opacity = 0.8 },
+                    focusStyle = { borderWidth = 2 },
+                }),
+                view.textInput({ key = "input", value = "draft", height = 32,
+                    accessibility = { label = "Draft" },
+                    events = { change = { id = "draft.change" } } }),
+            } })
+        end
+    )lua") == LUA_OK, "layout cache Lua fixture must initialize");
+    const auto evaluate = [&]() {
+        lua_getglobal(state, "cachedView");
+        Check(lua_pcall(state, 0, 1, 0) == LUA_OK,
+            "every frame must still evaluate its Lua view");
+        ViewNode result;
+        std::string error;
+        Check(ParseLuaViewTree(state, -1, result, error),
+            "every frame must still parse the current view result");
+        lua_pop(state, 1);
+        return result;
+    };
+
+    ViewLayoutCache cache;
+    std::string error;
+    bool reused = true;
+    auto first = evaluate();
+    Check(cache.ValidateAndLayout(first, 200, 160, error, &reused) && !reused,
+        "the first descriptor must use the original layout path");
+    auto second = evaluate();
+    auto reference = second;
+    Check(ValidateAndLayoutViewTree(reference, 200, 160, error) &&
+            cache.ValidateAndLayout(second, 200, 160, error, &reused) &&
+            reused && second == reference && second == first &&
+            Near(second.children[1].frame.y, 21.0f),
+        "unchanged descriptors must reuse the exact original layout output");
+    lua_getglobal(state, "evaluations");
+    Check(lua_tointeger(state, -1) == 2,
+        "layout reuse must preserve visible Lua evaluation side effects");
+    lua_pop(state, 1);
+
+    Check(luaL_dostring(state, "label = 'Updated'") == LUA_OK,
+        "current data changes must reach the Lua view");
+    auto updated = evaluate();
+    Check(cache.ValidateAndLayout(updated, 200, 160, error, &reused) &&
+            !reused && updated.children[0].text == "Updated",
+        "a script-derived state/time/data change must replace cached content");
+    auto resized = evaluate();
+    Check(cache.ValidateAndLayout(resized, 240, 180, error, &reused) &&
+            !reused && Near(resized.frame.width, 240) &&
+            Near(resized.children[1].frame.width, 240),
+        "content width and height changes must invalidate layout reuse");
+
+    const auto descriptor = evaluate();
+    // All of these can change while a script's state revision stays unchanged.
+    const std::vector<std::function<void(ViewNode&)>> changes = {
+        [](auto& root) { root.children[0].fontSize = 22; },
+        [](auto& root) { root.children[0].fontResourceName = "new-font"; },
+        [](auto& root) { root.children[0].style.foregroundToken = ViewThemeColorToken::Warning; },
+        [](auto& root) { root.children[1].enabled = false; },
+        [](auto& root) { root.children[1].hoverStyle.opacity = 0.4f; },
+        [](auto& root) { root.children[1].focusStyle.borderWidth = 4; },
+        [](auto& root) { root.children[1].tooltip = "Current tooltip"; },
+        [](auto& root) { root.children[1].events.at("click").value.object.at("sequence").integer = 2; },
+        [](auto& root) { root.children[2].inputValue = "new draft"; },
+        [](auto& root) { root.children[2].textSelection = ViewTextSelection{ 1, 2 }; },
+        [](auto& root) { root.children[2].readOnly = true; },
+        [](auto& root) { root.children[1].transition = ViewTransition{}; },
+        [](auto& root) { root.children[0].overflowText = ViewTextOverflow::Clip; },
+    };
+    for (const auto& change : changes)
+    {
+        auto baseline = descriptor;
+        Check(cache.ValidateAndLayout(baseline, 240, 180, error),
+            "each independent input change needs the same baseline");
+        auto candidate = descriptor;
+        change(candidate);
+        reference = candidate;
+        Check(ValidateAndLayoutViewTree(reference, 240, 180, error) &&
+                cache.ValidateAndLayout(candidate, 240, 180, error, &reused) &&
+                !reused && candidate == reference,
+            "resource/theme/interaction/input/animation descriptor changes must retain fresh layout output");
+    }
+
+    auto invalid = descriptor;
+    invalid.children[1].key = invalid.children[0].key;
+    auto invalidReference = invalid;
+    std::string referenceError;
+    Check(!ValidateAndLayoutViewTree(invalidReference, 240, 180, referenceError) &&
+            !cache.ValidateAndLayout(invalid, 240, 180, error, &reused) &&
+            !reused && error == referenceError,
+        "invalid descriptors must retain the original validation diagnostic");
+    auto recovered = descriptor;
+    Check(cache.ValidateAndLayout(recovered, 240, 180, error, &reused) &&
+            !reused && error.empty(),
+        "a failed descriptor must not poison later successful recovery");
+    auto badSize = descriptor;
+    Check(!cache.ValidateAndLayout(badSize, 0, 180, error, &reused) &&
+            !reused && error.find("dimensions") != std::string::npos,
+        "a cached descriptor must not bypass surface-size validation");
+    lua_close(state);
+}
+
+void TestViewLayoutCacheScrollAndHostValidation()
+{
+    ViewNode descriptor;
+    descriptor.type = ViewNodeType::Scroll;
+    descriptor.key = "scroll";
+    descriptor.orientation = ViewOrientation::Vertical;
+    descriptor.height = { ViewLengthKind::Fixed, 50 };
+    ViewNode body;
+    body.type = ViewNodeType::Column;
+    body.key = "body";
+    body.height = { ViewLengthKind::Fixed, 200 };
+    ViewNode input;
+    input.type = ViewNodeType::TextInput;
+    input.key = "editor";
+    input.inputValue = "draft";
+    input.accessibilityLabel = "Draft";
+    input.events["change"].id = "draft.change";
+    input.height = { ViewLengthKind::Fixed, 32 };
+    body.children.push_back(input);
+    descriptor.children.push_back(body);
+
+    ViewLayoutCache cache;
+    std::string error;
+    auto first = descriptor;
+    Check(cache.ValidateAndLayout(first, 200, 50, error),
+        "scroll fixture must cache its unscrolled layout");
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(first,
+            [](std::string_view, float) { return 40.0f; }, viewports, error) &&
+            Near(first.children[0].frame.y, -40),
+        "host scroll offsets must apply after layout");
+    auto second = descriptor;
+    bool reused = false;
+    Check(cache.ValidateAndLayout(second, 200, 50, error, &reused) && reused &&
+            Near(second.children[0].frame.y, 0) &&
+            ApplyViewScrollOffsets(second,
+                [](std::string_view, float) { return 10.0f; }, viewports, error) &&
+            Near(second.children[0].frame.y, -10),
+        "cache hits must apply the latest scroll without retaining or accumulating old offsets");
+    std::vector<InteractionRegion> regions;
+    std::vector<ViewInputControl> controls;
+    Check(CollectViewInteractionRegions(second, regions, error) &&
+            CollectViewInputControls(second, controls, error) &&
+            controls.size() == 1 && Near(controls[0].frame.y, -10) &&
+            controls[0].value == "draft" && !regions.empty(),
+        "controls and interaction geometry must reflect this frame's scroll after a cache hit");
+
+    // A variable virtual list's sparse host measurements are layout inputs.
+    ViewNode virtualList;
+    virtualList.type = ViewNodeType::VirtualList;
+    virtualList.key = "virtual";
+    virtualList.orientation = ViewOrientation::Vertical;
+    virtualList.height = { ViewLengthKind::Fixed, 40 };
+    virtualList.itemCount = 5;
+    virtualList.firstIndex = 2;
+    virtualList.estimatedItemSize = 20;
+    virtualList.overscan = 0;
+    ViewNode item;
+    item.type = ViewNodeType::ListItem;
+    item.key = "item-2";
+    item.height = { ViewLengthKind::Fixed, 20 };
+    item.accessibilityLabel = "Item 2";
+    ViewNode itemLabel;
+    itemLabel.type = ViewNodeType::Text;
+    itemLabel.key = "item-label-2";
+    itemLabel.text = "Item 2";
+    item.children.push_back(itemLabel);
+    virtualList.children.push_back(item);
+    auto measured = virtualList;
+    Check(cache.ValidateAndLayout(measured, 200, 40, error),
+        "virtual list fixture must initially lay out");
+    virtualList.virtualMeasurements = { { 1, 35 } };
+    auto reference = virtualList;
+    measured = virtualList;
+    Check(ValidateAndLayoutViewTree(reference, 200, 40, error) &&
+            cache.ValidateAndLayout(measured, 200, 40, error, &reused) &&
+            !reused && measured == reference &&
+            Near(measured.children[0].frame.y, 35),
+        "new host virtual measurements must invalidate cached item placement");
+
+    LogicalSlotModel slots;
+    ViewNode slot;
+    slot.type = ViewNodeType::SlotSurface;
+    slot.key = "slot";
+    slot.logicalSlotId = "missing";
+    auto cachedSlot = slot;
+    Check(cache.ValidateAndLayout(cachedSlot, 200, 50, error),
+        "pure layout must not include mutable host slot state");
+    cachedSlot = slot;
+    Check(cache.ValidateAndLayout(cachedSlot, 200, 50, error, &reused) && reused &&
+            !ValidateViewLogicalSlots(cachedSlot, slots, error),
+        "layout hits must still reject a slot absent from the current host model");
+    ViewLayoutCache anotherSurface;
+    auto other = descriptor;
+    Check(anotherSurface.ValidateAndLayout(other, 200, 50, error, &reused) &&
+            !reused && Near(other.children[0].frame.y, 0),
+        "another surface or runtime must begin with its own unscrolled layout");
+}
+
 int main()
 {
     const auto lightButton = ResolveWidgetButtonFill({}, 0x161616, true, false, false);
@@ -5290,6 +5508,8 @@ int main()
     TestDurationPickerController();
     TestDatePickerController();
     TestLayoutAndRegions();
+    TestViewLayoutCacheEvaluationAndInvalidation();
+    TestViewLayoutCacheScrollAndHostValidation();
     TestValidationFailures();
     TestLuaParsing();
     TestLuaFieldPresenceAfterMutation();

@@ -2324,13 +2324,19 @@ static void AttachVariableVirtualMeasurements(
 
 static bool ValidateAndLayoutWidgetView(
     snowdesktop::widget_runtime::ViewNode& root,
-    const LuaWidget& widget, std::string_view surface,
+    LuaWidget& widget, std::string_view surface,
     float width, float height, std::string& error)
 {
     snowdesktop::performance::Scope scope("widget.view", "layout", widget.widgetId);
     AttachVariableVirtualMeasurements(root, widget, surface);
-    return snowdesktop::widget_runtime::ValidateAndLayoutViewTree(
-        root, width, height, error);
+    auto& cache = IsPanelSurface(surface)
+        ? widget.panelViewLayoutCache : widget.viewLayoutCache;
+    bool reused = false;
+    const bool accepted = cache.ValidateAndLayout(
+        root, width, height, error, &reused);
+    snowdesktop::performance::Value("widget.view.layout_cache",
+        reused ? "hit" : "miss", widget.widgetId, 1);
+    return accepted;
 }
 
 static std::string FormatViewValidationDiagnostic(

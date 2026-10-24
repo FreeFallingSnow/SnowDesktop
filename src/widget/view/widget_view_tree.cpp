@@ -5627,6 +5627,36 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
         ValidateTransforms(root, {}, error, ViewPresencePhase::Exit);
 }
 
+bool ViewLayoutCache::ValidateAndLayout(ViewNode& root,
+    float width, float height, std::string& error, bool* reused)
+{
+    if (reused) *reused = false;
+    if (snapshot_ && snapshot_->width == width &&
+        snapshot_->height == height && snapshot_->input == root)
+    {
+        root = snapshot_->output;
+        error.clear();
+        if (reused) *reused = true;
+        return true;
+    }
+
+    // Keep the pre-layout input: layout also resolves selection, grid placement
+    // and virtual indices, so the committed/presented tree is not a cache key.
+    ViewNode input = root;
+    if (!ValidateAndLayoutViewTree(root, width, height, error))
+    {
+        snapshot_.reset();
+        return false;
+    }
+    auto snapshot = std::make_shared<Snapshot>();
+    snapshot->input = std::move(input);
+    snapshot->output = root;
+    snapshot->width = width;
+    snapshot->height = height;
+    snapshot_ = std::move(snapshot);
+    return true;
+}
+
 bool ValidateViewLogicalSlots(const ViewNode& root,
     const LogicalSlotModel& model, std::string& error)
 {
