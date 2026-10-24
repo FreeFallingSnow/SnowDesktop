@@ -6,6 +6,7 @@
 #include <numeric>
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_process_discovery.h"
 #include "dock/dock_window_source_cloak.h"
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
@@ -240,7 +241,7 @@ inline std::wstring QueryDockWindowExecutablePath(HWND window)
 }
 
 using DockProcessParentMap =
-    std::unordered_map<DWORD, DWORD>;
+    snowdesktop::dock_process_discovery::Snapshot;
 
 inline DockProcessParentMap QueryDockProcessParentMap()
 {
@@ -256,7 +257,7 @@ inline DockProcessParentMap QueryDockProcessParentMap()
     {
         do
         {
-            parents.insert_or_assign(
+            parents.parents.insert_or_assign(
                 entry.th32ProcessID,
                 entry.th32ParentProcessID);
         } while (Process32NextW(snapshot, &entry));
@@ -270,22 +271,10 @@ QueryDockProcessAncestorExecutablePaths(
     DWORD processId,
     const DockProcessParentMap& parents)
 {
-    std::vector<std::wstring> paths;
-    std::unordered_set<DWORD> visited{ processId };
-    for (size_t depth = 0; depth < 32; ++depth)
-    {
-        const auto found = parents.find(processId);
-        if (found == parents.end() || !found->second ||
-            !visited.insert(found->second).second)
-            break;
-        processId = found->second;
-        std::wstring path =
-            QueryDockProcessExecutablePath(processId);
-        if (path.empty())
-            break;
-        paths.push_back(std::move(path));
-    }
-    return paths;
+    return snowdesktop::dock_process_discovery::AncestorPaths(
+        processId, parents.parents, [&](DWORD ancestor) {
+            return parents.executablePaths.Read(ancestor, &NormalizeDockExecutablePath);
+        });
 }
 
 inline std::wstring QueryDockProcessAppUserModelId(DWORD processId)

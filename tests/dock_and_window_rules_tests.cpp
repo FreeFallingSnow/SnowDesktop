@@ -19,6 +19,7 @@
 #include "dock/dock_insertion_cases.h"
 #include "dock/dock_task_window_filter_tests.h"
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_process_discovery_tests.h"
 #include "common/bounded_lru_cache.h"
 #include "diagnostics/slow_call_limiter.h"
 #include "icons/icon_row_index.h"
@@ -1937,6 +1938,16 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    if (const auto helper = snowdesktop::tests::dock_process_discovery::TryRunHelper(argc, argv))
+        return *helper;
+    if (argc == 2 && (std::string_view(argv[1]) == "--dock-process-discovery" ||
+        std::string_view(argv[1]) == "--dock-process-discovery-negative-control"))
+    {
+        snowdesktop::tests::dock_process_discovery::Run(Check,
+            std::string_view(argv[1]) == "--dock-process-discovery-negative-control");
+        return failures == 0 ? 0 : 1;
+    }
+    snowdesktop::tests::dock_process_discovery::Run(Check);
     snowdesktop::tests::list_columns::Run(Check);
     {
         namespace single = snowdesktop::single_cell_widget;
