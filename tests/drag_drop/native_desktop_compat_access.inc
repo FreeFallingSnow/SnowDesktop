@@ -1,3 +1,5 @@
+#include "../icons/native_large_icon_completion_access.inc"
+
     static void SeedCompatAppearance(DesktopApp& app, const std::filesystem::path& file,
         int destination, const snowdesktop::LargeIconConfig& config)
     {
