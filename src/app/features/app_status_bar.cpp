@@ -1014,6 +1014,110 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
 }
 
+void DesktopApp::HandleStatusBarPointerPressed()
+{
+    // Snapshot before ClearSelection: selected titles and keyboard-retained
+    // widget frames can shrink or disappear when their model flags are cleared.
+    std::unordered_set<const bool*> clearedFlags;
+    const auto remember = [&](const auto& values) {
+        for (const auto& value : values)
+            if (value.selected) clearedFlags.insert(&value.selected);
+    };
+    remember(items_);
+    remember(dockEntries_);
+    remember(dockUnpinnedRunningApps_);
+    remember(widgets_);
+    for (const auto& widget : widgets_) remember(widget.folderEntries);
+
+    std::vector<RECT> desktopDamage;
+    const auto addDesktop = [&](RECT bounds, int padding) {
+        if (IsRectEmptyRect(bounds)) return;
+        InflateRect(&bounds, padding, padding);
+        desktopDamage.push_back(bounds);
+    };
+    std::vector<PersistentDockHost*> dockDamage;
+    bool popupDamage = false;
+    if (!clearedFlags.empty() || keyboardNavVisualFocus_)
+    {
+        for (const auto& object : items_oo_)
+        {
+            const auto* icon = dynamic_cast<const DesktopIcon*>(object.get());
+            const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+            if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
+            RECT bounds = item->bounds;
+            const RECT title = GetItemTextRect(bounds, true);
+            UnionRect(&bounds, &bounds, &title);
+            if (item->largeIcon)
+            {
+                const RECT frame = GetLargeIconFrameRect(*item);
+                const RECT handle = GetLargeIconResizeHandleRect(*item);
+                UnionRect(&bounds, &bounds, &frame);
+                UnionRect(&bounds, &bounds, &handle);
+            }
+            addDesktop(bounds, std::max(8, static_cast<int>(std::ceil(8.f * GetItemLayoutScale(item->bounds)))));
+        }
+
+        std::unordered_set<size_t> widgetOwners;
+        for (size_t index = 0; index < widgets_.size(); ++index)
+        {
+            const bool keyboardFocus = keyboardNavVisualFocus_ && keyboardNavInsideWidget_ &&
+                keyboardNavWidgetIndex_ == index;
+            if (!widgets_[index].selected && !HasSelectedFilesInWidget(index) && !keyboardFocus) continue;
+            const size_t owner = ResolveRenameVisibilityWidgetIndex(index);
+            if (owner >= widgets_.size() || !widgetOwners.insert(owner).second) continue;
+            const auto& widget = widgets_[owner];
+            if (IsRectEmptyRect(widget.bounds)) continue;
+            RECT frame = GetStandaloneWidgetFrameRect(widget);
+            const RECT move = GetStandaloneWidgetMoveHandleRect(widget);
+            const RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
+            UnionRect(&frame, &frame, &move);
+            UnionRect(&frame, &frame, &resize);
+            addDesktop(frame, std::max(8, ScaleWidgetCu(8.f, GetWidgetCellScale(widget))));
+        }
+
+        for (const auto& container : containers_)
+        {
+            auto* dock = dynamic_cast<DockContainer*>(container.get());
+            if (!dock) continue;
+            const auto& slots = dock->GetSlots();
+            if (std::none_of(slots.begin(), slots.end(), [](const auto& slot) {
+                return slot->GetItem() && slot->GetItem()->IsSelected();
+            })) continue;
+            if (IsDockHostedByPersistentHost(dock))
+            {
+                if (auto* host = FindPersistentDockHost(dock)) dockDamage.push_back(host);
+            }
+            else
+            {
+                RECT frame = dock->GetAnimationVisualBounds();
+                const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
+                UnionRect(&frame, &frame, &title);
+                addDesktop(frame, 8);
+            }
+        }
+
+        // A Dock folder popup owns temporary folder flags which ClearSelection
+        // deliberately does not mutate. Shared desktop flags still affect it.
+        const auto popupTargets = GetPopupSelectionTargets();
+        popupDamage = std::any_of(popupTargets.begin(), popupTargets.end(), [&](const auto& target) {
+            return target.selected && clearedFlags.contains(target.selected);
+        });
+        if (popupWidgetIndex_ < widgets_.size())
+            popupDamage = popupDamage || widgets_[popupWidgetIndex_].selected;
+        popupDamage = popupDamage || (GetOpenPopupWidget() && keyboardNavVisualFocus_ &&
+            keyboardNavInsideWidget_ && (keyboardNavWidgetIndex_ == popupWidgetIndex_ ||
+                (dockFolderPopupOpen_ && keyboardNavWidgetIndex_ >= widgets_.size())));
+    }
+
+    // Always reset anchors and keyboard context, including a repeated press
+    // with no selected flags. Keep the original input and notification order.
+    ClearSelection();
+    if (hwnd_ && IsWindow(hwnd_))
+        for (const RECT& bounds : desktopDamage) InvalidateRect(hwnd_, &bounds, FALSE);
+    for (auto* host : dockDamage) InvalidateFloatingDockWindow(*host);
+    if (popupDamage) InvalidateFloatingPopupWindow();
+}
+
 void DesktopApp::SyncStatusBar()
 {
     const bool dockTrayRequired = generalSettings_.dockEnabled &&
@@ -1054,10 +1158,7 @@ void DesktopApp::SyncStatusBar()
                 brushCache_.clear(); brushCacheContext_ = nullptr;
              }, dockTrayService_);
         statusBar_->SetPointerPressed([this] {
-            ClearSelection();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            InvalidatePersistentDockHosts();
-            InvalidateFloatingPopupWindow();
+            HandleStatusBarPointerPressed();
         });
         statusBar_->SetTrayDragHandlers([this](const auto& changed) {
             if (!settingsController_) return;

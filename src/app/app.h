@@ -1210,6 +1210,7 @@ private:
     /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
+    void HandleStatusBarPointerPressed();
     void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
     struct StatusBarActivationHold;
     void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
