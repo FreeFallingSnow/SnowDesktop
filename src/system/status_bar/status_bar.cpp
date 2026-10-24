@@ -666,10 +666,33 @@ struct StatusBar::Impl
         {
             return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, dropIndicator);
         }
+        bool ReusableInteractionFrame(const RECT& client, const StatusBarPalette& palette) const
+        {
+            return !paintDirty && !backgroundDirty && !appearanceDirty && surface && backgroundSurface &&
+                client.right == static_cast<LONG>(width) && client.bottom == static_cast<LONG>(height) &&
+                retainedFrameValid && retainedPalette && SameStatusBarPalette(*retainedPalette, palette) &&
+                drawResources.FrameTextMatches(owner.text.Get(), TrayScale(), retainedTextGeneration);
+        }
+        void PaintInteraction()
+        {
+            if (presentationPreparation.Defer()) return;
+            if (closing || painting || failed || fullscreen || !IsWindowVisible(hwnd) ||
+                !owner.composition || !owner.text)
+            { paintDirty = true; return; }
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const StatusBarPalette palette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
+                SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+            // These entries formerly forced a complete frame. Even when no
+            // feedback pixels change, they must retain its recovery opportunity.
+            // Ordinary Paint keeps its existing same-content no-op timing.
+            if (!ReusableInteractionFrame(client, palette)) paintDirty = true;
+            Paint();
+        }
         template<class Update> void UpdateInteraction(Update&& update)
         {
             presentationPreparation.Run(std::forward<Update>(update));
-            Paint();
+            PaintInteraction();
         }
         struct PreparedFocusFrame
         {
@@ -964,11 +987,7 @@ struct StatusBar::Impl
             GetClientRect(hwnd, &client);
             const StatusBarPalette palette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
-            if (!partialHoverUpdates || paintDirty || backgroundDirty || appearanceDirty || !surface ||
-                !backgroundSurface || !retainedFrameValid || !retainedPalette ||
-                !SameStatusBarPalette(*retainedPalette, palette) ||
-                !drawResources.FrameTextMatches(owner.text.Get(), TrayScale(), retainedTextGeneration) ||
-                client.right != static_cast<LONG>(width) || client.bottom != static_cast<LONG>(height))
+            if (!partialHoverUpdates || !ReusableInteractionFrame(client, palette))
             { paintDirty = true; Paint(); return; }
             const auto drawnInteraction = InteractionVisual();
             const auto damage = StatusBarInteractionDamageRegions(items, paintedInteraction, drawnInteraction, width, height);
@@ -1221,7 +1240,8 @@ struct StatusBar::Impl
                             canceledMenu = !sameTray && self->CancelTrayMenu();
                             self->keyboardFocusVisible = true; self->ClearHover();
                         });
-                        self->Paint(false, false, frame.previousOffset != self->trayScroll.offset ? &frame : nullptr);
+                        if (frame.previousOffset != self->trayScroll.offset) self->Paint(false, false, &frame);
+                        else self->PaintInteraction();
                         if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
                     },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
@@ -1323,7 +1343,7 @@ struct StatusBar::Impl
                     self->mergedPresentation.insertAfter && IsWindowVisible(window))
                     self->backdrop.SetPopupWindowPairZOrder(window,
                         self->mergedPresentation.insertAfter, true);
-                self->Paint(); break;
+                self->PaintInteraction(); break;
             case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
             case WM_ERASEBKGND: return 1;
             case WM_PAINT:
@@ -1379,7 +1399,7 @@ struct StatusBar::Impl
                     return 0;
                 }
                 if (self->keyboardFocusVisible)
-                { self->keyboardFocusVisible = false; self->Paint(); }
+                { self->keyboardFocusVisible = false; self->PaintInteraction(); }
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const auto released = self->interaction.Release(self->items, point, false);
                 if (!released.accepted) return 0;
@@ -1525,7 +1545,7 @@ struct StatusBar::Impl
                     self->trayDragging = false;
                     self->ClearHover(); self->interaction.CancelPointer();
                 });
-                if (self->presentationPreparation.Pending()) self->Paint();
+                if (self->presentationPreparation.Pending()) self->PaintInteraction();
                 else self->PaintHover();
                 break;
             }
@@ -1651,7 +1671,7 @@ struct StatusBar::Impl
             const std::optional<RECT> next=target&&target->window==window.get()?std::optional(target->indicator):std::nullopt;
             if(next.has_value()!=window->dropIndicator.has_value() ||
                 (next&&!EqualRect(&*next,&*window->dropIndicator)))
-            {window->dropIndicator=next;if(window.get()!=deferred)window->Paint();}
+            {window->dropIndicator=next;if(window.get()!=deferred)window->PaintInteraction();}
         }
         return target.has_value();
     }
