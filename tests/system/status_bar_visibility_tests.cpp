@@ -130,7 +130,8 @@ const StatusBarItem* Find(const std::vector<StatusBarItem>& items, std::string_v
 class AtlasSurface final : public IDCompositionSurface
 {
 public:
-    AtlasSurface(ID2D1DeviceContext* context, ID2D1Bitmap1* retained) : context_(context), retained_(retained)
+    AtlasSurface(ID2D1DeviceContext* context, ID2D1Bitmap1* retained, bool aligned = false)
+        : aligned_(aligned), context_(context), retained_(retained)
     {
         const auto size = retained->GetPixelSize();
         Check(SUCCEEDED(context_->CreateBitmap(D2D1::SizeU(size.width + 32, size.height + 24), nullptr, 0,
@@ -153,7 +154,11 @@ public:
         const auto size = retained_->GetPixelSize();
         if (region->left < 0 || region->top < 0 || region->right > static_cast<LONG>(size.width) ||
             region->bottom > static_cast<LONG>(size.height) || IsRectEmpty(region)) return E_INVALIDARG;
-        region_ = *region; *offset = origin_;
+        region_ = *region;
+        // The complete-reference pass uses one physical raster origin. The
+        // arbitrary-offset pass retains the original fixed atlas placement.
+        origin_ = aligned_ ? POINT{13 + region->left, 9 + region->top} : POINT{13, 9};
+        *offset = origin_;
         const auto result = context_->QueryInterface(iid, value);
         if (FAILED(result)) return result;
         updates.push_back(*region); drawing_ = true;
@@ -181,13 +186,15 @@ private:
     ULONG references_ = 1;
     bool drawing_ = false;
     RECT region_{};
-    const POINT origin_{13, 9}; // Deliberately unrelated to either target's position.
+    bool aligned_ = false;
+    POINT origin_{13, 9}; // Both placements exercise nonzero atlas offsets.
     ComPtr<ID2D1DeviceContext> context_;
     ComPtr<ID2D1Bitmap1> retained_, atlas_;
 };
 
 void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWriteFactory* text,
-    const StatusBarSnapshot& data, const std::vector<std::string>& pinned)
+    const StatusBarSnapshot& data, const std::vector<std::string>& pinned,
+    bool alignedPhysicalOrigin, bool requireCompleteReference)
 {
     std::uint64_t updatedPixels = 0, fullPixels = 0;
     for (const bool merged : {false, true}) for (const bool highContrast : {false, true})
@@ -198,10 +205,11 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             height = static_cast<UINT>((merged ? 64.f : 32.f) * scale);
         const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        ComPtr<ID2D1Bitmap1> retained, reference, legacy, readable;
+        ComPtr<ID2D1Bitmap1> retained, reference, legacy, readable, fullAtlas;
         Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &retained)) &&
             SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &reference)) &&
             SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &legacy)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width + 32, height + 24), nullptr, 0, properties, &fullAtlas)) &&
             SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0,
                 D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
                     properties.pixelFormat), &readable)), "hover comparison bitmaps initialize");
@@ -212,10 +220,15 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             D2D1::ColorF(0x003399), D2D1::ColorF(0xffffff)};
         StatusBarTrayScroll scrolling;
         StatusBarDrawResources resources;
+        // Outline antialiasing depends on physical device coordinates. Match
+        // those coordinates for the complete-reference comparison, retaining
+        // an independent fresh full layout/draw of every item. A separate pass
+        // checks exact cached/original behavior at arbitrary atlas offsets.
+        const POINT fullOrigin = alignedPhysicalOrigin ? POINT{13, 9} : POINT{0, 0};
         const auto fullPaint = [&](ID2D1Bitmap1* target, std::vector<StatusBarItem>& content,
             std::optional<std::size_t> hover, StatusBarTrayScroll& scroll, StatusBarDrawResources* cache = nullptr) {
-            context->SetTarget(target); context->SetDpi(96, 96);
-            context->SetTransform(D2D1::Matrix3x2F::Identity());
+            context->SetTarget(fullAtlas.Get()); context->SetDpi(96, 96);
+            context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(fullOrigin.x), static_cast<float>(fullOrigin.y)));
             context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
@@ -223,6 +236,9 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
                 appearance, palette, hover, true, 0, merged, true, &scroll, true, nullptr, cache);
             const auto ended = context->EndDraw(); context->SetTarget(nullptr);
             Check(SUCCEEDED(result) && SUCCEEDED(ended), "full reference frame renders");
+            const D2D1_RECT_U client{static_cast<UINT32>(fullOrigin.x), static_cast<UINT32>(fullOrigin.y),
+                static_cast<UINT32>(fullOrigin.x) + width, static_cast<UINT32>(fullOrigin.y) + height};
+            Check(SUCCEEDED(target->CopyFromBitmap(nullptr, fullAtlas.Get(), &client)), "complete atlas frame copies to client pixels");
         };
         const auto pixels = [&](ID2D1Bitmap1* target) {
             Check(SUCCEEDED(readable->CopyFromBitmap(nullptr, target, nullptr)), "hover pixels copy to CPU");
@@ -244,8 +260,8 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
         legacyScroll.Move(legacyScroll.Maximum() / 2 + (legacyScroll.Maximum() ? 7 : 0));
         fullPaint(retained.Get(), items, {}, scrolling, &resources);
         fullPaint(legacy.Get(), legacyItems, {}, legacyScroll);
-        ComPtr<AtlasSurface> surface; surface.Attach(new AtlasSurface(context, retained.Get()));
-        ComPtr<AtlasSurface> legacySurface; legacySurface.Attach(new AtlasSurface(context, legacy.Get()));
+        ComPtr<AtlasSurface> surface; surface.Attach(new AtlasSurface(context, retained.Get(), alignedPhysicalOrigin));
+        ComPtr<AtlasSurface> legacySurface; legacySurface.Attach(new AtlasSurface(context, legacy.Get(), alignedPhysicalOrigin));
         std::vector<std::optional<std::size_t>> sequence;
         const auto add = [&](std::string_view key) {
             const auto* item = Find(items, key);
@@ -293,7 +309,7 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
                     if (std::abs(static_cast<int>((observed[pixel] >> shift) & 255) -
                         static_cast<int>((wanted[pixel] >> shift) & 255)) > 2) equivalent = false;
             }
-            if (!equivalent)
+            if (requireCompleteReference && !equivalent)
             {
                 std::size_t mismatchCount = 0;
                 unsigned maximumDelta = 0;
@@ -354,14 +370,17 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
             SUCCEEDED(composition->Commit()), "real DComp accepts the production hover enter/leave updates");
     }
     Check(updatedPixels < fullPixels / 4, "hover repaint area remains bounded to changed controls");
-    std::cout << "Hover pixel equivalence and native DComp passed; updated pixels=" << updatedPixels
+    std::cout << (requireCompleteReference ? "Complete-reference hover" : "Cached/original arbitrary-offset hover")
+        << " and native DComp passed; updated pixels=" << updatedPixels
         << " equivalent full-frame pixels=" << fullPixels << '\n';
 }
 #include "status_bar_resources_cases.h"
 }
 int main(int argc, char** argv)
 {
-    Check(argc == 2 || (argc == 3 && std::string_view(argv[2]) == "--uncached-resource-control"), "expected repository root and optional uncached control");
+    const std::string_view control = argc == 3 ? argv[2] : "";
+    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control")),
+        "expected repository root and optional resource/atlas control");
     CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
     Locale::Instance().SetLanguage("en-US");
@@ -395,7 +414,7 @@ int main(int argc, char** argv)
         SUCCEEDED(fontBuilder->CreateFontSet(&fontSet)) &&
         SUCCEEDED(fontFactory->CreateFontCollectionFromFontSet(fontSet.Get(), &fluentFallbackCollection)),
         "load a deterministic non-Fluent collection for resource recovery");
-    CheckResourceReuse(factory.Get(), dxgi.Get(), context.Get(), text.Get(), argc == 3);
+    CheckResourceReuse(factory.Get(), dxgi.Get(), context.Get(), text.Get(), control == "--uncached-resource-control");
     StatusBarSnapshot data; data.clock = L"2026/10/23   16:25";
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
     std::vector<std::string> pinned;
@@ -410,7 +429,14 @@ int main(int argc, char** argv)
     const auto defaults = BuildStatusBarItems(StatusBarSettings{}, data);
     Check(Find(defaults, "clock") && Find(defaults, "notifications") && Find(defaults, "controlCenter"),
         "clock, notifications and grouped control center start visible");
-    CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned);
+    if (control == "--unaligned-hover-control")
+    {
+        // Preserve the observed cross-origin failure as a calibration control.
+        CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, true);
+        return 0;
+    }
+    CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, true, true);
+    CheckHoverUpdates(device.Get(), context.Get(), text.Get(), data, pinned, false, false);
     for (const int mode : {0, 1, 2}) for (const bool clock : {false, true})
     for (const bool notifications : {false, true}) for (const bool merged : {false, true})
     for (const bool rightAligned : {false, true}) for (const float scale : {1.f, 2.f})
