@@ -263,6 +263,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_external_minimize.cpp
     src/dock/dock_external_minimize.cpp
     src/dock/dock_external_minimize.h
+    src/dock/dock_minimize_process_cache.h
+    src/dock/dock_work_area_reservation.h
     src/dock/dock_minimize_protocol.h
     src/dock/dock_minimize_hook_threads.h
     src/app/dock/app_dock_window_tracking.cpp
@@ -3248,6 +3250,13 @@ if (BUILD_TESTING)
         LINK_LIBRARIES user32
         LABELS integration core desktop window)
     snowdesktop_add_test(
+        SnowDesktopDockWorkAreaReservationTests
+        dock_work_area_reservation
+        SOURCES tests/dock/dock_work_area_reservation_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS core dock rules)
+    snowdesktop_add_test(
         SnowDesktopDockDocumentProxyTests
         dock_document_proxy
         NATIVE_WINDOW_COMPATIBILITY
@@ -3261,6 +3270,8 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock/dock_hook_resource_tests.cpp
+            tests/dock/dock_minimize_target_cases.h
+            src/dock/dock_external_minimize.cpp
             src/dock/dock_cloak_dispatcher.cpp
             src/dock/dock_minimize_hook.cpp
         INCLUDE_DIRECTORIES src
