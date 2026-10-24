@@ -520,10 +520,27 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     auto& item = position->second;
-    // Collapse and drag-time expansion can change another widget's frame
-    // outside the current dirty region. Rebuild its surface at the new size.
-    if (visible && !EqualRect(&item.bounds, &bounds))
+    // A restored/resized surface must publish fresh pixels before its clip
+    // opens. A passive hover tail can otherwise defer the draw while this
+    // frame commits the retained surface at its previous size.
+    const bool refreshBeforeShow = visible &&
+        (!item.visible || !EqualRect(&item.bounds, &bounds));
+    if (refreshBeforeShow)
+    {
         pendingDesktopWidgetCompositions_.insert(widgetId);
+        if (desktopWidgetHoverTailToken_)
+        {
+            uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
+            desktopWidgetHoverTailToken_ = 0;
+        }
+        // FlushPendingDesktopWidgetComposition opens the clip only after
+        // EndDraw succeeds and the current surface has been attached.
+        if (item.clip)
+        {
+            (void)item.clip->SetRight(0.0f);
+            (void)item.clip->SetBottom(0.0f);
+        }
+    }
     if (item.visible == visible)
         return;
     item.visible = visible;
@@ -545,12 +562,10 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible)
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
-    if (item.clip)
+    if (!visible && item.clip)
     {
-        (void)item.clip->SetRight(
-            visible ? static_cast<float>(item.width) : 0.0f);
-        (void)item.clip->SetBottom(
-            visible ? static_cast<float>(item.height) : 0.0f);
+        (void)item.clip->SetRight(0.0f);
+        (void)item.clip->SetBottom(0.0f);
     }
     if (!visible)
     {
