@@ -1109,6 +1109,7 @@ struct NativeDragIntegrationAccess
 #include "../dock/native_preview_order_access.inc"
 #include "../layout/native_list_hover_access.inc"
 #include "native_input_safety_access.inc"
+#include "../widget/native_widget_surface_handoff_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
@@ -1146,6 +1147,7 @@ struct NativeDragIntegrationAccess
 #include "../layout/native_list_hover_cases.h"
 #include "../layout/native_popup_display_menu_cases.h"
 #include "native_input_safety_cases.h"
+#include "../widget/native_widget_surface_handoff_cases.h"
 
 namespace
 {
@@ -1201,7 +1203,13 @@ int main(int argc, char** argv)
 {
     try
     {
-        if (argc == 1) { RunTargets(); native_preview_order_cases::Run(); }
+        if (argc == 1) {
+            native_widget_surface_handoff_cases::Run();
+            RunTargets();
+            native_preview_order_cases::Run();
+        }
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-surface-handoff")
+            native_widget_surface_handoff_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
             return native_preview_order_cases::RunFixture(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
