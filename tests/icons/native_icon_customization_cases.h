@@ -2,6 +2,7 @@
 #include "theme/theme_library_settings.h"
 #include "data/layout_storage.h"
 #include "native_icon_cold_pixels_cases.h"
+#include "native_system_icon_refresh_cases.h"
 
 namespace native_icon_customization_cases
 {
@@ -141,6 +142,10 @@ inline void Run()
     native_icon_cold_pixels_cases::Run(app, renderContext.Get(), profile.root);
     Require(Access::NoPresentationWindows(app), "icon lifecycle and upload regression never starts a desktop presentation host");
     Access::StopModel(app);
+    auto& routingApp = profile.Model(false, profile.root / L"system-icon-routing");
+    native_system_icon_refresh_cases::Run(routingApp, renderContext.Get());
+    Require(Access::NoPresentationWindows(routingApp), "system-icon completion regression never starts a desktop presentation host");
+    Access::StopModel(routingApp);
     std::cout << "Native icon customization lifecycle, storage, usage and non-square upload passed\n";
 }
 }

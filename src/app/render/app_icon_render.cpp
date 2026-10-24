@@ -710,6 +710,15 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             ComPtr<ID2D1Bitmap> converted;
             if (!bitmap || FAILED(bitmap.As(&converted))) return;
             (quick ? quickNavSysIconCache_ : placeholderIconCache_)[key] = std::move(converted);
+            if (quick)
+            {
+                // Only navigation reads this cache. Its new bitmap does not
+                // change desktop, Dock, popup or drag-static pixels.
+                InvalidateQuickNavigationWindow();
+                return;
+            }
+            // Placeholder icons are shared by all of these presentation hosts;
+            // retain the complete refresh fallback for their consumers.
             InvalidateDragStaticScene();
             InvalidateRect(hwnd_, nullptr, FALSE);
             InvalidateDockRects();
