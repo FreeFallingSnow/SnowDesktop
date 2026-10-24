@@ -3,6 +3,7 @@
 
 #include "widget/view/widget_accessibility_provider.h"
 #include "widget/view/widget_accessibility_events.h"
+#include "ui/input/text_input_accessibility.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>
@@ -401,6 +402,189 @@ void TestSnapshotDiff()
         "semantic additions, removals, and ordering changes must invalidate structure");
 }
 
+void TestIndividualEventInputs()
+{
+    using Kind = WidgetAccessibilityChangeKind;
+    using Element = WidgetAccessibilityElementKind;
+    struct Mutation
+    {
+        const char* description;
+        std::function<void(LuaWidgetAccessibilitySnapshot&)> apply;
+        Kind kind;
+        Element element = Element::Node;
+        std::string_view semanticId = "path:0/1";
+    };
+    const Mutation mutations[] = {
+        { "widget identity", [](auto& s) { s.widgetId += L"-new"; }, Kind::Structure, Element::Root, {} },
+        { "package identity", [](auto& s) { s.packageId += ".new"; }, Kind::Structure, Element::Root, {} },
+        { "widget name", [](auto& s) { s.name += " new"; }, Kind::Name, Element::Widget, {} },
+        { "widget left", [](auto& s) { ++s.bounds.left; }, Kind::Bounds, Element::Widget, {} },
+        { "widget top", [](auto& s) { ++s.bounds.top; }, Kind::Bounds, Element::Widget, {} },
+        { "widget right", [](auto& s) { ++s.bounds.right; }, Kind::Bounds, Element::Widget, {} },
+        { "widget bottom", [](auto& s) { ++s.bounds.bottom; }, Kind::Bounds, Element::Widget, {} },
+        { "node count", [](auto& s) { s.nodes.pop_back(); }, Kind::Structure, Element::Root, {} },
+        { "node order", [](auto& s) { std::swap(s.nodes[1], s.nodes[2]); }, Kind::Structure, Element::Root, {} },
+        { "semantic identity", [](auto& s) { s.nodes[2].semanticId += "-new"; }, Kind::Structure, Element::Root, {} },
+        { "semantic parent", [](auto& s) { s.nodes[2].parentIndex = 1; }, Kind::Structure, Element::Root, {} },
+        { "control type", [](auto& s) { s.nodes[2].controlType = "Pane"; }, Kind::Structure, Element::Root, {} },
+        { "patterns", [](auto& s) { s.nodes[2].patterns = ViewAccessibilityPattern::Value; }, Kind::Structure, Element::Root, {} },
+        { "label relation", [](auto& s) { s.nodes[2].labelledBySemanticId = "key:open"; }, Kind::Structure, Element::Root, {} },
+        { "description relation", [](auto& s) { s.nodes[2].describedBySemanticId = "key:open"; }, Kind::Structure, Element::Root, {} },
+        { "focus loss", [](auto& s) { s.nodes[1].focused = false; }, Kind::Focus, Element::Root, {} },
+        { "name", [](auto& s) { s.nodes[2].name += " new"; }, Kind::Name },
+        { "role", [](auto& s) { s.nodes[2].role = "alert"; }, Kind::AriaRole },
+        { "help", [](auto& s) { s.nodes[2].helpText += " new"; }, Kind::HelpText },
+        { "status", [](auto& s) { s.nodes[2].valueText += " new"; }, Kind::ItemStatus },
+        { "heading", [](auto& s) { ++s.nodes[2].headingLevel; }, Kind::HeadingLevel },
+        { "live setting", [](auto& s) { s.nodes[2].live = AccessibilityLive::Assertive; }, Kind::LiveSetting },
+        { "position", [](auto& s) { s.nodes[2].positionInSet = 2; }, Kind::PositionInSet },
+        { "set size", [](auto& s) { s.nodes[2].setSize = 5; }, Kind::SizeOfSet },
+        { "enabled", [](auto& s) { s.nodes[2].enabled = false; }, Kind::Enabled },
+        { "required", [](auto& s) { s.nodes[2].required = true; }, Kind::Required },
+        { "offscreen", [](auto& s) { s.nodes[2].offscreen = true; }, Kind::Offscreen },
+        { "checked", [](auto& s) { s.nodes[3].checked = true; }, Kind::Toggle, Element::Node, "key:enabled" },
+        { "selected", [](auto& s) { s.nodes[7].checked = true; }, Kind::SelectionItem, Element::Node, "key:choice/a" },
+        { "range value", [](auto& s) { s.nodes[4].value = 5.f; }, Kind::RangeValue, Element::Node, "key:level" },
+        { "edit value", [](auto& s) { s.nodes[5].valueText += " new"; }, Kind::Value, Element::Node, "key:query" },
+        { "expanded", [](auto& s) { s.nodes[6].expanded = true; }, Kind::ExpandCollapse, Element::Node, "key:choice" },
+        { "node x", [](auto& s) { ++s.nodes[2].bounds.x; }, Kind::Bounds },
+        { "node y", [](auto& s) { ++s.nodes[2].bounds.y; }, Kind::Bounds },
+        { "node width", [](auto& s) { ++s.nodes[2].bounds.width; }, Kind::Bounds },
+        { "node height", [](auto& s) { ++s.nodes[2].bounds.height; }, Kind::Bounds },
+        { "scroll axis", [](auto& s) { s.nodes[9].scrollHorizontal = true; }, Kind::HorizontalScrollPercent, Element::Node, "key:feed-scroll" },
+        { "scroll offset", [](auto& s) { ++s.nodes[9].scrollOffset; }, Kind::VerticalScrollPercent, Element::Node, "key:feed-scroll" },
+        { "scroll viewport", [](auto& s) { ++s.nodes[9].scrollViewportExtent; }, Kind::VerticalViewSize, Element::Node, "key:feed-scroll" },
+        { "scroll content", [](auto& s) { s.nodes[9].scrollContentExtent = 100.f; }, Kind::VerticallyScrollable, Element::Node, "key:feed-scroll" },
+    };
+    const std::vector<LuaWidgetAccessibilitySnapshot> previous{ Snapshot() };
+    for (const auto& mutation : mutations)
+    {
+        auto current = previous;
+        mutation.apply(current[0]);
+        const auto changes = snowdesktop::DiffWidgetAccessibilitySnapshots(previous, current);
+        Check(ContainsChange(changes, mutation.kind, mutation.element,
+            mutation.semanticId), mutation.description);
+    }
+    auto adapterOnly = previous;
+    adapterOnly[0].nodes[5].textAccess =
+        std::make_shared<snowdesktop::text_input::TextAccess>();
+    Check(snowdesktop::DiffWidgetAccessibilitySnapshots(previous, adapterOnly).empty(),
+        "fresh text query adapters alone must not create events");
+}
+
+void TestEventListeningBaseline()
+{
+    // RefreshEvents uses this state directly. Only OS listening and runtime
+    // capture/failure are injected here; native event delivery needs a client.
+    snowdesktop::WidgetAccessibilityEventState events;
+    std::vector<LuaWidgetAccessibilitySnapshot> snapshots{ Snapshot() };
+    int captures = 0;
+    bool captureSucceeds = true;
+    const LuaWidgetAccessibilitySnapshot* captured = nullptr;
+    const auto capture = [&](auto& output) {
+        ++captures;
+        output = snapshots;
+        captured = output.data();
+        return captureSucceeds;
+    };
+    const auto refresh = [&](bool listening) {
+        return events.Refresh(capture, [listening] { return listening; });
+    };
+    for (int frame = 0; frame < 5; ++frame)
+        Check(refresh(false).changes.empty(),
+            "unobserved frames must emit no events");
+    Check(captures == 5 && events.Current().data() == captured,
+        "unobserved frames must move the live baseline without diffing or copying snapshots");
+
+    snapshots[0].nodes[5].valueText = "before client connected";
+    Check(refresh(false).changes.empty(),
+        "changes before client connection must update the baseline silently");
+    auto update = refresh(true);
+    Check(captures == 7 && events.Current().data() == captured &&
+            events.Current()[0].nodes[5].valueText == "before client connected" &&
+            update.previous.empty() && update.changes.empty(),
+        "late listeners must use the current baseline without replaying historical events or copying snapshots");
+    update = refresh(true);
+    Check(update.changes.empty() && update.previous.empty() && captures == 8 &&
+            events.Current().data() == captured,
+        "unchanged observed frames must keep the moved live baseline without events");
+
+    const auto* previousStorage = events.Current().data();
+    snapshots[0].bounds.left += 10;
+    snapshots[0].nodes[1].focused = false;
+    snapshots[0].nodes[5].focused = true;
+    snapshots[0].nodes[5].valueText = "after client connected";
+    update = refresh(true);
+    Check(update.changes.size() == 3 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Bounds,
+                WidgetAccessibilityElementKind::Widget) &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Focus,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            update.previous.data() == previousStorage &&
+            update.previous[0].nodes[5].valueText == "before client connected" &&
+            events.Current().data() == captured,
+        "observed property, bounds and focus transitions must preserve exact old/new values by moving snapshots");
+
+    const auto successful = snapshots;
+    snapshots[0].name = "retry after capture failure";
+    captureSucceeds = false;
+    Check(refresh(true).changes.empty() &&
+            events.Current()[0].name == successful[0].name,
+        "failed captures must preserve the last successful baseline");
+    captureSucceeds = true;
+    update = refresh(true);
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Name,
+                WidgetAccessibilityElementKind::Widget) &&
+            update.previous[0].name == successful[0].name &&
+            events.Current()[0].name == "retry after capture failure",
+        "the next successful capture must retry every change since the successful baseline");
+
+    const int beforeDisconnect = captures;
+    Check(refresh(false).changes.empty() &&
+            captures == beforeDisconnect + 1 &&
+            events.Current()[0].name == "retry after capture failure",
+        "disconnect must continue maintaining a fresh baseline without emitting changes");
+    snapshots[0].name = "new client current name";
+    snapshots[0].nodes[5].valueText = "new client current value";
+    Check(refresh(false).changes.empty(),
+        "disconnected changes must refresh the baseline without events");
+    update = refresh(true);
+    Check(update.previous.empty() && update.changes.empty() &&
+            events.Current()[0].name == "new client current name",
+        "reconnected listeners must not receive stale name, value, focus or structure events");
+    snapshots[0].nodes[5].valueText = "changed immediately after subscribing";
+    update = refresh(true);
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            update.previous[0].nodes[5].valueText == "new client current value",
+        "a change between subscription and the first paint must retain its property event and old value");
+    // A client can also connect while runtime snapshot capture is in progress.
+    bool listeningDuringCapture = false;
+    update = events.Refresh([&](auto& output) {
+        output = snapshots;
+        output[0].nodes[5].valueText = "changed while client connected";
+        listeningDuringCapture = true;
+        return true;
+    }, [&] { return listeningDuringCapture; });
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query"),
+        "listener state must be checked after capture to retain connections made during capture");
+    snapshots.clear();
+    update = refresh(true);
+    Check(ContainsChange(update.changes, WidgetAccessibilityChangeKind::Structure,
+            WidgetAccessibilityElementKind::Root) &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Focus,
+                WidgetAccessibilityElementKind::Root),
+        "removing the final focused widget must still invalidate structure and return focus to the root");
+    events.Reset();
+    Check(events.Current().empty(), "window identity changes must clear the event baseline");
+}
+
 void TestProviderTreeAndLifetime()
 {
     const HRESULT initialized = OleInitialize(nullptr);
@@ -414,8 +598,9 @@ void TestProviderTreeAndLifetime()
     std::wstring focusedWidget;
     std::string focusedKey;
     std::vector<LuaWidgetAccessibilityActionRequest> actions;
+    int captures = 0;
     WidgetAccessibilityProviderHost host(
-        [&]() { return snapshots; },
+        [&]() { ++captures; return snapshots; },
         [&](const std::wstring& widgetId, const std::string& nodeKey) {
             focusedWidget = widgetId;
             focusedKey = nodeKey;
@@ -427,6 +612,7 @@ void TestProviderTreeAndLifetime()
         });
     Check(host.AttachWindow(window),
         "provider host must attach to a valid window");
+    Check(captures == 1, "attaching a provider must seed its event baseline before a client can subscribe");
 
     IRawElementProviderSimple* rootSimple = host.RootProvider();
     Check(rootSimple != nullptr, "attached provider must expose a root");
@@ -829,6 +1015,15 @@ void TestProviderTreeAndLifetime()
     host.RefreshEvents();
     host.RefreshEvents();
 
+    snapshots[0].nodes[5].valueText = "live query after paint";
+    const int beforeLiveQuery = captures;
+    BSTR liveValue = nullptr;
+    Check(SUCCEEDED(valuePattern->get_Value(&liveValue)) &&
+            liveValue && std::wstring(liveValue, SysStringLen(liveValue)) == L"live query after paint" &&
+            captures > beforeLiveQuery,
+        "retained provider queries must capture current values independently of the event baseline");
+    SysFreeString(liveValue);
+
     host.DetachWindow(window);
     VARIANT unavailable;
     VariantInit(&unavailable);
@@ -845,6 +1040,8 @@ void TestProviderTreeAndLifetime()
 int main()
 {
     TestSnapshotDiff();
+    TestIndividualEventInputs();
+    TestEventListeningBaseline();
     TestProviderTreeAndLifetime();
     std::cout << "widget accessibility provider tests passed\n";
     return 0;
