@@ -30,14 +30,14 @@ void PrepareTitle(TitleResources& cached, IDWriteFactory* fonts, const LargeIcon
         cached.key == key && cached.name == view.name) return;
     cached = {};
     cached.key = key; cached.factory = fonts; cached.fontRevision = revision; cached.name = view.name;
-    const auto measure = large_icon_render_rules::MeasureTitleText(fonts, c, view.name, view.scale);
+    const auto measure = large_icon_render_rules::MeasureTitleText(fonts, c, view.name, view.scale, key.width, key.height);
     cached.closed = large_icon_render_rules::ResolveContent(c, key.width, key.height,
         source.width, source.height, view.scale, view.original, 0, measure);
     cached.open = large_icon_render_rules::ResolveContent(c, key.width, key.height,
         source.width, source.height, view.scale, view.original, 1, measure);
     if (!fonts || view.name.empty() || (!cached.open.leftReveal && !cached.open.upReveal))
     { cached.valid = true; return; }
-    const float size = static_cast<float>(c.revealTitleSize) * view.scale;
+    const float size = static_cast<float>(cached.open.titleFontSize);
     ComPtr<IDWriteTextFormat> format;
     if (FAILED(app_fonts::CreateTextFormat(fonts, L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;

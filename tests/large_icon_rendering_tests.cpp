@@ -714,6 +714,27 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(Visible(pixels, {152, 200, 308, 242}) > 50, "up reveal places title close beneath the image");
         Save(outputDirectory, "04-up-title.png", pixels);
 
+        {
+            snowdesktop::large_icon_renderer::TitleResources adaptive;
+            auto adaptiveConfig = config;
+            adaptiveConfig.titleColor = 0xffffff;
+            auto adaptiveView = view;
+            adaptiveView.titleResources = &adaptive;
+            adaptiveView.frame = {40, 10, 440, 350};
+            adaptiveView.name = L"\u5fae\u4fe1";
+            (void)canvas.Draw(adaptiveConfig, adaptiveView);
+            const double shortNameSize = adaptive.open.titleFontSize;
+            Check(shortNameSize > 30 && shortNameSize < 40,
+                "production title rendering grows short names on a larger card");
+            adaptiveView.name = L"A very long application name with enough extra words to overflow two lines at the preferred size";
+            pixels = canvas.Draw(adaptiveConfig, adaptiveView);
+            Check(adaptive.open.titleFontSize < shortNameSize && adaptive.open.titleFontSize >= shortNameSize * .65 - .01,
+                "long names shrink within a bounded readable range before ellipsis");
+            Check(adaptive.layout && TextBands(pixels, {40, 10, 440, 350}) == 2,
+                "the adaptive production draw emits exactly two visible text lines");
+            Save(outputDirectory, "04-adaptive-title.png", pixels);
+        }
+
         // Exercise the production cache while animation changes only position
         // and opacity. Layout inputs must invalidate it without stale glyphs.
         {

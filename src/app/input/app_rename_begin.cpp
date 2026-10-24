@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "widget/view/widget_title_layout.h"
+#include "icons/large_icon_shape_geometry.h"
 
 // Rename command target selection and editor placement.
 
@@ -358,6 +359,18 @@ void DesktopApp::BeginRenameSelected(
     }
     const float renameScale = GetGridCuScaleForBounds(gridPages_, itemBounds);
     const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    if (!popupRename && items_[selectedIndex].largeIcon && !IsItemInAnyWidget(items_[selectedIndex]))
+    {
+        const auto frame = snowdesktop::large_icon_shape::Frame(
+            EffectiveLargeIconConfig(items_[selectedIndex]), GetLargeIconFrameRect(items_[selectedIndex]));
+        const LONG height = std::max<LONG>(1, textRect.bottom - textRect.top);
+        const LONG gap = std::max(1L, static_cast<LONG>(std::round(2.f * renameScale)));
+        // The outer horizontal margin below restores the exact card width.
+        // The editor's existing work-area fitting keeps screen-edge edits visible.
+        textRect = {frame.left + renameMargin, frame.bottom + gap,
+            std::max(frame.left + renameMargin + 1, frame.right - renameMargin), frame.bottom + gap + height};
+        leftAlignedRename = false;
+    }
     InflateRect(&textRect, renameMargin, 0);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);

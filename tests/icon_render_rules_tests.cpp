@@ -57,6 +57,19 @@ int main(int argc, char** argv)
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
     {
+        const double reference = AdaptiveTitleFontSize(24, 1, 400, 180);
+        const double large = AdaptiveTitleFontSize(24, 1, 690, 576);
+        Check(reference == 24 && large > 40 && large < 48,
+            "a screenshot-sized card grows the reference label without scaling as fast as the card");
+        Check(AdaptiveTitleFontSize(24, 1, 100, 90) < reference &&
+            AdaptiveTitleFontSize(8, 1, 100, 90) >= 8,
+            "compact cards reduce the label while retaining a readable minimum");
+        Check(std::abs(AdaptiveTitleFontSize(24, 2, 1380, 1152) - large * 2) < .0001,
+            "DPI scaling stays independent of adaptive card sizing");
+        Check(AdaptiveTitleFontSize(48, 1, 690, 576) > large,
+            "the saved font size remains the user's relative size preference");
+    }
+    {
         // Production layout codec must preserve the silhouette without
         // changing grid spans or the user's saved corner rounding.
         for (int shape = 0; shape <= 5; ++shape)
