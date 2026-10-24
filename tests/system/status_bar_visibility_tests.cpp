@@ -4,6 +4,7 @@
 #include "system/status_bar/status_bar_fullscreen.h"
 #include "common/l10n.h"
 #include "ui/render/app_font.h"
+#include "tray_geometry_cases.h"
 #include <d3d11.h>
 #include <dwrite.h>
 #include <dcomp.h>
@@ -387,8 +388,8 @@ void CheckHoverUpdates(ID2D1Device* device, ID2D1DeviceContext* context, IDWrite
 int main(int argc, char** argv)
 {
     const std::string_view control = argc == 3 ? argv[2] : "";
-    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control" || control == "--full-content-control" || control == "--legacy-focus-return")),
-        "expected repository root and optional resource/atlas control");
+    Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control" || control == "--full-content-control" || control == "--legacy-focus-return" || control == "--legacy-geometry-noop-control")),
+        "expected repository root and optional offscreen regression control");
     CheckFullscreenRounds();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
     Locale::Instance().SetLanguage("en-US");
@@ -458,6 +459,8 @@ int main(int argc, char** argv)
         CheckFocusReturnRoutes(context.Get(), text.Get(), data, pinned, true);
         return 0;
     }
+    tray_geometry_tests::Run(Check, context.Get(), text.Get(), data, pinned, control == "--legacy-geometry-noop-control");
+    if (control == "--legacy-geometry-noop-control") return 2; // The retained old writer must fail the no-op assertion.
     CheckFocusFeedbackUpdates(context.Get(), text.Get(), data, pinned);
     CheckFocusNativeUpdates(device.Get(), text.Get(), data, pinned);
     CheckFocusReturnRoutes(context.Get(), text.Get(), data, pinned, false);

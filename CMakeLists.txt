@@ -226,6 +226,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
+    src/system/status_bar/status_bar_geometry.h
     src/system/status_bar/status_bar_preview.cpp
     src/system/status_bar/status_bar_preview.h
     src/system/status_bar/status_bar.cpp
@@ -247,6 +248,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/tray/tray_model.cpp
     src/system/tray/tray_change_notifications.h
     src/system/tray/tray_service.h
+    src/system/tray/tray_geometry_table.h
     src/system/tray/tray_focus.h
     src/taskbar_hook/tray_protocol.h
     src/system/status_bar/status_bar.h

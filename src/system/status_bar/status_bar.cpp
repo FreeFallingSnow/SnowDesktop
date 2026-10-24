@@ -3,6 +3,7 @@
 #include "status_bar_activation.h"
 #include "status_bar_appearance.h"
 #include "status_bar_view.h"
+#include "status_bar_geometry.h"
 #include "status_bar_interaction.h"
 #include "status_bar_appbar.h"
 #include "status_bar_fullscreen.h"
@@ -390,8 +391,11 @@ struct StatusBar::Impl
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
             paintDirty = true;
-            for (const auto& item : items) if (item.icon && owner.tray)
-                owner.tray->SetGeometry(item.icon->key, {});
+            if (owner.tray)
+            {
+                const auto removed = StatusBarTrayGeometries(items, [](RECT&) {}, true);
+                if (!removed.empty()) owner.tray->SetGeometries(removed);
+            }
             backdrop.HidePopupWindowPair(hwnd);
             backdrop.SetPopupTopmost(false);
             SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
@@ -655,12 +659,11 @@ struct StatusBar::Impl
         }
         void PublishTrayGeometry()
         {
-            for (const auto& item : items) if (item.icon && owner.tray)
-            {
-                RECT screen = item.bounds;
-                if (!IsRectEmpty(&screen)) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
-                owner.tray->SetGeometry(item.icon->key, screen);
-            }
+            if (!owner.tray) return;
+            const auto updates = StatusBarTrayGeometries(items, [this](RECT& screen) {
+                MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
+            });
+            if (!updates.empty()) owner.tray->SetGeometries(updates);
         }
         StatusBarInteractionVisualState InteractionVisual() const
         {
@@ -724,10 +727,14 @@ struct StatusBar::Impl
             if (interaction.Reconcile(previousItems, items))
             {
                 ClearHover();
+                std::vector<tray::GeometryUpdate> removed;
                 for (const auto& old : previousItems) if (old.icon && owner.tray &&
                     std::none_of(items.begin(), items.end(), [&](const auto& item) {
                         return item.icon && item.icon->key == old.icon->key;
-                    })) owner.tray->SetGeometry(old.icon->key, {});
+                    })) removed.push_back({old.icon->key, {}});
+                // Keep removal at the old pre-layout boundary, including when
+                // resource preparation or drawing subsequently fails.
+                if (owner.tray && !removed.empty()) owner.tray->SetGeometries(removed);
             }
             if (!pressedTray.empty() && std::none_of(items.begin(), items.end(), [&](const auto& item) {
                 return item.icon && item.icon->key == pressedTray;

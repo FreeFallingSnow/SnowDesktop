@@ -1,4 +1,5 @@
 #include "tray_service.h"
+#include "tray_geometry_table.h"
 #include "platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
@@ -11,7 +12,6 @@
 #include "platform/hook_registration_retry.h"
 #include "data/data_paths.h"
 #include <future>
-#include <map>
 #include <thread>
 
 namespace snowdesktop::tray
@@ -73,7 +73,7 @@ struct Service::Impl
     hook_registration::Statistics registrationStatistics;
     void Changed() { ++snapshot.revision; changes.Publish(); }
     std::shared_ptr<Connection> connection;
-    std::map<std::string, Geometry> geometries;
+    GeometryTable geometries;
     FocusReturnTracker focus;
     MenuPlacementGuard menuPlacement;
     std::uint64_t focusSerial = 0;
@@ -91,20 +91,7 @@ struct Service::Impl
         connection.reset();
         if (stop) CloseHandle(stop);
     }
-    void PublishGeometries()
-    {
-        if (!connection || !connection->shared) return;
-        auto& state = *connection->shared;
-        InterlockedIncrement(&state.geometrySequence);
-        state.geometryCount = 0;
-        for (const auto& [key, geometry] : geometries)
-        {
-            (void)key;
-            if (state.geometryCount == kGeometries) break;
-            state.geometries[state.geometryCount++] = geometry;
-        }
-        MemoryBarrier(); InterlockedIncrement(&state.geometrySequence);
-    }
+    SharedState* GeometryState() const { return connection ? connection->shared : nullptr; }
     void PublishFocus()
     {
         if (connection && connection->shared)
@@ -113,14 +100,7 @@ struct Service::Impl
     void CancelFocus() { focus.Cancel(); PublishFocus(); }
     void PruneGeometries()
     {
-        const auto previous = geometries.size();
-        std::erase_if(geometries, [&](const auto& pair) {
-            return std::none_of(snapshot.icons.begin(), snapshot.icons.end(), [&](const auto& icon) {
-                return icon.key == pair.first && !(icon.state & NIS_HIDDEN) &&
-                    SameFocusIdentity(icon.identity, pair.second.identity);
-            });
-        });
-        if (previous != geometries.size()) PublishGeometries();
+        geometries.Prune(snapshot.icons, GeometryState());
     }
     bool FocusIconExists() const
     {
@@ -276,7 +256,7 @@ struct Service::Impl
                 std::lock_guard guard(mutex);
                 snapshot.connected = current != nullptr; snapshot.degraded = !current;
                 snapshot.error = error; snapshot.icons.clear(); Changed();
-                connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
+                connection = current; geometries.Reset(); CancelFocus(); menuPlacement.Cancel();
             }
             runtime_modules::SetError(runtime_modules::Module::Tray, error);
             if (!current) { registrationRetry.Failed(error, GetTickCount64()); continue; }
@@ -492,15 +472,16 @@ bool Service::AcknowledgeChange(HWND window, std::uint64_t token)
 { std::lock_guard guard(impl_->mutex); return impl_->changes.Acknowledge(window, token); }
 void Service::SetGeometry(const std::string& key, RECT rect)
 {
+    const GeometryUpdate update{key, rect};
+    SetGeometries(std::span<const GeometryUpdate>(&update, 1));
+}
+void Service::SetGeometries(std::span<const GeometryUpdate> updates)
+{
     std::lock_guard guard(impl_->mutex);
-    const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(), [&](const auto& icon) { return icon.key == key; });
-    if (found == impl_->snapshot.icons.end()) return;
-    if (IsRectEmpty(&rect)) impl_->geometries.erase(key);
-    else impl_->geometries[key] = {found->identity, rect};
-    impl_->PublishGeometries();
+    impl_->geometries.Set(impl_->snapshot.icons, updates, impl_->GeometryState());
 }
 void Service::ClearGeometries()
-{ std::lock_guard guard(impl_->mutex); impl_->geometries.clear(); impl_->PublishGeometries(); }
+{ std::lock_guard guard(impl_->mutex); impl_->geometries.Clear(impl_->GeometryState()); }
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
     std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
@@ -514,8 +495,8 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return false;
         if (expectedIdentity && !SameFocusIdentity(found->identity, *expectedIdentity)) return false;
         icon = *found;
-        if (const auto bounds = impl_->geometries.find(key); bounds != impl_->geometries.end() &&
-            SameFocusIdentity(bounds->second.identity, icon.identity)) geometry = bounds->second.rect;
+        if (const auto* bounds = impl_->geometries.Find(key); bounds &&
+            SameFocusIdentity(bounds->identity, icon.identity)) geometry = bounds->rect;
     }
     DWORD pid = 0;
     if (invocationBounds) geometry = *invocationBounds;
