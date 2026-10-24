@@ -106,11 +106,13 @@
             const auto count = [&](HWND window) {
                 return std::count(systemIconRefreshCalls.begin(), systemIconRefreshCalls.end(), window);
             };
+            constexpr const char* unrelatedRefreshFailure =
+                "navigation-only system icons must not invalidate desktop, Dock or popup; shared icons retain all consumers";
             const auto verifyRefresh = [&](bool quick, std::uint64_t revision) {
                 check(count(navigation) == 1, "an accepted system icon must request exactly one navigation redraw");
                 check(count(app.hwnd_) == (quick ? 0 : 1) && count(dock) == (quick ? 0 : 1) &&
                     count(popup) == (quick ? 0 : 1),
-                    "navigation-only system icons must not invalidate desktop, Dock or popup; shared icons retain all consumers");
+                    unrelatedRefreshFailure);
                 check(app.dragSession_.StaticSceneRevision() == revision + (quick ? 0 : 1) &&
                     app.desktopBackdropFullCollectionPending_ == !quick,
                     "only shared system icons invalidate drag pixels and request full desktop glass collection");
@@ -184,6 +186,27 @@
                 check(renderPixels(quick, nullptr) == renderPixels(quick, referenceBitmap.Get()),
                     "actual navigation and shared-placeholder draw routes must match the complete reference surface pixels");
                 verifyRefresh(quick, revision);
+                if (quick)
+                {
+                    // Restore the original four excess completion actions on
+                    // this real accepted navigation result. Its one navigation
+                    // notification already ran; keep it unchanged so the
+                    // oracle fails specifically on the unrelated-host refresh.
+                    app.InvalidateDragStaticScene();
+                    InvalidateRect(app.hwnd_, nullptr, FALSE);
+                    app.InvalidateDockRects();
+                    app.InvalidateFloatingPopupWindow(false);
+                    check(count(navigation) == 1 && count(app.hwnd_) == 1 && count(dock) == 1 && count(popup) == 1 &&
+                        app.dragSession_.StaticSceneRevision() == revision + 1 && app.desktopBackdropFullCollectionPending_,
+                        "the original excess refresh actions must actually reach every old consumer and drag/glass state");
+                    bool legacyRejected = false;
+                    try { verifyRefresh(true, revision); }
+                    catch (const std::runtime_error& error)
+                    { legacyRejected = std::string_view(error.what()) == unrelatedRefreshFailure; }
+                    check(legacyRejected,
+                        "the same business oracle must reject the original excess completion actions at the unrelated-host assertion");
+                    std::cout << "Original system-icon excess refresh actions were observed and rejected by the unrelated-host assertion\n";
+                }
             }
             for (const bool quick : {true, false})
             {
