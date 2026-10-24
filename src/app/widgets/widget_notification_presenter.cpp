@@ -1,9 +1,7 @@
 #include "ui/render/app_font.h"
 #include "widget_notification_presenter.h"
 
-#include <wincodec.h>
 #include <windowsx.h>
-#include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,8 +11,6 @@
 
 namespace
 {
-using Microsoft::WRL::ComPtr;
-
 constexpr wchar_t WindowClassName[] =
     L"SnowDesktop.WidgetNotificationPresenter";
 constexpr UINT_PTR DismissTimerId = 1;
@@ -26,59 +22,6 @@ int Scale(HWND hwnd, int value)
     return MulDiv(value, static_cast<int>(dpi ? dpi : 96), 96);
 }
 
-HBITMAP LoadImage(const std::wstring& path, int targetPixels)
-{
-    if (path.empty() || targetPixels <= 0) return nullptr;
-    ComPtr<IWICImagingFactory> factory;
-    ComPtr<IWICBitmapDecoder> decoder;
-    ComPtr<IWICBitmapFrameDecode> frame;
-    ComPtr<IWICBitmapScaler> scaler;
-    ComPtr<IWICFormatConverter> converter;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
-            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
-        FAILED(decoder->GetFrame(0, &frame)))
-        return nullptr;
-
-    UINT sourceWidth = 0;
-    UINT sourceHeight = 0;
-    if (FAILED(frame->GetSize(&sourceWidth, &sourceHeight)) ||
-        sourceWidth == 0 || sourceHeight == 0)
-        return nullptr;
-    IWICBitmapSource* source = frame.Get();
-    if (FAILED(factory->CreateBitmapScaler(&scaler)) ||
-        FAILED(scaler->Initialize(frame.Get(), targetPixels, targetPixels,
-            WICBitmapInterpolationModeFant)))
-        return nullptr;
-    source = scaler.Get();
-    if (FAILED(factory->CreateFormatConverter(&converter)) ||
-        FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
-            WICBitmapDitherTypeNone, nullptr, 0.0,
-            WICBitmapPaletteTypeCustom)))
-        return nullptr;
-
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = targetPixels;
-    info.bmiHeader.biHeight = -targetPixels;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(
-        nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-    const UINT stride = static_cast<UINT>(targetPixels * 4);
-    if (!bitmap || !pixels || FAILED(converter->CopyPixels(nullptr, stride,
-            stride * static_cast<UINT>(targetPixels),
-            static_cast<BYTE*>(pixels))))
-    {
-        if (bitmap) DeleteObject(bitmap);
-        return nullptr;
-    }
-    return bitmap;
-}
-
 HFONT CreateUiFont(HWND hwnd, int points, int weight)
 {
     LOGFONTW font{};
@@ -88,11 +31,6 @@ HFONT CreateUiFont(HWND hwnd, int points, int weight)
     wcsncpy_s(font.lfFaceName, snowdesktop::app_fonts::GdiFamily().c_str(), _TRUNCATE);
     return CreateFontIndirectW(&font);
 }
-}
-
-WidgetNotificationPresenter::Toast::~Toast()
-{
-    if (image) DeleteObject(image);
 }
 
 WidgetNotificationPresenter::~WidgetNotificationPresenter()
@@ -142,8 +80,7 @@ bool WidgetNotificationPresenter::Show(HWND owner,
         WindowClassName, L"", WS_POPUP,
         0, 0, 1, 1, owner, nullptr, GetModuleHandleW(nullptr), toast.get());
     if (!toast->hwnd) return false;
-    if (!request.imagePath.empty())
-        toast->image = LoadImage(request.imagePath, Scale(toast->hwnd, 48));
+    toast->image.Update(request.imagePath, Scale(toast->hwnd, 48));
     const HWND hwnd = toast->hwnd;
     toasts_.emplace(request.id, std::move(toast));
     Reflow(owner);
@@ -161,13 +98,7 @@ bool WidgetNotificationPresenter::Update(HWND owner,
     Toast& toast = *found->second;
     toast.owner = owner ? owner : toast.owner;
     toast.request = request;
-    if (toast.image)
-    {
-        DeleteObject(toast.image);
-        toast.image = nullptr;
-    }
-    if (!request.imagePath.empty())
-        toast.image = LoadImage(request.imagePath, Scale(toast.hwnd, 48));
+    toast.image.Update(request.imagePath, Scale(toast.hwnd, 48));
     Reflow(toast.owner);
     SetTimer(toast.hwnd, DismissTimerId, DismissDelayMs, nullptr);
     InvalidateRect(toast.hwnd, nullptr, FALSE);
@@ -260,10 +191,10 @@ void WidgetNotificationPresenter::Paint(Toast& toast)
     if (!toast.request.imagePath.empty())
     {
         const int imageSize = Scale(toast.hwnd, 48);
-        if (toast.image)
+        if (toast.image.Get())
         {
             HDC imageDc = CreateCompatibleDC(buffer);
-            HGDIOBJ oldImage = SelectObject(imageDc, toast.image);
+            HGDIOBJ oldImage = SelectObject(imageDc, toast.image.Get());
             BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
             AlphaBlend(buffer, padding, padding + Scale(toast.hwnd, 6),
                 imageSize, imageSize, imageDc, 0, 0,
