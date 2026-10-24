@@ -360,9 +360,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
     if (const auto result = snowdesktop::start_menu::TryRunLauncherHelper()) return *result;
     if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
-    // Normalize login-task privileges before the Steam startup channel, data
+    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
+    const bool inheritedHelper =
+        snowdesktop::settings_ipc::IsSettingsProcessCommand() ||
+        snowdesktop::settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper") ||
+        snowdesktop::settings_ipc::IsSettingsProcessCommand(L"--shell-open-helper") ||
+        snowdesktop::auto_start_launch::IsPreviewHostCommand(GetCommandLineW()) ||
+        snowdesktop::application_restart_policy::ParseWatchProcessHandle(
+            commandLine ? commandLine : L"") != 0;
+    // Normalize every desktop launch before the Steam startup channel, data
     // discovery and the single-instance mutex acquire any process identity.
-    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize(!inheritedHelper);
     if (autoStartLaunch.handled)
     {
         const std::wstring message = std::wstring(autoStartLaunch.operation) +
@@ -381,7 +389,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     GeneralSettings diagnosticSettings;
     if (LoadGeneralSettings(GetGeneralSettingsPath().c_str(), diagnosticSettings))
         snowdesktop::diagnostics::SetLogModules(diagnosticSettings.diagnosticLogModules);
-    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (const auto result = snowdesktop::shell_extensions::TryRunHelper({}, {},
             [](snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
                 return snowdesktop::shell_start_pin::Invoke(

@@ -17,6 +17,9 @@
 
 namespace snowdesktop::auto_start_launch
 {
+// Internal handoff marker, never an exemption from the actual token check.
+inline constexpr wchar_t kExplorerRelaunchArgument[] = L"--snowdesktop-explorer-relaunch";
+
 struct Failure
 {
     DWORD code;
@@ -62,12 +65,24 @@ inline bool IsAutoStartCommand(std::wstring_view command)
     return false;
 }
 
+inline bool IsPreviewHostCommand(std::wstring_view command) noexcept
+{
+    try
+    {
+        const Arguments arguments(command);
+        return arguments.count > 1 &&
+            (std::wstring_view(arguments.value[1]) == L"--widget-author-preview" ||
+                std::wstring_view(arguments.value[1]) == L"--native-component-preview");
+    }
+    catch (...) { return false; } // Normalize will report an unreadable command.
+}
+
 struct Result
 {
     bool handled = false;
     DWORD error = ERROR_SUCCESS;
     DWORD childProcessId = 0; // Shell automation does not return a process ID.
-    const wchar_t* operation = L"AutoStart Explorer launch requested";
+    const wchar_t* operation = L"Standard-user Explorer launch requested";
 };
 inline std::wstring QuoteArgument(std::wstring_view argument)
 {
@@ -173,6 +188,30 @@ class NativePlatform final
 public:
     explicit NativePlatform(ShellExecutor execute = &ExecuteThroughExplorer) : execute_(execute) {}
 
+    bool IsElevated()
+    {
+        struct Token
+        {
+            HANDLE value = nullptr;
+            ~Token() { if (value) CloseHandle(value); }
+        } token;
+        Require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.value) != FALSE,
+            L"OpenProcessToken(startup privileges)");
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        Require(GetTokenInformation(token.value, TokenElevation, &elevation,
+            sizeof(elevation), &size) != FALSE, L"GetTokenInformation(startup elevation)");
+        alignas(TOKEN_MANDATORY_LABEL) BYTE buffer[sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE]{};
+        Require(GetTokenInformation(token.value, TokenIntegrityLevel, buffer,
+            sizeof(buffer), &size) != FALSE, L"GetTokenInformation(startup integrity)");
+        const auto label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer);
+        if (!IsValidSid(label->Label.Sid) || *GetSidSubAuthorityCount(label->Label.Sid) == 0)
+            throw Failure{ERROR_INVALID_SID, L"Startup integrity SID"};
+        const DWORD integrity = *GetSidSubAuthority(label->Label.Sid,
+            static_cast<DWORD>(*GetSidSubAuthorityCount(label->Label.Sid) - 1));
+        return elevation.TokenIsElevated != 0 || integrity > SECURITY_MANDATORY_MEDIUM_RID;
+    }
+
     DWORD Relaunch(std::wstring_view command)
     {
         std::wstring executable(32768, L'\0');
@@ -195,6 +234,8 @@ public:
             parameters += QuoteArgument(IsOwnerArgument(arguments.value[index]) ?
                 kAutoStartBackgroundArgument : arguments.value[index]);
         }
+        if (!parameters.empty()) parameters.push_back(L' ');
+        parameters += QuoteArgument(kExplorerRelaunchArgument);
         execute_(executable, parameters, directory);
         return 0;
     }
@@ -204,11 +245,33 @@ private:
 };
 
 template<typename Platform>
-Result Normalize(std::wstring_view command, Platform& platform) noexcept
+Result Normalize(std::wstring_view command, Platform& platform,
+    bool desktopLaunch = true) noexcept
 {
     try
     {
-        if (!IsAutoStartCommand(command)) return {};
+        // Helpers with inherited handles cannot survive an Explorer handoff.
+        // Their real dispatch/validation runs separately from desktop startup.
+        if (!desktopLaunch) return {};
+        const bool elevated = platform.IsElevated();
+        const Arguments arguments(command);
+        bool autoStart = false;
+        bool relaunched = false;
+        for (int index = 1; index < arguments.count; ++index)
+        {
+            autoStart = autoStart || IsOwnerArgument(arguments.value[index]);
+            relaunched = relaunched || arguments.value[index] ==
+                std::wstring_view(kExplorerRelaunchArgument);
+        }
+        if (relaunched)
+        {
+            // Compatibility RUNASADMIN or an elevated shell may elevate the
+            // child again. Never loop or continue into the desktop with it.
+            if (elevated)
+                throw Failure{ERROR_ELEVATION_REQUIRED, L"Explorer child still has elevated startup privileges"};
+            return {};
+        }
+        if (!autoStart && !elevated) return {};
         return {true, ERROR_SUCCESS, platform.Relaunch(command)};
     }
     catch (const Failure& failure)
@@ -225,10 +288,10 @@ Result Normalize(std::wstring_view command, Platform& platform) noexcept
     }
 }
 
-inline Result Normalize() noexcept
+inline Result Normalize(bool desktopLaunch = true) noexcept
 {
     NativePlatform platform;
-    return Normalize(GetCommandLineW(), platform);
+    return Normalize(GetCommandLineW(), platform, desktopLaunch);
 }
 }
 #pragma pop_macro("ShellExecute")

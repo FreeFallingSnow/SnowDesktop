@@ -1006,7 +1006,7 @@ add_executable(SnowDesktopLauncher WIN32
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
 target_include_directories(SnowDesktopLauncher PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32)
+target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32 advapi32)
 if (MSVC)
     set_property(TARGET SnowDesktopLauncher PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

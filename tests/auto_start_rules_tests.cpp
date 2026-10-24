@@ -24,11 +24,25 @@ void Check(bool condition, const char* message)
 void CheckAutoStartLaunchRules()
 {
     namespace launch = snowdesktop::auto_start_launch;
+    Check(launch::IsPreviewHostCommand(L"host.exe --widget-author-preview request") &&
+        launch::IsPreviewHostCommand(L"host.exe --native-component-preview request") &&
+        !launch::IsPreviewHostCommand(L"host.exe --data-directory=--widget-author-preview") &&
+        !launch::IsPreviewHostCommand(L"host.exe profile --native-component-preview"),
+        "only dedicated preview entry points retain their independent tool argument protocol");
     struct Platform
     {
         int launches = 0;
+        int tokenChecks = 0;
+        bool elevated = false;
+        DWORD tokenError = 0;
         DWORD error = 0;
         std::wstring forwarded;
+        bool IsElevated()
+        {
+            ++tokenChecks;
+            if (tokenError) throw launch::Failure{tokenError, L"test token query"};
+            return elevated;
+        }
         DWORD Relaunch(std::wstring_view command)
         {
             ++launches;
@@ -62,6 +76,45 @@ void CheckAutoStartLaunchRules()
         const auto result = launch::Normalize(L"host.exe --snowdesktop-autostart-owner=steam", platform);
         Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 1,
             "an Explorer launch failure is reported without a second creation path");
+    }
+    // Steam/manual launches carry no login owner. The actual token, including
+    // a background/recovery launch or an unrecognized owner, decides routing.
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-autostart",
+        L"host.exe --snowdesktop-application-recovery", L"host.exe --wait-for-pid=42",
+        L"host.exe --snowdesktop-autostart-owner=unknown",
+        L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
+    {
+        Platform platform;
+        platform.elevated = true;
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_SUCCESS && platform.tokenChecks == 1 &&
+            platform.launches == 1 && platform.forwarded == command,
+            "every elevated desktop launch delegates regardless of source, background intent or owner arguments");
+        platform.error = ERROR_ACCESS_DENIED;
+        const auto denied = launch::Normalize(command, platform);
+        Check(denied.handled && denied.error == ERROR_ACCESS_DENIED && platform.launches == 2,
+            "failed ordinary launch handoff never falls back to an elevated desktop");
+    }
+    for (const auto command : {L"host.exe --snowdesktop-explorer-relaunch",
+        L"host.exe --snowdesktop-autostart --snowdesktop-explorer-relaunch"})
+    {
+        Platform platform;
+        Check(!launch::Normalize(command, platform).handled && platform.tokenChecks == 1 &&
+            platform.launches == 0, "an ordinary Explorer child continues without another handoff");
+        platform.elevated = true;
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_ELEVATION_REQUIRED && platform.tokenChecks == 2 &&
+            platform.launches == 0, "a still-elevated child reports failure instead of looping or bypassing the check");
+    }
+    {
+        Platform platform;
+        platform.tokenError = ERROR_ACCESS_DENIED;
+        const auto result = launch::Normalize(L"host.exe", platform);
+        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 0,
+            "unknown privileges cannot silently enter desktop initialization");
+        Check(!launch::Normalize(L"host.exe --shell-open-helper 123 456", platform, false).handled &&
+            platform.tokenChecks == 1 && platform.launches == 0,
+            "inherited-channel helper dispatch retains its handles and independent validation");
     }
 }
 }

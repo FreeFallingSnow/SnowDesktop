@@ -275,6 +275,12 @@ int RunLauncher(bool& maintenance)
         {
             noUi = true;
         }
+        else if (wcscmp(rawArguments[index],
+                snowdesktop::auto_start_launch::kExplorerRelaunchArgument) == 0)
+        {
+            // This guard belongs to the launcher process. The runtime must
+            // still get its own first handoff if its token is elevated.
+        }
         else
         {
             forwarded.emplace_back(rawArguments[index]);
@@ -365,8 +371,8 @@ int RunLauncher(bool& maintenance)
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
-    // The task may elevate even with LUA (notably built-in Administrator).
-    // Transfer before creating the runtime handshake or updating runtime files.
+    // Steam, login tasks and other launchers may pass an elevated token.
+    // Normalize every launch before the runtime handshake or runtime updates.
     const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
     if (autoStartLaunch.handled)
     {

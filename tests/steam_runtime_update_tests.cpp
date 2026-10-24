@@ -1950,6 +1950,10 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "readiness confirms exactly the launched runtime");
     Check(ReadText(output).find("args=4;\"\";\"two words\";\"quote\\\"inside\";\"tail \\\\\";channelCleared=1") != std::string::npos,
         "the real child receives empty, spaced, quoted and trailing-backslash arguments without inheriting startup identity");
+    WriteText(output, "");
+    Check(RunLauncherProcess(root, L"--launcher-test-host --snowdesktop-explorer-relaunch") == 0 &&
+        ReadText(output).find("args=0;channelCleared=1") != std::string::npos,
+        "the launcher handoff guard is consumed so the runtime retains its independent privilege normalization");
 
     WriteLauncherDistribution(root, host, b, "fail-before");
     const auto recoveryExit = RunLauncherProcess(root, L"--launcher-test-host");
