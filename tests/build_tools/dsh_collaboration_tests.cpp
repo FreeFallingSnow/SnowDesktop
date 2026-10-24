@@ -87,7 +87,7 @@ Panel(props);React.useState=originalState;React.useEffect=originalEffect;
 response={ok:true,value:'invalid JSON'};await poll();
 const malformed=updates.filter(value=>value.index===1).at(-1)?.value;
 let finish;response=new Promise(resolve=>{finish=resolve;});const pending=poll();
-for(const cleanup of componentCleanup)cleanup();const beforeLate=updates.length;
+for(const cleanup of componentCleanup)if(typeof cleanup==='function')cleanup();const beforeLate=updates.length;
 await unmount();finish({ok:true,value:JSON.stringify({marker:'late'})});await pending;
 let rejected=false;const second=context(true);try{await plugin.apply(second.ctx);}catch{rejected=true;}
 for(const cleanup of [...first.effects,...second.effects])if(typeof cleanup==='function')await cleanup();
@@ -400,6 +400,7 @@ try{
  hooks.get('agent/disposed')({agent:released});
  const bridge=services.snowCollaboration.bridge,call=bridge.call.bind(bridge);
  bridge.call=(...args)=>{if(args[0]==='event-ack')acks++;return call(...args);};
+ await bridge.call('task-open','synthetic-peer');
  const membership=await bridge.call('begin',taskId(idle.id));await bridge.call('begin',taskId(active.id));
  const post=(key,importance)=>promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post','synthetic-peer','-Batch',membership.batchId,'-Target','*','-EventKey','wake-'+mode+'-'+key,'-Importance',importance,'-Text','Isolated authorized delivery check'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
  const registered=notices.length;
@@ -419,7 +420,8 @@ try{
 console.log(JSON.stringify(result));
 )JS");
     for(const std::wstring mode:{L"disabled",L"enabled"}){
-        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"wake.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring(),mode},c.root,30);
+        Coordinator wakeRoot(repo,"dsh-resident-wake");
+        const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"wake.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),wakeRoot.root.wstring(),mode},c.root,30);
         require(execution.code==0,"Production wake delivery carrier failed: "+execution.out+execution.err);
         const auto wake=Json::parse(execution.out);
         require(wake.at("normal").at("notices").integer()==0&&wake.at("normal").at("acks").integer()==0,"Normal progress woke or notified a model");
