@@ -17,6 +17,7 @@
 #include "system/panel/system_panel_backdrop_placement.h"
 #include "dock/dock_desktop_layer_cases.h"
 #include "navigation/quick_navigation_attraction_render_cases.h"
+#include "ui/render/desktop_backdrop_panel_properties_cases.h"
 #include <commctrl.h>
 
 #include <roapi.h>
@@ -868,6 +869,7 @@ int RunDesktopBackdropCompositorTests()
             check(springGlass.IsAvailable(), "zero-sized glass completion remains available for the next open");
         }
     }
+    snowdesktop::test::backdrop_properties::Run(content.handle, check, FindOwnedBackdrop);
     failures += snowdesktop::test::CheckQuickNavigationAttractionPixels();
     failures += CheckHiddenPopupKeyboardFocus();
 

@@ -54,6 +54,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -383,6 +384,60 @@ struct DesktopBackdropCompositor::Impl
         int largeIconShape = -1;
         int largeIconFlagDirection = 0;
         SIZE largeIconSize{};
+
+        // Cache only successfully submitted values. All panel property writers,
+        // including animation hand-offs, use these setters so a normal paint
+        // still restores the ordinary pose and visibility.
+        std::optional<wfn::float4x4> submittedTransform;
+        std::optional<wfn::float3> submittedOffset;
+        std::optional<wfn::float2> submittedSize;
+        std::optional<float> submittedRadius;
+        std::optional<float> submittedOpacity;
+        wuc::CompositionGeometry submittedClip{nullptr};
+
+        void SetTransform(const wfn::float4x4& value)
+        {
+            if (submittedTransform && *submittedTransform == value) return;
+            visual.TransformMatrix(value);
+            submittedTransform = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.transform", {}, 1, ownerKey);
+        }
+        void SetOffset(const wfn::float3& value)
+        {
+            if (submittedOffset && *submittedOffset == value) return;
+            visual.Offset(value);
+            submittedOffset = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.offset", {}, 1, ownerKey);
+        }
+        void SetSize(const wfn::float2& value)
+        {
+            if (submittedSize && *submittedSize == value) return;
+            visual.Size(value);
+            geometry.Size(value);
+            submittedSize = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.size", {}, 1, ownerKey);
+        }
+        void SetRadius(float value)
+        {
+            if (submittedRadius && *submittedRadius == value) return;
+            geometry.CornerRadius(wfn::float2{value, value});
+            submittedRadius = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.radius", {}, 1, ownerKey);
+        }
+        void SetClip(const wuc::CompositionGeometry& value)
+        {
+            if (submittedClip == value) return;
+            clip.Geometry(value);
+            submittedClip = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.clip", {}, 1, ownerKey);
+        }
+        void SetOpacity(float value)
+        {
+            if (submittedOpacity && *submittedOpacity == value) return;
+            visual.Opacity(value);
+            submittedOpacity = value;
+            snowdesktop::performance::Value("render", "backdrop.panel.opacity", {}, value, ownerKey);
+        }
     };
 
     // Values only: collecting a candidate must not touch the shared compositor.
@@ -400,6 +455,26 @@ struct DesktopBackdropCompositor::Impl
         std::optional<snowdesktop::IconBackdropClip> iconContentClip;
     };
     std::vector<StagedPanel> stagedPanels;
+    std::unordered_map<std::uintptr_t, std::size_t> stagedPanelOwners;
+    auto FindStagedPanel(const RECT& frame, std::uintptr_t ownerKey)
+    {
+        if (ownerKey)
+        {
+            const auto owner = stagedPanelOwners.find(ownerKey);
+            return owner == stagedPanelOwners.end() ? stagedPanels.end() :
+                stagedPanels.begin() + static_cast<std::ptrdiff_t>(owner->second);
+        }
+        return std::find_if(stagedPanels.begin(), stagedPanels.end(), [&](const auto& panel) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                panel.ownerKey, panel.frame, ownerKey, frame);
+        });
+    }
+    void RebuildStagedPanelOwners()
+    {
+        stagedPanelOwners.clear();
+        for (std::size_t index = 0; index < stagedPanels.size(); ++index)
+            if (stagedPanels[index].ownerKey) stagedPanelOwners.emplace(stagedPanels[index].ownerKey, index);
+    }
     bool stagingFrame = false;
     RECT stagedOcclusionRect{};
 
@@ -412,6 +487,31 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     std::vector<PanelVisual> panels;
+    std::unordered_map<std::uintptr_t, std::size_t> panelOwners;
+
+    auto FindPanel(const RECT& frame, std::uintptr_t ownerKey)
+    {
+        if (ownerKey)
+        {
+            const auto owner = panelOwners.find(ownerKey);
+            return owner == panelOwners.end() ? panels.end() :
+                panels.begin() + static_cast<std::ptrdiff_t>(owner->second);
+        }
+        return std::find_if(panels.begin(), panels.end(), [&](const auto& panel) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                panel.ownerKey, panel.frame, ownerKey, frame);
+        });
+    }
+
+    auto ErasePanel(std::vector<PanelVisual>::iterator panel)
+    {
+        panelOwners.erase(panel->ownerKey);
+        auto next = panels.erase(panel);
+        // Keep vector order (and therefore native stacking order) unchanged.
+        for (auto moved = next; moved != panels.end(); ++moved)
+            if (moved->ownerKey) panelOwners.at(moved->ownerKey) = static_cast<std::size_t>(moved - panels.begin());
+        return next;
+    }
     wuc::SpriteVisual genieRoot{nullptr};
     wuc::SpriteVisual genieSource{nullptr};
     wuc::CompositionPathGeometry genieGeometry{nullptr};
@@ -819,7 +919,18 @@ struct DesktopBackdropCompositor::Impl
             root.Children().Remove(genieRoot);
         }
         if (genieSource)
-            genieSource.Opacity(genieSourceOpacity);
+        {
+            bool restored = false;
+            for (auto& panel : panels)
+                if (panel.visual == genieSource)
+                {
+                    panel.SetOpacity(genieSourceOpacity);
+                    restored = true;
+                    break;
+                }
+            // Icon retirement may have already detached the source visual.
+            if (!restored) genieSource.Opacity(genieSourceOpacity);
+        }
         genieRoot = nullptr;
         genieSource = nullptr;
         genieGeometry = nullptr;
@@ -842,10 +953,12 @@ struct DesktopBackdropCompositor::Impl
         genieHostSize = {};
         genieOpacity = 1.0f;
         panels.clear();
+        panelOwners.clear();
         blurFactories.clear();
         collectingFrame = false;
         stagingFrame = false;
         stagedPanels.clear();
+        stagedPanelOwners.clear();
         blurFactoriesDirty = false;
         try
         {
@@ -1582,7 +1695,7 @@ bool DesktopBackdropCompositor::SetDeformationTransform(
             impl_->root.Opacity(1.0f);
             impl_->genieRoot = glass;
             impl_->genieSource = panel->visual;
-            impl_->genieSourceOpacity = panel->visual.Opacity();
+            impl_->genieSourceOpacity = panel->submittedOpacity.value_or(1.0f);
             impl_->genieGeometry = geometry;
             impl_->genieOutline = std::move(outline);
             impl_->geniePanelFrame = panelFrame;
@@ -1591,7 +1704,7 @@ bool DesktopBackdropCompositor::SetDeformationTransform(
             impl_->genieVertical = vertical;
             impl_->genieAttraction = attraction;
             impl_->root.Children().InsertAtTop(glass);
-            panel->visual.Opacity(0.0f);
+            panel->SetOpacity(0.0f);
         }
 
         const genie::Rect source{static_cast<double>(panelFrame.left),
@@ -1692,6 +1805,7 @@ void DesktopBackdropCompositor::DiscardStagedFrame()
 {
     impl_->stagingFrame = false;
     impl_->stagedPanels.clear();
+    impl_->stagedPanelOwners.clear();
 }
 
 bool DesktopBackdropCompositor::ApplyStagedFrame()
@@ -1703,8 +1817,9 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
     struct ClearCandidate
     {
         std::vector<Impl::StagedPanel>& panels;
-        ~ClearCandidate() { panels.clear(); }
-    } clearCandidate{impl_->stagedPanels};
+        std::unordered_map<std::uintptr_t, std::size_t>& owners;
+        ~ClearCandidate() { panels.clear(); owners.clear(); }
+    } clearCandidate{impl_->stagedPanels, impl_->stagedPanelOwners};
     // EndFrame owns the region update, after every panel has been applied.
     impl_->occlusionRect = occlusion;
     for (const auto& panel : impl_->stagedPanels)
@@ -1746,6 +1861,13 @@ bool DesktopBackdropCompositor::AddPanel(
     const RECT& frame, float cornerRadius,
     float blurRadius, std::uintptr_t ownerKey, bool smoothCorners)
 {
+    return UpdatePanel(frame, cornerRadius, blurRadius, ownerKey, smoothCorners, false);
+}
+
+bool DesktopBackdropCompositor::UpdatePanel(
+    const RECT& frame, float cornerRadius,
+    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners, bool customClip)
+{
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
     if (impl_->stagingFrame)
@@ -1756,12 +1878,12 @@ bool DesktopBackdropCompositor::AddPanel(
         candidate.blurRadius = blurRadius;
         candidate.ownerKey = ownerKey;
         candidate.smoothCorners = smoothCorners;
-        auto existing = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
-            [&](const auto& panel) {
-                return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                    panel.ownerKey, panel.frame, ownerKey, frame);
-            });
-        if (existing == impl_->stagedPanels.end()) impl_->stagedPanels.push_back(candidate);
+        auto existing = impl_->FindStagedPanel(frame, ownerKey);
+        if (existing == impl_->stagedPanels.end())
+        {
+            impl_->stagedPanels.push_back(candidate);
+            if (ownerKey) impl_->stagedPanelOwners.emplace(ownerKey, impl_->stagedPanels.size() - 1);
+        }
         else *existing = candidate;
         return true;
     }
@@ -1771,13 +1893,7 @@ bool DesktopBackdropCompositor::AddPanel(
 
     try
     {
-        auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
-            [&frame, ownerKey](const Impl::PanelVisual& panel) {
-                return snowdesktop::desktop_backdrop_update_rules::
-                    PanelIdentityMatches(
-                        panel.ownerKey, panel.frame,
-                        ownerKey, frame);
-            });
+        auto existing = impl_->FindPanel(frame, ownerKey);
         if (existing == impl_->panels.end())
         {
             Impl::PanelVisual panel{};
@@ -1788,10 +1904,12 @@ bool DesktopBackdropCompositor::AddPanel(
             panel.visual = impl_->compositor.CreateSpriteVisual();
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
+            panel.submittedClip = panel.geometry;
             panel.visual.Clip(panel.clip);
             impl_->root.Children().InsertAtTop(panel.visual);
             impl_->panels.push_back(std::move(panel));
             existing = std::prev(impl_->panels.end());
+            if (ownerKey) impl_->panelOwners.emplace(ownerKey, impl_->panels.size() - 1);
         }
 
         // A moving Dock keeps one SpriteVisual and changes its geometry in
@@ -1805,7 +1923,7 @@ bool DesktopBackdropCompositor::AddPanel(
         }
         existing->frame = frame;
         existing->regionFrame = frame;
-        existing->visual.TransformMatrix(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+        existing->SetTransform(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
@@ -1815,15 +1933,13 @@ bool DesktopBackdropCompositor::AddPanel(
         }
         existing->cornerRadius = resolvedRadius;
         existing->regionCornerRadius = resolvedRadius;
-        existing->visual.Offset(wfn::float3{
+        existing->SetOffset(wfn::float3{
             static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{
             static_cast<float>(frame.right - frame.left),
             static_cast<float>(frame.bottom - frame.top) };
-        existing->visual.Size(panelSize);
-        existing->geometry.Size(panelSize);
-        existing->geometry.CornerRadius(wfn::float2{
-            resolvedRadius, resolvedRadius });
+        existing->SetSize(panelSize);
+        existing->SetRadius(resolvedRadius);
         if (smoothCorners)
         {
             const SIZE size{frame.right-frame.left, frame.bottom-frame.top};
@@ -1843,9 +1959,9 @@ bool DesktopBackdropCompositor::AddPanel(
                 existing->smoothSize = size;
                 existing->smoothRadius = resolvedRadius;
             }
-            existing->clip.Geometry(existing->smoothGeometry);
+            if (!customClip) existing->SetClip(existing->smoothGeometry);
         }
-        else existing->clip.Geometry(existing->geometry);
+        else if (!customClip) existing->SetClip(existing->geometry);
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -1857,10 +1973,10 @@ bool DesktopBackdropCompositor::AddPanel(
         {
             impl_->genieSourceOpacity = 1.0f;
             impl_->genieRoot.Opacity(impl_->genieOpacity);
-            existing->visual.Opacity(0.0f);
+            existing->SetOpacity(0.0f);
         }
         else
-            existing->visual.Opacity(1.0f);
+            existing->SetOpacity(1.0f);
         existing->seen = true;
         impl_->PruneUnusedBlurFactories();
         return true;
@@ -1891,22 +2007,22 @@ bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
 bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey)
 {
     if (impl_->stagingFrame)
-        return std::erase_if(impl_->stagedPanels, [&](const auto& panel) {
+    {
+        const bool removed = std::erase_if(impl_->stagedPanels, [&](const auto& panel) {
             return panel.kind == Impl::StagedPanel::Kind::Icon &&
                 snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
                     panel.ownerKey, panel.frame, ownerKey, frame);
         }) != 0;
-    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
-        return panel.iconShape >= 0 &&
-            snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                panel.ownerKey, panel.frame, ownerKey, frame);
-    });
-    if (found == impl_->panels.end()) return false;
+        if (removed) impl_->RebuildStagedPanelOwners();
+        return removed;
+    }
+    const auto found = impl_->FindPanel(frame, ownerKey);
+    if (found == impl_->panels.end() || found->iconShape < 0) return false;
     try
     {
         impl_->root.Children().Remove(found->visual);
         found->visual.Brush(nullptr);
-        impl_->panels.erase(found);
+        impl_->ErasePanel(found);
         impl_->blurFactoriesDirty = true;
         // The enclosing EndFrame submits geometry and retirement together.
         // Visibility/deletion can also retire a child outside a paint frame.
@@ -1935,14 +2051,10 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
         (void)RemoveIconPanel(frame, ownerKey);
         return impl_->available;
     }
-    if (!AddPanel(frame, 0.0f, blurRadius, ownerKey)) return false;
+    if (!UpdatePanel(frame, 0.0f, blurRadius, ownerKey, true, true)) return false;
     if (impl_->stagingFrame)
     {
-        auto panel = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
-            [&](const auto& value) {
-                return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                    value.ownerKey, value.frame, ownerKey, frame);
-            });
+        auto panel = impl_->FindStagedPanel(frame, ownerKey);
         panel->kind = Impl::StagedPanel::Kind::Icon;
         panel->shape = static_cast<int>(shape);
         panel->iconContentClip = contentClip
@@ -1951,10 +2063,7 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
     }
     try
     {
-        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
-            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                value.ownerKey, value.frame, ownerKey, frame);
-        });
+        auto panel = impl_->FindPanel(frame, ownerKey);
         if (panel == impl_->panels.end()) return false;
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         const auto requestedClip = contentClip
@@ -1975,12 +2084,12 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
             auto geometry = impl_->compositor.CreatePathGeometry();
             geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
             panel->customGeometry = geometry;
-            panel->clip.Geometry(geometry);
+            panel->SetClip(geometry);
             panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
             panel->iconFrame = frame;
             panel->iconContentClip = requestedClip;
         }
-        else panel->clip.Geometry(panel->customGeometry);
+        else panel->SetClip(panel->customGeometry);
         panel->regionFrame = visibleFrame;
         panel->regionCornerRadius = 0;
         return true;
@@ -1995,14 +2104,10 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
 bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
     int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey, int flagDirection)
 {
-    if (!AddPanel(frame, cornerRadius, blurRadius, ownerKey)) return false;
+    if (!UpdatePanel(frame, cornerRadius, blurRadius, ownerKey, true, shape > 1)) return false;
     if (impl_->stagingFrame)
     {
-        auto panel = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
-            [&](const auto& value) {
-                return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                    value.ownerKey, value.frame, ownerKey, frame);
-            });
+        auto panel = impl_->FindStagedPanel(frame, ownerKey);
         panel->kind = Impl::StagedPanel::Kind::LargeIcon;
         panel->shape = shape;
         panel->flagDirection = flagDirection;
@@ -2010,10 +2115,7 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
     }
     try
     {
-        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
-            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                value.ownerKey, value.frame, ownerKey, frame);
-        });
+        auto panel = impl_->FindPanel(frame, ownerKey);
         if (panel == impl_->panels.end()) return false;
         if (shape <= 1)
         {
@@ -2023,17 +2125,23 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
             panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
-        { panel->clip.Geometry(panel->customGeometry); return true; }
+        { panel->SetClip(panel->customGeometry); return true; }
         if (!impl_->genieGeometryFactory)
             winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
         const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
             D2D1::RectF(0, 0, static_cast<float>(size.cx), static_cast<float>(size.cy)), cornerRadius, flagDirection);
-        if (!mask) return false;
+        if (!mask)
+        {
+            // AddPanel used to select this ordinary clip before attempting
+            // the custom outline. Preserve that fallback on shape failure.
+            panel->SetClip(panel->smoothGeometry);
+            return false;
+        }
         winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
         auto geometry = impl_->compositor.CreatePathGeometry();
         geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
         panel->customGeometry = geometry;
-        panel->clip.Geometry(geometry);
+        panel->SetClip(geometry);
         panel->largeIconShape = shape; panel->largeIconFlagDirection = flagDirection; panel->largeIconSize = size;
         return true;
     }
@@ -2050,20 +2158,18 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
     if (!impl_->available || !ownerKey || IsRectEmpty(&projectedFrame)) return false;
     if (impl_->stagingFrame)
     {
-        auto panel = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
-            [ownerKey](const auto& value) { return value.ownerKey == ownerKey; });
+        auto panel = impl_->FindStagedPanel({}, ownerKey);
         if (panel == impl_->stagedPanels.end()) return false;
         panel->transformed = true;
         panel->transform = matrix;
         panel->projectedFrame = projectedFrame;
         return true;
     }
-    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(),
-        [ownerKey](const auto& panel) { return panel.ownerKey == ownerKey; });
+    const auto found = impl_->FindPanel({}, ownerKey);
     if (found == impl_->panels.end()) return false;
     try
     {
-        found->visual.TransformMatrix(wfn::float4x4{
+        found->SetTransform(wfn::float4x4{
             matrix._11, matrix._12, matrix._13, matrix._14,
             matrix._21, matrix._22, matrix._23, matrix._24,
             matrix._31, matrix._32, matrix._33, matrix._34,
@@ -2093,10 +2199,15 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
         return ownerKey != 0 ? panel.ownerKey == ownerKey : EqualRect(&panel.frame, &frame) != FALSE;
     };
     if (impl_->stagingFrame)
-        return std::erase_if(impl_->stagedPanels, matches) != 0;
+    {
+        const bool removed = std::erase_if(impl_->stagedPanels, matches) != 0;
+        if (removed) impl_->RebuildStagedPanelOwners();
+        return removed;
+    }
     if (!impl_->available || !impl_->root)
         return false;
-    auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(), matches);
+    auto existing = ownerKey ? impl_->FindPanel(frame, ownerKey) :
+        std::find_if(impl_->panels.begin(), impl_->panels.end(), matches);
     if (existing == impl_->panels.end())
         return false;
 
@@ -2106,7 +2217,7 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
             impl_->ClearGenieTransform();
         impl_->root.Children().Remove(existing->visual);
         existing->visual.Brush(nullptr);
-        impl_->panels.erase(existing);
+        impl_->ErasePanel(existing);
         impl_->blurFactoriesDirty = true;
         impl_->PruneUnusedBlurFactories();
         if (impl_->genieRoot)
@@ -2170,7 +2281,7 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
             impl_->genieRoot.Opacity(impl_->genieOpacity * clampedOpacity);
         }
         else
-            existing->visual.Opacity(clampedOpacity);
+            existing->SetOpacity(clampedOpacity);
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -2263,7 +2374,7 @@ void DesktopBackdropCompositor::EndFrame(
                     impl_->ClearGenieTransform();
                 children.Remove(iterator->visual);
                 iterator->visual.Brush(nullptr);
-                iterator = impl_->panels.erase(iterator);
+                iterator = impl_->ErasePanel(iterator);
                 impl_->blurFactoriesDirty = true;
             }
         }

@@ -171,6 +171,8 @@ public:
     const std::wstring& LastError() const;
 
 private:
+    bool UpdatePanel(const RECT& frame, float cornerRadius, float blurRadius,
+        std::uintptr_t ownerKey, bool smoothCorners, bool customClip);
     bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(
