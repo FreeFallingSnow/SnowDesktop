@@ -23,7 +23,7 @@ namespace perf = snowdesktop::performance;
 std::filesystem::path fixtureRoot;
 void Check(bool condition, const char* message)
 {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition) { std::cerr << "FAIL: " << message << std::endl; throw std::runtime_error(message); }
 }
 double Number(const JsonValue& value, std::string_view key)
 {

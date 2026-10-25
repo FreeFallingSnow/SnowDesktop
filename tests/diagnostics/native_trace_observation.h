@@ -93,7 +93,9 @@ public:
             perfetto::TracingInitArgs args; args.backends = perfetto::kInProcessBackend;
             perfetto::Tracing::Initialize(args);
             performance::native_trace::TrackEvent::Register();
-            perfetto::InterceptorDescriptor descriptor; descriptor.set_name("snowdesktop.test.observer");
+            // v58.2 deliberately admits only its upstream test interceptor
+            // name (plus console/etwexport), even though Register accepts a string.
+            perfetto::InterceptorDescriptor descriptor; descriptor.set_name("test_interceptor");
             NativeTraceInterceptor::Register(descriptor);
         });
         { std::lock_guard lock(NativeTraceInterceptor::mutex);
@@ -103,7 +105,7 @@ public:
         config.add_buffers()->set_size_kb(1024);
         auto* source = config.add_data_sources()->mutable_config();
         source->set_name("track_event");
-        source->mutable_interceptor_config()->set_name("snowdesktop.test.observer");
+        source->mutable_interceptor_config()->set_name("test_interceptor");
         session_ = perfetto::Tracing::NewTrace(perfetto::kInProcessBackend);
         session_->Setup(config); session_->StartBlocking();
         static std::uint64_t generation = 0;

@@ -59,6 +59,9 @@ try {
         [double]$manifest.probeQuality.droppedLinks + [double]$manifest.probeQuality.probeErrors
     $valid = $null -ne $duration -and $duration -gt 0 -and [int]$q.starts -eq 1 -and [int]$q.stops -eq 1 -and [double]$q.lossOrErrors -eq 0 -and $probeErrors -eq 0
     $quality = [ordered]@{valid=$valid;lossOrErrors=[double]$q.lossOrErrors;probeErrors=$probeErrors
+        scopeCoverage=if([int]$q.incompleteSlices -gt 0 -or [int]$q.boundarySlices -gt 0){'partial'}else{'complete_recorded'}
+        unattributedServiceDiscardedChunks=[double]$q.serviceChunksDiscarded
+        unattributedServiceDiscardedPatches=[double]$q.servicePatchesDiscarded
         incompleteSlices=[int]$q.incompleteSlices;boundarySlices=[int]$q.boundarySlices;missingCpuSlices=[int]$q.missingCpuSlices
         window='SDK capture markers; only complete contained slices; resource rates use their actual first/last sample window'}
     $scopes = @($tables.scopes | ForEach-Object {

@@ -195,6 +195,16 @@ void RunPerfettoSessionTests()
         "size-limit failure must not publish a truncated trace as success");
     Check(std::filesystem::exists(options.output.wstring() + L".partial"),
         "failed partial must remain available as evidence");
+    options.output = root / L"buffer-loss.pftrace";
+    options.bufferKiB = 64;
+    options.maximumFileBytes = 256ULL * 1024 * 1024;
+    Check(session.Start(options, error), "start intentionally overflowing native buffer");
+    for (int event = 0; event < 30000; ++event)
+        TRACE_EVENT_INSTANT("snow.lua.callback", "fixture.buffer.loss", "index", event);
+    Check(session.Stop(error), "lossy buffer can still produce a durable native artifact");
+    AssertSql(options.output,
+        "SELECT (SELECT SUM(value) FROM stats WHERE name GLOB 'traced_buf_*'"
+        " AND (severity='data_loss' OR name GLOB '*discard*' OR name GLOB '*overwrit*'))>0 AS passed;");
     std::cout << "Native Perfetto fixture passed: " << root.string() << '\n';
     // Only this fixture's individually named generated files are removed.
     for (const auto& item : std::filesystem::directory_iterator(root))
