@@ -512,26 +512,6 @@
                 app.dragSession_.End();
             }
 
-            // The previous release route converted a drag back onto its source
-            // into a click. Double-click launch mode makes that faulty route
-            // observable as a pending click, without launching an application.
-            app.lastMousePoint_ = first;
-            auto* self = docks[0]->GetSlots().front()->GetItem();
-            app.dragSession_.Begin(docks[0], {self}, app.BuildDragSourceList({self}, docks[0]), first, first);
-            app.mouseDown_ = true; app.mouseDownPoint_ = first;
-            app.dockPressedContainer_ = docks[0]; app.dockPressedEntry_ = 0;
-            app.dockPressedWindowAction_ = snowdesktop::dock_window_rules::DockClickAction::Launch;
-            app.dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
-            const bool singleClick = app.dockSettings_.singleClickLaunchItems;
-            app.dockSettings_.singleClickLaunchItems = false;
-            check(!app.HandleDockClickRelease(first) && app.dragSession_.IsActive(),
-                "an active drag must never enter Dock click execution even with stale pressed state");
-            app.OnLeftButtonUpAt(0, first, false);
-            check(!app.dragSession_.HasContext() && app.dockPendingDoubleClickEntry_ == static_cast<size_t>(-1) &&
-                app.dockEntries_.size() == 3 && app.dockEntries_.front().reference == app.items_.front().layoutKey,
-                "the actual button-up route must end a self drop without arming a click or changing Dock order");
-            app.dockSettings_.singleClickLaunchItems = singleClick;
-
             for (const bool reconcile : {false, true})
             {
                 const RECT base = docks[0]->GetSlots().front()->GetBounds();
@@ -563,6 +543,30 @@
                 app.shellPopupMenuLayerDepth_ = 0;
             }
         }
+        // The real release may replace the complete Dock runtime tree. Run it
+        // after all rendering/menu scenes, and never reuse the fixture's old
+        // Dock/Slot pointers afterwards. Double-click mode exposes an unwanted
+        // click as pending state without launching an application.
+        const POINT selfPoint = point(0, 0);
+        app.lastMousePoint_ = selfPoint;
+        auto* self = docks[0]->GetSlots().front()->GetItem();
+        app.dragSession_.Begin(docks[0], {self}, app.BuildDragSourceList({self}, docks[0]), selfPoint, selfPoint);
+        app.mouseDown_ = true; app.mouseDownPoint_ = selfPoint;
+        app.dockPressedContainer_ = docks[0]; app.dockPressedEntry_ = 0;
+        app.dockPressedWindowAction_ = snowdesktop::dock_window_rules::DockClickAction::Launch;
+        app.dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+        const bool singleClick = app.dockSettings_.singleClickLaunchItems;
+        app.dockSettings_.singleClickLaunchItems = false;
+        check(!app.HandleDockClickRelease(selfPoint) && app.dragSession_.IsActive(),
+            "an active drag must never enter Dock click execution even with stale pressed state");
+        // Live window discovery is an independent maintenance boundary, not
+        // part of this private model's click/drop contract.
+        app.dockRunningWindowsRefreshTick_ = GetTickCount() | 1u;
+        app.OnLeftButtonUpAt(0, selfPoint, false);
+        check(!app.dragSession_.HasContext() && app.dockPendingDoubleClickEntry_ == static_cast<size_t>(-1) &&
+            app.dockEntries_.size() == 3 && app.dockEntries_.front().reference == app.items_.front().layoutKey,
+            "the actual button-up route must end a self drop without arming a click or changing Dock order");
+        app.dockSettings_.singleClickLaunchItems = singleClick;
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
         app.persistentDockHosts_.clear(); app.containers_.clear();
