@@ -5,6 +5,7 @@
 #include <string>
 
 void RunPerformanceCaptureTests();
+void RunPerfettoSessionTests();
 int RunPerformanceControlFixture();
 int RunPerformanceOverheadBenchmark(const char* directory);
 
@@ -72,6 +73,7 @@ int main(int argc, char** argv)
         return RunPerformanceControlFixture();
     TestLevelNormalizationAndFiltering();
     TestBoundedHistory();
+    RunPerfettoSessionTests();
     RunPerformanceCaptureTests();
     std::cout << "widget runtime diagnostics tests passed\n";
     return 0;
