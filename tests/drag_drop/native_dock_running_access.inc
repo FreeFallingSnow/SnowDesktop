@@ -14,7 +14,8 @@
         }
     }
     static std::weak_ptr<void> QueueNativeRunningDockPin(DesktopApp& app,
-        const std::filesystem::path& executable, bool matched, bool mapping, bool retired, bool explorer)
+        const std::filesystem::path& executable, bool matched, bool mapping, bool retired, bool explorer,
+        bool explorerFixed = false, bool folderKnown = true)
     {
         DockRunningAppInfo running;
         running.identityKey = L"fixture-running-application";
@@ -28,28 +29,34 @@
             running.executablePath = (std::filesystem::path(directory.data()) / L"explorer.exe").wstring();
         }
         running.presence.SetVisible(true, 0, false);
-        if (!retired) app.dockUnpinnedRunningApps_.push_back(running);
+        if (!retired && std::none_of(app.dockUnpinnedRunningApps_.begin(), app.dockUnpinnedRunningApps_.end(),
+                [&](const auto& value) { return value.identityKey == running.identityKey; }))
+            app.dockUnpinnedRunningApps_.push_back(running);
         auto state = std::make_shared<DesktopApp::DockRunningDragState>();
         state->running = running; state->resolved = true; state->existingDesktopItem = matched; state->explorer = explorer;
         state->serial = ++app.dockRunningDragSerial_;
         state->application = std::make_shared<DesktopApp::DockRunningPinTarget>();
-        auto nativePath = executable; nativePath.make_preferred();
+        auto nativePath = explorerFixed ? std::filesystem::path(running.executablePath) : executable;
+        nativePath.make_preferred();
         state->application->entry.absolutePidl.reset(ILCreateFromPathW(nativePath.c_str()));
         if (!state->application->entry.absolutePidl.get()) throw std::runtime_error("real running pin application target PIDL required");
-        state->application->entry.parsingName = executable.wstring();
+        state->application->entry.parsingName = nativePath.wstring();
         state->application->entry.name = L"Resolved running app";
-        state->application->identity = app.ReadDockAppIdentity(executable.wstring());
-        if (explorer)
+        state->application->identity = app.ReadDockAppIdentity(nativePath.wstring());
+        if (explorer && !explorerFixed)
         {
-            state->folder = state->application;
-            state->folder->folderPath = executable.wstring();
+            if (folderKnown)
+            {
+                state->folder = state->application;
+                state->folder->folderPath = executable.wstring();
+            }
             state->application.reset();
         }
         std::weak_ptr<void> finished = state;
         // CommitDockRunningDrag has already ended its input gesture before
         // this production queue boundary. Retain real lookup-result dispatch,
         // live membership checks, pin commit, file creation and storage.
-        app.QueueDockRunningPin(std::move(state), {explorer ? snowdesktop::dock_running_drag::Area::Files
+        app.QueueDockRunningPin(std::move(state), {explorer && !explorerFixed ? snowdesktop::dock_running_drag::Area::Files
             : snowdesktop::dock_running_drag::Area::Fixed, 0}, mapping ? MK_CONTROL : 0, 0);
         return finished;
     }
