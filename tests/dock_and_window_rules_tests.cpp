@@ -7625,14 +7625,12 @@ int main(int argc, char** argv)
     Check(singleFocusVisual.right <= singleNeighborVisual.left,
         "fixed gentle single hover must make room without enlarging its neighbor");
     Check(!magnification::ShouldSuppressMagnification(
-              false, false, false) &&
+              false, false) &&
             magnification::ShouldSuppressMagnification(
-              true, false, false) &&
+              true, false) &&
             magnification::ShouldSuppressMagnification(
-              false, true, false) &&
-            magnification::ShouldSuppressMagnification(
-              false, false, true),
-        "Dock magnification must be disabled for item drags and widget move or resize gestures");
+              false, true),
+        "Dock magnification remains available except during widget move or resize gestures");
     Check(std::abs(
             magnification::ScaleForAxisDistance(0, 76) -
             magnification::kFocusScale) < 0.001f,

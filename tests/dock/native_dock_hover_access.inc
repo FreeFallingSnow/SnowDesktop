@@ -379,6 +379,93 @@
             reset(); move(first, false, false, false);
             app.dockSettings_.keepWhenDesktopHidden = true;
             reset(); move(first, false, false, true);
+
+            // Starting and releasing a sort must retain the existing hover,
+            // including a half-entered timeline. Exercise the real Dock model,
+            // visual hit test and D2D insertion renderer without desktop input.
+            for (const bool external : {false, true})
+            {
+                app.desktopIconsHidden_ = false;
+                reset();
+                app.lastMousePoint_ = first;
+                const RECT base = docks[0]->GetSlots().front()->GetBounds();
+                (void)docks[0]->GetElementVisualRect(base, first);
+                auto hovering = docks[0]->CapturePresentationState();
+                const double hoverNow = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (effect == 1)
+                {
+                    hovering.single = {};
+                    hovering.single.SetTarget(base, hoverNow - 40, 1.0,
+                        position == DockPosition::Left || position == DockPosition::Right ? first.y : first.x);
+                    hovering.single.Advance(hoverNow);
+                }
+                else if (effect == 2)
+                {
+                    hovering.entry = {};
+                    hovering.entry.SetHovered(true, hoverNow - 80, 1.0);
+                    hovering.entry.Advance(hoverNow);
+                }
+                check(docks[0]->RestorePresentationState(hovering), "restore partial pre-drag hover");
+                const RECT beforeDrag = docks[0]->GetElementVisualRect(base, first);
+                auto* source = docks[0]->GetSlots()[2]->GetItem();
+                app.dragSession_.Begin(external ? nullptr : docks[0],
+                    external ? std::vector<Item*>{} : std::vector<Item*>{source}, {}, first, first);
+                const RECT duringDrag = docks[0]->GetElementVisualRect(base, first);
+                check(EqualRect(&beforeDrag, &duringDrag) &&
+                    docks[0]->IsMagnificationAnimating() == (effect != 0),
+                    "internal and external drag entry must preserve partial hover geometry and its timeline");
+                check(IsRectEmpty(&docks[0]->GetHoveredTitleBounds(first)),
+                    "drag hover must not put a title over the insertion feedback");
+                docks[0]->AdvanceMagnificationAnimation(hoverNow + 1000);
+                const RECT expanded = docks[0]->GetElementVisualRect(base, first);
+                check(effect == 0 ? EqualRect(&base, &expanded) != FALSE :
+                    docks[0]->GetElementIconSize(base, expanded) > docks[0]->GetElementIconSize(base, base),
+                    "stationary drag hover must finish the configured growth effect");
+                POINT tip = first;
+                if (effect != 0)
+                {
+                    switch (position)
+                    {
+                    case DockPosition::Bottom: tip.y = base.top - 1; break;
+                    case DockPosition::Top: tip.y = base.bottom; break;
+                    case DockPosition::Left: tip.x = base.right; break;
+                    case DockPosition::Right: tip.x = base.left - 1; break;
+                    }
+                }
+                app.lastMousePoint_ = tip;
+                Slot* hit = nullptr;
+                const auto region = docks[0]->HitTestDrag(tip, hit);
+                check(hit == docks[0]->GetSlots().front().get() &&
+                    (region == HitRegion::SortBefore || region == HitRegion::SortAfter),
+                    "drag hit testing must accept the visible grown icon outside its base cell");
+
+                referenceContext->SetTarget(complete.Get());
+                referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                docks[0]->DrawInsertionPreview(referenceContext.Get(), 1);
+                check(SUCCEEDED(referenceContext->EndDraw()), "render the real magnified insertion line");
+                referenceContext->SetTarget(nullptr);
+                const auto indicator = read(referenceContext.Get(), complete.Get());
+                const RECT next = docks[0]->GetElementVisualRect(docks[0]->GetSlots()[1]->GetBounds(), tip);
+                const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+                const LONG axis = vertical ? next.top : next.left;
+                const POINT line = vertical ? POINT{first.x, axis} : POINT{axis, first.y};
+                check(line.x >= 0 && line.y >= 0 && line.x < static_cast<LONG>(width) && line.y < static_cast<LONG>(height) &&
+                    indicator[static_cast<size_t>(line.y) * width + static_cast<size_t>(line.x)] != 0,
+                    "the blue insertion line must follow the animated next-slot edge rather than its original pitch");
+                const RECT beforeRelease = docks[0]->GetElementVisualRect(base, tip);
+                app.dragSession_.End();
+                const RECT released = docks[0]->GetElementVisualRect(base, tip);
+                check(EqualRect(&beforeRelease, &released), "release must not restart or collapse hover growth");
+                app.lastMousePoint_ = outside;
+                (void)docks[0]->GetElementVisualRect(base, outside);
+                app.lastMousePoint_ = first;
+                app.dragSession_.Begin(nullptr, {}, {}, first, first);
+                const RECT reentered = docks[0]->GetElementVisualRect(base, first);
+                check(effect == 0 || docks[0]->IsMagnificationAnimating() ||
+                    docks[0]->GetElementIconSize(base, reentered) > docks[0]->GetElementIconSize(base, base),
+                    "re-entering during a drag must resume the configured hover animation");
+                app.dragSession_.End();
+            }
         }
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;

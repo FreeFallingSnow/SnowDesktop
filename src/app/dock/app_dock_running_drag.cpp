@@ -207,7 +207,9 @@ std::wstring DesktopApp::GetDockRunningDragHint() const
 void DesktopApp::DrawDockRunningDragPreview(ID2D1DeviceContext* context, DockContainer* dock)
 {
     if (!context || !dock || !dockRunningDrag_ || dragSession_.TargetContainer() != dock) return;
-    const auto& target = dockRunningDrag_->target;
+    if (dockRunningDrag_->target.area == drag::Area::None) return;
+    // Re-read animated geometry even when the pointer is stationary.
+    const auto target = dock->GetRunningDragTarget(dragSession_.CurrentPoint());
     if (target.area == drag::Area::None) return;
     const RECT bounds = dock->GetBounds();
     ComPtr<ID2D1SolidColorBrush> brush;

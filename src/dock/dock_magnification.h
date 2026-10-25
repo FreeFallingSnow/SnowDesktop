@@ -38,15 +38,13 @@ inline float ScaleGrowthMultiplier(float focusScale) noexcept
 }
 
 inline constexpr bool ShouldSuppressMagnification(
-    bool itemDragActive,
     bool widgetMoveActive,
     bool widgetResizeActive,
     bool inputAvailable = true)
 {
-    // The same semantic hover drives title placement. Disabling the optional
-    // growth effect, or merging its chrome, must not disable that hover.
-    return !inputAvailable || itemDragActive ||
-        widgetMoveActive ||
+    // Item drags retain the same hover timeline as passive pointer motion.
+    // Titles have a separate drag gate so they do not obscure drop feedback.
+    return !inputAvailable || widgetMoveActive ||
         widgetResizeActive;
 }
 
