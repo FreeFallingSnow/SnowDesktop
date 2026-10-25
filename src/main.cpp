@@ -335,6 +335,23 @@ static bool LaunchRestartAfterProcess(DWORD processId)
         SetLastError(ERROR_FILE_NOT_FOUND);
         return false;
     }
+    const HRESULT initialized = CoInitializeEx(nullptr,
+        COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
+    {
+        SetLastError(static_cast<DWORD>(initialized));
+        return false;
+    }
+    struct ComScope
+    {
+        bool uninitialize;
+        ~ComScope()
+        {
+            const DWORD error = GetLastError();
+            if (uninitialize) CoUninitialize();
+            SetLastError(error);
+        }
+    } com{SUCCEEDED(initialized)};
     wchar_t parameters[64]{};
     swprintf_s(parameters, L"--wait-for-pid=%lu", processId);
     SHELLEXECUTEINFOW launch{sizeof(launch)};
@@ -565,8 +582,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         if (!snowdesktop::debug_profile::Write(paths, config, recoveryError) ||
             !InitializeDebugProfile(recoveryError))
         {
-            MessageBoxW(nullptr, _LW("settings.debug.profile.recoveryFailed"), L"SnowDesktop", MB_OK | MB_ICONERROR);
-            return ERROR_WRITE_FAULT;
+            if (!ConfirmStartupRecovery("settings.debug.profile.recoveryFailed", recoveryError))
+                return ERROR_CANCELLED;
+            // A failed persistent recovery must not force the optional debug
+            // environment on this run. Preserve its files and retry next time.
+            auto& profile = snowdesktop::debug_profile::runtimeSession;
+            profile.configuration.enabled = false;
+            profile.initialized = false;
+            WriteDiagnosticLogEntry(L"Debug-profile recovery was not saved; continuing in normal mode for this process",
+                DiagnosticLogLevel::Warning);
         }
     }
 

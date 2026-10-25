@@ -314,7 +314,8 @@ void TestRealProcessExit(DWORD exitCode, bool preventRestart,
                 launchCalled = predecessor == GetCurrentProcessId();
                 return launchSucceeds;
             });
-    Expect(result.error == (expectedAttempt && !launchSucceeds ? ERROR_GEN_FAILURE : ERROR_SUCCESS),
+    const DWORD expectedError = expectedAttempt && !launchSucceeds ? ERROR_GEN_FAILURE : ERROR_SUCCESS;
+    Expect(result.error == expectedError,
         "watchdog preserves successful observation and reports failed restart launch");
     Expect(result.exitCode == exitCode,
         "watchdog preserves the child process exit code");
@@ -359,7 +360,8 @@ void TestRecoveryFailureDecisions()
         const int expectedLaunches = scenario == 0 ? 0 : scenario == 3 ? 2 : 1;
         Expect(choices == 1 && launches == expectedLaunches && result.restartLaunched == (scenario == 1 || scenario == 3),
             "crash recovery offers a real continue/cancel choice and never retries without consent");
-        Expect(result.error == (scenario == 2 ? ERROR_ACCESS_DENIED : ERROR_SUCCESS),
+        const DWORD expectedError = scenario == 2 ? ERROR_ACCESS_DENIED : ERROR_SUCCESS;
+        Expect(result.error == expectedError,
             "recovery preserves the launch error or records a successful explicit continuation");
     }
 }

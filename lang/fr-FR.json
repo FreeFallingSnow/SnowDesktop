@@ -75,7 +75,7 @@
   "settings.contextMenu.folderBackground": "Arrière-plan du dossier",
   "settings.contextMenu.desktop": "Bureau",
   "settings.debug.profile.recover": "L’environnement de débogage n’a pas pu démarrer. Choisissez « Démarrer quand même » pour rétablir le mode normal. Vos données de débogage seront conservées.",
-  "settings.debug.profile.recoveryFailed": "Impossible d’enregistrer les paramètres de récupération.",
+  "settings.debug.profile.recoveryFailed": "Impossible d’enregistrer les paramètres du mode normal. Choisissez « Démarrer quand même » pour utiliser le mode normal uniquement cette fois. Les données de débogage seront conservées ; ce message pourra réapparaître au prochain démarrage.",
   "settings.debug.profile.title": "Environnement de débogage",
   "settings.debug.profile.enabled": "Mode débogage",
   "settings.debug.profile.description": "Redémarre pour changer de données indépendantes et mémorise le mode. Les actions sur les fichiers et les icônes système accèdent aux fichiers réels et à Windows.",

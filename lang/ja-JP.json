@@ -75,7 +75,7 @@
   "settings.contextMenu.folderBackground": "フォルダーの空白部分",
   "settings.contextMenu.desktop": "デスクトップ",
   "settings.debug.profile.recover": "デバッグ環境を起動できませんでした。「このまま起動」を選ぶと通常モードに戻ります。デバッグデータは保持されます。",
-  "settings.debug.profile.recoveryFailed": "復旧設定を保存できませんでした。",
+  "settings.debug.profile.recoveryFailed": "通常モードの設定を保存できませんでした。「そのまま起動」を選ぶと、今回のみ通常モードで起動します。デバッグデータは保持され、次回の起動時にこのメッセージが再度表示される場合があります。",
   "settings.debug.profile.title": "デバッグ環境",
   "settings.debug.profile.enabled": "デバッグモード",
   "settings.debug.profile.description": "再起動して独立したデータに切り替え、モードを記憶します。ファイル操作とシステムアイコンは実際のファイルと Windows にアクセスします。",

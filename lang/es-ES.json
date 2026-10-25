@@ -75,7 +75,7 @@
   "settings.contextMenu.folderBackground": "Fondo de carpeta",
   "settings.contextMenu.desktop": "Escritorio",
   "settings.debug.profile.recover": "No se ha podido iniciar el entorno de depuración. Selecciona «Iniciar de todos modos» para restaurar el modo normal. Se conservarán tus datos de depuración.",
-  "settings.debug.profile.recoveryFailed": "No se pudo guardar la configuración de recuperación.",
+  "settings.debug.profile.recoveryFailed": "No se ha podido guardar la configuración del modo normal. Elige «Iniciar de todos modos» para usar el modo normal solo esta vez. Los datos de depuración se conservarán; este aviso puede volver a aparecer en el próximo inicio.",
   "settings.debug.profile.title": "Entorno de depuración",
   "settings.debug.profile.enabled": "Modo de depuración",
   "settings.debug.profile.description": "Reinicia para cambiar entre datos independientes y recuerda el modo. Las acciones de archivos y los iconos del sistema acceden a archivos reales y a Windows.",

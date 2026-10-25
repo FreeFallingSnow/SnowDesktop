@@ -75,7 +75,7 @@
   "settings.contextMenu.folderBackground": "Ordnerhintergrund",
   "settings.contextMenu.desktop": "Desktop",
   "settings.debug.profile.recover": "Die Debug-Umgebung konnte nicht gestartet werden. Wählen Sie „Trotzdem starten“, um den normalen Modus wiederherzustellen. Ihre Debug-Daten bleiben erhalten.",
-  "settings.debug.profile.recoveryFailed": "Die Wiederherstellungseinstellungen konnten nicht gespeichert werden.",
+  "settings.debug.profile.recoveryFailed": "Die Einstellungen für den normalen Modus konnten nicht gespeichert werden. Mit „Trotzdem starten“ wird nur für diesen Start der normale Modus verwendet. Die Debug-Daten bleiben erhalten; beim nächsten Start kann diese Meldung erneut erscheinen.",
   "settings.debug.profile.title": "Debug-Umgebung",
   "settings.debug.profile.enabled": "Debug-Modus",
   "settings.debug.profile.description": "Neustart zum Wechsel zwischen getrennten Daten. Der Modus wird gespeichert. Dateiaktionen und Systemsymbole greifen weiterhin auf echte Dateien und Windows zu.",
