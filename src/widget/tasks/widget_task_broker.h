@@ -127,7 +127,6 @@ private:
     std::unordered_map<std::uint64_t, Task> tasks_;
     std::vector<TaskBrokerAction> actions_;
     std::vector<TaskCompletion> completions_;
-    std::uint64_t nextId_ = 0;
     bool shuttingDown_ = false;
 };
 }

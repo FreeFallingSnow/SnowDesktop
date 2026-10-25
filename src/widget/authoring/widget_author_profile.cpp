@@ -83,14 +83,18 @@ struct WidgetAuthorProfile::Impl
     bool Pump(DWORD timeout)
     {
         const auto timer = scheduler.WaitHandle();
-        MsgWaitForMultipleObjects(1, &timer, FALSE, timeout, QS_ALLINPUT);
+        const auto wake = MsgWaitForMultipleObjects(1, &timer, FALSE, timeout, QS_ALLINPUT);
+        if (wake == WAIT_FAILED) return false;
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
         {
             if (message.message == WM_QUIT) return false;
             TranslateMessage(&message); DispatchMessageW(&message);
         }
-        if (WaitForSingleObject(timer, 0) == WAIT_OBJECT_0) scheduler.DispatchDue();
+        // The scheduler timer auto-resets when the multi-object wait succeeds.
+        // Keep that result instead of consuming and then losing the same signal.
+        if (wake == WAIT_OBJECT_0 || WaitForSingleObject(timer, 0) == WAIT_OBJECT_0)
+            scheduler.DispatchDue();
         engine.TickRuntime();
         return true;
     }

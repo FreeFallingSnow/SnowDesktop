@@ -66,6 +66,9 @@ return widget.define({
         const auto& profile = metadata.at("performance");
         require(metadata.at("ok").boolean && profile.at("processRole").str() == "widget-preview" &&
             profile.at("drawCalls").number > 0, "evaluation records actual isolated drawing and process role");
+        if (std::wstring_view(scenario) == L"redraw")
+            require(profile.at("drawCalls").number > 2,
+                "redraw must continue after the initial frame; scheduler timer signals must not be lost");
         const auto manifest = ReadJson(output / L"session.json");
         require(manifest.at("completion").boolean && manifest.at("processRole").str() == "widget-preview" &&
             manifest.at("finalWidgetSampleConfirmed").boolean, "native session is complete with a real final engine resource sample");

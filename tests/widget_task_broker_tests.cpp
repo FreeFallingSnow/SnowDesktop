@@ -329,6 +329,42 @@ void TestInstanceAndShutdownCleanup()
         "executor acknowledgements must release all canceled task records");
 }
 
+void TestProcessUniqueTaskIds()
+{
+    WidgetTaskBroker first, second;
+    std::string error;
+    Check(first.RegisterTask({"search", {}, false, 2}, error) &&
+            second.RegisterTask({"search", {}, false, 2}, error),
+        "separate brokers register independent task descriptors");
+    TaskStartOptions options;
+    options.ownerToken = 901;
+    const auto firstTask = first.Start("widget-a", "search", options);
+    options.ownerToken = 902;
+    const auto secondTask = second.Start("widget-b", "search", options);
+    Check(firstTask && secondTask && firstTask.id != secondTask.id,
+        "concurrent brokers must not alias task identities or worker trace origins");
+    Check(!second.Complete(firstTask.id, true) && second.Snapshot(secondTask.id),
+        "a completion for another broker cannot consume its live task");
+    std::uint64_t retiredId = 0;
+    {
+        WidgetTaskBroker retired;
+        Check(retired.RegisterTask({"search", {}, false, 2}, error),
+            "temporary broker registers its task");
+        const auto task = retired.Start("retired-widget", "search", options);
+        Check(static_cast<bool>(task), "temporary broker starts a task");
+        retiredId = task.id;
+        retired.Shutdown();
+    }
+    WidgetTaskBroker recreated;
+    Check(recreated.RegisterTask({"search", {}, false, 2}, error),
+        "recreated broker registers its task");
+    const auto replacement = recreated.Start("replacement-widget", "search", options);
+    Check(replacement && replacement.id != retiredId &&
+            replacement.id != firstTask.id && replacement.id != secondTask.id &&
+            !recreated.Complete(retiredId, true),
+        "late work from a destroyed broker cannot alias replacement task identity");
+}
+
 void TestTrustedGestureScope()
 {
     Check(IsTrustedWidgetGestureCallback("onClick") &&
@@ -366,6 +402,7 @@ int main()
     TestCancellationAndRevocation();
     TestApplicationTaskGesturePolicy();
     TestInstanceAndShutdownCleanup();
+    TestProcessUniqueTaskIds();
     TestTrustedGestureScope();
     std::cout << "widget task broker tests passed\n";
     return 0;
