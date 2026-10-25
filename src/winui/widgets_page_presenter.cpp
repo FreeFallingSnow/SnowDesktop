@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cwchar>
 #include <cwctype>
 #include <limits>
@@ -123,6 +124,37 @@ void SetCenteredButtonText(const muxc::ContentControl& button, std::wstring text
     label.TextWrapping(mux::TextWrapping::Wrap);
     label.TextAlignment(mux::TextAlignment::Center);
     button.Content(label);
+}
+
+void UpdatePackageInlineMetrics(const muxc::RichTextBlock& row)
+{
+    if (row.Blocks().Size() != 1) return;
+    const auto paragraph = row.Blocks().GetAt(0).as<muxd::Paragraph>();
+    double height = 0.0, descent = 0.0;
+    for (const auto& element : paragraph.Inlines())
+    {
+        const auto container = element.try_as<muxd::InlineUIContainer>();
+        if (!container) continue;
+        const auto tag = container.Child().as<muxc::Border>();
+        if (tag.ActualHeight() <= 0.0) continue;
+        const auto label = tag.Child().as<muxc::TextBlock>();
+        const auto baseline = label.TransformToVisual(tag).TransformPoint(
+            {0.0f, static_cast<float>(label.BaselineOffset())});
+        const double belowBaseline = std::max(0.0, tag.ActualHeight() - baseline.Y);
+        height = std::max(height, tag.ActualHeight());
+        descent = std::max(descent, belowBaseline);
+        if (std::abs(tag.Margin().Bottom + belowBaseline) > 0.05)
+            tag.Margin({0.0, 0.0, 6.0, -belowBaseline});
+    }
+    // Use attached, arranged font metrics. An unattached label can still use
+    // fallback metrics and under-report the final badge height and descent.
+    const double lineHeight = height > 0.0 ? height + 4.0 : 0.0;
+    const auto strategy = height > 0.0 ? mux::LineStackingStrategy::BaselineToBaseline
+                                    : mux::LineStackingStrategy::MaxHeight;
+    if (row.LineStackingStrategy() != strategy) row.LineStackingStrategy(strategy);
+    if (std::abs(row.LineHeight() - lineHeight) > 0.05) row.LineHeight(lineHeight);
+    if (std::abs(row.Padding().Bottom - descent) > 0.05)
+        row.Padding({0.0, 0.0, 0.0, descent});
 }
 
 void ApplyAccentButtonStyle(const muxc::Button& button) noexcept
@@ -1308,14 +1340,7 @@ struct WidgetsPagePresenter::Impl
             packages.begin(), packages.end(), IsIncludedPackage));
     }
 
-    struct PackageTag
-    {
-        muxc::Border element;
-        double height;
-        double descent;
-    };
-
-    [[nodiscard]] PackageTag MakePackageTag(
+    [[nodiscard]] muxc::Border MakePackageTag(
         std::wstring text) const
     {
         auto tag = mux::Markup::XamlReader::Load(LR"(<Border
@@ -1333,18 +1358,10 @@ struct WidgetsPagePresenter::Impl
         label.FontSize(12.0);
         label.TextWrapping(mux::TextWrapping::NoWrap);
         tag.Child(label);
-
-        // InlineUIContainer uses the child's bottom as its baseline. Let the
-        // badge extend below it so its label shares the description baseline.
-        const float unbounded = std::numeric_limits<float>::infinity();
-        tag.Measure({unbounded, unbounded});
-        const double height = tag.DesiredSize().Height;
-        const double belowBaseline = height -
-            tag.BorderThickness().Top - tag.Padding().Top - label.BaselineOffset();
-        tag.Margin({0.0, 0.0, 6.0, -std::max(0.0, belowBaseline)});
+        tag.Margin({0.0, 0.0, 6.0, 0.0});
 
         SetAutomation(tag, label.Text());
-        return {tag, height, std::max(0.0, belowBaseline)};
+        return tag;
     }
 
     void PopulatePackageDescription(
@@ -1352,14 +1369,16 @@ struct WidgetsPagePresenter::Impl
         const InstalledWidgetPackageSnapshot& package) const
     {
         muxd::Paragraph paragraph;
-        double tagHeight = 0.0;
-        double tagDescent = 0.0;
+        const auto weakRow = winrt::make_weak(descriptionRow);
         const auto appendTag = [&](std::wstring text) {
             const auto tag = MakePackageTag(std::move(text));
-            tagHeight = std::max(tagHeight, tag.height);
-            tagDescent = std::max(tagDescent, tag.descent);
+            const auto refreshMetrics = [weakRow](const auto&, const auto&) {
+                if (const auto current = weakRow.get()) UpdatePackageInlineMetrics(current);
+            };
+            tag.Loaded(refreshMetrics);
+            tag.SizeChanged(refreshMetrics);
             muxd::InlineUIContainer container;
-            container.Child(tag.element);
+            container.Child(tag);
             paragraph.Inlines().Append(container);
         };
         if (IsInstalledPackage(package))
@@ -1387,13 +1406,7 @@ struct WidgetsPagePresenter::Impl
         }
         descriptionRow.Blocks().Clear();
         descriptionRow.Blocks().Append(paragraph);
-        // The baseline adjustment above must not remove the badge's descent
-        // from the line box: reserve it between lines and after the last line.
-        descriptionRow.LineStackingStrategy(tagHeight > 0.0
-                ? mux::LineStackingStrategy::BaselineToBaseline
-                : mux::LineStackingStrategy::MaxHeight);
-        descriptionRow.LineHeight(tagHeight > 0.0 ? tagHeight + 4.0 : 0.0);
-        descriptionRow.Padding({0.0, 0.0, 0.0, tagDescent});
+        UpdatePackageInlineMetrics(descriptionRow);
         descriptionRow.Visibility(paragraph.Inlines().Size() == 0
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);

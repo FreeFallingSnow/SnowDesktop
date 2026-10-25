@@ -144,7 +144,7 @@ void InspectPackageInlineLayout(const x::FrameworkElement& root,
         Settle(root);
     }
     std::ofstream metrics(output / L"package-inline-layout.tsv");
-    metrics << "row\ttag_bottom\trow_height\tbaseline_error\tsecond_line_top\tsecond_line_x\tgap\n";
+    metrics << "row\ttag_bottom\trow_height\tbaseline_error\tsecond_line_top\tsecond_line_x\tgap\tline_height\tpadding_bottom\n";
     bool foundWrappedDescription = false;
     for (std::size_t index = 0; index < rows.size(); ++index)
     {
@@ -190,7 +190,8 @@ void InspectPackageInlineLayout(const x::FrameworkElement& root,
         }
         metrics << index << '\t' << tagBottom << '\t' << row.ActualHeight() << '\t'
             << baselineError << '\t' << secondTop << '\t' << secondX << '\t'
-            << (secondTop < 0.0 ? -1.0 : secondTop - tagBottom) << '\n';
+            << (secondTop < 0.0 ? -1.0 : secondTop - tagBottom) << '\t'
+            << row.LineHeight() << '\t' << row.Padding().Bottom << '\n';
         metrics.flush();
         if (baselineError > 0.75) throw std::runtime_error("package tag and description baselines do not align");
         if (tagBottom > row.ActualHeight() + 0.75) throw std::runtime_error("package tag exceeds its line box");
