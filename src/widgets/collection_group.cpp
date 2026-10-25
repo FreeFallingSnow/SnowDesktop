@@ -948,13 +948,16 @@ HitRegion CollectionGroup::HitTestDrag(
     if (tabIndex != static_cast<size_t>(-1))
     {
         RECT tab = CollectionGroupTabRect(this, tabIndex);
+        // Capture the previous hit before rebinding the shared transient slot.
+        const auto region = ownLabels
+            ? snowdesktop::group_tab_drag_preview::OwnSortRegion(*this, app_->dragSession_,
+                GetVisibleCollectionIds(), tabIndex, CollectionGroupTabLayoutRect(this, tabIndex), pt, Cu(4.0f),
+                [this](size_t i) { return CollectionGroupTabLayoutRect(this, i); })
+            : (pt.x < tab.left + (tab.right - tab.left) / 2 ? HitRegion::SortBefore : HitRegion::SortAfter);
         outSlot = BindTransientDragSlot(
             tabDropSlot_, this, tab, tabIndex,
             SlotFeedbackRole::CollectionGroupTab);
-        return pt.x < tab.left +
-                (tab.right - tab.left) / 2
-            ? HitRegion::SortBefore
-            : HitRegion::SortAfter;
+        return region;
     }
 
     if (memberInsertion)

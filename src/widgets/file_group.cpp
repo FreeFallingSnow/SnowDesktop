@@ -1687,6 +1687,11 @@ HitRegion FileGroup::HitTestDrag(
     if (sourceTab != static_cast<size_t>(-1))
     {
         RECT tab = FileGroupSourceTabRect(this, sourceTab);
+        const auto region = ownLabels
+            ? snowdesktop::group_tab_drag_preview::OwnSortRegion(*this, app_->dragSession_,
+                GetVisibleSourceIds(), sourceTab, FileGroupSourceTabLayoutRect(this, sourceTab), pt, Cu(4.0f),
+                [this](size_t i) { return FileGroupSourceTabLayoutRect(this, i); })
+            : (pt.x < tab.left + (tab.right - tab.left) / 2 ? HitRegion::SortBefore : HitRegion::SortAfter);
         outSlot = BindTransientDragSlot(
             sourceTabDropSlot_, this, tab, sourceTab,
             SlotFeedbackRole::FileGroupSourceTab);
@@ -1694,10 +1699,7 @@ HitRegion FileGroup::HitTestDrag(
         dropPreviewIndex_ = sourceTab;
         dropPreviewValid_ = true;
         dropPreviewSourceTab_ = true;
-        return pt.x < tab.left +
-                (tab.right - tab.left) / 2
-            ? HitRegion::SortBefore
-            : HitRegion::SortAfter;
+        return region;
     }
 
     if (memberInsertion)

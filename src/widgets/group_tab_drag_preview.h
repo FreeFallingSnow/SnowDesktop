@@ -72,6 +72,46 @@ inline bool CarriesTabs(const DragSourceList& source)
     });
 }
 
+// Reordering an existing block should react before the old insertion-line
+// midpoint. Keep external insertion at its existing midpoint and use original
+// geometry here so a displaced neighbour cannot move the trigger back again.
+template<class TabRect>
+HitRegion OwnSortRegion(ScrollingItemWidget& view, const DragSession& session,
+    const std::vector<std::wstring>& ids, size_t targetIndex, RECT target, POINT point,
+    int reversalBuffer, TabRect tabRect)
+{
+    const LONG width = target.right - target.left;
+    const auto midpoint = point.x < target.left + width / 2 ? HitRegion::SortBefore : HitRegion::SortAfter;
+    const auto& source = session.SourceList();
+    if (width <= 0 || !CarriesTabs(source)) return midpoint;
+    size_t anchor = static_cast<size_t>(-1), primary = static_cast<size_t>(-1);
+    for (const auto& entry : source.entries)
+    {
+        const auto& id = entry.fromDock ? entry.dockReference : entry.widgetId;
+        const auto found = std::find(ids.begin(), ids.end(), id);
+        if (found == ids.end()) continue;
+        const size_t index = static_cast<size_t>(std::distance(ids.begin(), found));
+        // Within the picked-up selection either raw edge describes the same
+        // existing block; retaining the midpoint avoids an accidental hop.
+        if (index == targetIndex) return midpoint;
+        if (anchor == static_cast<size_t>(-1)) anchor = index;
+        if (session.IsPrimaryVisualItem(entry.sourceIndex, tabRect(index), session.MouseDownPoint())) primary = index;
+    }
+    if (primary != static_cast<size_t>(-1)) anchor = primary;
+    if (anchor == static_cast<size_t>(-1)) return midpoint;
+    const bool right = targetIndex > anchor;
+    LONG threshold = right ? target.left + width / 4 : target.right - width / 4;
+    const auto* previous = session.TargetSlot();
+    if (session.TargetContainer() == &view && IsTabInsertion(previous, session.TargetRegion()) &&
+        previous->GetIndex() == targetIndex)
+    {
+        const LONG buffer = std::clamp<LONG>(reversalBuffer, 0, width / 8);
+        if (right && session.TargetRegion() == HitRegion::SortAfter) threshold -= buffer;
+        if (!right && session.TargetRegion() == HitRegion::SortBefore) threshold += buffer;
+    }
+    return point.x < threshold ? HitRegion::SortBefore : HitRegion::SortAfter;
+}
+
 inline Context FromSession(ScrollingItemWidget& view, const DragSession& session)
 {
     Context result;

@@ -283,6 +283,15 @@ inline void RunInsertionZones()
         const RECT a = Access::GroupSurfaceTabRect(app, L"surface-group", L"A");
         const RECT b = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
         const RECT frame = target->GetFrameRect();
+        // External insertion keeps its exact midpoint, even after hovering
+        // the opposite side; the new sort reversal buffer must not leak here.
+        for (const auto [x, insertion] : std::initializer_list<std::pair<LONG, size_t>>{
+            {b.left + (b.right - b.left) * 3 / 10, 1}, {b.left + (b.right - b.left) * 7 / 10, 2},
+            {(b.left + b.right) / 2 - 1, 1}, {(b.left + b.right) / 2 + 1, 2}, {(b.left + b.right) / 2 - 1, 1}})
+        {
+            const auto edge = Access::GroupSurfacePointPreview(app, L"surface-group", {x, (b.top + b.bottom) / 2});
+            Require(edge.insertIndex == insertion, "cross-group insertion retains the original50-percent boundary without sort hysteresis");
+        }
         POINT point{b.left + 1, (b.top + b.bottom) / 2};
         if (zone == 0) point.x = (a.right + b.left) / 2; // Actual gap, not a label hit.
         if (zone == 1) point.y = b.top - target->Cu(3.0f);
@@ -680,12 +689,16 @@ inline void RunDesktopComponentTabs()
         const auto a = Access::GroupSurfaceTabRect(app, L"surface-group", L"A");
         const auto b = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
         auto* group = Access::MemberContainer(app, L"surface-group");
+        Access::BeginGroupComponentMove(app, L"E");
+        for (const auto [x, insertion] : std::initializer_list<std::pair<LONG, size_t>>{
+            {(b.left + b.right) / 2 - 1, 1}, {(b.left + b.right) / 2 + 1, 2}, {(b.left + b.right) / 2 - 1, 1}})
+            Require(Access::GroupComponentMovePoint(app, {x, (b.top + b.bottom) / 2}) == insertion,
+                "desktop component insertion retains exact midpoint behavior on both sides and reversal");
         POINT point{b.left + 1, (b.top + b.bottom) / 2};
         if (zone == 1) point.x = (a.right + b.left) / 2;
         if (zone == 2) point.y = b.top - group->Cu(3.0f);
         if (zone == 3) point.y = group->GetFrameRect().bottom - 1;
         const bool cancel = zone == 4;
-        Access::BeginGroupComponentMove(app, L"E");
         const auto insertion = Access::GroupComponentMovePoint(app, point);
         const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
         Require(zone == 3 || insertion == 1, "native component handle move retains the exact tab insertion index");
