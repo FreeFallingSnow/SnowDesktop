@@ -1216,7 +1216,12 @@ void TestRealUiaApartmentAndLifetime()
             }
             Check(SUCCEEDED(button->SetFocus()) && fixture.focuses > 0,
                 "background UIA focus must reach the owning STA");
-            Check(SUCCEEDED(value->SetValue(L"after")),
+            BSTR replacementValue = SysAllocString(L"after");
+            Check(replacementValue != nullptr,
+                "the client value argument must be an allocated BSTR");
+            const HRESULT writeResult = value->SetValue(replacementValue);
+            SysFreeString(replacementValue);
+            Check(SUCCEEDED(writeResult),
                 "background UIA value writes must reach the owning STA");
             BSTR currentValue = nullptr;
             Check(SUCCEEDED(value->get_CurrentValue(&currentValue)) &&
