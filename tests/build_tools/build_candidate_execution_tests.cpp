@@ -135,9 +135,17 @@ if($gate -and [IO.File]::Exists($gate)){
     require(c.git({L"add",L"--all"}).code==0&&c.git({L"commit",L"-m",L"Candidate executor fixture baseline"}).code==0,"Cannot establish candidate executor baseline");
     c.call({"task-open","candidate","-TaskName","Candidate execution acceptance fixture"});
 }
-void private_preflight(const fs::path& repo,bool oldPath) {
+void private_preflight(const fs::path& repo,bool oldPath,bool modulePathOnly=false) {
     const auto root=temporary("candidate-preflight",fixture_parent(repo));
     copy(repo,root,{"scripts/build_entry.ps1","scripts/build_preflight.ps1","scripts/test_manager.ps1"});
+    if(modulePathOnly){
+        auto manager=read(root/L"scripts/test_manager.ps1");
+        const std::string needle="$path = Get-PreflightProcessPath $process";
+        const auto location=manager.find(needle);
+        require(location!=std::string::npos,"Missing production test-runtime process path observer for original-fault control");
+        manager.replace(location,needle.size(),"$path = $process.Path");
+        write(root/L"scripts/test_manager.ps1",manager);
+    }
     const auto source=root/L"source",output=root/L"output",neighbor=root/L"output-neighbor";
     fs::create_directories(source);fs::create_directories(output/L"Release");fs::create_directories(output/L"Debug");fs::create_directories(neighbor/L"Release");
     for(const auto& destination:{output/L"Release/SnowDesktop.exe",output/L"Debug/SnowDesktop.exe",neighbor/L"Release/SnowDesktop.exe"})
@@ -146,9 +154,17 @@ void private_preflight(const fs::path& repo,bool oldPath) {
         const auto result=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("New-Item -ItemType Junction -Path "+ps_literal(source/name)+" -Target "+ps_literal(output)+" -ErrorAction Stop | Out-Null")},root);
         require(result.code==0,"Cannot establish private output junction: "+result.out+result.err);
     }
-    std::string query=R"PS(param([string]$ProbeRoot,[string]$ProbeConfiguration='Release')
+    std::string query=R"PS(param([string]$ProbeRoot,[string]$ProbeConfiguration='Release',[uint32]$HideModulePathForPid=0)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1')
+function Get-Process {
+ [CmdletBinding()]param([string[]]$Name)
+ foreach($process in @(Microsoft.PowerShell.Management\Get-Process -Name $Name -ErrorAction SilentlyContinue)){
+  if($process.Id -eq $HideModulePathForPid){
+   [pscustomobject]@{Id=$process.Id;StartTime=$process.StartTime;Path=$null;ProcessName=$process.ProcessName}
+  }else{$process}
+ }
+}
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'scripts/test_manager.ps1'),[ref]$tokens,[ref]$errors)
 $definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-HostRuntimeLocks'},$false)
@@ -162,8 +178,9 @@ $repositoryRoot=$ProbeRoot
 )PS";
     query+="$observation=Get-ReadOnlyPreflight $ProbeRoot $ProbeConfiguration\n@{preflight=$observation;locks=@(Get-HostRuntimeLocks)}|ConvertTo-Json -Depth 8\n";
     write(root/L"query.ps1",query,true);Bridge bridge(repo,root);
-    auto probe=[&](const std::string& configuration="Release"){
-        return bridge.call(root/L"query.ps1",{"-ProbeRoot",utf8(source.wstring()),"-ProbeConfiguration",configuration});
+    auto probe=[&](const std::string& configuration="Release",DWORD hiddenModulePath=0){
+        return bridge.call(root/L"query.ps1",{"-ProbeRoot",utf8(source.wstring()),"-ProbeConfiguration",configuration,
+            "-HideModulePathForPid",std::to_string(hiddenModulePath)});
     };
     auto contains=[&](const Json& value,DWORD pid){
         for(const auto& entry:value.at("preflight").at("owners").items)if(entry.at("pid").integer()==static_cast<int>(pid))return true;
@@ -176,11 +193,17 @@ $repositoryRoot=$ProbeRoot
     const auto otherMarker=root/L"other-ready",releaseMarker=root/L"release-ready",debugMarker=root/L"debug-ready",aliasMarker=root/L"alias-ready";
     Child other({(neighbor/L"Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",otherMarker.wstring()},root);
     until([&]{return fs::exists(otherMarker);});require(!contains(probe(),other.pid()),"Private preflight included a neighboring output owner");
+    const auto hiddenNeighbour=probe("Release",other.pid());
+    require(!contains(hiddenNeighbour,other.pid())&&!locksContain(hiddenNeighbour,other.pid()),
+        "Unavailable module Path on an unrelated process must not block private test runtime");
     Child release({(output/L"Release/SnowDesktop.exe").wstring(),L"--wait",L"--marker",releaseMarker.wstring()},root);
     until([&]{return fs::exists(releaseMarker);});const auto physical=probe();
     require(contains(physical,release.pid())&&physical.at("preflight").at("status").str()!="clear",
         "Private output preflight falsely reported the physical application as clear");
     require(locksContain(physical,release.pid())&&!locksContain(physical,other.pid()),"Test runtime ownership missed the physical output or included its neighbor");
+    const auto hiddenPhysical=probe("Release",release.pid());
+    require(contains(hiddenPhysical,release.pid())&&locksContain(hiddenPhysical,release.pid()),
+        "Unavailable module Path must retain a real private-output owner through its kernel image identity");
     require(!contains(probe("Debug"),release.pid()),"Debug preflight included a Release application");
     Child debug({(output/L"Debug/SnowDesktop.exe").wstring(),L"--wait",L"--marker",debugMarker.wstring()},root);
     until([&]{return fs::exists(debugMarker);});require(contains(probe("Debug"),debug.pid())&&!contains(probe(),debug.pid()),"Private Debug/Release ownership crossed configurations");
@@ -918,7 +941,16 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--tool-verification"||mode=="--tool-verification-old-preset")candidate_batches(repo,false,true,mode=="--tool-verification-old-preset");
     else if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
     else if(mode=="--artifacts"||mode=="--artifacts-slot-reference"||mode=="--artifacts-input-denied")artifacts(repo,mode=="--artifacts-slot-reference",mode=="--artifacts-input-denied");
-    else if(mode=="--preflight"||mode=="--preflight-old-path")private_preflight(repo,mode=="--preflight-old-path");
+    else if(mode=="--preflight"||mode=="--preflight-old-path"){
+        private_preflight(repo,mode=="--preflight-old-path");
+        if(mode=="--preflight"){
+            const auto negative=run({executable().wstring(),repo.wstring(),L"--preflight-module-path-only"},repo,90,{},true);
+            require(negative.code==1&&negative.err.find("Unavailable module Path on an unrelated process must not block private test runtime")!=std::string::npos,
+                "Original managed-Path-only test-runtime observer did not fail at the unrelated-owner assertion: "+negative.out+negative.err);
+            std::cout<<"PASS kernel image identity retains actual owners and rejects unrelated missing-module-path helpers; original observer rejected\n";
+        }
+    }
+    else if(mode=="--preflight-module-path-only")private_preflight(repo,false,true);
     else if(mode=="--verify-checkout-lock")executor_control(repo,true);
     else if(mode=="--verify-source-lock")executor_control(repo,false);
     else if(mode=="--checkout-cache")checkout_cache(repo);

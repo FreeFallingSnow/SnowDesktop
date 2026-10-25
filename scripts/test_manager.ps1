@@ -22,6 +22,7 @@ if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Pro
 }
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+. (Join-Path $PSScriptRoot 'build_preflight.ps1')
 
 function Invoke-Checked {
     param(
@@ -378,7 +379,9 @@ function Get-HostRuntimeLocks {
     foreach ($process in @(Get-Process -Name SnowDesktop, snowwidget,
             SnowDesktopWorkshopManager, SnowDesktopSteamBridge, SnowDesktopLauncher,
             SnowDesktopWallpaperInjector32 -ErrorAction SilentlyContinue)) {
-        $path = $process.Path
+        # Use the same creation-time-checked image query as product preflight.
+        # A missing managed Path must not turn an unrelated helper into an owner.
+        $path = Get-PreflightProcessPath $process
         if ([string]::IsNullOrEmpty($path) -or
             @($releaseRoots|Where-Object {$path.StartsWith($_+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)}).Count) {
             "$($process.ProcessName) (PID $($process.Id))"
