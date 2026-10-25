@@ -409,7 +409,9 @@ performance review or a demonstrated performance concern. Read
 metric boundaries. This runs the real isolated preview engine and native
 Perfetto; it does not require a performance control in Settings. Check the
 `performanceProfile` capability and the returned report quality before drawing
-conclusions. Ordinary previews remain static and do not start tracing.
+conclusions. Non-default module filters or input sampling also require the
+corresponding capabilities and confirmation in the actual result. Ordinary
+previews remain static and do not start tracing.
 
 ## Diagnose suspected API problems
 

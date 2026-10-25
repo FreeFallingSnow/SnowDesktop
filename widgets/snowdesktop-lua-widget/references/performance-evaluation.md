@@ -49,6 +49,28 @@ Choose one of these workloads:
 
 `--seconds` accepts 1–60, `--warmup-seconds` 0–30, and `--interval-ms` 8–1000.
 The interval is a requested application redraw period, not presented FPS.
+For focused evidence, check `performanceProfile.moduleFiltering` and
+`performanceProfile.inputSampling`, then pass `--modules lua,render` or
+`--modules resource`, and optionally `--input-sample-every 4` (1–1000).
+Available module groups are `resource`, `lua`, `task`, `frame`, `input`, `dock`,
+`popup`, `layout`, `render`, `icon` and `cache`. The widget preset permits them
+all; resources and profiler boundary markers always remain enabled. An empty
+filter uses the preset default. The CLI requires the actual host result to
+confirm any requested non-default selection; an older profile-capable host
+must not silently ignore it.
+
+Input sampling uses a session-salted operation hash with a nominal one-in-N
+ratio. Nested input scopes and metrics in one producer-thread synchronous
+operation group agree. Read the actual observed/selected group counts and
+category-filtered probe calls in the manifest and `inputDetailSampling` report.
+Owner-filtered calls are separate from category filters and probe losses.
+These are capture-active diagnostic group observations, not OS input-event
+counts or the fixed SQL slice window. Selection does not guarantee serialization
+when trace loss or a capture boundary intervenes; inspect report quality. Do not
+multiply sampled counts or treat their latency percentiles as the full input
+population. This isolated workload does not generate interactive pointer input;
+zero observed input groups is expected unless actual input probes execute.
+
 Use existing preview options for span, DPI, locale, appearance, data state and
 storage. Initial package load and warmup precede tracing. PNG readback/encoding
 and analysis follow it.

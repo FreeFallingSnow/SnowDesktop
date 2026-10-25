@@ -96,23 +96,43 @@ const char* PresetName(CapturePreset preset) noexcept
 }
 const char* ProcessRole(CaptureProcessRole role) noexcept
 { return role == CaptureProcessRole::WidgetPreview ? "widget-preview" : "host"; }
-std::vector<std::string> Categories(CapturePreset preset)
+std::string ModuleForCategory(std::string_view category)
+{
+    if (category.starts_with("snow.lua.")) return "lua";
+    if (category.starts_with("snow.task")) return "task";
+    if (category == "snow.cache.detail") return "cache";
+    return std::string(category.substr(5));
+}
+std::string StringArray(const std::vector<std::string>& values)
+{
+    std::string result = "[";
+    for (const auto& value : values) { if (result.size() > 1) result += ','; result += Quote(value); }
+    return result + ']';
+}
+std::vector<std::string> Categories(CapturePreset preset, const std::vector<std::string>& modules = {})
 {
     std::vector<std::string> result{ "snow.resource", "snow.lua.callback", "snow.task", "snow.frame", "snow.profiler" };
     if (preset != CapturePreset::Resource)
         for (const auto* item : { "snow.input", "snow.dock", "snow.popup", "snow.layout", "snow.render", "snow.icon" }) result.emplace_back(item);
     if (preset == CapturePreset::Widget)
         for (const auto* item : { "snow.lua.detail", "snow.cache.detail", "snow.task.detail" }) result.emplace_back(item);
+    if (!modules.empty()) std::erase_if(result, [&](const auto& category) {
+        return category != "snow.resource" && category != "snow.profiler" &&
+            std::find(modules.begin(), modules.end(), ModuleForCategory(category)) == modules.end();
+    });
     return result;
 }
 std::string ConfigHash(const CaptureOptions& options)
 {
     std::string canonical;
     const auto add = [&](std::string_view part) { canonical += std::to_string(part.size()); canonical += ':'; canonical += part; };
-    add("snowdesktop.capture.config.v3"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
+    add("snowdesktop.capture.config.v4"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
     add(std::to_string(options.bufferKiB)); add(std::to_string(options.maximumFileBytes)); add(options.scopeCpu ? "cpu" : "wall");
     add(std::to_string(options.selectedInstances.size()));
     for (const auto& owner : options.selectedInstances) add(Utf8(owner));
+    add(std::to_string(options.modules.size()));
+    for (const auto& module : options.modules) add(module);
+    add(std::to_string(options.inputSampleEvery));
     std::array<unsigned char, 32> digest{};
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
@@ -129,7 +149,8 @@ bool SameRequest(const CaptureOptions& a, const CaptureOptions& b)
 {
     return a.session == b.session && a.requestId == b.requestId && a.output == b.output &&
         a.seconds == b.seconds && a.bufferKiB == b.bufferKiB && a.maximumFileBytes == b.maximumFileBytes &&
-        a.preset == b.preset && a.processRole == b.processRole && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances;
+        a.preset == b.preset && a.processRole == b.processRole && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances &&
+        a.modules == b.modules && a.inputSampleEvery == b.inputSampleEvery;
 }
 struct File
 {
@@ -312,6 +333,13 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"traceSha256\":" << (record.traceSha256.empty() ? "null" : Quote(record.traceSha256))
         << ",\"logicalProcessors\":" << (allProcessors ? allProcessors : system.dwNumberOfProcessors) << ",\"preset\":" << Quote(PresetName(record.options.preset))
         << ",\"configHash\":" << Quote(record.snapshot.configHash) << ",\"scopeCpuEnabled\":" << (record.options.scopeCpu ? "true" : "false")
+        << ",\"moduleFilter\":" << StringArray(record.options.modules)
+        << ",\"enabledCategories\":" << StringArray(Categories(record.options.preset, record.options.modules))
+        << ",\"inputSampleEvery\":" << record.options.inputSampleEvery << ",\"inputSamplingAlgorithm\":\"operation-hash-v1\""
+        << ",\"probeFiltering\":{\"categoryFilteredCalls\":" << record.quality.filteredProbeCalls
+        << ",\"ownerFilteredCalls\":" << record.quality.ownerFilteredProbeCalls
+        << ",\"inputOperationsObserved\":" << record.quality.inputOperationsObserved
+        << ",\"inputOperationsSelected\":" << record.quality.inputOperationsSelected << '}'
         << ",\"environment\":" << record.environment << ",\"selectedInstances\":[";
     for (std::size_t i = 0; i < record.selectedOwners.size(); ++i)
     {
@@ -390,12 +418,12 @@ void Worker(std::shared_ptr<Record> record) noexcept
         native.bufferKiB = record->options.bufferKiB;
         native.maximumFileBytes = fileLimit;
         native.threadCpu = record->options.scopeCpu;
-        native.categories = Categories(record->options.preset);
+        native.categories = Categories(record->options.preset, record->options.modules);
         if (!session.Start(native, error)) throw std::runtime_error(error);
         std::uint64_t salt = 0;
         if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&salt), sizeof(salt), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
             throw std::runtime_error("captureIdentityRandomFailed");
-        ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances);
+        ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances, record->options.inputSampleEvery);
         for (const auto& instance : record->options.selectedInstances) record->selectedOwners.push_back(OwnerId(instance));
         record->firstTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
         {
@@ -524,6 +552,7 @@ bool Start(const CaptureOptions& requested, std::string& error)
     error.clear();
     std::lock_guard startLock(state.startMutex);
     auto options = requested;
+    std::sort(options.modules.begin(), options.modules.end());
     if (options.requestId.empty()) options.requestId = options.session;
     if ((options.processRole != CaptureProcessRole::Host && options.processRole != CaptureProcessRole::WidgetPreview) ||
         !ValidId(options.session) || !ValidId(options.requestId) || options.seconds < 1 || options.seconds > 600 ||
@@ -533,6 +562,14 @@ bool Start(const CaptureOptions& requested, std::string& error)
         (options.preset == CapturePreset::Widget && options.selectedInstances.empty()) ||
         std::any_of(options.selectedInstances.begin(), options.selectedInstances.end(), [](const auto& id) { return id.empty() || id.size() > 256; }))
     { error = "invalidCaptureOptions"; return false; }
+    const auto available = Categories(options.preset);
+    if (!options.inputSampleEvery || options.inputSampleEvery > 1000 || options.modules.size() > CaptureModules.size() ||
+        std::adjacent_find(options.modules.begin(), options.modules.end()) != options.modules.end() ||
+        std::any_of(options.modules.begin(), options.modules.end(), [&](const auto& module) {
+            return std::find(CaptureModules.begin(), CaptureModules.end(), module) == CaptureModules.end() ||
+                std::none_of(available.begin(), available.end(), [&](const auto& category) { return ModuleForCategory(category) == module; });
+        }))
+    { error = "invalidCaptureFilter"; return false; }
     if (!options.output.empty() && (!IsLocalCapturePath(options.output) || options.output.extension() != L".pftrace"))
     { error = "invalidOutputPath"; return false; }
     try
@@ -567,6 +604,8 @@ bool Start(const CaptureOptions& requested, std::string& error)
         record->snapshot.preset = static_cast<unsigned>(options.preset); record->snapshot.bufferKiB = options.bufferKiB;
         record->snapshot.selectedInstances = options.selectedInstances;
         record->snapshot.scopeCpu = options.scopeCpu;
+        record->snapshot.modules = options.modules;
+        record->snapshot.inputSampleEvery = options.inputSampleEvery;
         record->snapshot.phase = CapturePhase::Starting;
         if (!state.worker.joinable())
         {
@@ -645,10 +684,11 @@ std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view reply
         << ",\"analysis\":" << Quote(snapshot.analysis) << ",\"analysisError\":" << Quote(snapshot.analysisError)
         << ",\"quality\":" << Quote(snapshot.quality) << ",\"preset\":" << Quote(PresetName(static_cast<CapturePreset>(snapshot.preset)))
         << ",\"bufferKiB\":" << snapshot.bufferKiB << ",\"scopeCpuEnabled\":" << (snapshot.scopeCpu ? "true" : "false")
+        << ",\"moduleFilter\":" << StringArray(snapshot.modules) << ",\"inputSampleEvery\":" << snapshot.inputSampleEvery
         << ",\"errorCode\":" << Quote(snapshot.error) << ",\"retryable\":" << (snapshot.error == "captureBusy" ? "true" : "false")
         << ",\"paths\":{\"trace\":" << Quote(Utf8(snapshot.trace.wstring())) << ",\"manifest\":" << Quote(Utf8(snapshot.manifest.wstring()))
         << ",\"report\":" << Quote(Utf8(snapshot.report.wstring()))
-        << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3},"
+        << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3,\"moduleFilter\":true,\"inputSampling\":true},"
         << "\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId() << ",\"included\":true}]}";
     return out.str();
 }
@@ -659,8 +699,8 @@ std::string ProcessControlRequest(std::string_view request) noexcept
     {
         JsonValue value; std::string parseError;
         if (request.size() > 16384 || !ParseJson(request, value, &parseError) || !value.IsObject()) throw std::runtime_error("invalidControlRequest");
-        constexpr std::array<std::string_view, 10> fields{
-            "protocolVersion", "requestId", "sessionId", "command", "generation", "preset", "seconds", "bufferKiB", "threadCpu", "widgetIds" };
+        constexpr std::array<std::string_view, 12> fields{
+            "protocolVersion", "requestId", "sessionId", "command", "generation", "preset", "seconds", "bufferKiB", "threadCpu", "widgetIds", "modules", "inputSampleEvery" };
         for (const auto& [field, ignored] : value.object)
         {
             (void)ignored;
@@ -697,6 +737,7 @@ std::string ProcessControlRequest(std::string_view request) noexcept
         options.session = failure.session; options.requestId = failure.requestId;
         options.seconds = static_cast<unsigned>(number("seconds", 120, 600));
         options.bufferKiB = static_cast<unsigned>(number("bufferKiB", 32768, 65536));
+        options.inputSampleEvery = static_cast<unsigned>(number("inputSampleEvery", 1, 1000));
         const auto preset = string("preset", true);
         if (preset == "idle") options.preset = CapturePreset::Resource;
         else if (preset == "interaction") options.preset = CapturePreset::Interaction;
@@ -709,6 +750,12 @@ std::string ProcessControlRequest(std::string_view request) noexcept
             if (!widgets->IsArray() || widgets->array.size() > 8) throw std::runtime_error("invalidWidgetFilter");
             for (const auto& item : widgets->array)
             { if (!item.IsString() || item.string.empty() || item.string.size() > 256) throw std::runtime_error("invalidWidgetFilter"); options.selectedInstances.push_back(Wide(item.string)); }
+        }
+        if (const auto* modules = value.Find("modules"))
+        {
+            if (!modules->IsArray() || modules->array.size() > CaptureModules.size()) throw std::runtime_error("invalidCaptureFilter");
+            for (const auto& item : modules->array)
+            { if (!item.IsString() || item.string.size() > 16) throw std::runtime_error("invalidCaptureFilter"); options.modules.push_back(item.string); }
         }
         std::string error;
         if (!Start(options, error)) throw std::runtime_error(error);

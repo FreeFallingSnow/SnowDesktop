@@ -31,6 +31,25 @@ try {
     if ([IO.Path]::GetExtension($manifestFile) -eq '.pftrace') { $manifestFile = Join-Path ([IO.Path]::GetDirectoryName($manifestFile)) 'session.json' }
     if ((Get-Item -LiteralPath $manifestFile).Length -gt 65536) { throw 'manifestLimit' }
     $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $moduleFilter = $null; $enabledCategories = $null; $inputSampling = $null; $probeFiltering = $null
+    if ($manifest.PSObject.Properties['moduleFilter']) {
+        $moduleFilter = @($manifest.moduleFilter)
+        $enabledCategories = @($manifest.enabledCategories)
+        if ($moduleFilter.Count -gt 11 -or $enabledCategories.Count -gt 14 -or
+            @($moduleFilter | Where-Object {$_ -notin @('resource','lua','task','frame','input','dock','popup','layout','render','icon','cache')}).Count -or
+            $manifest.inputSamplingAlgorithm -ne 'operation-hash-v1' -or
+            $manifest.inputSampleEvery -lt 1 -or $manifest.inputSampleEvery -gt 1000 -or
+            $manifest.inputSampleEvery -ne [math]::Floor([double]$manifest.inputSampleEvery)) { throw 'captureFilterMetadataInvalid' }
+        $probeFiltering = $manifest.probeFiltering
+        foreach ($name in @('categoryFilteredCalls','ownerFilteredCalls','inputOperationsObserved','inputOperationsSelected')) {
+            $number = [double]$probeFiltering.$name
+            if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt 0 -or $number -ne [math]::Floor($number)) { throw 'captureFilterMetadataInvalid' }
+        }
+        if ($probeFiltering.inputOperationsSelected -gt $probeFiltering.inputOperationsObserved) { throw 'captureFilterMetadataInvalid' }
+        $inputSampling = [ordered]@{oneIn=[int]$manifest.inputSampleEvery;algorithm=$manifest.inputSamplingAlgorithm
+            operationsObserved=$probeFiltering.inputOperationsObserved;operationsSelected=$probeFiltering.inputOperationsSelected
+            interpretation='Capture-active per-producer synchronous operation-group observations, not OS input counts or the SQL slice window. Nested input scopes agree. Selected groups are probe decisions; consult trace loss/boundary quality. No scaled estimates.'}
+    }
     if ($manifest.schemaVersion -ne 2 -or $manifest.format -ne 'perfetto' -or -not $manifest.completion -or $manifest.state -ne 'completed') { throw 'captureIncompleteOrUnsupported' }
     if (-not $manifest.PSObject.Properties['probeSchemaVersion'] -or $manifest.probeSchemaVersion -ne 2) { throw 'unsupportedProbeSchema: record a new native capture; historical JSON remains supported through report.' }
     if ($manifest.traceFile -ne [IO.Path]::GetFileName($manifest.traceFile) -or [IO.Path]::GetExtension($manifest.traceFile) -ne '.pftrace') { throw 'manifestTracePathRejected' }
@@ -126,6 +145,7 @@ try {
     $summary = [ordered]@{schemaVersion=2;queryVersion=2;sdkVersion=$manifest.sdkVersion;sessionId=$manifest.sessionId
         hostVersion=$manifest.hostVersion;executableSha256=$manifest.executableSha256;sourceCommit=$manifest.sourceCommit
         environment=$manifest.environment;selectedInstances=$manifest.selectedInstances
+        moduleFilter=$moduleFilter;enabledCategories=$enabledCategories;inputDetailSampling=$inputSampling;probeFiltering=$probeFiltering
         finalWidgetSampleConfirmed=$manifest.finalWidgetSampleConfirmed
         processId=$manifest.processId;processRole=$manifest.processRole;preset=$manifest.preset;scopeCpuEnabled=$manifest.scopeCpuEnabled
         configHash=$manifest.configHash;traceSha256=$manifest.traceSha256;manifestSha256=(Get-FileHash -LiteralPath $manifestFile -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -150,6 +170,8 @@ try {
     $report = @('# Perfetto analysis', '', ('Trace: `' + $trace + '`'), ('Session: `' + $manifest.sessionId + '`'),
         ('Effective observation window: ' + $duration + ' ms. Evidence valid: ' + $valid + '.'),
         ('Process CPU: ' + $(if($null -eq $cpu){'unavailable'}else{$cpu.ToString('F3',[Globalization.CultureInfo]::InvariantCulture)+' ms/s'}) + '.'),
+        ('Module filter: ' + $(if($null -eq $moduleFilter){'unknown (older capture)'}elseif($moduleFilter.Count){$moduleFilter -join ', '}else{'preset default'}) + '; resource and profiler markers are retained.'),
+        ('Input detail sampling: ' + $(if($null -eq $inputSampling){'unknown (older capture)'}else{'one in '+$inputSampling.oneIn+' by operation hash; '+$inputSampling.operationsSelected+' / '+$inputSampling.operationsObserved+' operation-group observations selected; category-filtered probe calls '+$probeFiltering.categoryFilteredCalls+'; owner-filtered probe calls '+$probeFiltering.ownerFilteredCalls}) + '. No extrapolation to full input counts or latency distributions.'),
         '', 'Queries and CSV results are saved beside summary.json. Query hashes bind this report to its fixed SQL package.', '',
         'Open questions: workload, display configuration, actual desktop behavior, and unrecorded participants require separate validation.', '')
     $report += $summary.limitations | ForEach-Object {'- ' + $_}

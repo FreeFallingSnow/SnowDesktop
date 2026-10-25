@@ -1110,6 +1110,18 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
             else if (key == L"@profile.seconds" && ParsePositiveInteger(value, 1, 60, number)) request.profile->seconds = static_cast<unsigned>(number);
             else if (key == L"@profile.warmup" && ParsePositiveInteger(value, 0, 30, number)) request.profile->warmupSeconds = static_cast<unsigned>(number);
             else if (key == L"@profile.interval" && ParsePositiveInteger(value, 8, 1000, number)) request.profile->intervalMs = static_cast<unsigned>(number);
+            else if (key == L"@profile.input-sample-every" && ParsePositiveInteger(value, 1, 1000, number)) request.profile->inputSampleEvery = static_cast<unsigned>(number);
+            else if (key == L"@profile.modules")
+            {
+                std::size_t begin = 0;
+                do
+                {
+                    const auto end = value.find(L',', begin);
+                    request.profile->modules.push_back(WideToUtf8(value.substr(begin, end == value.npos ? value.npos : end - begin)));
+                    if (end == value.npos) break;
+                    begin = end + 1;
+                } while (begin <= value.size());
+            }
             else if (key == L"@profile.workload" && (value == L"idle" || value == L"redraw")) request.profile->redraw = value == L"redraw";
             else if (key == L"@profile.cpu" && value == L"1") request.profile->threadCpu = true;
             else if (key == L"@profile.offline" && value == L"1") request.profile->offline = true;

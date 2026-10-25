@@ -46,7 +46,10 @@ std::string PreviewProfileResult::ToJson() const
         << ",\"requestedSeconds\":" << seconds << ",\"warmupSeconds\":" << warmupSeconds
         << ",\"redrawIntervalMs\":" << intervalMs << ",\"workload\":" << Quote(redraw ? "redraw" : "idle")
         << ",\"manifest\":" << Quote(Utf8(manifest)) << ",\"report\":" << Quote(Utf8(report))
-        << ",\"coverage\":\"isolated preview; live services and desktop presentation excluded; initial load and warmup excluded\"}";
+        << ",\"inputSampleEvery\":" << inputSampleEvery << ",\"moduleFilter\":[";
+    for (std::size_t index = 0; index < modules.size(); ++index)
+    { if (index) out << ','; out << Quote(modules[index]); }
+    out << "],\"coverage\":\"isolated preview; live services and desktop presentation excluded; initial load and warmup excluded\"}";
     return out.str();
 }
 
@@ -105,10 +108,16 @@ bool WidgetAuthorProfile::Initialize(const PreviewProfileOptions& options, std::
 {
     auto& state = *impl_;
     if (!options.seconds || options.seconds > 60 || options.warmupSeconds > 30 ||
-        options.intervalMs < 8 || options.intervalMs > 1000 ||
+        options.intervalMs < 8 || options.intervalMs > 1000 || !options.inputSampleEvery || options.inputSampleEvery > 1000 ||
+        options.modules.size() > perf::CaptureModules.size() ||
+        std::any_of(options.modules.begin(), options.modules.end(), [](const auto& module) {
+            return std::find(perf::CaptureModules.begin(), perf::CaptureModules.end(), module) == perf::CaptureModules.end(); }) ||
         !perf::IsLocalCapturePath(options.directory / L"trace.pftrace") || std::filesystem::exists(options.directory))
     { error = "invalidProfileOptionsOrExistingOutput"; return false; }
     state.options = options;
+    std::sort(state.options.modules.begin(), state.options.modules.end());
+    if (std::adjacent_find(state.options.modules.begin(), state.options.modules.end()) != state.options.modules.end())
+    { error = "invalidProfileModuleFilter"; return false; }
     if (!state.scheduler.Initialize()) { error = "profileSchedulerUnavailable"; return false; }
     WNDCLASSW type{}; type.lpfnWndProc = Impl::WindowProc;
     type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = L"SnowDesktopAuthorProfileControl";
@@ -133,6 +142,7 @@ PreviewProfileResult WidgetAuthorProfile::Measure(const std::function<bool()>& d
     PreviewProfileResult result;
     result.seconds = state.options.seconds; result.warmupSeconds = state.options.warmupSeconds;
     result.intervalMs = state.options.intervalMs; result.redraw = state.options.redraw;
+    result.modules = state.options.modules; result.inputSampleEvery = state.options.inputSampleEvery;
     const auto cadence = state.options.redraw ? state.scheduler.ScheduleInterval(state.options.intervalMs, [&state](auto) {
         state.dirty = true;
     }) : 0;
@@ -156,6 +166,7 @@ PreviewProfileResult WidgetAuthorProfile::Measure(const std::function<bool()>& d
     capture.seconds = state.options.seconds; capture.bufferKiB = 65536;
     capture.preset = perf::CapturePreset::Widget; capture.processRole = perf::CaptureProcessRole::WidgetPreview;
     capture.scopeCpu = state.options.threadCpu; capture.selectedInstances = {Instance};
+    capture.modules = state.options.modules; capture.inputSampleEvery = state.options.inputSampleEvery;
     if (!perf::Start(capture, result.error)) return result;
     auto snapshot = perf::Snapshot(capture.session);
     const auto startupEnd = Clock::now() + std::chrono::seconds(20);

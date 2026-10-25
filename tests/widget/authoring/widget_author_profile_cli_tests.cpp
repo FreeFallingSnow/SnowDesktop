@@ -49,6 +49,9 @@ return widget.define({
     const auto capabilities = Run({tool.wstring(), L"capabilities"}, root);
     require(capabilities.code == 0 && Json::parse(capabilities.out).at("performanceProfile").at("schemaVersion").integer() == 1,
         "CLI advertises its callable performance evaluation contract");
+    require(Json::parse(capabilities.out).at("performanceProfile").at("moduleFiltering").boolean &&
+        Json::parse(capabilities.out).at("performanceProfile").at("inputSampling").boolean,
+        "CLI declares the optional filter and sampling contracts explicitly");
     const auto normal = Run({tool.wstring(), L"preview", package.wstring(), (root / L"ordinary.png").wstring(),
         L"--host", host.wstring(), L"--content-only"}, root, 35);
     require(normal.code == 0 && !Json::parse(normal.out).has("performance"),
@@ -56,17 +59,20 @@ return widget.define({
     for (const auto& item : fs::recursive_directory_iterator(root))
         require(item.path().extension() != L".pftrace", "ordinary preview creates no trace");
 
-    for (const auto* scenario : {L"redraw", L"idle"})
+    for (const auto* scenario : {L"redraw", L"idle", L"filtered"})
     {
         const auto output = root / scenario;
-        const auto result = Run({tool.wstring(), L"profile", package.wstring(), output.wstring(), L"--host", host.wstring(),
-            L"--seconds", L"2", L"--warmup-seconds", L"0", L"--workload", scenario, L"--scope-cpu", L"--offline"}, root, 55);
+        const bool filtered = std::wstring_view(scenario) == L"filtered";
+        std::vector<std::wstring> arguments{tool.wstring(), L"profile", package.wstring(), output.wstring(), L"--host", host.wstring(),
+            L"--seconds", L"2", L"--warmup-seconds", L"0", L"--workload", filtered ? L"redraw" : scenario, L"--scope-cpu", L"--offline"};
+        if (filtered) arguments.insert(arguments.end(), {L"--modules", L"resource", L"--input-sample-every", L"4"});
+        const auto result = Run(arguments, root, 55);
         require(result.code == 0, "real package profile succeeds: " + result.out + result.err);
         const auto metadata = ReadJson(output / L"evaluation.json");
         const auto& profile = metadata.at("performance");
         require(metadata.at("ok").boolean && profile.at("processRole").str() == "widget-preview" &&
             profile.at("drawCalls").number > 0, "evaluation records actual isolated drawing and process role");
-        if (std::wstring_view(scenario) == L"redraw")
+        if (std::wstring_view(scenario) != L"idle")
             require(profile.at("drawCalls").number > 2,
                 "redraw must continue after the initial frame; scheduler timer signals must not be lost");
         const auto manifest = ReadJson(output / L"session.json");
@@ -85,7 +91,18 @@ return widget.define({
         for (const auto& counter : summary.at("counters").items)
             if (counter.at("metric").str() == "lua_allocated_bytes_total" && counter.at("samples").number >= 2 &&
                 counter.at("delta").kind == Json::Kind::Number && counter.at("delta").number > 0) allocations = true;
-        require(timer && allocations, "actual named timers and successful Lua allocation traffic are measured");
+        require((filtered || timer) && allocations, "actual timers and successful Lua allocation traffic run independently of scope selection");
+        if (filtered)
+        {
+            require(profile.at("moduleFilter").items.size() == 1 && profile.at("moduleFilter").items[0].str() == "resource" &&
+                profile.at("inputSampleEvery").integer() == 4 && summary.at("inputDetailSampling").at("oneIn").integer() == 4 &&
+                manifest.at("enabledCategories").items.size() == 2 && manifest.at("probeFiltering").at("categoryFilteredCalls").number > 0,
+                "requested filter and sampling appear in native evidence, evaluation and fixed report");
+            for (const auto& scope : summary.at("scopes").items)
+                require(scope.at("module").str() != "widget" && scope.at("module").str() != "lua" &&
+                    scope.at("module").str() != "author.preview" && scope.at("module").str() != "widget.render",
+                    "resource selection excludes business scopes without disabling the actual workload");
+        }
         const auto originalManifest = read(output / L"session.json");
         const auto duplicate = Run({tool.wstring(), L"profile", package.wstring(), output.wstring(), L"--host", host.wstring()}, root);
         require(duplicate.code != 0 && read(output / L"session.json") == originalManifest,
@@ -95,9 +112,16 @@ return widget.define({
         L"--host", executable().wstring(), L"--offline"}, root);
     require(unsupported.code != 0 && unsupported.err.find("performance.capability") != std::string::npos,
         "an old host result cannot masquerade as a successful performance evaluation");
+    const auto partialHost = Run({tool.wstring(), L"profile", package.wstring(), (root / L"old-filter-host").wstring(),
+        L"--host", executable().wstring(), L"--modules", L"resource", L"--input-sample-every", L"4"}, root);
+    require(partialHost.code != 0 && partialHost.err.find("performance.filterCapability") != std::string::npos,
+        "a previous profile-capable host cannot silently ignore new selection options");
     const auto invalid = Run({tool.wstring(), L"profile", package.wstring(), (root / L"invalid").wstring(),
         L"--seconds", L"0", L"--host", host.wstring()}, root);
     require(invalid.code != 0 && !fs::exists(root / L"invalid"), "invalid workload arguments create no capture artifacts");
+    const auto invalidModule = Run({tool.wstring(), L"profile", package.wstring(), (root / L"invalid-module").wstring(),
+        L"--modules", L"resource,unknown", L"--host", host.wstring()}, root);
+    require(invalidModule.code != 0 && !fs::exists(root / L"invalid-module"), "unknown module cannot launch a broad unfiltered capture");
     require(read(package / L"main.lua") == sourceBefore, "evaluation leaves component source unchanged");
     std::cout << "Component profiling artifacts retained: " << root.string() << '\n';
 }
@@ -108,7 +132,12 @@ int wmain(int argc, wchar_t** argv)
     // with no performance result. This fixture performs no component rendering.
     if (argc >= 8 && std::wstring_view(argv[1]) == L"--widget-author-preview")
     {
-        std::ofstream(fs::path(argv[7])) << "{\"ok\":true,\"stage\":\"complete\"}\n";
+        bool requestedFilter = false;
+        for (int index = 8; index < argc; ++index)
+            requestedFilter = requestedFilter || std::wstring_view(argv[index]).find(L"@profile.modules=") != std::wstring_view::npos;
+        std::ofstream(fs::path(argv[7])) << (requestedFilter
+            ? "{\"ok\":true,\"performance\":{\"report\":\"legacy-report.md\"}}\n"
+            : "{\"ok\":true,\"stage\":\"complete\"}\n");
         return 0;
     }
     try

@@ -12,6 +12,7 @@ scripts/profile.bat setup
 scripts/profile.bat status
 scripts/profile.bat capture -Preset idle -Seconds 120
 scripts/profile.bat capture -Preset interaction -Seconds 60 -ScopeCpu
+scripts/profile.bat capture -Preset interaction -Modules "lua,render,input" -InputSampleEvery 4 -Seconds 30
 scripts/profile.bat start -Preset widget-detail -WidgetIds <instance-id> -Session <id>
 scripts/profile.bat status -Session <id>
 scripts/profile.bat stop -Session <id> -Generation <generation>
@@ -24,6 +25,16 @@ scripts/profile.bat compare -BaselinePath <summary.json> -ReportPath <summary.js
 SHA-256。其缓存位于用户 LocalAppData/SnowDesktop/tools/perfetto/v58.2。
 也可通过 `SNOWDESKTOP_TRACE_PROCESSOR` 指向同一哈希的离线程序。构建不联网；
 仓库工具不依赖用户安装 Skill。离线分析不上传 trace。
+
+`-Modules` 接受逗号分隔的固定模块组：resource、lua、task、frame、input、dock、
+popup、layout、render、icon、cache。筛选只能缩小预设；请求预设未启用的组会拒绝，
+资源与会话边界标记始终保留。CLI 先确认宿主能力，旧宿主不能静默忽略新参数。
+`-InputSampleEvery 1..1000` 按会话加盐的操作哈希以名义 1/N 比例选择输入细节，
+同一生产线程同步操作组中的嵌套范围与指标采用相同决定。默认 1 保留全部。
+manifest 和报告记录请求筛选、实际类别、观察/选择操作组数及类别/实例过滤探针次数；
+这是采集启用期间的诊断操作组观测，不是操作系统输入事件数或 SQL slice 窗口。
+选择计数不代表跨边界或丢失事件已成功序列化，须结合质量字段判断；不外推完整计数或延迟分布。
+配置指纹包含筛选与采样率，不同配置不能作为同条件比较。
 
 新采集只有原生格式。旧 `summary/trace` 参数分别映射到 idle/interaction 预设，
 不再选择产品后端。`report` 保留 schema 1 JSON 的只读分析；原生会话 manifest
@@ -115,6 +126,8 @@ Interceptor 观察已序列化事件，不保留另一套产品 profiler。
 `snowwidget profile <包目录> <全新输出目录> --seconds 5 --workload redraw --scope-cpu`
 在独立预览进程复用真实引擎、命名定时器、Lua 分配器和同一 Perfetto 控制器。
 `--workload idle` 只随组件实际失效重绘；`redraw` 按 `--interval-ms` 请求重绘。
+组件命令同样支持 `--modules lua,render` 与 `--input-sample-every 4`；先核对
+`performanceProfile.moduleFiltering/inputSampling`，实际宿主结果必须确认请求配置。
 静置模式不建立无用的重绘周期，资源采样仍使用现有 1 Hz 机制。
 预热和初次加载在测量窗口之前；PNG 回读、编码与离线分析在窗口之后。
 

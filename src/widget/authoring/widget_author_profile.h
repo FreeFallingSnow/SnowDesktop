@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 class WidgetEngine;
 
@@ -15,6 +16,8 @@ struct PreviewProfileOptions
     std::filesystem::path directory;
     unsigned seconds = 5, warmupSeconds = 1, intervalMs = 16;
     bool redraw = true, threadCpu = false, offline = false;
+    std::vector<std::string> modules;
+    unsigned inputSampleEvery = 1;
 };
 struct PreviewProfileResult
 {
@@ -23,6 +26,8 @@ struct PreviewProfileResult
     std::uint64_t drawCalls = 0;
     unsigned seconds = 0, warmupSeconds = 0, intervalMs = 0;
     bool redraw = false;
+    std::vector<std::string> modules;
+    unsigned inputSampleEvery = 1;
     std::string ToJson() const;
 };
 

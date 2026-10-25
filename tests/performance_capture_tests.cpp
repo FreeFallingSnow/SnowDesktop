@@ -1,4 +1,5 @@
 #include "diagnostics/performance_capture.h"
+#include "diagnostics/performance_trace_control.h"
 #include "diagnostics/performance_trace.h"
 #include "common/json_value.h"
 #include "widget/runtime/lua_runtime.h"
@@ -179,60 +180,74 @@ void ExerciseCli(const std::filesystem::path& root)
         executable = std::filesystem::path(system) / L"WindowsPowerShell/v1.0/powershell.exe";
     }
     const auto output = root / L"cli-export";
-    std::wstring command = L"\"" + executable.wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
-        (scripts / L"profile.ps1").wstring() + L"\" capture -Seconds 1 -Preset interaction -Offline -Session cli-fixture -TargetProcessId " +
+    const auto runCli = [&](std::wstring command, const std::filesystem::path& commandLog) {
+        SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+        const auto commandOutput = CreateFileW(commandLog.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+            &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        const auto commandInput = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Check(commandOutput != INVALID_HANDLE_VALUE && commandInput != INVALID_HANDLE_VALUE, "reserve isolated CLI streams");
+        STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup);
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = commandOutput;
+        startup.StartupInfo.hStdInput = commandInput;
+        SIZE_T attributeBytes = 0; InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+        std::vector<unsigned char> attributes(attributeBytes);
+        startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+        Check(InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes) != FALSE, "initialize CLI stream inheritance");
+        HANDLE handles[]{commandOutput, commandInput};
+        const bool configured = UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            handles, sizeof(handles), nullptr, nullptr) != FALSE;
+        PROCESS_INFORMATION child{};
+        const bool launched = configured && CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+            CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &child) != FALSE;
+        DeleteProcThreadAttributeList(startup.lpAttributeList);
+        CloseHandle(commandOutput); CloseHandle(commandInput);
+        Check(launched, "launch actual CLI against isolated host with valid bounded streams");
+        const auto deadline = GetTickCount64() + 45000;
+        while (WaitForSingleObject(child.hProcess, 0) != WAIT_OBJECT_0 && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+            MsgWaitForMultipleObjects(1, &child.hProcess, FALSE, 20, QS_ALLINPUT);
+        }
+        const auto wait = WaitForSingleObject(child.hProcess, 0);
+        if (wait != WAIT_OBJECT_0) { TerminateProcess(child.hProcess, 124); WaitForSingleObject(child.hProcess, 5000); }
+        DWORD exitCode = 1; GetExitCodeProcess(child.hProcess, &exitCode);
+        CloseHandle(child.hThread); CloseHandle(child.hProcess);
+        if (wait != WAIT_OBJECT_0 || exitCode != 0)
+        {
+            std::ifstream stream(commandLog, std::ios::binary);
+            std::vector<char> diagnostic(65536);
+            stream.read(diagnostic.data(), static_cast<std::streamsize>(diagnostic.size()));
+            std::cerr << "CLI child exit=" << exitCode << ": " << std::string(diagnostic.data(), static_cast<std::size_t>(stream.gcount())) << '\n';
+        }
+        Check(wait == WAIT_OBJECT_0 && exitCode == 0, "real CLI, authenticated pipe, duration, export and fixed SQL must complete");
+    };
+    const std::wstring captureCommand = L"\"" + executable.wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
+        (scripts / L"profile.ps1").wstring() + L"\" capture -Seconds 1 -Preset interaction -Modules lua -InputSampleEvery 4 -Offline -Session cli-fixture -TargetProcessId " +
         std::to_wstring(GetCurrentProcessId()) + L" -OutputDirectory \"" + output.wstring() + L"\"";
-    const auto commandLog = root / L"cli-process.log";
-    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
-    const auto commandOutput = CreateFileW(commandLog.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
-        &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    const auto commandInput = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    Check(commandOutput != INVALID_HANDLE_VALUE && commandInput != INVALID_HANDLE_VALUE, "reserve isolated CLI streams");
-    STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup);
-    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = commandOutput;
-    startup.StartupInfo.hStdInput = commandInput;
-    SIZE_T attributeBytes = 0; InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
-    std::vector<unsigned char> attributes(attributeBytes);
-    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
-    Check(InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes) != FALSE, "initialize CLI stream inheritance");
-    HANDLE handles[]{commandOutput, commandInput};
-    const bool configured = UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        handles, sizeof(handles), nullptr, nullptr) != FALSE;
-    PROCESS_INFORMATION child{};
-    const bool launched = configured && CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
-        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &child) != FALSE;
-    DeleteProcThreadAttributeList(startup.lpAttributeList);
-    CloseHandle(commandOutput); CloseHandle(commandInput);
-    Check(launched, "launch actual CLI against isolated host with valid bounded streams");
-    const auto deadline = GetTickCount64() + 45000;
-    while (WaitForSingleObject(child.hProcess, 0) != WAIT_OBJECT_0 && GetTickCount64() < deadline)
-    {
-        MSG message{};
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
-        MsgWaitForMultipleObjects(1, &child.hProcess, FALSE, 20, QS_ALLINPUT);
-    }
-    const auto wait = WaitForSingleObject(child.hProcess, 0);
-    if (wait != WAIT_OBJECT_0) { TerminateProcess(child.hProcess, 124); WaitForSingleObject(child.hProcess, 5000); }
-    DWORD exitCode = 1; GetExitCodeProcess(child.hProcess, &exitCode);
-    CloseHandle(child.hThread); CloseHandle(child.hProcess);
+    runCli(captureCommand, root / L"cli-process.log");
+    const std::wstring statusCommand = L"\"" + executable.wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
+        (scripts / L"profile.ps1").wstring() + L"\" status -TargetProcessId " + std::to_wstring(GetCurrentProcessId());
+    const auto statusLog = root / L"cli-current-status.log";
+    runCli(statusCommand, statusLog);
+    const auto current = Read(statusLog);
+    Check(String(current, "sessionId") == "cli-fixture" && String(current, "state") == "completed",
+        "default current-session status remains valid after capture; explicit session checks stay strict");
     KillTimer(window, 1); DestroyWindow(window);
     MSG ignored{}; PeekMessageW(&ignored, nullptr, WM_QUIT, WM_QUIT, PM_REMOVE);
-    if (wait != WAIT_OBJECT_0 || exitCode != 0)
-    {
-        std::ifstream stream(commandLog, std::ios::binary);
-        std::vector<char> diagnostic(65536);
-        stream.read(diagnostic.data(), static_cast<std::streamsize>(diagnostic.size()));
-        std::cerr << "CLI child exit=" << exitCode << ": " << std::string(diagnostic.data(), static_cast<std::size_t>(stream.gcount())) << '\n';
-    }
-    Check(wait == WAIT_OBJECT_0 && exitCode == 0, "real CLI, authenticated pipe, duration, export and fixed SQL must complete");
     bool summaryFound = false;
     for (const auto& entry : std::filesystem::directory_iterator(output))
         if (entry.is_directory() && entry.path().filename().wstring().starts_with(L"analysis-"))
         {
             const auto summary = Read(entry.path()/L"summary.json");
             Check(summary.Find("quality")->Find("valid")->boolean, "complete native known-answer CLI evidence is valid");
+            const auto* inputSampling = summary.Find("inputDetailSampling");
+            const auto* moduleFilter = summary.Find("moduleFilter");
+            Check(inputSampling && inputSampling->IsObject() && moduleFilter && moduleFilter->IsArray(), "CLI fixed report publishes selection metadata");
+            Check(Number(*inputSampling, "oneIn") == 4 && moduleFilter->array.size() == 1 && moduleFilter->array[0].string == "lua",
+                "real authenticated CLI confirms module selection and sampling in the fixed report");
             const auto* scopes = summary.Find("scopes");
             Check(scopes && scopes->IsArray() && !scopes->array.empty(), "SQL report contains real Lua/callback activity");
             summaryFound = true;
@@ -306,6 +321,62 @@ void RunPerformanceCaptureTests()
     Check(!perf::Start(ambiguous, error) && error == "requestIdConflict", "delimiter ambiguity must not replay different selected instances");
     Check(WaitFor(filtered.session, true).phase == perf::CapturePhase::Completed, "persistent worker finishes queued capture");
     Check(perf::Start(options, error), "historical replay compares original parameters after later captures");
+    auto sampled = Options(root, "sampled-input");
+    sampled.preset = perf::CapturePreset::Interaction;
+    sampled.modules = {"resource", "input"}; sampled.inputSampleEvery = 4;
+    sampled.selectedInstances = {L"sampled-instance"};
+    auto invalidFilter = sampled; invalidFilter.inputSampleEvery = 0;
+    Check(!perf::Start(invalidFilter, error) && error == "invalidCaptureFilter", "zero sampling ratio is rejected before artifacts");
+    invalidFilter = sampled; invalidFilter.modules = {"input", "input"};
+    Check(!perf::Start(invalidFilter, error), "duplicate module filters are rejected");
+    invalidFilter.modules = {"unknown"};
+    Check(!perf::Start(invalidFilter, error), "unknown modules cannot broaden native categories");
+    invalidFilter.modules = {"input"}; invalidFilter.preset = perf::CapturePreset::Resource;
+    Check(!perf::Start(invalidFilter, error), "a module outside the selected preset is rejected");
+    Check(!std::filesystem::exists(sampled.output.parent_path()), "invalid filters create no capture evidence");
+    Check(perf::Start(sampled, error) && WaitFor(sampled.session, false).phase == perf::CapturePhase::Recording, "filtered input capture starts");
+    auto reorderedModules = sampled; reorderedModules.modules = {"input", "resource"};
+    Check(perf::Start(reorderedModules, error), "module order does not change normalized request identity");
+    auto changedSampling = sampled; changedSampling.inputSampleEvery = 2;
+    Check(!perf::Start(changedSampling, error) && error == "requestIdConflict", "sampling participates in request identity");
+    for (int input = 0; input < 200; ++input)
+    {
+        perf::Scope filteredParent("widget.event", "sample.filtered.lua", L"sampled-instance");
+        perf::Scope parent("input", "sample.parent");
+        { perf::Scope child("input.hit_test", "sample.child");
+          perf::Value("input", "sample.metric", L"sampled-instance", input); }
+    }
+    for (unsigned index = 0; index < 1100; ++index)
+    {
+        perf::DrawLink("desktop", L"sampled-instance", false);
+        perf::TaskQueued(index + 1, "sampled-instance");
+        Check(perf::ReserveAnimationTrack() == 0, "filtered frame work cannot reserve animation identities");
+    }
+    for (int excluded = 0; excluded < 10; ++excluded)
+    { perf::Scope otherOwner("input", "sample.excluded", L"not-selected"); }
+    Check(perf::RequestStop(sampled.session) && WaitFor(sampled.session, true).phase == perf::CapturePhase::Completed, "sampled native evidence publishes");
+    const auto sampledManifest = Read(sampled.output.parent_path() / L"session.json");
+    const auto* sampling = sampledManifest.Find("probeFiltering");
+    Check(sampling && sampling->IsObject(), "native manifest publishes intentional filter accounting");
+    const auto selectedOperations = Number(*sampling, "inputOperationsSelected");
+    Check(selectedOperations > 0 && selectedOperations < 200, "sampled selection is a bounded subset before integer conversion");
+    const auto sampledCount = static_cast<unsigned>(selectedOperations);
+    Check(static_cast<double>(sampledCount) == selectedOperations, "native operation accounting is integral");
+    Check(Number(*sampling, "inputOperationsObserved") == 200 && sampledCount > 0 && sampledCount < 200 &&
+        Number(*sampling, "categoryFilteredCalls") > 0 && Number(*sampling, "ownerFilteredCalls") == 10 && Number(sampledManifest, "inputSampleEvery") == 4,
+        "intentional category filtering and actual sampled operation counts are explicit");
+    Check(Number(*sampledManifest.Find("probeQuality"), "droppedLinks") == 0 &&
+        Number(*sampledManifest.Find("probeQuality"), "droppedTracks") == 0,
+        "excluded categories do not exhaust bounded correlation registries");
+    const std::string sampledSql = "SELECT ((SELECT COUNT(*) FROM slice WHERE name='sample.parent')=" + std::to_string(sampledCount) +
+        " AND (SELECT COUNT(*) FROM slice WHERE name='sample.child')=" + std::to_string(sampledCount) +
+        " AND (SELECT COUNT(*) FROM slice c JOIN slice p ON c.parent_id=p.id WHERE c.name='sample.child' AND p.name='sample.parent')=" + std::to_string(sampledCount) +
+        " AND (SELECT COUNT(*) FROM slice WHERE name='sample.filtered.lua')=0"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='sample.excluded')=0"
+        " AND (SELECT COUNT(*) FROM counter c JOIN track t ON c.track_id=t.id WHERE t.name GLOB 'input|sample.metric|*')=" + std::to_string(sampledCount) +
+        " AND (SELECT COUNT(*) FROM slice WHERE name IN ('sample.parent','sample.child') AND EXTRACT_ARG(arg_set_id,'debug.owner')!=0)=" + std::to_string(2 * sampledCount) +
+        " AND (SELECT COUNT(DISTINCT EXTRACT_ARG(arg_set_id,'debug.owner')) FROM slice WHERE name IN ('sample.parent','sample.child'))=1) AS passed;";
+    AssertNativeTraceSql(sampled.output, sampledSql);
     auto workload = Options(root, "real-workload"); workload.scopeCpu = true;
     Check(perf::Start(workload, error), "accept real worker/scheduler workload capture");
     Check(WaitFor(workload.session, false).phase == perf::CapturePhase::Recording, "workload starts after SDK ack");

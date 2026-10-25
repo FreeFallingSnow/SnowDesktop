@@ -9,6 +9,8 @@ param(
     [ValidateSet('idle','interaction','widget-detail')][string]$Preset = 'idle',
     [ValidateSet('summary','trace')][string]$Mode,
     [string[]]$WidgetIds = @(),
+    [string[]]$Modules = @(),
+    [ValidateRange(1,1000)][int]$InputSampleEvery = 1,
     [ValidateRange(64,65536)][int]$BufferKiB = 32768,
     [string]$OutputDirectory,
     [string]$ReportPath,
@@ -29,7 +31,8 @@ function Invoke-Control([hashtable]$Request) {
     if (-not $Request.requestId) { $Request.requestId = New-RequestId }
     $reply = [SnowDesktopPerformanceClientV3]::Request($script:hostPid, (ConvertTo-Json $Request -Depth 5 -Compress)) | ConvertFrom-Json
     if ($reply.protocolVersion -ne 3 -or $reply.processId -ne $script:hostPid -or $reply.requestId -ne $Request.requestId) { throw 'controlReplyIdentityMismatch' }
-    if ($Request.ContainsKey('sessionId') -and $reply.sessionId -ne $Request.sessionId) { throw 'controlReplySessionMismatch' }
+    if ($Request.ContainsKey('sessionId') -and -not [string]::IsNullOrEmpty($Request.sessionId) -and
+        $reply.sessionId -ne $Request.sessionId) { throw 'controlReplySessionMismatch' }
     if ($reply.errorCode) { throw ($reply.errorCode + ': ' + (ConvertTo-Json $reply -Depth 6 -Compress)) }
     return $reply
 }
@@ -44,6 +47,12 @@ function Wait-Capture([string]$Id, [UInt64]$ExpectedGeneration) {
     throw 'captureWaitTimeout: session continues independently; use wait with the same Session to resume.'
 }
 try {
+    $allowedModules = @('resource','lua','task','frame','input','dock','popup','layout','render','icon','cache')
+    $Modules = @($Modules | ForEach-Object {$_.Split(',') | ForEach-Object {$_.Trim().ToLowerInvariant()}})
+    if (@($Modules | Where-Object {$_ -notin $allowedModules}).Count -or
+        @($Modules | Group-Object | Where-Object Count -gt 1).Count) { throw 'invalidCaptureFilter' }
+    $Modules = @($Modules | Sort-Object)
+    if (($Modules.Count -or $InputSampleEvery -ne 1) -and $Command -notin @('start','capture')) { throw 'captureFilterOptionsRequireStartOrCapture' }
     if ($Mode) { $Preset = if ($Mode -eq 'summary') {'idle'} else {'interaction'} }
     if (-not $PSBoundParameters.ContainsKey('Seconds')) { $Seconds = if ($Preset -eq 'idle') {120} elseif ($Preset -eq 'widget-detail') {30} else {60} }
     if (-not $PSBoundParameters.ContainsKey('BufferKiB')) { $BufferKiB = if ($Preset -eq 'idle') {32768} else {65536} }
@@ -149,9 +158,21 @@ public static class SnowDesktopPerformanceClientV3 {
     $script:hostPid = [SnowDesktopPerformanceClientV3]::Connect($TargetProcessId)
     if ($Command -eq 'status') { Invoke-Control @{command='status';requestId=(New-RequestId);sessionId=[string]$Session} | ConvertTo-Json -Depth 8 -Compress; exit 0 }
     if ($Command -in @('start','capture')) {
+        if ($Modules.Count -or $InputSampleEvery -ne 1) {
+            $capabilities = (Invoke-Control @{command='status';requestId=(New-RequestId)}).capabilities
+            if (-not $capabilities.PSObject.Properties['moduleFilter'] -or -not $capabilities.moduleFilter -or
+                -not $capabilities.PSObject.Properties['inputSampling'] -or -not $capabilities.inputSampling) {
+                throw 'captureFilterCapabilityUnavailable: update the host before requesting modules or input sampling.'
+            }
+        }
         if (-not $Session) { $Session = New-RequestId }
         if (-not $RequestId) { $RequestId = $Session }
-        $snapshot = Invoke-Control @{command='start';requestId=$RequestId;sessionId=$Session;preset=$Preset;seconds=$Seconds;bufferKiB=$BufferKiB;threadCpu=[bool]$ScopeCpu;widgetIds=@($WidgetIds)}
+        $request = @{command='start';requestId=$RequestId;sessionId=$Session;preset=$Preset;seconds=$Seconds;bufferKiB=$BufferKiB;threadCpu=[bool]$ScopeCpu;widgetIds=@($WidgetIds)}
+        if ($Modules.Count) { $request.modules = @($Modules) }
+        if ($InputSampleEvery -ne 1) { $request.inputSampleEvery = $InputSampleEvery }
+        $snapshot = Invoke-Control $request
+        if (($Modules.Count -and (($snapshot.moduleFilter -join ',') -cne ($Modules -join ','))) -or
+            ($InputSampleEvery -ne 1 -and $snapshot.inputSampleEvery -ne $InputSampleEvery)) { throw 'captureConfigurationMismatch' }
         $Generation = [UInt64]$snapshot.generation
         if ($Command -eq 'start') { $snapshot | ConvertTo-Json -Depth 8 -Compress; exit 0 }
     }

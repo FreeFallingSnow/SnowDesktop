@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -18,6 +19,8 @@ inline constexpr LRESULT ProtocolIdle = 0x53445010, ProtocolRecording = 0x534450
 enum class CapturePreset { Resource, Interaction, Widget };
 enum class CaptureProcessRole { Host, WidgetPreview };
 enum class CapturePhase { Idle, Starting, Recording, Stopping, Finalizing, Completed, Failed };
+inline constexpr std::array<std::string_view, 11> CaptureModules{
+    "resource", "lua", "task", "frame", "input", "dock", "popup", "layout", "render", "icon", "cache"};
 struct CaptureOptions
 {
     std::string session, requestId;
@@ -28,6 +31,8 @@ struct CaptureOptions
     CaptureProcessRole processRole = CaptureProcessRole::Host;
     bool scopeCpu = false;
     std::vector<std::wstring> selectedInstances;
+    std::vector<std::string> modules;
+    unsigned inputSampleEvery = 1;
 };
 struct CaptureSnapshot
 {
@@ -39,6 +44,8 @@ struct CaptureSnapshot
     unsigned requestedSeconds = 0;
     unsigned preset = 0, bufferKiB = 0;
     std::vector<std::wstring> selectedInstances;
+    std::vector<std::string> modules;
+    unsigned inputSampleEvery = 1;
     double elapsedMs = 0;
     bool scopeCpu = false, found = true;
 };

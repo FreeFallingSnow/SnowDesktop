@@ -27,6 +27,8 @@ struct TraceContext
     std::atomic<std::uint64_t> nextOperation{ 1 };
     std::atomic<std::uint64_t> droppedOwners{ 0 }, droppedCounters{ 0 }, droppedLinks{ 0 }, probeErrors{ 0 };
     std::atomic<std::uint64_t> animationTracks{0}, droppedTracks{0};
+    unsigned inputSampleEvery = 1;
+    std::atomic<std::uint64_t> filteredProbeCalls{0}, inputOperationsObserved{0}, inputOperationsSelected{0}, ownerFilteredProbeCalls{0};
     std::mutex identityMutex, counterMutex, drawMutex, taskMutex;
     std::unordered_map<std::uint64_t, std::wstring> owners;
     // Bounded identity and correlation registries, not event/timing storage.
@@ -41,6 +43,8 @@ std::atomic<bool> active{ false };
 std::atomic<std::uint64_t> activeGeneration{0};
 std::atomic<std::shared_ptr<detail::TraceContext>> context;
 thread_local std::uint64_t currentOwner = 0, currentOperation = 0, currentGeneration = 0;
+thread_local std::uint64_t inputGeneration = 0, inputSalt = 0, inputOperation = 0;
+thread_local bool inputSelected = true;
 enum class Category : std::uint8_t { Resource, Lua, LuaDetail, Task, TaskDetail,
     Frame, Input, Dock, Popup, Layout, Render, Icon, Cache, Profiler };
 
@@ -73,8 +77,12 @@ Category CategoryFor(std::string_view module) noexcept
     if (module.starts_with("desktop") || module.starts_with("composition")) return Category::Frame;
     return Category::Render;
 }
-bool Selected(const detail::TraceContext& state, std::uint64_t owner) noexcept
-{ return !owner || state.selected.empty() || std::find(state.selected.begin(), state.selected.end(), owner) != state.selected.end(); }
+bool Selected(detail::TraceContext& state, std::uint64_t owner) noexcept
+{
+    if (!owner || state.selected.empty() || std::find(state.selected.begin(), state.selected.end(), owner) != state.selected.end()) return true;
+    ++state.ownerFilteredProbeCalls;
+    return false;
+}
 std::uint64_t RegisterOwner(detail::TraceContext& state, std::wstring_view owner)
 {
     if (owner.empty()) return 0;
@@ -101,6 +109,37 @@ std::uint64_t RegisterOwner(detail::TraceContext& state, std::wstring_view owner
     ACTION(Input, "snow.input") ACTION(Dock, "snow.dock") ACTION(Popup, "snow.popup") \
     ACTION(Layout, "snow.layout") ACTION(Render, "snow.render") ACTION(Icon, "snow.icon") \
     ACTION(Cache, "snow.cache.detail") ACTION(Profiler, "snow.profiler")
+
+bool CategoryEnabled(Category category) noexcept
+{
+#define SNOW_ENABLED_CASE(kind, label) case Category::kind: return TRACE_EVENT_CATEGORY_ENABLED(label);
+    switch (category) { SNOW_TRACE_CATEGORIES(SNOW_ENABLED_CASE) }
+#undef SNOW_ENABLED_CASE
+    return false;
+}
+bool RecordCategory(detail::TraceContext& state, Category category) noexcept
+{
+    if (CategoryEnabled(category)) return true;
+    ++state.filteredProbeCalls;
+    return false;
+}
+bool RecordInputOperation(detail::TraceContext& state, std::uint64_t operation) noexcept
+{
+    if (inputGeneration != state.generation || inputSalt != state.salt || inputOperation != operation)
+    {
+        inputGeneration = state.generation; inputSalt = state.salt; inputOperation = operation;
+        ++state.inputOperationsObserved;
+        // Hash sampling avoids aliasing a repeated sequence of nested probe
+        // phases. Every scope/metric in one synchronous operation agrees.
+        auto hash = operation ^ state.salt;
+        hash ^= hash >> 30; hash *= 0xbf58476d1ce4e5b9ULL;
+        hash ^= hash >> 27; hash *= 0x94d049bb133111ebULL;
+        hash ^= hash >> 31;
+        inputSelected = hash % state.inputSampleEvery == 0;
+        if (inputSelected) ++state.inputOperationsSelected;
+    }
+    return inputSelected;
+}
 
 bool Begin(Category category, std::string_view module, std::string_view phase,
     std::uint64_t owner, std::uint64_t operation)
@@ -163,7 +202,9 @@ Scope::Scope(std::string_view module, std::string_view phase,
         if ((module == "widget.render" || module == "widget.invalidate") && phase != "desktop" && phase != "panel" && phase != "backgroundLayer")
         { safePhase = "surface-" + std::to_string(Hash(phase, context_->salt)); phase = safePhase; }
         if (phase.size() > 256 || module.size() > 64) { ++context_->probeErrors; return; }
-        if (Selected(*context_, currentOwner)) open_ = Begin(category, module, phase, currentOwner, currentOperation);
+        if (Selected(*context_, currentOwner) && RecordCategory(*context_, category) &&
+            (category != Category::Input || RecordInputOperation(*context_, currentOperation)))
+            open_ = Begin(category, module, phase, currentOwner, currentOperation);
     }
     catch (...) { ++context_->probeErrors; }
 }
@@ -187,12 +228,20 @@ void Value(std::string_view module, std::string_view name, std::wstring_view own
         if (!std::isfinite(value) || module.size() > 64 || name.size() > 128 ||
             module.find('|') != module.npos || name.find('|') != name.npos)
         { ++state->probeErrors; return; }
+        const auto category = (module == "widget.composition" && (name == "surface_visible" || name == "surface_resident")) || name == "retained_bytes_estimate"
+            ? Category::Resource : CategoryFor(module);
+        if (!RecordCategory(*state, category)) return;
         const auto ownerId = RegisterOwner(*state, owner);
         if (!owner.empty() && !ownerId) return;
         if (module != "process" && !Selected(*state, ownerId)) return;
+        if (category == Category::Input)
+        {
+            const auto operation = correlation ? OperationId(correlation) :
+                (currentGeneration == state->generation && currentOperation ? currentOperation : state->nextOperation.fetch_add(1));
+            if (!RecordInputOperation(*state, operation)) return;
+        }
         if (IsEventMetric(module, name))
         {
-            const auto category = CategoryFor(module);
 #define SNOW_METRIC_CASE(kind, label) case Category::kind: \
             TRACE_EVENT_INSTANT(label, "metric.event", "module", perfetto::DynamicString(module.data(), module.size()), \
                 "metric", perfetto::DynamicString(name.data(), name.size()), "owner", ownerId, "value", value, "operation", OperationId(correlation)); break;
@@ -226,8 +275,6 @@ void Value(std::string_view module, std::string_view name, std::wstring_view own
             { ++state->droppedCounters; return; }
             state->counters.insert(key);
         }
-        const auto category = (module == "widget.composition" && (name == "surface_visible" || name == "surface_resident")) || name == "retained_bytes_estimate"
-            ? Category::Resource : CategoryFor(module);
         Counter(category, label, value);
         if (correlation)
             TRACE_EVENT_INSTANT("snow.task", "numeric.operation", "module", perfetto::DynamicString(module.data(), module.size()),
@@ -240,6 +287,7 @@ void DrawLink(std::string_view surface, std::wstring_view owner, bool consume) n
     if (!Enabled()) return;
     const auto state = context.load();
     if (!state) return;
+    if (!RecordCategory(*state, Category::Frame)) return;
     try
     {
         if (surface.size() > 1024) { ++state->probeErrors; return; }
@@ -283,6 +331,7 @@ void TaskQueued(std::uint64_t id, std::string_view instanceUtf8) noexcept
 {
     if (!Enabled() || !id) return;
     const auto state = context.load(); if (!state) return;
+    if (!RecordCategory(*state, Category::Task)) return;
     try
     {
         if (instanceUtf8.empty() || instanceUtf8.size() > 1024) { ++state->probeErrors; return; }
@@ -323,6 +372,7 @@ TaskExecution::TaskExecution(std::uint64_t id, std::string_view worker) noexcept
 {
     if (!Enabled()) return;
     context_ = context.load(); if (!context_) return;
+    if (!RecordCategory(*context_, Category::Task)) return;
     try
     {
         detail::TraceContext::TaskOrigin origin;
@@ -342,11 +392,12 @@ TaskExecution::~TaskExecution()
     if (flow_ && Enabled() && context.load() == context_)
         TRACE_EVENT_INSTANT("snow.task", "task.execute.end", perfetto::Flow::ProcessScoped(flow_), "operation", operation_, "owner", owner_);
 }
-void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected)
+void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected, unsigned inputSampleEvery)
 {
     auto state = std::make_shared<detail::TraceContext>();
     state->generation = generation;
     state->salt = salt;
+    state->inputSampleEvery = (std::max)(1U, inputSampleEvery);
     for (const auto& owner : selected) state->selected.push_back(RegisterOwner(*state, owner));
     context.store(std::move(state));
     active.store(true, std::memory_order_release);
@@ -358,7 +409,8 @@ TraceQuality DeactivateTrace() noexcept
     activeGeneration.store(0, std::memory_order_release);
     const auto state = context.exchange(nullptr);
     if (!state) return {};
-    return { state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load() };
+    return { state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
+        state->filteredProbeCalls.load(), state->inputOperationsObserved.load(), state->inputOperationsSelected.load(), state->ownerFilteredProbeCalls.load() };
 }
 std::vector<TraceOwnerDescription> DescribeTraceOwners()
 {
@@ -385,6 +437,7 @@ std::uint64_t ReserveAnimationTrack() noexcept
 {
     if (!Enabled()) return 0;
     const auto state = context.load(); if (!state) return 0;
+    if (!RecordCategory(*state, Category::Frame)) return 0;
     if (state->animationTracks.fetch_add(1) >= 1024) { ++state->droppedTracks; return 0; }
     return OperationId(state->nextOperation.fetch_add(1));
 }
