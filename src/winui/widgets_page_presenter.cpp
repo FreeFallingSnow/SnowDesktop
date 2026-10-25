@@ -148,7 +148,18 @@ void UpdatePackageInlineMetrics(const muxc::RichTextBlock& row)
     }
     // Use attached, arranged font metrics. An unattached label can still use
     // fallback metrics and under-report the final badge height and descent.
-    const double lineHeight = height > 0.0 ? height + 4.0 : 0.0;
+    double lineHeight = height > 0.0 ? height + 4.0 : 0.0;
+    if (height > 0.0)
+    {
+        for (const auto& element : paragraph.Inlines())
+        {
+            const auto run = element.try_as<muxd::Run>();
+            if (!run || run.Text().empty()) continue;
+            const auto bounds = run.ContentStart().GetCharacterRect(muxd::LogicalDirection::Forward);
+            if (bounds.Height > 0.0f && bounds.Y <= row.BaselineOffset())
+                lineHeight = std::max(lineHeight, descent + row.BaselineOffset() - bounds.Y + 4.0);
+        }
+    }
     const auto strategy = height > 0.0 ? mux::LineStackingStrategy::BaselineToBaseline
                                     : mux::LineStackingStrategy::MaxHeight;
     if (row.LineStackingStrategy() != strategy) row.LineStackingStrategy(strategy);
@@ -2557,6 +2568,10 @@ struct WidgetsPagePresenter::Impl
         descriptionRow.TextTrimming(mux::TextTrimming::CharacterEllipsis);
         descriptionRow.IsTextSelectionEnabled(false);
         PopulatePackageDescription(descriptionRow, package);
+        const auto weakDescriptionRow = winrt::make_weak(descriptionRow);
+        descriptionRow.SizeChanged([weakDescriptionRow](const auto&, const mux::SizeChangedEventArgs&) {
+            if (const auto current = weakDescriptionRow.get()) UpdatePackageInlineMetrics(current);
+        });
         muxc::Grid identity;
         identity.ColumnSpacing(12);
         muxc::ColumnDefinition identityName, identityState;
