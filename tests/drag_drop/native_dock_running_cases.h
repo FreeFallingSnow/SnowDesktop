@@ -10,6 +10,22 @@ inline void CreateLink(const fs::path& linkPath, const fs::path& target)
         SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link.As(&persist)) && SUCCEEDED(persist->Save(linkPath.c_str(), TRUE)),
         "create real matching desktop application shortcut for generated Dock pin tests");
 }
+inline void RemoveAfterShellRelease(const fs::path& desktop, const fs::path& path)
+{
+    Require(fs::canonical(path).parent_path() == fs::canonical(desktop),
+        "running Dock cleanup must resolve to one owned direct child of the isolated desktop");
+    // StopModel cancels detached Shell providers without joining them. A
+    // provider may still briefly hold a link that all business checks finished
+    // reading. Wait only for sharing/lock violations; never rerun the scene.
+    Wait([&] {
+        std::error_code error;
+        fs::remove_all(path, error);
+        if (!error) return true;
+        Require(error.value() == ERROR_SHARING_VIOLATION || error.value() == ERROR_LOCK_VIOLATION,
+            "running Dock cleanup failed: " + error.message());
+        return false;
+    }, "detached Shell providers must release the owned running-pin fixture before cleanup completes");
+}
 inline void Run()
 {
     native_drag_commit_cases::Profile profile;
@@ -107,8 +123,8 @@ inline void Run()
         native_dock_return_cases::OriginalFiles(originals);
         Require(Access::NoDockWindows(app), "generated pin model cannot create desktop or persistent Dock presentation windows");
         Access::StopModel(app);
-        for (const auto& path : outputs) native_dock_return_cases::RemoveOwnedEntry(desktop, path);
-        for (const auto& path : existing) native_dock_return_cases::RemoveOwnedEntry(desktop, path);
+        for (const auto& path : outputs) RemoveAfterShellRelease(desktop, path);
+        for (const auto& path : existing) RemoveAfterShellRelease(desktop, path);
     }
     std::cout << scenes << " generated running Dock queue, rejection and existing-entry storage scenes passed\n";
 }

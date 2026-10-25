@@ -423,7 +423,10 @@ int RunNativeTaskbarTests()
         SendMessageW(window, apply, 0, 0);
         SendMessageW(secondary, apply, 0, 0);
         check(!cloaked() && !secondaryCloaked(), "ending Start restores both bars independently of minimize protection");
-        useSampleCursor = false;
+        // Minimize below assumes the pointer is away from the reveal edge.
+        // Keep the injected cursor for this entire private-window scenario so
+        // the user's real pointer cannot cancel an otherwise valid cloak.
+        sampleCursor.y = fixtureMonitor.rcMonitor.top + 100;
         temporary.targets[0].shellPanelVisible = FALSE;
         temporary.targets[1].shellPanelVisible = FALSE;
         temporary.minimizeSource = reinterpret_cast<std::uintptr_t>(source);
@@ -569,6 +572,7 @@ int RunNativeTaskbarTests()
             !GetPropW(secondary, native::kAttachedProperty), "owner shutdown restores both taskbars and detaches temporary protection");
         check(!GetPropW(secondary, native::kMinimizeInputTickProperty),
             "detaching removes transient taskbar input provenance");
+        useSampleCursor = false;
         DestroyWindow(source);
         DestroyWindow(secondary);
         UnregisterClassW(registration.lpszClassName, instance);
