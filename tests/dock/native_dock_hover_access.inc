@@ -140,17 +140,21 @@
             check(SUCCEEDED(cpu->Unmap()), "unmap pixel reference");
             return result;
         };
-        const auto paintedBounds = [&](const std::vector<std::uint32_t>& pixels) {
+        const auto paintedBounds = [&](const std::vector<std::uint32_t>& pixels, bool greenOnly = false) {
             RECT bounds{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
             for (UINT y = 0; y < height; ++y)
             for (UINT x = 0; x < width; ++x)
-                if ((pixels[static_cast<size_t>(y) * width + x] >> 24) != 0)
+            {
+                const auto pixel = pixels[static_cast<size_t>(y) * width + x];
+                const auto red = (pixel >> 16) & 255, green = (pixel >> 8) & 255, blue = pixel & 255;
+                if ((pixel >> 24) != 0 && (!greenOnly || (green > red + 12 && green > blue + 12)))
                 {
                     bounds.left = std::min(bounds.left, static_cast<LONG>(x));
                     bounds.top = std::min(bounds.top, static_cast<LONG>(y));
                     bounds.right = std::max(bounds.right, static_cast<LONG>(x + 1));
                     bounds.bottom = std::max(bounds.bottom, static_cast<LONG>(y + 1));
                 }
+            }
             return bounds;
         };
         std::array<DockContainer*, 3> docks{};
@@ -173,7 +177,9 @@
                 const auto mismatch = std::mismatch(actualPixels.begin(), actualPixels.end(), completePixels.begin());
                 const size_t index = static_cast<size_t>(mismatch.first - actualPixels.begin());
                 std::cerr << "R08 pixel mismatch x=" << index % width << " y=" << index / width
-                    << " actual=" << *mismatch.first << " reference=" << *mismatch.second << '\n';
+                    << " actual=" << *mismatch.first << " reference=" << *mismatch.second
+                    << " pointer=" << app.lastMousePoint_.x << ',' << app.lastMousePoint_.y
+                    << " effect=" << app.dockSettings_.hoverEffect << " position=" << static_cast<int>(app.dockSettings_.position) << '\n';
             }
             check(actualPixels == completePixels,
                 "retained partial foreground must equal the complete pixel reference");
@@ -481,11 +487,12 @@
                 referenceContext->SetTarget(complete.Get());
                 referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
                 app.brushCache_.clear(); app.brushCacheContext_ = referenceContext.Get();
-                docks[0]->DrawDropPreview(referenceContext.Get(), docks[0]->GetSlots().front().get(), HitRegion::Handoff);
-                check(SUCCEEDED(referenceContext->EndDraw()), "render the actual green Dock handoff frame");
+                app.dragSession_.UpdateTarget(docks[0], docks[0]->GetSlots().front().get(), HitRegion::Handoff);
+                app.DrawDesktopForeground(referenceContext.Get(), false);
+                check(SUCCEEDED(referenceContext->EndDraw()), "render green Dock handoff through the actual scene entry");
                 referenceContext->SetTarget(nullptr);
                 app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
-                const RECT greenPixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+                const RECT greenPixels = paintedBounds(read(referenceContext.Get(), complete.Get()), true);
                 const RECT focusedVisual = docks[0]->GetElementVisualRect(base, tip);
                 check(greenPixels.left <= focusedVisual.left + 1 && greenPixels.top <= focusedVisual.top + 1 &&
                     greenPixels.right >= focusedVisual.right - 1 && greenPixels.bottom >= focusedVisual.bottom - 1,
@@ -524,6 +531,37 @@
                 app.dockEntries_.size() == 3 && app.dockEntries_.front().reference == app.items_.front().layoutKey,
                 "the actual button-up route must end a self drop without arming a click or changing Dock order");
             app.dockSettings_.singleClickLaunchItems = singleClick;
+
+            for (const bool reconcile : {false, true})
+            {
+                const RECT base = docks[0]->GetSlots().front()->GetBounds();
+                app.lastMousePoint_ = first;
+                auto menuHover = docks[0]->CapturePresentationState();
+                menuHover.focusRect = base; menuHover.entry = {}; menuHover.single = {};
+                const double menuNow = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (effect == 1)
+                {
+                    menuHover.single.SetTarget(base, menuNow - 200, 1.0,
+                        position == DockPosition::Left || position == DockPosition::Right ? first.y : first.x);
+                    menuHover.single.Advance(menuNow);
+                }
+                else if (effect == 2)
+                { menuHover.entry.SetHovered(true, menuNow - 200, 1.0); menuHover.entry.Advance(menuNow); }
+                check(docks[0]->RestorePresentationState(menuHover), "supply settled hover before menu capture");
+                app.shellPopupMenuLayerDepth_ = 1;
+                // The fixture's HWND is never shown and remains offscreen.
+                // A live cursor cannot be on this Dock; no user window is operated.
+                if (reconcile) app.ReconcileDesktopHoverState(snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
+                else app.OnMouseLeave();
+                check(app.lastMousePoint_.x == LONG_MIN && app.lastMousePoint_.y == LONG_MIN &&
+                    app.shellPopupMenuLayerDepth_ == 1,
+                    "menu capture must clear departed Dock hover before the menu closes, including fallback reconciliation");
+                docks[0]->AdvanceMagnificationAnimation(menuNow + 1000);
+                const RECT cleared = docks[0]->GetElementVisualRect(base, app.lastMousePoint_);
+                check(EqualRect(&cleared, &base) && !docks[0]->IsMagnificationAnimating(),
+                    "hover must reach resting geometry while the context-menu session is still active");
+                app.shellPopupMenuLayerDepth_ = 0;
+            }
         }
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;

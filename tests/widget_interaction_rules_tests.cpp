@@ -970,9 +970,11 @@ void TestDesktopHoverDeactivation()
             ReconcileMode::DeactivateOnly,
         "closing a Shell popup must not reactivate hover from the menu's last cursor position");
     Check(
-        hoverRules::ShouldHoldHoverDuringNativeShellPopup(true) &&
-            !hoverRules::ShouldHoldHoverDuringNativeShellPopup(false),
-        "native Shell popup capture must hold the complete hover frame until the menu closes");
+        hoverRules::ShouldHoldHoverDuringContextMenu(true, true) &&
+            !hoverRules::ShouldHoldHoverDuringContextMenu(true, false) &&
+            !hoverRules::ShouldHoldHoverDuringContextMenu(false, true) &&
+            !hoverRules::ShouldHoldHoverDuringContextMenu(false, false),
+        "context-menu capture retains Dock hover only while the live pointer remains on the Dock");
     Check(
         hoverRules::ShouldRetainHoverAcrossMouseLeave(
             true, false) &&

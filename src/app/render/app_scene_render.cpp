@@ -568,7 +568,14 @@ void DesktopApp::DrawDynamicOverlays(
             ctx->PushAxisAlignedClip(ToD2DRect(clipViewport), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             clipped = true;
         }
-        if (targetRegion == HitRegion::Handoff && targetSlot)
+        if (targetRegion == HitRegion::Handoff && targetSlot &&
+            dynamic_cast<DockContainer*>(targetContainer))
+        {
+            // Dock targets share the exact hover geometry used by their icons.
+            // The generic slot frame remains at the unanimated layout cell.
+            targetContainer->DrawDropPreview(ctx, targetSlot, targetRegion);
+        }
+        else if (targetRegion == HitRegion::Handoff && targetSlot)
         {
             RECT bounds = targetSlot->GetBounds();
             float radius = 6.f;

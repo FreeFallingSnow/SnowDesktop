@@ -60,20 +60,20 @@ void DesktopApp::OnMouseLeave()
     }
     else DockTrayPopupPointerMove({LONG_MIN, LONG_MIN});
     POINT hoverPoint{};
-    if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
+    const bool hoverPointAvailable = TryGetDesktopHoverPointFromCursor(hoverPoint);
+    if (hoverPointAvailable) UpdatePopupHover(hoverPoint);
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
     if ((IsDockStartMenuActive() && RetainStartButtonHover(
             persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
-        HasActiveContextMenuSession() ||
         snowdesktop::desktop_hover_rules::
-            ShouldHoldHoverDuringNativeShellPopup(
-                shellPopupMenuLayerDepth_ > 0))
+            ShouldHoldHoverDuringContextMenu(
+                HasActiveContextMenuSession(),
+                hoverPointAvailable && GetDockContainerAtPoint(hoverPoint)))
     {
-        // Popup windows temporarily own pointer input. Preserve the complete
-        // Dock hover frame until the menu session unwinds; subsequent live
-        // sampling reconciles the real pointer location.
+        // Ignore a capture/restack leave only while the live pointer still
+        // belongs to the Dock. The menu itself must not freeze that frame.
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
@@ -188,9 +188,18 @@ void DesktopApp::ReconcileDesktopHoverState(
     const HWND shellDialogOwner = ShellDialogOwnerHwnd();
     const bool shellDialogOwnerAvailable =
         shellDialogOwner && IsWindow(shellDialogOwner);
+    if (HasActiveContextMenuSession())
+    {
+        // Modal menus can consume the original WM_MOUSELEAVE. Keep this
+        // deactivation path live without replaying passive hover into a menu.
+        if (lastMousePoint_.x != LONG_MIN || lastMousePoint_.y != LONG_MIN)
+            OnMouseLeave();
+        desktopHoverForegroundObservedTick_ = foregroundTick;
+        RecordShellHoverTrace(ShellHoverTraceEvent::ReconcileSuspended);
+        return;
+    }
     if ((IsDockStartMenuActive() && RetainStartButtonHover(
             persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
-        HasActiveContextMenuSession() ||
         !snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
                 shellPopupMenuLayerDepth_ > 0,

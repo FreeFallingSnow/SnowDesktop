@@ -1786,7 +1786,8 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 
 bool DockContainer::IsPointInScrollViewport(POINT point) const
 {
-    RECT viewport = GetVisualScrollViewport(point);
+    RECT viewport = app_ && app_->dragSession_.IsActive()
+        ? GetVisualScrollViewport(point) : GetScrollViewport(GetBounds());
     if (!IsMagnificationSuppressed())
     {
         viewport = snowdesktop::dock_magnification::
