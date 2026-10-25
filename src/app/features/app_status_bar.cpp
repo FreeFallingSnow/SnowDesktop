@@ -140,6 +140,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
+    const bool dismissDock = action == Action::Dismiss;
     if ((snowdesktop::IsStatusBarContextMenuAction(action) || action == Action::SystemMenu) &&
         action == statusBarMenuAction_ && statusBarMenuMonitor_ == statusBarActivationMonitor_ &&
         statusBarMenuOwner_ && activeMenu && GetWindow(activeMenu, GW_OWNER) == statusBarMenuOwner_)
@@ -155,6 +156,13 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
         statusBarActivationMonitor_ = nullptr;
+        if (dismissDock && floatingDockVisible_)
+        {
+            // Blank-bar presses share the outside-click close policy. A menu
+            // button toggled closed above must keep its Dock session instead.
+            CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        }
         return;
     }
     if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled ||

@@ -273,5 +273,47 @@
         app.dockFolderPopupOpen_ = false; app.popupWidgetIndex_ = static_cast<size_t>(-1);
         app.persistentDockHosts_[0]->container = nullptr;
         ClearListTitleRendering(app);
+
+        // Exercise the production Press -> ActivateStatusBar -> Dock close
+        // route using only the inactive desktop's test-owned HWNDs. Native
+        // status-bar hit dispatch and visible animation still need runtime QA.
+        const std::vector<snowdesktop::StatusBarItem> dismissItems = [] {
+            snowdesktop::StatusBarItem item;
+            item.key = "quickSearch"; item.action = snowdesktop::StatusBarAction::QuickSearch;
+            item.bounds = {0, 0, 40, 30};
+            return std::vector<snowdesktop::StatusBarItem>{item};
+        }();
+        for (const bool summonOnly : {false, true})
+        {
+            app.dockSettings_.showOnlyWhenSummoned = summonOnly;
+            for (const bool right : {false, true}) for (const bool blank : {false, true})
+            {
+                for (const auto& host : app.persistentDockHosts_) host->promoted = true;
+                app.SelectPersistentDockHost(app.persistentDockHosts_[0].get());
+                app.RefreshFloatingDockVisibilityState();
+                app.floatingDockKeyboardSessionActive_ = true;
+                app.floatingDockLogicalForegroundWindow_ = windows.values[0];
+                const HWND focus = GetFocus();
+                snowdesktop::StatusBarInteraction interaction;
+                const POINT point = blank ? POINT{80, 10} : POINT{10, 10};
+                const auto action = interaction.Press(dismissItems, point, right, false,
+                    [&] { app.HandleStatusBarPointerPressed(); });
+                if (action == snowdesktop::StatusBarAction::Dismiss)
+                    app.ActivateStatusBar(action, windows.values[0], RECT{0, 0, 1200, 30});
+                const bool dismissed = blank && !right;
+                require(app.floatingDockVisible_ == !dismissed &&
+                    app.floatingDockKeyboardSessionActive_ == !dismissed,
+                    "only a left blank-bar press ends the summoned Dock and its keyboard session");
+                for (const auto& host : app.persistentDockHosts_)
+                    require(host->active && host->promoted == !dismissed,
+                        "blank-bar dismissal releases every promotion without disabling persistent Docks");
+                require(GetFocus() == focus,
+                    "blank-bar Dock dismissal preserves the current input focus");
+                if (dismissed)
+                    require(!interaction.Release(dismissItems, point, false).accepted,
+                        "blank-bar release cannot reopen a surface after Dock dismissal");
+            }
+        }
+        app.CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
         std::cout << "R13 production Press, host routing, final state/geometry and WARP pixel comparisons passed\n";
     }
