@@ -23,6 +23,7 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Provider.h>
+#include <winrt/Microsoft.UI.Xaml.Documents.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
@@ -113,6 +114,91 @@ template<class Control> Control PreviewControl(const x::DependencyObject& root, 
     });
     if (!found) throw std::runtime_error("missing preview control: " + winrt::to_string(id));
     return found;
+}
+
+void InspectPackageInlineLayout(const x::FrameworkElement& root,
+    const std::filesystem::path& output, bool oldLineBoxes)
+{
+    namespace d = x::Documents;
+    Settle(root);
+    std::vector<c::RichTextBlock> rows;
+    Walk(root, [&](const x::DependencyObject& node) {
+        const auto text = node.try_as<c::RichTextBlock>();
+        if (!text || text.Blocks().Size() != 1) return;
+        const auto paragraph = text.Blocks().GetAt(0).try_as<d::Paragraph>();
+        if (paragraph && paragraph.Inlines().Size() > 0 &&
+            paragraph.Inlines().GetAt(0).try_as<d::InlineUIContainer>())
+            rows.push_back(text);
+    });
+    if (rows.size() != 3) throw std::runtime_error("expected three package inline preview rows");
+    if (oldLineBoxes)
+    {
+        // Isolated negative control: restore the preceding production line-box
+        // settings while retaining its real tag, font, text and wrapping path.
+        for (const auto& row : rows)
+        {
+            row.LineStackingStrategy(x::LineStackingStrategy::MaxHeight);
+            row.LineHeight(0.0);
+            row.Padding({0, 0, 0, 0});
+        }
+        Settle(root);
+    }
+    std::ofstream metrics(output / L"package-inline-layout.tsv");
+    metrics << "row\ttag_bottom\trow_height\tbaseline_error\tsecond_line_top\tsecond_line_x\tgap\n";
+    bool foundWrappedDescription = false;
+    for (std::size_t index = 0; index < rows.size(); ++index)
+    {
+        const auto& row = rows[index];
+        const auto paragraph = row.Blocks().GetAt(0).as<d::Paragraph>();
+        double tagBottom = 0.0, baselineError = 0.0;
+        d::Run description{nullptr};
+        for (const auto& inlineElement : paragraph.Inlines())
+        {
+            if (const auto container = inlineElement.try_as<d::InlineUIContainer>())
+            {
+                const auto tag = container.Child().as<c::Border>();
+                const auto label = tag.Child().as<c::TextBlock>();
+                const auto bounds = tag.TransformToVisual(row).TransformBounds(
+                    {0, 0, static_cast<float>(tag.ActualWidth()), static_cast<float>(tag.ActualHeight())});
+                tagBottom = std::max(tagBottom, static_cast<double>(bounds.Y + bounds.Height));
+                const auto baseline = label.TransformToVisual(row).TransformPoint(
+                    {0, static_cast<float>(label.BaselineOffset())});
+                baselineError = std::max(baselineError,
+                    std::abs(static_cast<double>(baseline.Y) - row.BaselineOffset()));
+            }
+            else if (const auto run = inlineElement.try_as<d::Run>())
+                description = run;
+        }
+        double secondTop = -1.0, secondX = -1.0;
+        if (description && !description.Text().empty())
+        {
+            const auto first = description.ContentStart().GetCharacterRect(d::LogicalDirection::Forward);
+            for (std::uint32_t offset = 1; offset < description.Text().size(); ++offset)
+            {
+                const auto pointer = description.ContentStart().GetPositionAtOffset(
+                    static_cast<int>(offset), d::LogicalDirection::Forward);
+                if (!pointer) break;
+                const auto bounds = pointer.GetCharacterRect(d::LogicalDirection::Forward);
+                if (bounds.Y > first.Y + 1.0f)
+                {
+                    secondTop = bounds.Y;
+                    secondX = bounds.X;
+                    foundWrappedDescription = true;
+                    break;
+                }
+            }
+        }
+        metrics << index << '\t' << tagBottom << '\t' << row.ActualHeight() << '\t'
+            << baselineError << '\t' << secondTop << '\t' << secondX << '\t'
+            << (secondTop < 0.0 ? -1.0 : secondTop - tagBottom) << '\n';
+        metrics.flush();
+        if (baselineError > 0.75) throw std::runtime_error("package tag and description baselines do not align");
+        if (tagBottom > row.ActualHeight() + 0.75) throw std::runtime_error("package tag exceeds its line box");
+        if (secondTop >= 0.0 && secondTop - tagBottom < 2.0)
+            throw std::runtime_error("package tag overlaps the following description line");
+        if (secondX > 0.75) throw std::runtime_error("wrapped package description does not start at the full left edge");
+    }
+    if (!foundWrappedDescription) throw std::runtime_error("package preview did not exercise a wrapped description");
 }
 
 void InvokePreview(const x::FrameworkElement& element)
@@ -1447,6 +1533,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 package.description = english ? L"An example component with a longer description for layout review." : L"用于检查长名称、状态与操作排列的示例组件。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
                 if (index == 1)
                     package.description = english ? L"A desktop clock inspired by Xiaomi HyperOS, displaying 17:27 as Chinese numerals and full hours in a separate format, with configurable ink color, opacity, horizontal or vertical layout, and handwritten fonts." : L"一个仿小米澎湃系统的桌面时钟，用汉字数字写时间：17:27 显示「十七 二七」，整点显示「十七时」；可配置墨色、透明度、横竖排列与手迹字体。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                if (index == 2 && focusId.starts_with("package-inline-layout"))
+                    package.description.clear();
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
                 package.enabled = index != 2; packages.installed.push_back(std::move(package));
                 WidgetRuntimeDiagnosticSnapshot diagnostic;
@@ -2069,6 +2157,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 Settle(shell.as<x::FrameworkElement>());
             }
         }
+        if (page == SettingsPage::Widgets &&
+            (focusId == "package-inline-layout" || focusId == "package-inline-layout-old"))
+            InspectPackageInlineLayout(shell.as<x::FrameworkElement>(), output,
+                focusId == "package-inline-layout-old");
         if (page == SettingsPage::Debug && expanded)
         {
             const auto list = PreviewControl<c::ListView>(cards, L"PerformanceCaptureInstances");

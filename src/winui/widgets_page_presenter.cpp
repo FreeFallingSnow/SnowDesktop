@@ -1308,7 +1308,14 @@ struct WidgetsPagePresenter::Impl
             packages.begin(), packages.end(), IsIncludedPackage));
     }
 
-    [[nodiscard]] muxc::Border MakePackageTag(
+    struct PackageTag
+    {
+        muxc::Border element;
+        double height;
+        double descent;
+    };
+
+    [[nodiscard]] PackageTag MakePackageTag(
         std::wstring text) const
     {
         auto tag = mux::Markup::XamlReader::Load(LR"(<Border
@@ -1331,12 +1338,13 @@ struct WidgetsPagePresenter::Impl
         // badge extend below it so its label shares the description baseline.
         const float unbounded = std::numeric_limits<float>::infinity();
         tag.Measure({unbounded, unbounded});
-        const double belowBaseline = tag.DesiredSize().Height -
+        const double height = tag.DesiredSize().Height;
+        const double belowBaseline = height -
             tag.BorderThickness().Top - tag.Padding().Top - label.BaselineOffset();
         tag.Margin({0.0, 0.0, 6.0, -std::max(0.0, belowBaseline)});
 
         SetAutomation(tag, label.Text());
-        return tag;
+        return {tag, height, std::max(0.0, belowBaseline)};
     }
 
     void PopulatePackageDescription(
@@ -1344,9 +1352,14 @@ struct WidgetsPagePresenter::Impl
         const InstalledWidgetPackageSnapshot& package) const
     {
         muxd::Paragraph paragraph;
+        double tagHeight = 0.0;
+        double tagDescent = 0.0;
         const auto appendTag = [&](std::wstring text) {
+            const auto tag = MakePackageTag(std::move(text));
+            tagHeight = std::max(tagHeight, tag.height);
+            tagDescent = std::max(tagDescent, tag.descent);
             muxd::InlineUIContainer container;
-            container.Child(MakePackageTag(std::move(text)));
+            container.Child(tag.element);
             paragraph.Inlines().Append(container);
         };
         if (IsInstalledPackage(package))
@@ -1374,6 +1387,13 @@ struct WidgetsPagePresenter::Impl
         }
         descriptionRow.Blocks().Clear();
         descriptionRow.Blocks().Append(paragraph);
+        // The baseline adjustment above must not remove the badge's descent
+        // from the line box: reserve it between lines and after the last line.
+        descriptionRow.LineStackingStrategy(tagHeight > 0.0
+                ? mux::LineStackingStrategy::BaselineToBaseline
+                : mux::LineStackingStrategy::MaxHeight);
+        descriptionRow.LineHeight(tagHeight > 0.0 ? tagHeight + 4.0 : 0.0);
+        descriptionRow.Padding({0.0, 0.0, 0.0, tagDescent});
         descriptionRow.Visibility(paragraph.Inlines().Size() == 0
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
