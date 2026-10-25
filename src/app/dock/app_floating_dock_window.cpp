@@ -77,7 +77,7 @@ DesktopApp::FindPersistentDockHost(
 
 bool DesktopApp::IsPersistentDockHostWindow(HWND hwnd) const
 {
-    return FindPersistentDockHost(hwnd) != nullptr;
+    return hwnd != nullptr && FindPersistentDockHost(hwnd) != nullptr;
 }
 
 bool DesktopApp::IsPersistentDockBackdropWindow(HWND hwnd) const

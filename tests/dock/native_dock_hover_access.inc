@@ -529,6 +529,8 @@
                 { menuHover.entry.SetHovered(true, menuNow - 200, 1.0); menuHover.entry.Advance(menuNow); }
                 check(docks[0]->RestorePresentationState(menuHover), "supply settled hover before menu capture");
                 app.shellPopupMenuLayerDepth_ = 1;
+                check(!app.IsPersistentDockHostWindow(nullptr),
+                    "an uninitialized Dock host must not claim an absent mouse-capture handle");
                 // The fixture's HWND is never shown and remains offscreen.
                 // A live cursor cannot be on this Dock; no user window is operated.
                 if (reconcile) app.ReconcileDesktopHoverState(snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
@@ -536,6 +538,9 @@
                 check(app.lastMousePoint_.x == LONG_MIN && app.lastMousePoint_.y == LONG_MIN &&
                     app.shellPopupMenuLayerDepth_ == 1,
                     "menu capture must clear departed Dock hover before the menu closes, including fallback reconciliation");
+                // STATIC supplies geometry only; query the real Dock paint
+                // resolver to start its exit track before advancing the clock.
+                (void)docks[0]->GetElementVisualRect(base, app.lastMousePoint_);
                 docks[0]->AdvanceMagnificationAnimation(menuNow + 1000);
                 const RECT cleared = docks[0]->GetElementVisualRect(base, app.lastMousePoint_);
                 check(EqualRect(&cleared, &base) && !docks[0]->IsMagnificationAnimating(),
