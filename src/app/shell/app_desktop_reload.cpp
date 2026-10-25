@@ -382,6 +382,11 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
+        static const UINT performanceControl = RegisterWindowMessageW(
+            snowdesktop::performance::ControlMessageName);
+        if (performanceControl && msg == performanceControl)
+            snowdesktop::performance::ConfigureControl(hwnd,
+                std::filesystem::path(GetDataDirectoryPath()) / L"diagnostics" / L"performance");
         return snowdesktop::performance::HandleControlMessage(
             hwnd, msg, wp, lp, +[](void* context) {
                 auto* app = static_cast<DesktopApp*>(context);

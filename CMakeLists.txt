@@ -664,6 +664,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
     src/diagnostics/performance_capture.cpp
+    src/diagnostics/performance_control_pipe.cpp
     src/widget/runtime/widget_runtime_scheduler.cpp
     src/widget/runtime/widget_timer_dispatch.h
     src/widget/runtime/widget_calendar_provider.h
@@ -1225,7 +1226,7 @@ add_executable(snowwidget
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 snowdesktop_add_executable_version_resource(snowwidget "SnowDesktop widget authoring tool")
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
+target_link_libraries(snowwidget PRIVATE SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
@@ -1287,7 +1288,7 @@ if (MSVC)
         "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTextInput PRIVATE /W4 /permissive- /EHsc /utf-8)
 endif()
-target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput)
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput SnowDesktopPerfetto bcrypt)
 
 include(CTest)
 if (BUILD_TESTING)
@@ -1314,6 +1315,13 @@ if (BUILD_TESTING)
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
         target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
+        foreach(probe_source IN LISTS SNOW_TEST_SOURCES)
+            if(probe_source IN_LIST SNOWDESKTOP_PERFETTO_PROBE_SOURCES)
+                target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopPerfetto)
+                target_include_directories(${TEST_TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+                break()
+            endif()
+        endforeach()
         if (SNOW_TEST_NATIVE_WINDOW_COMPATIBILITY)
             snowdesktop_enable_native_window_compatibility(${TEST_TARGET})
         endif()
@@ -1633,10 +1641,13 @@ if (BUILD_TESTING)
             tests/diagnostics/perfetto_session_tests.cpp
             src/widget/runtime/widget_runtime_diagnostics.cpp
             src/diagnostics/performance_capture.cpp
+            src/diagnostics/performance_control_pipe.cpp
             src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua SnowDesktopPerfetto pdh psapi user32
+        LINK_LIBRARIES SnowDesktopLua SnowDesktopPerfetto bcrypt advapi32 pdh psapi user32
         LABELS contract widget)
+    target_compile_definitions(SnowDesktopWidgetRuntimeDiagnosticsTests PRIVATE
+        SNOWDESKTOP_PERFORMANCE_SOURCE_ROOT=L"${CMAKE_SOURCE_DIR}")
 
     snowdesktop_add_test(
         SnowDesktopWidgetPreviewContextTests
@@ -2790,6 +2801,7 @@ if (BUILD_TESTING)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
+    target_include_directories(SnowDesktopNativeDragIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/tests")
     set_tests_properties(native_drag_target_integration PROPERTIES TIMEOUT 90)
     add_test(NAME native_drag_commit_storage
         COMMAND SnowDesktopNativeDragIntegrationTests --commit-storage)

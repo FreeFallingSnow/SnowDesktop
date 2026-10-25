@@ -1,4 +1,5 @@
 #pragma once
+#include "diagnostics/native_trace_observation.h"
 
 #include "../platform/native_import_patch.h"
 #include "diagnostics/performance_trace.h"
@@ -58,26 +59,20 @@ inline BOOL WINAPI Position(HWND window, HWND after, int x, int y, int width, in
     if (window == popup) flags &= ~SWP_SHOWWINDOW;
     return originalPosition(window, after, x, y, width, height, flags);
 }
-inline void Begin(snowdesktop::performance::ScopeToken&, std::string_view module,
-    std::string_view phase, std::wstring_view id, std::uint64_t) noexcept
+inline void Observe(const snowdesktop::test::NativeTraceEvent& event)
 {
-    if (GetCurrentThreadId() != testThread.load()) return;
-    if (module == "composition.shared" && phase == "commit") ++commits;
-    if (module == "popup" && phase == "backdrop.update") ++backdropUpdates;
-    if (module == "widget.composition" && phase == "draw") drawnOwners.emplace_back(id);
+    if (GetCurrentThreadId() != testThread.load() || event.kind != snowdesktop::test::NativeTraceEvent::Begin) return;
+    if (event.module == "composition.shared" && event.name == "commit") ++commits;
+    if (event.module == "popup" && event.name == "backdrop.update") ++backdropUpdates;
+    if (event.module == "widget.composition" && event.name == "draw") drawnOwners.emplace_back(event.owner);
 }
-inline void End(snowdesktop::performance::ScopeToken&) noexcept {}
-inline void Value(std::string_view, std::string_view, std::wstring_view, double, std::uint64_t) noexcept {}
-inline void Link(std::string_view, std::wstring_view, bool) noexcept {}
-inline const snowdesktop::performance::Hooks hooks{Begin, End, Value, Link};
 
 struct Observation
 {
-    const snowdesktop::performance::Hooks* previous;
+    snowdesktop::test::NativeTraceObservation trace{Observe};
     snowdesktop::test::NativeImportPatch visiblePatch, updatePatch, invalidatePatch, positionPatch;
     explicit Observation(DesktopApp& app)
-        : previous(snowdesktop::performance::captureHooks.load()),
-          visiblePatch("IsWindowVisible", reinterpret_cast<ULONG_PTR>(&Visible)),
+        : visiblePatch("IsWindowVisible", reinterpret_cast<ULONG_PTR>(&Visible)),
           updatePatch("UpdateWindow", reinterpret_cast<ULONG_PTR>(&Update)),
           invalidatePatch("InvalidateRect", reinterpret_cast<ULONG_PTR>(&Invalidate)),
           positionPatch("SetWindowPos", reinterpret_cast<ULONG_PTR>(&Position))
@@ -88,12 +83,10 @@ struct Observation
         originalInvalidate = reinterpret_cast<InvalidateFunction>(invalidatePatch.original);
         originalPosition = reinterpret_cast<PositionFunction>(positionPatch.original);
         testThread = GetCurrentThreadId();
-        snowdesktop::performance::captureHooks.store(&hooks);
     }
     ~Observation()
     {
         Access::StopPopupInputMonitor(*owner);
-        snowdesktop::performance::captureHooks.store(previous);
         owner = nullptr; popup = desktop = nullptr;
     }
     void Reset()

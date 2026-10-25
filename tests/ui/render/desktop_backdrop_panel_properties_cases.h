@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/render/desktop_backdrop_compositor.h"
-#include "diagnostics/performance_trace.h"
+#include "diagnostics/native_trace_observation.h"
 #include <d2d1_1helper.h>
 #include <array>
 #include <numeric>
@@ -14,29 +14,21 @@ namespace snowdesktop::test::backdrop_properties
 inline std::array<unsigned, 6> submissions{};
 inline float lastOpacity = -1;
 inline std::uintptr_t lastOwner = 0;
-inline const performance::Hooks hooks{
-    [](performance::ScopeToken&, std::string_view, std::string_view,
-        std::wstring_view, std::uint64_t) noexcept {},
-    [](performance::ScopeToken&) noexcept {},
-    [](std::string_view, std::string_view name, std::wstring_view,
-        double value, std::uint64_t owner) noexcept {
+struct Observation
+{
+    NativeTraceObservation trace{[](const NativeTraceEvent& event) {
+        if (event.kind == NativeTraceEvent::Instant && event.name == "numeric.operation")
+        { lastOwner = static_cast<std::uintptr_t>(event.operation); return; }
+        if (event.kind != NativeTraceEvent::Counter) return;
         constexpr std::array names{"backdrop.panel.transform", "backdrop.panel.offset",
             "backdrop.panel.size", "backdrop.panel.radius", "backdrop.panel.clip", "backdrop.panel.opacity"};
         for (std::size_t index = 0; index < names.size(); ++index)
-            if (name == names[index])
+            if (event.name == names[index])
             {
                 ++submissions[index];
-                lastOwner = static_cast<std::uintptr_t>(owner);
-                if (index == 5) lastOpacity = static_cast<float>(value);
+                if (index == 5) lastOpacity = static_cast<float>(event.value);
             }
-    },
-    [](std::string_view, std::wstring_view, bool) noexcept {}
-};
-
-struct Observation
-{
-    const performance::Hooks* previous = performance::captureHooks.exchange(&hooks);
-    ~Observation() { performance::captureHooks.store(previous); }
+    }};
 };
 
 inline unsigned Total() { return std::accumulate(submissions.begin(), submissions.end(), 0u); }
@@ -144,7 +136,7 @@ void Run(HWND content, Check check, FindHelper findHelper)
             glass.RemovePanel({}, 92008) && glass.RemovePanel({}, 92016),
         "retire the first, middle and last owner without reordering survivors");
     Clear();
-    check(glass.SetPanelTransform(92009, matrix, projected) && lastOwner == 92009 &&
+    check(glass.SetPanelTransform(92009, matrix, projected) && lastOwner == performance::OperationId(92009) &&
             !glass.SetPanelTransform(92008, matrix, projected),
         "surviving owner lookup follows ordered erasure and removed owners are absent");
     check(glass.AddPanel(frame, 12, 24, 92008) && glass.PanelCount() == 14 &&

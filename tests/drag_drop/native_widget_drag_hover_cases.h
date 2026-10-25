@@ -1,29 +1,24 @@
 #pragma once
+#include "diagnostics/native_trace_observation.h"
 #include "diagnostics/performance_trace.h"
 #include <iterator>
 
 namespace native_widget_drag_hover_cases
 {
-inline void TraceBegin(snowdesktop::performance::ScopeToken&,
-    std::string_view module, std::string_view phase, std::wstring_view owner, std::uint64_t) noexcept
+inline void Observe(const snowdesktop::test::NativeTraceEvent& event)
 {
     auto* observation = NativeDragIntegrationAccess::widgetDragObservation;
-    if (!observation) return;
-    if (module == "widget.composition" && phase == "draw") observation->drawn.emplace_back(owner);
-    if (module == "composition.shared" && phase == "commit") ++observation->commits;
+    if (!observation || event.kind != snowdesktop::test::NativeTraceEvent::Begin) return;
+    if (event.module == "widget.composition" && event.name == "draw") observation->drawn.emplace_back(event.owner);
+    if (event.module == "composition.shared" && event.name == "commit") ++observation->commits;
 }
-inline void TraceEnd(snowdesktop::performance::ScopeToken&) noexcept {}
-inline void TraceValue(std::string_view, std::string_view, std::wstring_view, double, std::uint64_t) noexcept {}
-inline void TraceLink(std::string_view, std::wstring_view, bool) noexcept {}
 
 inline void Run()
 {
     constexpr auto legacyVariable = L"SNOWDESKTOP_TEST_R01_LEGACY_INVALIDATION";
     wchar_t legacyValue[2]{};
     const bool restoreLegacyInvalidation = GetEnvironmentVariableW(legacyVariable, legacyValue, 2) == 1 && legacyValue[0] == L'1';
-    const snowdesktop::performance::Hooks hooks{TraceBegin, TraceEnd, TraceValue, TraceLink};
-    const auto* previousHooks = snowdesktop::performance::captureHooks.exchange(&hooks);
-    struct RestoreHooks { const snowdesktop::performance::Hooks* previous; ~RestoreHooks() { snowdesktop::performance::captureHooks = previous; } } restore{previousHooks};
+    snowdesktop::test::NativeTraceObservation observation(Observe);
     native_drag_commit_cases::Profile profile;
     auto& app = NativeDragIntegrationAccess::Scene(false);
     profile.apps.push_back(&app);

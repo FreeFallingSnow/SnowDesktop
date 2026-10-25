@@ -1,6 +1,12 @@
 #pragma once
 
+// Windows propkey.h exports KIND_UNKNOWN as a string macro, which collides
+// with an upstream protobuf enum. Keep that caller macro outside this SDK
+// include boundary, and restore it for Shell consumers afterwards.
+#pragma push_macro("KIND_UNKNOWN")
+#undef KIND_UNKNOWN
 #include <perfetto.h>
+#pragma pop_macro("KIND_UNKNOWN")
 
 // Finite categories are the collection boundary. Module/instance identities
 // belong in event arguments, never in dynamically registered categories.

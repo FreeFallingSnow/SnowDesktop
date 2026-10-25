@@ -15,10 +15,12 @@ extern "C" {
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace
 {
 namespace perf = snowdesktop::performance;
+std::filesystem::path fixtureRoot;
 void Check(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
@@ -43,26 +45,6 @@ JsonValue Read(const std::filesystem::path& path)
     std::string error;
     Check(ParseJson(text, value, &error), "completed report must parse as JSON");
     return value;
-}
-const JsonValue& Find(const JsonValue& report, std::string_view collection,
-    std::string_view module, std::string_view phase)
-{
-    const auto* values = report.Find(collection);
-    Check(values && values->IsArray(), "report collection must exist");
-    for (const auto& value : values->array)
-        if (String(value, "module") == module && String(value, "phase") == phase)
-            return value;
-    throw std::runtime_error("expected instrumented report row");
-}
-
-LRESULT Request(HWND window, std::wstring payload)
-{
-    COPYDATASTRUCT data{};
-    data.dwData = perf::CopyDataTag;
-    data.cbData = static_cast<DWORD>((payload.size() + 1) * sizeof(wchar_t));
-    data.lpData = payload.data();
-    return perf::HandleControlMessage(window, WM_COPYDATA, 0,
-        reinterpret_cast<LPARAM>(&data), nullptr, nullptr);
 }
 void ExerciseCoupledScopes()
 {
@@ -101,6 +83,8 @@ void ExerciseCoupledScopes()
 
 LRESULT CALLBACK FixtureWindow(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
+    if (message == RegisterWindowMessageW(perf::ControlMessageName))
+        perf::ConfigureControl(window, fixtureRoot);
     if (perf::IsControlMessage(message, wp, lp))
         return perf::HandleControlMessage(window, message, wp, lp, nullptr, nullptr);
     if (message == WM_TIMER && wp == 1)
@@ -118,6 +102,8 @@ LRESULT CALLBACK FixtureWindow(HWND window, UINT message, WPARAM wp, LPARAM lp)
 // protocol. It never starts or operates SnowDesktop's desktop host.
 int RunPerformanceControlFixture()
 {
+    fixtureRoot = std::filesystem::temp_directory_path() / (L"SnowDesktopControlFixture-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     WNDCLASSW type{};
     type.lpfnWndProc = FixtureWindow;
     type.hInstance = GetModuleHandleW(nullptr);
@@ -136,169 +122,144 @@ int RunPerformanceControlFixture()
     return 0;
 }
 
+namespace
+{
+perf::CaptureSnapshot WaitFor(std::string_view session, bool terminal)
+{
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (std::chrono::steady_clock::now() < end)
+    {
+        auto snapshot = perf::Snapshot(session);
+        if (snapshot.phase == perf::CapturePhase::Failed) return snapshot;
+        if (terminal ? snapshot.phase == perf::CapturePhase::Completed : snapshot.phase == perf::CapturePhase::Recording) return snapshot;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    throw std::runtime_error("capture state deadline expired");
+}
+perf::CaptureOptions Options(const std::filesystem::path& root, std::string id)
+{
+    perf::CaptureOptions result;
+    result.session = id; result.requestId = id;
+    result.output = root / id / "trace.pftrace";
+    result.seconds = 60; result.preset = perf::CapturePreset::Interaction;
+    return result;
+}
+void ExerciseCli(const std::filesystem::path& root)
+{
+    fixtureRoot = root / L"cli-managed";
+    const auto scripts = std::filesystem::path(SNOWDESKTOP_PERFORMANCE_SOURCE_ROOT) / L"scripts";
+    WNDCLASSW type{};
+    type.lpfnWndProc = FixtureWindow; type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"SnowDesktopControlWindow";
+    Check(RegisterClassW(&type) != 0, "register isolated control-only fixture");
+    const auto window = CreateWindowW(type.lpszClassName, L"SnowDesktopControl", WS_POPUP,
+        0, 0, 0, 0, nullptr, nullptr, type.hInstance, nullptr);
+    Check(window != nullptr, "create isolated CLI control endpoint");
+    SetTimer(window, 1, 100, nullptr);
+    auto executable = std::filesystem::path(L"C:/Program Files/PowerShell/7/pwsh.exe");
+    if (!std::filesystem::exists(executable))
+    {
+        wchar_t system[32768]{}; GetSystemDirectoryW(system, static_cast<UINT>(std::size(system)));
+        executable = std::filesystem::path(system) / L"WindowsPowerShell/v1.0/powershell.exe";
+    }
+    const auto output = root / L"cli-export";
+    std::wstring command = L"\"" + executable.wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
+        (scripts / L"profile.ps1").wstring() + L"\" capture -Seconds 1 -Preset interaction -Offline -Session cli-fixture -TargetProcessId " +
+        std::to_wstring(GetCurrentProcessId()) + L" -OutputDirectory \"" + output.wstring() + L"\"";
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    Check(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != FALSE, "launch actual CLI against isolated host");
+    const auto deadline = GetTickCount64() + 45000;
+    while (WaitForSingleObject(child.hProcess, 0) != WAIT_OBJECT_0 && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        MsgWaitForMultipleObjects(1, &child.hProcess, FALSE, 20, QS_ALLINPUT);
+    }
+    const auto wait = WaitForSingleObject(child.hProcess, 0);
+    if (wait != WAIT_OBJECT_0) { TerminateProcess(child.hProcess, 124); WaitForSingleObject(child.hProcess, 5000); }
+    DWORD exitCode = 1; GetExitCodeProcess(child.hProcess, &exitCode);
+    CloseHandle(child.hThread); CloseHandle(child.hProcess);
+    KillTimer(window, 1); DestroyWindow(window);
+    MSG ignored{}; PeekMessageW(&ignored, nullptr, WM_QUIT, WM_QUIT, PM_REMOVE);
+    Check(wait == WAIT_OBJECT_0 && exitCode == 0, "real CLI, authenticated pipe, duration, export and fixed SQL must complete");
+    bool summaryFound = false;
+    for (const auto& entry : std::filesystem::directory_iterator(output))
+        if (entry.is_directory() && entry.path().filename().wstring().starts_with(L"analysis-"))
+        {
+            const auto summary = Read(entry.path()/L"summary.json");
+            Check(summary.Find("quality")->Find("valid")->boolean, "complete native known-answer CLI evidence is valid");
+            const auto* scopes = summary.Find("scopes");
+            Check(scopes && scopes->IsArray() && !scopes->array.empty(), "SQL report contains real Lua/callback activity");
+            summaryFound = true;
+        }
+    Check(summaryFound, "CLI must publish machine-readable summary with queries and CSV");
+}
+}
+void AssertNativeTraceSql(const std::filesystem::path&, std::string_view);
 void RunPerformanceCaptureTests()
 {
     const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktopPerfTests-" + std::to_wstring(GetCurrentProcessId()) +
-            L"-" + std::to_wstring(GetTickCount64()));
+        (L"SnowDesktopPerfTests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     std::filesystem::create_directory(root);
     std::string error;
-    Check(!perf::Enabled() && perf::Status() == perf::ProtocolIdle,
-        "profiling must be disabled by default");
+    Check(!perf::Enabled() && perf::Status() == perf::ProtocolIdle, "profiling defaults off");
     { perf::Scope disabled("off", "no-recording"); }
     perf::Value("off", "no-recording", {}, 1);
-    Check(std::filesystem::is_empty(root), "disabled probes must create no files");
-
-    perf::CaptureOptions options{ "coupled-test", root / L"coupled.json", 60, 2048 };
-    Check(perf::Start(options, error), "start explicit capture");
-    Check(!perf::Start(options, error), "concurrent session must be rejected");
-    Check(!perf::RequestStop("someone-else"), "a stale session must not stop another capture");
+    Check(std::filesystem::is_empty(root), "disabled probes create no files");
+    auto options = Options(root, "coupled-test"); options.scopeCpu = true;
+    Check(perf::Start(options, error), "accept capture on worker");
+    Check(perf::Start(options, error), "same request id returns same accepted operation");
+    auto busy = Options(root, "concurrent");
+    Check(!perf::Start(busy, error) && error == "captureBusy", "independent concurrent capture rejected");
+    const auto recording = WaitFor(options.session, false);
+    Check(recording.phase == perf::CapturePhase::Recording, "SDK must acknowledge before recording");
+    Check(!perf::RequestStop("someone-else") && !perf::RequestStop(options.session, recording.generation + 1), "stale identity cannot stop capture");
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
     ExerciseCoupledScopes();
-    Check(perf::RequestStop(options.session), "owner can request stop");
-    perf::Shutdown();
-    Check(!perf::Enabled() && perf::Status() == perf::ProtocolIdle,
-        "stop must disable hooks and publish a completed report");
-    const auto report = Read(options.output);
-    Check(Number(report, "schemaVersion") == 1, "report schema must be explicit");
-    const auto& parent = Find(report, "events", "widget.event", "timer");
-    const auto& lua = Find(report, "events", "lua", "protectedCall");
-    Check(Number(lua, "parent") == Number(parent, "id"), "Lua must link to its owning callback");
-    Check(String(lua, "owner") == "widget-a" && Number(lua, "correlation") == 42,
-        "Lua must inherit instance and task context");
-    Check(Number(parent, "selfWallMs") <= Number(parent, "wallMs") &&
-        Number(parent, "wallMs") - Number(parent, "selfWallMs") >= Number(lua, "wallMs") - 0.001,
-        "nested elapsed time must not be double-counted as self time");
-    Check(String(Find(report, "events", "shared.system", "sample"), "owner").empty(),
-        "shared work must not be assigned to the caller widget");
-    Check(Number(Find(report, "events", "task.worker", "independent"), "parent") == 0,
-        "unrelated worker threads must not inherit synchronous parents");
-    const auto& origin = Find(report, "events", "widget.draw.source", "desktop");
-    Check(Number(origin, "value") == Number(parent, "id"),
-        "deferred draw must preserve its originating callback");
-    Check(Number(origin, "parent") == Number(Find(report, "events", "widget.composition", "draw-a"), "id"),
-        "causal link must point to the draw that consumes it");
-    Check(!perf::Start(options, error), "existing reports must never be overwritten");
-
-    options = { "bounded-test", root / L"bounded.json", 60, 1 };
-    Check(perf::Start(options, error), "start bounded capture");
-    for (int i = 0; i < 20; ++i) perf::Value("bounded", "counter", L"owner", i);
-    auto spanning = std::make_unique<perf::Scope>("old-session", "unfinished");
-    perf::Shutdown();
-    const auto bounded = Read(options.output);
-    Check(bounded.Find("events")->array.size() == 1 && Number(bounded, "droppedEvents") >= 19,
-        "timeline must be bounded and truncation explicit");
-    Check(Number(Find(bounded, "groups", "bounded", "counter"), "count") == 20,
-        "aggregates must continue after timeline fills");
-    options = { "next-test", root / L"next.json", 1, 2048 };
-    Check(perf::Start(options, error), "restart capture");
-    { perf::Scope next("new-session", "scope"); }
-    spanning.reset();
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-    while (perf::Status() == perf::ProtocolRecording || perf::Status() == perf::ProtocolFinishing)
-    {
-        Check(std::chrono::steady_clock::now() < deadline, "capture must stop by itself");
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    perf::Shutdown();
-    const auto next = Read(options.output);
-    Check(Number(Find(next, "events", "new-session", "scope"), "parent") == 0,
-        "new session must not inherit stale scopes");
-    for (const auto& event : next.Find("events")->array)
-        Check(String(event, "module") != "old-session", "old scopes must not leak into a new session");
-    Check(String(next, "stopReason") == "duration", "automatic stop must be distinguished from requested stop");
-
-    options = { "summary-test", root / L"summary.json", 60, 1,
-        perf::CaptureMode::Summary, false };
-    Check(perf::Start(options, error), "start bounded summary capture");
-    ExerciseCoupledScopes();
-    std::vector<std::thread> threads;
-    for (int thread = 0; thread < 4; ++thread)
-        threads.emplace_back([] {
-            for (int i = 0; i < 200; ++i)
-            {
-                perf::Scope outer("summary", "parallel", L"shared-owner");
-                perf::Scope inner("lua", "nested");
-            }
-        });
-    for (auto& thread : threads) thread.join();
-    auto summarySpanning = std::make_unique<perf::Scope>("summary-old", "spanning");
-    perf::Shutdown();
-    const auto summary = Read(options.output);
-    Check(String(summary, "captureMode") == "summary" &&
-            String(summary, "timelinePolicy") == "none" &&
-            summary.Find("events")->array.empty() && Number(summary, "droppedEvents") == 0,
-        "summary must intentionally omit timeline without reporting truncation");
-    const auto& merged = Find(summary, "groups", "summary", "parallel");
-    const auto& summaryLua = Find(summary, "groups", "lua", "nested");
-    Check(Number(merged, "count") == 800 && Number(summaryLua, "count") == 800 &&
-            String(summaryLua, "owner") == "shared-owner" &&
-            Number(merged, "cpuSamples") == 0 &&
-            Number(merged, "wallMs") - Number(merged, "selfWallMs") >=
-                Number(summaryLua, "wallMs") - 0.001,
-        "thread-local aggregates must merge counts and preserve owner and nested self time");
-    Check(Number(Find(summary, "groups", "widget.memory", "lua_bytes"), "last") == 256,
-        "summary must retain resource gauges");
-
-    options = { "summary-stop", root / L"summary-stop.json", 60, 1,
-        perf::CaptureMode::Summary, false };
-    Check(perf::Start(options, error), "start summary stop race");
-    std::atomic<bool> entered{ false }, release{ false };
-    std::thread crossing([&] {
-        { perf::Scope completed("summary-stop", "completed", L"worker"); }
-        perf::Scope crossingScope("summary-stop", "crossing", L"worker");
-        entered.store(true);
-        while (!release.load()) std::this_thread::yield();
-    });
-    while (!entered.load()) std::this_thread::yield();
-    perf::Shutdown();
-    release.store(true);
-    crossing.join();
-    const auto stoppedSummary = Read(options.output);
-    Check(Number(Find(stoppedSummary, "groups", "summary-stop", "completed"), "count") == 1,
-        "a worker buffer must survive stop while an old scope still owns it");
-    for (const auto& group : stoppedSummary.Find("groups")->array)
-        Check(String(group, "phase") != "crossing", "unfinished summary scopes must be omitted");
-
-    options = { "trace-no-cpu", root / L"trace-no-cpu.json", 60, 2048,
-        perf::CaptureMode::Trace, false };
-    Check(perf::Start(options, error), "switch summary to trace without thread CPU");
-    ExerciseCoupledScopes();
-    summarySpanning.reset();
-    perf::Shutdown();
-    const auto trace = Read(options.output);
-    Check(Number(Find(trace, "groups", "lua", "protectedCall"), "cpuSamples") == 0 &&
-            !Find(trace, "events", "lua", "protectedCall").Find("cpuAvailable")->boolean,
-        "disabled scope CPU must be unavailable while trace retains causality");
-    Check(Number(Find(trace, "events", "settings", "apply"), "parent") == 0,
-        "a trace session must not inherit an old summary scope");
-
-    options = { "summary-invalid", root / L"invalid-summary.json", 1, 10,
-        perf::CaptureMode::Summary, true };
-    Check(!perf::Start(options, error), "summary cannot silently enable expensive scope CPU");
-
-    options = { "summary-bounds", root / L"summary-bounds.json", 60, 1,
-        perf::CaptureMode::Summary, false };
-    Check(perf::Start(options, error), "start bounded summary groups");
-    for (int i = 0; i < 4200; ++i)
-    { perf::Scope scope("bounded-summary", std::to_string(i), L"owner"); }
-    perf::Shutdown();
-    const auto summaryBounds = Read(options.output);
-    Check(summaryBounds.Find("groups")->array.size() <= 4096 &&
-            Number(summaryBounds, "droppedGroups") > 0,
-        "summary labels from dynamic callers must have a bounded memory budget");
-
-    Check(Request(nullptr, L"2\nstart\ninvalid\n1\nignored.json") == 0,
-        "incomplete v2 control payload must be rejected");
-    Check(Request(nullptr, L"1\nstart\ninvalid\n601\nignored.json") == 0,
-        "unbounded capture duration must be rejected");
+    Check(perf::RequestStop(options.session, recording.generation), "matching generation can stop");
+    const auto completed = WaitFor(options.session, true);
+    Check(completed.phase == perf::CapturePhase::Completed && !perf::Enabled(), "terminal only after native export and manifest");
+    const auto manifest = Read(completed.manifest);
+    Check(Number(manifest, "schemaVersion") == 2 && String(manifest, "format") == "perfetto", "explicit native format schema");
+    Check(manifest.Find("completion")->boolean && String(manifest, "traceSha256").size() == 64, "durable evidence fingerprint");
+    AssertNativeTraceSql(completed.trace,
+        "SELECT ((SELECT COUNT(*) FROM slice c JOIN slice p ON c.parent_id=p.id WHERE c.name='protectedCall' AND p.name='timer')=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='sample' AND EXTRACT_ARG(arg_set_id,'debug.owner')=0)=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='independent' AND parent_id IS NULL)=1"
+        " AND (SELECT COUNT(*) FROM flow)=2"
+        " AND (SELECT COUNT(DISTINCT EXTRACT_ARG(arg_set_id,'debug.owner')) FROM slice WHERE name IN ('timer','protectedCall'))=1) AS passed;");
+    Check(perf::Start(options, error), "completed request replay remains idempotent");
+    auto conflict = options; ++conflict.seconds;
+    Check(!perf::Start(conflict, error) && error == "requestIdConflict", "idempotency cannot change configuration");
+    auto next = Options(root, "next-test"); next.seconds = 1;
+    Check(perf::Start(next, error), "restart capture");
+    Check(WaitFor(next.session, false).phase == perf::CapturePhase::Recording, "new session recording");
+    Check(perf::RequestStop(options.session, recording.generation), "old stop returns old terminal result");
+    Check(perf::Snapshot(next.session).phase == perf::CapturePhase::Recording, "old stop cannot stop new capture");
+    { perf::Scope event("widget.event", "next"); }
+    Check(WaitFor(next.session, true).phase == perf::CapturePhase::Completed, "duration stops without a UI timer");
+    AssertNativeTraceSql(next.output, "SELECT ((SELECT COUNT(*) FROM slice WHERE name='next')=1 AND (SELECT COUNT(*) FROM slice WHERE thread_dur IS NOT NULL)=0) AS passed;");
+    auto failed = Options(root, "export-limit"); failed.maximumFileBytes = 1024;
+    Check(perf::Start(failed, error), "accept size-bound session");
+    Check(WaitFor(failed.session, false).phase == perf::CapturePhase::Recording, "size-bound session recording");
+    for (int i = 0; i < 2000; ++i) { perf::Scope event("widget.event", "overflow"); }
+    perf::RequestStop(failed.session);
+    Check(WaitFor(failed.session, true).phase == perf::CapturePhase::Failed && !std::filesystem::exists(failed.output), "export cap never publishes truncated evidence as success");
+    Check(std::filesystem::exists(failed.output.wstring() + L".partial") && !Read(failed.output.parent_path()/L"session.json").Find("completion")->boolean, "failure evidence retained");
+    auto invalid = Options(root, "invalid"); invalid.output = root / "bad.json";
+    Check(!perf::Start(invalid, error), "legacy output extension rejected");
+    const auto protocol = perf::ProcessControlRequest(R"({"protocolVersion":3,"requestId":"test-status","command":"status","sessionId":"coupled-test"})");
+    JsonValue reply; Check(ParseJson(protocol, reply, &error), "control returns JSON");
+    Check(String(reply, "requestId") == "test-status" && String(reply, "state") == "completed", "status queries retain per-session result and echo request identity");
+    const auto rejected = perf::ProcessControlRequest(R"({"protocolVersion":3,"requestId":"bad-output","command":"start","output":"C:/arbitrary"})");
+    Check(rejected.find("unsupportedControlField") != rejected.npos, "external clients cannot select arbitrary server output paths");
     COPYDATASTRUCT malformed{ perf::CopyDataTag, 3, const_cast<char*>("bad") };
-    Check(perf::HandleControlMessage(nullptr, WM_COPYDATA, 0,
-        reinterpret_cast<LPARAM>(&malformed), nullptr, nullptr) == 0,
-        "malformed IPC payload must be rejected");
-    // Remove only this test's individually named files and empty directory.
-    for (const auto& entry : std::filesystem::directory_iterator(root))
-        std::filesystem::remove(entry.path());
-    std::filesystem::remove(root);
+    Check(perf::HandleControlMessage(nullptr, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&malformed), nullptr, nullptr) == 0, "deprecated unauthenticated writes rejected");
+    perf::Shutdown();
+    ExerciseCli(root);
+    std::cout << "Capture fixtures retained for offline analysis: " << root.string() << '\n';
 }
 
 // Explicit benchmark, not a timing-sensitive pass/fail test. Export happens
@@ -316,15 +277,15 @@ int RunPerformanceOverheadBenchmark(const char* directory)
         {
             // Rotate order so a consistently earlier warmup is not favored.
             const int mode = (step + round) % 4;
-            const char* name = mode == 0 ? "off" : mode == 1 ? "summary" :
-                mode == 2 ? "trace" : "trace-cpu";
+            const char* name = mode == 0 ? "off" : mode == 1 ? "idle" :
+                mode == 2 ? "interaction" : "interaction-cpu";
             std::string error;
             const std::string session = std::string(name) + "-" + std::to_string(round);
-            perf::CaptureOptions options{ session, root / (session + ".json"), 60, 65536,
-                mode == 1 ? perf::CaptureMode::Summary : perf::CaptureMode::Trace, mode == 3 };
+            auto options = Options(root, session);
+            options.preset = mode == 1 ? perf::CapturePreset::Resource : perf::CapturePreset::Interaction;
+            options.scopeCpu = mode == 3;
             if (mode && !perf::Start(options, error)) return 3;
-            // Let the one-time sampler initialization finish before timing.
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (mode && WaitFor(session, false).phase != perf::CapturePhase::Recording) return 4;
             const auto begin = std::chrono::steady_clock::now();
             for (int i = 0; i < iterations; ++i)
             {

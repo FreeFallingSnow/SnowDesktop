@@ -1,3 +1,4 @@
+#include "diagnostics/native_trace_observation.h"
 #include "../src/app/render/desktop_backdrop_compositor.h"
 #include "../src/app/render/desktop_backdrop_update_rules.h"
 #include "app/render/widget_icon_backdrops.h"
@@ -44,26 +45,13 @@ constexpr UINT kCommitCompleted = WM_APP + 471;
 
 std::atomic<DWORD> warmupThread{0};
 std::atomic<unsigned> warmupBuilds{0}, warmupReuses{0};
-const snowdesktop::performance::Hooks warmupHooks{
-    [](snowdesktop::performance::ScopeToken&, std::string_view, std::string_view phase,
-        std::wstring_view, std::uint64_t) noexcept {
-        if (phase == "backdrop.warmup.background")
-        {
-            warmupThread.store(GetCurrentThreadId());
-            ++warmupBuilds;
-        }
-    },
-    [](snowdesktop::performance::ScopeToken&) noexcept {},
-    [](std::string_view, std::string_view name, std::wstring_view, double, std::uint64_t) noexcept {
-        if (name == "backdrop.warmup.reused") ++warmupReuses;
-    },
-    [](std::string_view, std::wstring_view, bool) noexcept {}
-};
-
 struct WarmupObservation
 {
-    const snowdesktop::performance::Hooks* previous = snowdesktop::performance::captureHooks.exchange(&warmupHooks);
-    ~WarmupObservation() { snowdesktop::performance::captureHooks.store(previous); }
+    snowdesktop::test::NativeTraceObservation trace{[](const snowdesktop::test::NativeTraceEvent& event) {
+        if (event.kind == snowdesktop::test::NativeTraceEvent::Begin && event.name == "backdrop.warmup.background")
+        { warmupThread.store(GetCurrentThreadId()); ++warmupBuilds; }
+        if (event.kind == snowdesktop::test::NativeTraceEvent::Counter && event.name == "backdrop.warmup.reused") ++warmupReuses;
+    }};
 };
 
 bool WaitForWarmup(const std::shared_future<bool>& result)

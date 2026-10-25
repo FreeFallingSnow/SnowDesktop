@@ -1,7 +1,8 @@
+#include <windows.h>
+#include <propsys.h>
+#include <propkey.h>
 #include "diagnostics/perfetto_categories.h"
 #include "diagnostics/perfetto_session.h"
-
-#include <windows.h>
 
 #include <chrono>
 #include <atomic>
@@ -13,6 +14,9 @@
 #include <string>
 #include <string_view>
 #include <thread>
+
+static_assert(std::wstring_view(KIND_UNKNOWN) == L"unknown",
+    "SDK include boundary must preserve the Windows Shell property macro");
 
 namespace
 {
@@ -53,10 +57,10 @@ void AssertSql(const std::filesystem::path& trace, std::string_view sql)
 {
     auto processor = std::filesystem::path(Environment(L"SNOWDESKTOP_TRACE_PROCESSOR"));
     if (processor.empty())
-        processor = std::filesystem::path(Environment(L"USERPROFILE")) /
-            L".local/share/perfetto/prebuilts/trace_processor_shell-adfa6bad3d72be3b.exe";
+        processor = std::filesystem::path(Environment(L"LOCALAPPDATA")) /
+            L"SnowDesktop/tools/perfetto/v58.2/trace_processor_shell.exe";
     Check(std::filesystem::is_regular_file(processor),
-        "Perfetto v58.2 analyzer missing: install official Skill or set SNOWDESKTOP_TRACE_PROCESSOR");
+        "Perfetto v58.2 analyzer missing: run scripts/profile.bat setup or set SNOWDESKTOP_TRACE_PROCESSOR");
     const auto query = std::filesystem::path(trace.wstring() + L".sql");
     const auto csv = std::filesystem::path(trace.wstring() + L".csv");
     { std::ofstream output(query); output << sql; }
@@ -197,3 +201,5 @@ void RunPerfettoSessionTests()
         std::filesystem::remove(item.path());
     std::filesystem::remove(root);
 }
+
+void AssertNativeTraceSql(const std::filesystem::path& path, std::string_view sql) { AssertSql(path, sql); }

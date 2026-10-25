@@ -1,38 +1,50 @@
 #pragma once
-
 #include <windows.h>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::performance
 {
-inline constexpr wchar_t ControlMessageName[] =
-    L"FreeFallingSnow.SnowDesktop.Performance.v1";
-inline constexpr ULONG_PTR CopyDataTag = 0x53445031;
+inline constexpr wchar_t ControlMessageName[] = L"FreeFallingSnow.SnowDesktop.Performance.v3";
+inline constexpr ULONG_PTR CopyDataTag = 0x53445031; // Recognize/reject deprecated unauthenticated writes.
 inline constexpr UINT_PTR SampleTimer = 0x53445046;
-inline constexpr LRESULT ProtocolIdle = 0x53445010;
-inline constexpr LRESULT ProtocolRecording = 0x53445011;
-inline constexpr LRESULT ProtocolFinishing = 0x53445012;
-inline constexpr LRESULT ProtocolFailed = 0x53445013;
+inline constexpr LRESULT ProtocolIdle = 0x53445010, ProtocolRecording = 0x53445011,
+    ProtocolFinishing = 0x53445012, ProtocolFailed = 0x53445013, ProtocolStarting = 0x53445014;
 
-enum class CaptureMode { Trace, Summary };
-
+enum class CapturePreset { Resource, Interaction, Widget };
+enum class CapturePhase { Idle, Starting, Recording, Stopping, Finalizing, Completed, Failed };
 struct CaptureOptions
 {
-    std::string session;
+    std::string session, requestId;
     std::filesystem::path output;
-    unsigned seconds = 60;
-    std::size_t maximumEvents = 32768;
-    // Preserve v1/backend callers; v2 CLI explicitly defaults to summary.
-    CaptureMode mode = CaptureMode::Trace;
-    bool scopeCpu = true;
+    unsigned seconds = 120, bufferKiB = 32768;
+    std::uint64_t maximumFileBytes = 256ULL * 1024 * 1024;
+    CapturePreset preset = CapturePreset::Resource;
+    bool scopeCpu = false;
+    std::vector<std::wstring> selectedInstances;
+};
+struct CaptureSnapshot
+{
+    CapturePhase phase = CapturePhase::Idle;
+    std::string session, requestId, error, configHash;
+    std::uint64_t generation = 0;
+    std::filesystem::path trace, manifest;
+    unsigned requestedSeconds = 0;
+    double elapsedMs = 0;
+    bool scopeCpu = false, found = true;
 };
 
-// Backend entry points are also exercised by the runtime-diagnostics tests.
+// Start means accepted/Starting. Only the worker changes to Recording after
+// the SDK acknowledges startup. Completion is a per-session result, not Idle.
 bool Start(const CaptureOptions& options, std::string& error);
-bool RequestStop(std::string_view session) noexcept;
+bool RequestStop(std::string_view session, std::uint64_t generation = 0) noexcept;
+CaptureSnapshot Snapshot(std::string_view session = {});
+std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view replyRequestId = {});
+std::string ProcessControlRequest(std::string_view request) noexcept;
+void ConfigureControl(HWND window, const std::filesystem::path& outputRoot);
 void Shutdown() noexcept;
 LRESULT Status() noexcept;
 bool IsControlMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;

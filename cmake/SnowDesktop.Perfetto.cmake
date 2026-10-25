@@ -45,7 +45,8 @@ target_compile_definitions(SnowDesktopPerfettoSdk PRIVATE WIN32_LEAN_AND_MEAN NO
 target_link_libraries(SnowDesktopPerfettoSdk PUBLIC ws2_32)
 add_library(SnowDesktopPerfetto STATIC
     src/diagnostics/perfetto_categories.cpp
-    src/diagnostics/perfetto_session.cpp)
+    src/diagnostics/perfetto_session.cpp
+    src/diagnostics/performance_trace.cpp)
 target_include_directories(SnowDesktopPerfetto PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(SnowDesktopPerfetto PUBLIC cxx_std_20)
 target_link_libraries(SnowDesktopPerfetto PUBLIC SnowDesktopPerfettoSdk)
@@ -56,3 +57,37 @@ if(MSVC)
     target_compile_options(SnowDesktopPerfetto PRIVATE /W4 /permissive- /EHsc /utf-8)
     target_compile_definitions(SnowDesktopPerfetto PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
+
+# Actual translation units that emit probes. Only targets consuming these
+# sources link the SDK; unrelated unit tests keep their existing dependencies.
+set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
+    src/app/dock/app_dock_window_tracking.cpp
+    src/app/dock/app_floating_dock_render.cpp
+    src/app/dock/app_floating_dock_window.cpp
+    src/app/lifecycle/app_message_dispatch.cpp
+    src/app/lifecycle/app_run.cpp
+    src/app/popup/app_floating_popup_window.cpp
+    src/app/popup/app_popup_geometry.cpp
+    src/app/popup/app_popup_lifecycle.cpp
+    src/app/render/app_composition_animation_overlay.cpp
+    src/app/render/app_icon_loader.cpp
+    src/app/render/app_paint.cpp
+    src/app/render/app_scene_render.cpp
+    src/app/render/desktop_backdrop_compositor.cpp
+    src/app/shell/app_desktop_reload.cpp
+    src/app/shell/app_shell_file_operation.cpp
+    src/app/widgets/app_widget_composition.cpp
+    src/diagnostics/performance_capture.cpp
+    src/diagnostics/performance_control_pipe.cpp
+    src/dock/dock_window_transition.cpp
+    src/shell/shell_extension_catalogue.cpp
+    src/shell/shell_extension_service.cpp
+    src/system/status_bar/status_bar.cpp
+    src/widget/data/widget_audio_analysis_provider.cpp
+    src/widget/data/widget_system_data_provider.cpp
+    src/widget/runtime/lua_runtime.cpp
+    src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_lua_lifecycle.cpp
+    src/widget/view/widget_view_lua.cpp
+    src/winui/settings_window_host.cpp
+)
