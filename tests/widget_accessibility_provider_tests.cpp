@@ -9,10 +9,12 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -616,6 +618,10 @@ void TestProviderTreeAndLifetime()
 
     IRawElementProviderSimple* rootSimple = host.RootProvider();
     Check(rootSimple != nullptr, "attached provider must expose a root");
+    ProviderOptions rootOptions{};
+    Check(SUCCEEDED(rootSimple->get_ProviderOptions(&rootOptions)) &&
+            (rootOptions & ProviderOptions_UseComThreading) != 0,
+        "root UIA callbacks must respect the owning COM apartment");
     Check(PropertyString(rootSimple, UIA_AutomationIdPropertyId) ==
             L"SnowDesktop.Desktop",
         "root provider must expose its desktop automation id");
@@ -641,6 +647,10 @@ void TestProviderTreeAndLifetime()
             SUCCEEDED(button->Navigate(
                 NavigateDirection_NextSibling, &status)) && status,
         "widget semantic hierarchy must support child and sibling navigation");
+    ProviderOptions nodeOptions{};
+    Check(SUCCEEDED(AsSimple(button.Get())->get_ProviderOptions(&nodeOptions)) &&
+            (nodeOptions & ProviderOptions_UseComThreading) != 0,
+        "fragment UIA callbacks must respect the owning COM apartment");
     Check(PropertyString(AsSimple(button.Get()).Get(),
             UIA_AutomationIdPropertyId) == L"open" &&
             PropertyString(AsSimple(status.Get()).Get(),
@@ -1035,6 +1045,236 @@ void TestProviderTreeAndLifetime()
     DestroyWindow(window);
     OleUninitialize();
 }
+
+constexpr UINT kDetachProvider = WM_APP + 73;
+
+struct ApartmentFixture
+{
+    DWORD ownerThread = GetCurrentThreadId();
+    std::atomic<unsigned> wrongThreadCalls{ 0 };
+    std::atomic<unsigned> captures{ 0 };
+    std::atomic<unsigned> focuses{ 0 };
+    std::atomic<unsigned> actions{ 0 };
+    std::atomic<unsigned> textReads{ 0 };
+    unsigned replacements = 0;
+    std::wstring text = L"before";
+    std::vector<LuaWidgetAccessibilitySnapshot> snapshots{ Snapshot() };
+    std::unique_ptr<WidgetAccessibilityProviderHost> host;
+    HANDLE detached = nullptr;
+
+    bool OnOwnerThread()
+    {
+        if (GetCurrentThreadId() == ownerThread) return true;
+        ++wrongThreadCalls;
+        return false;
+    }
+
+    void ReplaceSnapshot()
+    {
+        auto replacement = Snapshot();
+        replacement.nodes[5].valueText = std::string(text.begin(), text.end());
+        auto access = std::make_shared<snowdesktop::text_input::TextAccess>();
+        access->document = [this]() ->
+            std::optional<snowdesktop::text_input::AccessibleDocument> {
+            if (!OnOwnerThread()) return {};
+            ++textReads;
+            snowdesktop::text_input::AccessibleDocument document;
+            document.text = text;
+            return document;
+        };
+        replacement.nodes[5].textAccess = std::move(access);
+        snapshots = { std::move(replacement) };
+        ++replacements;
+    }
+};
+
+LRESULT CALLBACK ApartmentWindowProc(
+    HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_NCCREATE)
+    {
+        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        SetWindowLongPtrW(window, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
+    auto* fixture = reinterpret_cast<ApartmentFixture*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (fixture && fixture->host)
+    {
+        LRESULT result = 0;
+        if (message == WM_GETOBJECT &&
+            fixture->host->TryHandleGetObject(window, wParam, lParam, result))
+            return result;
+        if (message == kDetachProvider)
+        {
+            fixture->host->DetachWindow(window);
+            fixture->host.reset();
+            SetEvent(fixture->detached);
+            return 0;
+        }
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+ComPtr<IUIAutomationElement> FindClientElement(
+    IUIAutomation* automation, IUIAutomationElement* root,
+    const wchar_t* automationId)
+{
+    VARIANT value;
+    VariantInit(&value);
+    value.vt = VT_BSTR;
+    value.bstrVal = SysAllocString(automationId);
+    ComPtr<IUIAutomationCondition> condition;
+    const HRESULT conditionResult = automation->CreatePropertyCondition(
+        UIA_AutomationIdPropertyId, value, &condition);
+    VariantClear(&value);
+    Check(SUCCEEDED(conditionResult), "client property condition must be created");
+    ComPtr<IUIAutomationElement> element;
+    Check(SUCCEEDED(root->FindFirst(TreeScope_Descendants,
+            condition.Get(), &element)) && element,
+        "real UIA must navigate the private fixture's provider tree");
+    return element;
+}
+
+void TestRealUiaApartmentAndLifetime()
+{
+    Check(SUCCEEDED(OleInitialize(nullptr)),
+        "the UIA provider fixture must own an OLE STA");
+    ApartmentFixture fixture;
+    fixture.detached = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Check(fixture.detached && finished, "fixture completion events must exist");
+    fixture.ReplaceSnapshot();
+    fixture.host = std::make_unique<WidgetAccessibilityProviderHost>(
+        [&]() {
+            if (!fixture.OnOwnerThread())
+                return std::vector<LuaWidgetAccessibilitySnapshot>{};
+            ++fixture.captures;
+            return fixture.snapshots;
+        },
+        [&](const std::wstring&, const std::string&) {
+            if (!fixture.OnOwnerThread()) return false;
+            ++fixture.focuses;
+            return true;
+        },
+        [&](const LuaWidgetAccessibilityActionRequest& request) {
+            if (!fixture.OnOwnerThread()) return false;
+            ++fixture.actions;
+            if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
+                fixture.text = request.textValue;
+            fixture.ReplaceSnapshot();
+            return true;
+        });
+    const wchar_t* className = L"SnowDesktopUiaApartmentTest";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = ApartmentWindowProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the isolated provider window class must register");
+    HWND window = CreateWindowExW(0, className, L"UIA apartment fixture",
+        WS_POPUP, 0, 0, 400, 400, nullptr, nullptr,
+        windowClass.hInstance, &fixture);
+    Check(window && fixture.host->AttachWindow(window),
+        "the fixture provider must attach to its private hidden window");
+
+    std::thread client([&]() {
+        Check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)),
+            "the real UIA client must use a separate MTA");
+        {
+            ComPtr<IUIAutomation> automation;
+            Check(SUCCEEDED(CoCreateInstance(__uuidof(CUIAutomation), nullptr,
+                    CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))),
+                "the Windows UIA client must initialize");
+            ComPtr<IUIAutomationElement> root;
+            Check(SUCCEEDED(automation->ElementFromHandle(window, &root)) && root,
+                "UIA must resolve only the private fixture HWND");
+            auto button = FindClientElement(automation.Get(), root.Get(), L"open");
+            auto input = FindClientElement(automation.Get(), root.Get(), L"query");
+            ComPtr<IUIAutomationInvokePattern> invoke;
+            ComPtr<IUIAutomationValuePattern> value;
+            ComPtr<IUIAutomationTextPattern> text;
+            Check(SUCCEEDED(button->GetCurrentPatternAs(UIA_InvokePatternId,
+                    IID_PPV_ARGS(&invoke))) && invoke &&
+                    SUCCEEDED(input->GetCurrentPatternAs(UIA_ValuePatternId,
+                        IID_PPV_ARGS(&value))) && value &&
+                    SUCCEEDED(input->GetCurrentPatternAs(UIA_TextPatternId,
+                        IID_PPV_ARGS(&text))) && text,
+                "real UIA must marshal retained invoke, value and text patterns");
+            for (unsigned index = 0; index < 20; ++index)
+            {
+                SAFEARRAY* runtimeId = nullptr;
+                BSTR name = nullptr;
+                Check(SUCCEEDED(button->GetRuntimeId(&runtimeId)) && runtimeId &&
+                        SUCCEEDED(button->get_CurrentName(&name)) && name &&
+                        std::wstring(name, SysStringLen(name)) == L"Open",
+                    "background runtime-id and property queries must survive snapshot replacement");
+                SafeArrayDestroy(runtimeId);
+                SysFreeString(name);
+                Check(SUCCEEDED(invoke->Invoke()),
+                    "background UIA invoke must reach the owning STA");
+            }
+            Check(SUCCEEDED(button->SetFocus()) && fixture.focuses > 0,
+                "background UIA focus must reach the owning STA");
+            Check(SUCCEEDED(value->SetValue(L"after")),
+                "background UIA value writes must reach the owning STA");
+            BSTR currentValue = nullptr;
+            Check(SUCCEEDED(value->get_CurrentValue(&currentValue)) &&
+                    currentValue &&
+                    std::wstring(currentValue, SysStringLen(currentValue)) == L"after",
+                "marshalling must preserve live values without waiting for paint events");
+            SysFreeString(currentValue);
+            ComPtr<IUIAutomationTextRange> range;
+            BSTR currentText = nullptr;
+            Check(SUCCEEDED(text->get_DocumentRange(&range)) && range &&
+                    SUCCEEDED(range->GetText(-1, &currentText)) && currentText &&
+                    std::wstring(currentText, SysStringLen(currentText)) == L"after" &&
+                    SUCCEEDED(range->Select()),
+                "retained text ranges must read and select through the owning STA");
+            SysFreeString(currentText);
+            Check(fixture.wrongThreadCalls == 0 && fixture.textReads > 0,
+                "no UIA snapshot, focus, action or text callback may run outside its STA");
+
+            Check(PostMessageW(window, kDetachProvider, 0, 0) &&
+                    WaitForSingleObject(fixture.detached, 10000) == WAIT_OBJECT_0,
+                "the owner must detach and destroy the host while clients retain providers");
+            const unsigned captures = fixture.captures;
+            const unsigned actions = fixture.actions;
+            currentText = nullptr;
+            const HRESULT textResult = range->GetText(-1, &currentText);
+            SysFreeString(currentText);
+            Check(FAILED(invoke->Invoke()) && FAILED(textResult) &&
+                    fixture.captures == captures && fixture.actions == actions,
+                "retained patterns and text ranges must fail without touching the destroyed host");
+        }
+        CoUninitialize();
+        SetEvent(finished);
+    });
+
+    const ULONGLONG deadline = GetTickCount64() + 20000;
+    while (WaitForSingleObject(finished, 0) == WAIT_TIMEOUT)
+    {
+        Check(GetTickCount64() < deadline,
+            "cross-apartment UIA calls must complete without deadlocking the GUI thread");
+        if (fixture.host) fixture.ReplaceSnapshot();
+        (void)MsgWaitForMultipleObjects(1, &finished, FALSE, 25, QS_ALLINPUT);
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    client.join();
+    Check(fixture.wrongThreadCalls == 0 && fixture.captures > 20 &&
+            fixture.actions >= 21 && fixture.replacements > 20,
+        "real UIA traffic must exercise live owner-thread reads, writes and replacement");
+    DestroyWindow(window);
+    UnregisterClassW(className, windowClass.hInstance);
+    CloseHandle(finished);
+    CloseHandle(fixture.detached);
+    OleUninitialize();
+}
 }
 
 int main()
@@ -1043,6 +1283,7 @@ int main()
     TestIndividualEventInputs();
     TestEventListeningBaseline();
     TestProviderTreeAndLifetime();
+    TestRealUiaApartmentAndLifetime();
     std::cout << "widget accessibility provider tests passed\n";
     return 0;
 }

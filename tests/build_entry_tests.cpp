@@ -4,7 +4,50 @@
 #include <sstream>
 namespace build_test {
 namespace {
+void process_image_preflight_tests(const fs::path& repo){
+    auto root=temporary("native image preflight");
+    copy(repo,root,{"scripts/build_preflight.ps1","scripts/build_entry.ps1"});
+    fs::create_directories(root/L".build/Release");
+    auto helper=root/L".build/Release/SnowDesktop.exe";
+    fs::copy_file(standin(),helper);
+    Child child({helper.wstring(),L"--shell-descendant"},root);
+    write(root/L"image.ps1",R"PS(param([int]$TargetId,[switch]$WrongCreation)
+. (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1')
+$global:ImageTarget=$TargetId;$global:WrongCreation=[bool]$WrongCreation
+function Get-Process {param($Name,$ErrorAction)
+ if($Name -contains 'explorer'){return}
+ $observed=Microsoft.PowerShell.Management\Get-Process -Id $global:ImageTarget -ErrorAction SilentlyContinue
+ if(-not $observed){return [pscustomobject]@{Id=$global:ImageTarget;ProcessName='SnowDesktop';Path=$null;StartTime=[DateTime]::UtcNow}}
+ $started=$observed.StartTime;if($global:WrongCreation){$started=$started.AddTicks(1)}
+ [pscustomobject]@{Id=$observed.Id;ProcessName='SnowDesktop';Path=$null;StartTime=$started}
+}
+Get-ReadOnlyPreflight $PSScriptRoot | ConvertTo-Json -Depth 5
+)PS",true);
+    Bridge bridge(repo,root);
+    auto result=bridge.call(root/L"image.ps1",{"-TargetId",std::to_string(child.pid())});
+    require(result.at("status").str()=="blocked"&&result.at("owners").items.size()==1&&
+        result.at("owners").items[0].at("pid").integer()==static_cast<int>(child.pid())&&
+        result.at("unknownPids").items.empty()&&child.running(),
+        "A missing MainModule path must use the real native image without stopping its owner");
+    result=bridge.call(root/L"image.ps1",{"-TargetId",std::to_string(GetCurrentProcessId())});
+    require(result.at("status").str()=="clear"&&result.at("owners").items.empty()&&
+        result.at("unknownPids").items.empty(),"Native image fallback must not claim a foreign executable");
+    for(const auto& arguments:std::vector<std::vector<std::string>>{
+        {"-TargetId",std::to_string(child.pid()),"-WrongCreation"},{"-TargetId","2147483647"}}){
+        result=bridge.call(root/L"image.ps1",arguments);
+        require(result.at("status").str()=="unknown"&&result.at("owners").items.empty()&&
+            result.at("unknownPids").items.size()==1&&child.running(),
+            "Unqueryable or recycled process identity must remain unknown and untouched");
+    }
+    auto original=read(root/L"scripts/build_preflight.ps1"),legacy=original;
+    replace(legacy,"$path=Get-PreflightProcessPath $process;","$path=$process.Path;");
+    write(root/L"scripts/build_preflight.ps1",legacy);
+    result=bridge.call(root/L"image.ps1",{"-TargetId",std::to_string(child.pid())});
+    require(result.at("status").str()=="unknown"&&result.at("owners").items.empty(),
+        "Old MainModule-only preflight must reproduce the identified helper's false unknown state");
+}
 void preflight_tests(const fs::path& repo){
+    process_image_preflight_tests(repo);
     auto root=temporary("preflight entry with spaces");copy(repo,root,{"scripts/build.bat","scripts/powershell_runtime.bat","scripts/build_entry.ps1","scripts/build_job.cs"});
     write(root/L"scripts/build_preflight.ps1",R"PS(param([switch]$ReloadShell,[switch]$CloseApplication)
 function Get-ReadOnlyPreflight($Root){@{status='clear';observedUtc=[DateTime]::UtcNow.ToString('o');owners=@()}}

@@ -29,6 +29,12 @@ using AccessibilityNode =
 using AccessibilityPattern =
     snowdesktop::widget_runtime::ViewAccessibilityPattern;
 
+// The host creates every provider in its OLE STA. UIA must marshal callbacks
+// back to that apartment: snapshots, actions and text access all use live
+// widget state owned by the GUI thread.
+constexpr ProviderOptions kProviderOptions = static_cast<ProviderOptions>(
+    ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+
 enum class ElementKind
 {
     Widget,
@@ -688,7 +694,7 @@ public:
         ProviderOptions* result) override
     {
         if (!result) return E_POINTER;
-        *result = ProviderOptions_ServerSideProvider;
+        *result = kProviderOptions;
         return S_OK;
     }
 
@@ -931,7 +937,7 @@ public:
         ProviderOptions* result) override
     {
         if (!result) return E_POINTER;
-        *result = ProviderOptions_ServerSideProvider;
+        *result = kProviderOptions;
         return S_OK;
     }
 
