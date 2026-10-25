@@ -98,11 +98,14 @@ void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false)
         require(empty.at("tasks").items.empty()&&!fs::exists(presence.stateRoot/L"state.json"),"Read-only task list wrote state");
         auto opened=presence.call({"task-open","reader","-TaskName","Investigate deadlock","-Adapter","dsh"});
         require(opened.at("task").at("phase").str()=="investigating"&&!opened.at("editingAuthority").boolean&&presence.state().at("current").kind==Json::Kind::Null,"Investigation joined editing barrier");
+        require(equivalent_results(Json("2026-10-25T07:28:25.4447810Z"),Json("2026-10-25T07:28:25.444781Z"))&&
+            !equivalent_results(Json("2026-10-25T07:28:25.4447810Z"),Json("2026-10-25T07:28:25.4447811Z")),
+            "Progress timestamp comparison must ignore only insignificant zero ticks, not real progress");
         const auto declared=presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","beforeWriteGate,boundedWait,idleWake"});
         const auto& capabilities=declared.at("task").at("capabilities");
         require(capabilities.at("beforeWriteGate").boolean&&capabilities.at("boundedWait").boolean&&capabilities.at("idleWake").boolean&&
             !capabilities.at("liveProgress").boolean&&!declared.at("editingAuthority").boolean&&declared.at("task").at("revision").integer()==0&&
-            declared.at("task").at("lastProgressUtc").str()==opened.at("task").at("lastProgressUtc").str()&&presence.state().at("current").kind==Json::Kind::Null,
+            equivalent_results(declared.at("task").at("lastProgressUtc"),opened.at("task").at("lastProgressUtc"))&&presence.state().at("current").kind==Json::Kind::Null,
             "Adapter capability declaration was lost or granted editing/business progress");
         require(presence.call({"task-open","reader"}).at("task").at("capabilities").at("idleWake").boolean,"An omitted declaration silently revoked adapter capabilities");
         presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","madeUp"},2);
