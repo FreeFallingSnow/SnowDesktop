@@ -8,6 +8,7 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Microsoft.UI.Xaml.Documents.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 
@@ -24,6 +25,7 @@ namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxcp = winrt::Microsoft::UI::Xaml::Controls::Primitives;
+namespace muxd = winrt::Microsoft::UI::Xaml::Documents;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace wad = winrt::Windows::ApplicationModel::DataTransfer;
 
@@ -123,25 +125,6 @@ void SetCenteredButtonText(const muxc::ContentControl& button, std::wstring text
     button.Content(label);
 }
 
-void UpdatePackageDescriptionLayout(const muxc::Grid& details)
-{
-    const auto tags = details.Children().GetAt(0).as<muxc::StackPanel>();
-    const auto description = details.Children().GetAt(1).as<muxc::TextBlock>();
-    const bool hasTags = tags.Visibility() == mux::Visibility::Visible;
-    const bool hasDescription = description.Visibility() == mux::Visibility::Visible;
-    const bool stacked = hasTags && hasDescription &&
-        details.ActualWidth() > 0 && details.ActualWidth() < 520.0;
-    details.Visibility(hasTags || hasDescription
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-    details.RowSpacing(stacked ? 8.0 : 0.0);
-    muxc::Grid::SetColumnSpan(tags, stacked ? 2 : 1);
-    muxc::Grid::SetRow(description, stacked ? 1 : 0);
-    muxc::Grid::SetColumn(description, hasTags && !stacked ? 1 : 0);
-    muxc::Grid::SetColumnSpan(description, hasTags && !stacked ? 1 : 2);
-    // Match the tag's first text baseline without centering wrapped text.
-    description.Margin({0.0, hasTags && !stacked ? 2.0 : 0.0, 0.0, 0.0});
-}
-
 void ApplyAccentButtonStyle(const muxc::Button& button) noexcept
 {
     try
@@ -231,9 +214,7 @@ struct WidgetsPagePresenter::Impl
         muxc::Border card{nullptr};
         muxc::TextBlock name{nullptr};
         muxc::TextBlock metadata{nullptr};
-        muxc::StackPanel tags{nullptr};
-        muxc::TextBlock description{nullptr};
-        muxc::Grid descriptionRow{nullptr};
+        muxc::RichTextBlock descriptionRow{nullptr};
         muxc::TextBlock version{nullptr};
         muxc::TextBlock author{nullptr};
         muxc::TextBlock sourceId{nullptr};
@@ -1346,32 +1327,54 @@ struct WidgetsPagePresenter::Impl
         label.TextWrapping(mux::TextWrapping::NoWrap);
         tag.Child(label);
 
+        // InlineUIContainer uses the child's bottom as its baseline. Let the
+        // badge extend below it so its label shares the description baseline.
+        const float unbounded = std::numeric_limits<float>::infinity();
+        tag.Measure({unbounded, unbounded});
+        const double belowBaseline = tag.DesiredSize().Height -
+            tag.BorderThickness().Top - tag.Padding().Top - label.BaselineOffset();
+        tag.Margin({0.0, 0.0, 6.0, -std::max(0.0, belowBaseline)});
+
         SetAutomation(tag, label.Text());
         return tag;
     }
 
-    void PopulatePackageTags(
-        const muxc::StackPanel& tags,
+    void PopulatePackageDescription(
+        const muxc::RichTextBlock& descriptionRow,
         const InstalledWidgetPackageSnapshot& package) const
     {
-        tags.Children().Clear();
+        muxd::Paragraph paragraph;
+        const auto appendTag = [&](std::wstring text) {
+            muxd::InlineUIContainer container;
+            container.Child(MakePackageTag(std::move(text)));
+            paragraph.Inlines().Append(container);
+        };
         if (IsInstalledPackage(package))
         {
-            tags.Children().Append(MakePackageTag(L(
-                "app.settings.widgets_filter_installed", L"Installed")));
+            appendTag(L("app.settings.widgets_filter_installed", L"Installed"));
         }
         if (IsIncludedPackage(package))
         {
-            tags.Children().Append(MakePackageTag(L(
-                "app.settings.widgets_filter_builtin", L"Included")));
+            appendTag(L("app.settings.widgets_filter_builtin", L"Included"));
         }
         if (IsDevelopmentPackage(package))
         {
-            tags.Children().Append(MakePackageTag(L(
+            appendTag(L(
                 "app.settings.widgets_filter_development",
-                L"Local development")));
+                L"Local development"));
         }
-        tags.Visibility(tags.Children().Size() == 0
+        if (!package.description.empty())
+        {
+            auto description = mux::Markup::XamlReader::Load(LR"(<Run
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />)").as<muxd::Run>();
+            description.Text((paragraph.Inlines().Size() == 0 ? L"" : L" ") +
+                package.description);
+            paragraph.Inlines().Append(description);
+        }
+        descriptionRow.Blocks().Clear();
+        descriptionRow.Blocks().Append(paragraph);
+        descriptionRow.Visibility(paragraph.Inlines().Size() == 0
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
     }
@@ -2512,43 +2515,15 @@ struct WidgetsPagePresenter::Impl
         const std::wstring packageState = PackageStateText(package);
         muxa::AutomationProperties::SetLiveSetting(metadata,
             muxa::Peers::AutomationLiveSetting::Polite);
-        muxc::StackPanel tags;
-        tags.Orientation(muxc::Orientation::Horizontal);
-        tags.Spacing(6.0);
-        tags.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        tags.VerticalAlignment(mux::VerticalAlignment::Top);
-        PopulatePackageTags(tags, package);
-
         muxc::StackPanel body;
         body.Spacing(0.0);
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        muxc::TextBlock description = MakeSecondaryText(package.description);
-        description.MaxLines(2);
-        description.TextTrimming(mux::TextTrimming::CharacterEllipsis);
-        description.Visibility(package.description.empty()
-                ? mux::Visibility::Collapsed
-                : mux::Visibility::Visible);
-        description.VerticalAlignment(mux::VerticalAlignment::Top);
-        muxc::Grid descriptionRow;
-        descriptionRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition tagsColumn, descriptionColumn;
-        tagsColumn.Width(mux::GridLengthHelper::Auto());
-        descriptionRow.ColumnDefinitions().Append(tagsColumn);
-        descriptionRow.ColumnDefinitions().Append(descriptionColumn);
-        for (int index = 0; index < 2; ++index)
-        {
-            muxc::RowDefinition definition;
-            definition.Height(mux::GridLengthHelper::Auto());
-            descriptionRow.RowDefinitions().Append(definition);
-        }
-        descriptionRow.Children().Append(tags);
-        descriptionRow.Children().Append(description);
-        UpdatePackageDescriptionLayout(descriptionRow);
-        const auto weakDescriptionRow = winrt::make_weak(descriptionRow);
-        descriptionRow.SizeChanged([weakDescriptionRow](const auto&, const mux::SizeChangedEventArgs&) {
-            if (const auto current = weakDescriptionRow.get())
-                UpdatePackageDescriptionLayout(current);
-        });
+        muxc::RichTextBlock descriptionRow;
+        descriptionRow.MaxLines(2);
+        descriptionRow.TextWrapping(mux::TextWrapping::Wrap);
+        descriptionRow.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        descriptionRow.IsTextSelectionEnabled(false);
+        PopulatePackageDescription(descriptionRow, package);
         muxc::Grid identity;
         identity.ColumnSpacing(12);
         muxc::ColumnDefinition identityName, identityState;
@@ -2815,7 +2790,7 @@ struct WidgetsPagePresenter::Impl
             firstIncludedPackageTarget = row;
         targetRows.Children().Append(row);
         packageRowBindings.push_back(PackageRowBinding{
-            package.packageId, row, name, metadata, tags, description, descriptionRow,
+            package.packageId, row, name, metadata, descriptionRow,
             version, author, sourceId, enabledAction, addAction,
             developmentAction,
             std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
@@ -2915,12 +2890,7 @@ struct WidgetsPagePresenter::Impl
         binding.name.Text(displayName);
         binding.metadata.Text(JoinMetadata(
             {package.sourceName, packageState}));
-        PopulatePackageTags(binding.tags, package);
-        binding.description.Text(package.description);
-        binding.description.Visibility(package.description.empty()
-                ? mux::Visibility::Collapsed
-                : mux::Visibility::Visible);
-        UpdatePackageDescriptionLayout(binding.descriptionRow);
+        PopulatePackageDescription(binding.descriptionRow, package);
         binding.version.Text(
             L("app.settings.version", L"Version") + L": " +
             package.version);
