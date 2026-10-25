@@ -65,6 +65,86 @@ inline std::set<std::wstring> VisiblePaths(DesktopApp& app)
                 "native search cannot publish the same physical member twice");
     return result;
 }
+inline void RunSortResponse()
+{
+    // The pointer reaches the near quarter of its neighbour before that
+    // neighbour's old midpoint. Expectations describe the user-visible order,
+    // not a reimplementation of the production threshold calculation.
+    struct Move
+    {
+        std::vector<std::wstring> selected;
+        const wchar_t* pressed;
+        const wchar_t* neighbour;
+        bool right, cancel;
+        size_t beforeIndex, afterIndex;
+        std::vector<std::wstring> before, after;
+    };
+    const Move moves[]{
+        {{L"B"}, L"B", L"C", true, false, 2, 3, {L"A", L"B", L"C", L"D"}, {L"A", L"C", L"B", L"D"}},
+        {{L"C"}, L"C", L"B", false, false, 2, 1, {L"A", L"B", L"C", L"D"}, {L"A", L"C", L"B", L"D"}},
+        {{L"B", L"D"}, L"B", L"C", true, false, 2, 3, {L"A", L"B", L"D", L"C"}, {L"A", L"C", L"B", L"D"}},
+        {{L"B", L"D"}, L"D", L"C", false, true, 3, 2, {L"A", L"C", L"B", L"D"}, {L"A", L"B", L"D", L"C"}},
+    };
+    Profile profile;
+    size_t scenes = 0;
+    for (const bool fileGroup : {false, true})
+    for (const bool list : {false, true})
+    for (const auto& move : moves)
+    {
+        context = "responsive label sort file-group=" + std::to_string(fileGroup) + " list=" + std::to_string(list) +
+            " case=" + std::to_string(&move - moves);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, fileGroup, list, false);
+        for (auto& widget : widgets)
+        {
+            if (widget.id == L"surface-group") widget.gridSpan.columns = 8;
+            if (widget.id == L"B") widget.title = widget.customTitle = L"Medium source B";
+            if (widget.id == L"C") widget.title = widget.customTitle = L"Longer C source title";
+        }
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::Save(app), "save responsive-sort baseline before hovering");
+        const auto saved = Read(Access::LayoutPath(app));
+        const RECT neighbour = Access::GroupSurfaceTabRect(app, L"surface-group", move.neighbour);
+        Require(!IsRectEmpty(&neighbour), "responsive neighbour is visible with variable-width labels");
+        const LONG quarter = (neighbour.right - neighbour.left) / 4;
+        const LONG threshold = move.right ? neighbour.left + quarter : neighbour.right - quarter;
+        auto* group = Access::MemberContainer(app, L"surface-group");
+        const int step = group->Cu(2.0f), buffer = group->Cu(4.0f);
+        const int direction = move.right ? 1 : -1;
+        Access::BeginResponsiveGroupLabels(app, move.selected, move.pressed);
+        const auto checkAt = [&](LONG x, size_t insertion, const std::vector<std::wstring>& expected) {
+            const POINT point{x, (neighbour.top + neighbour.bottom) / 2};
+            const auto preview = Access::GroupSurfacePointPreview(app, L"surface-group", point);
+            Require(!preview.Empty() && preview.insertIndex == insertion,
+                "same-group sort must respond at the directional near-quarter boundary, before the old midpoint");
+            const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs) order.push_back(tab.id);
+            Require(visual.inserting && order == expected && !Access::GroupSurfaceGhostWanted(app) &&
+                Access::GroupSurfaceLabelHint(app, L"surface-group").empty(),
+                "responsive sorting retains exact label landing, silent feedback and ghost exclusion");
+            Require(Read(Access::LayoutPath(app)) == saved, "responsive hover cannot save a tentative order");
+        };
+        checkAt(threshold - direction * step, move.beforeIndex, move.before);
+        checkAt(threshold + direction * step, move.afterIndex, move.after);
+        for (int repeat = 0; repeat < 3; ++repeat)
+            checkAt(threshold - direction * step, move.afterIndex, move.after);
+        checkAt(threshold - direction * (buffer + step), move.beforeIndex, move.before);
+        checkAt(threshold + direction * step, move.afterIndex, move.after);
+        if (move.cancel) Access::EndActualGesture(app);
+        else Access::DropGroupSurfaceLabels(app, L"surface-group");
+        const auto expected = move.cancel ? std::vector<std::wstring>{L"A", L"B", L"C", L"D"} : move.after;
+        CheckSurface(app, original, expected); samples.Check();
+        Require(Access::Save(app), "save responsive sort through actual host storage");
+        native_drag_async_reload_cases::Refresh(app); CheckSurface(app, original, expected);
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); CheckSurface(app, original, expected); samples.Check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " responsive same-group quarter-boundary, hysteresis, primary-label and storage scenes passed\n";
+}
 inline void RunLabels()
 {
     Profile profile;
@@ -642,7 +722,7 @@ inline void RunDesktopComponentTabs()
 }
 inline void Run(std::string_view mode)
 {
-    if (mode == "labels") { RunDesktopComponentTabs(); RunLabels(); RunInsertionZones(); }
+    if (mode == "labels") { RunSortResponse(); RunDesktopComponentTabs(); RunLabels(); RunInsertionZones(); }
     else if (mode == "search") RunSearch();
     else if (mode == "date") RunDateHeaders();
     else if (mode == "inactive") RunInactiveTab();

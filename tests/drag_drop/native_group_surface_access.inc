@@ -15,6 +15,21 @@
         if (auto* group = dynamic_cast<FileGroup*>(view)) return group->GetTabDragPreviewLayout();
         throw std::runtime_error("tab preview requires a native group");
     }
+    static void BeginResponsiveGroupLabels(DesktopApp& app, const std::vector<std::wstring>& selected,
+        const std::wstring& pressedId)
+    {
+        auto source = BeginGroupLabels(app, L"surface-group", selected);
+        auto items = app.dragSession_.Items();
+        const auto pressed = std::find_if(source.entries.begin(), source.entries.end(),
+            [&](const auto& entry) { return entry.widgetId == pressedId; });
+        if (pressed == source.entries.end()) throw std::runtime_error("pressed label must belong to the captured selection");
+        const size_t primary = static_cast<size_t>(std::distance(source.entries.begin(), pressed));
+        const RECT tab = GroupSurfaceTabRect(app, L"surface-group", pressedId);
+        if (IsRectEmpty(&tab)) throw std::runtime_error("responsive sort starts on an actual visible source label");
+        const POINT down{(tab.left + tab.right) / 2, (tab.top + tab.bottom) / 2};
+        app.dragSession_.Begin(MemberContainer(app, L"surface-group"), std::move(items), std::move(source), down, {-100, -100});
+        app.dragSession_.SetVisualItemBounds({}, primary);
+    }
     static std::wstring GroupSurfaceLabelHint(DesktopApp& app, const std::wstring& groupId)
     {
         return MemberContainer(app, groupId)->GetDragHint(app.dragSession_.TargetSlot(),
