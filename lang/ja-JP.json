@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "動的壁紙プレビュー",
   "modules.wallpaperPreview.purpose": "ウィジェット追加メニューのプレビュー用に Wallpaper Engine の現在の画面を取得します。",
   "modules.wallpaperPreview.impact": "無効時：静止壁紙または単色の背景を使います。ウィジェットと Wallpaper Engine は動作を続けます。",
-  "modules.wallpaperPreview.conflict": "画面キャプチャやオーバーレイのツールが同じ描画・取得経路に影響する場合があります。"
+  "modules.wallpaperPreview.conflict": "画面キャプチャやオーバーレイのツールが同じ描画・取得経路に影響する場合があります。",
+  "app.startup.privilegesFailed": "SnowDesktop を通常のユーザー権限で起動できませんでした。現在の権限のまま起動できますが、エクスプローラーからファイルをドラッグできない場合があります。このまま起動しますか？",
+  "app.startup.startAnyway": "このまま起動"
 }

@@ -115,9 +115,18 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
     struct Platform
     {
         launch::NativePlatform native{&ExecuteShellProbe};
+        int prompts = 0;
+        DWORD promptedError = ERROR_SUCCESS;
         // Substitute only the parent's token state. Explorer COM, argument
         // forwarding and the child's repeated native token check remain real.
         bool IsElevated() { return true; }
+        bool IsExplorerElevated() { return native.IsExplorerElevated(); }
+        bool ConfirmContinue(const launch::Failure& failure)
+        {
+            ++prompts;
+            promptedError = failure.code;
+            return false;
+        }
         DWORD Relaunch(std::wstring_view command) { return native.Relaunch(command); }
     } platform;
     const auto report = directory / L"child report.txt";
@@ -128,7 +137,13 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
         L" --autostart-permission-probe " + launch::QuoteArgument(report.wstring()) +
         L" " + launchArgument + L" " + launch::QuoteArgument(payload);
     const auto result = launch::Normalize(command, platform);
-    Require(result.handled && result.error == ERROR_SUCCESS && shellTestCalls == 1,
+    if (platform.native.IsExplorerElevated())
+    {
+        Require(!result.handled && shellTestCalls == 0 && platform.prompts == 0,
+            "a real high-privilege Explorer preserves the current startup without handoff");
+        return;
+    }
+    Require(result.handled && result.error == ERROR_SUCCESS && shellTestCalls == 1 && platform.prompts == 0,
         "login and elevated ordinary startup delegate once through the real desktop COM object");
     const ULONGLONG deadline = GetTickCount64() + 10000;
     while (!std::filesystem::exists(report) && GetTickCount64() < deadline) Sleep(20);
@@ -149,7 +164,8 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
     shellTestFailure = ERROR_ACCESS_DENIED;
     shellTestCalls = 0;
     const auto denied = launch::Normalize(command, platform);
-    Require(denied.handled && denied.error == ERROR_ACCESS_DENIED && shellTestCalls == 1 &&
+    Require(denied.handled && denied.error == ERROR_CANCELLED && shellTestCalls == 1 &&
+        platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED &&
         !std::filesystem::exists(report), "shell failure exits once without another creation method");
     std::cout << "Explorer COM launch: real hidden child, background intent, Unicode arguments, cwd and ordinary identity passed\n";
 }

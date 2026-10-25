@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "Dynamische Hintergrundvorschau",
   "modules.wallpaperPreview.purpose": "Aktuelles Wallpaper-Engine-Bild für die Vorschau im Widget-Menü erfassen.",
   "modules.wallpaperPreview.impact": "Deaktiviert: Die Vorschau nutzt ein statisches Hintergrundbild oder eine Vollfarbe. Widgets und Wallpaper Engine laufen weiter.",
-  "modules.wallpaperPreview.conflict": "Aufnahme- und Overlay-Tools können denselben Darstellungs- oder Erfassungspfad beeinflussen."
+  "modules.wallpaperPreview.conflict": "Aufnahme- und Overlay-Tools können denselben Darstellungs- oder Erfassungspfad beeinflussen.",
+  "app.startup.privilegesFailed": "SnowDesktop konnte nicht mit normalen Benutzerrechten gestartet werden. Sie können mit den aktuellen Berechtigungen fortfahren, aber das Ziehen von Dateien aus dem Datei-Explorer funktioniert möglicherweise nicht. Trotzdem starten?",
+  "app.startup.startAnyway": "Trotzdem starten"
 }

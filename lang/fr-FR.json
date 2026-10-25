@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "Aperçus de fond d’écran animé",
   "modules.wallpaperPreview.purpose": "Capturer l’image actuelle de Wallpaper Engine pour les aperçus du menu des widgets.",
   "modules.wallpaperPreview.impact": "Désactivé : les aperçus utilisent un fond statique ou uni. Les widgets et Wallpaper Engine continuent de fonctionner.",
-  "modules.wallpaperPreview.conflict": "Les outils de capture graphique et de superposition peuvent affecter le même chemin d’affichage ou de capture."
+  "modules.wallpaperPreview.conflict": "Les outils de capture graphique et de superposition peuvent affecter le même chemin d’affichage ou de capture.",
+  "app.startup.privilegesFailed": "SnowDesktop n’a pas pu démarrer avec les droits d’un utilisateur standard. Vous pouvez continuer avec les droits actuels, mais le glisser-déposer de fichiers depuis l’Explorateur de fichiers risque de ne pas fonctionner. Démarrer quand même ?",
+  "app.startup.startAnyway": "Démarrer quand même"
 }

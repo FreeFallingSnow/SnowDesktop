@@ -33,15 +33,33 @@ void CheckAutoStartLaunchRules()
     {
         int launches = 0;
         int tokenChecks = 0;
+        int explorerChecks = 0;
+        int prompts = 0;
         bool elevated = false;
+        bool explorerElevated = false;
+        bool continueStartup = false;
         DWORD tokenError = 0;
+        DWORD explorerError = 0;
         DWORD error = 0;
+        DWORD promptedError = 0;
         std::wstring forwarded;
         bool IsElevated()
         {
             ++tokenChecks;
             if (tokenError) throw launch::Failure{tokenError, L"test token query"};
             return elevated;
+        }
+        bool IsExplorerElevated()
+        {
+            ++explorerChecks;
+            if (explorerError) throw launch::Failure{explorerError, L"test Explorer token query"};
+            return explorerElevated;
+        }
+        bool ConfirmContinue(const launch::Failure& failure)
+        {
+            ++prompts;
+            promptedError = failure.code;
+            return continueStartup;
         }
         DWORD Relaunch(std::wstring_view command)
         {
@@ -74,12 +92,16 @@ void CheckAutoStartLaunchRules()
         Platform platform;
         platform.error = ERROR_ACCESS_DENIED;
         const auto result = launch::Normalize(L"host.exe --snowdesktop-autostart-owner=steam", platform);
-        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 1,
-            "an Explorer launch failure is reported without a second creation path");
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.launches == 1 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "an Explorer launch failure offers a decision and cancellation does not retry");
     }
     // Steam/manual launches carry no login owner. The actual token, including
     // a background/recovery launch or an unrecognized owner, decides routing.
     for (const auto command : {L"host.exe", L"host.exe --snowdesktop-autostart",
+        L"host.exe --snowdesktop-autostart-owner=portable",
+        L"host.exe --snowdesktop-autostart-owner=packaged",
+        L"host.exe --snowdesktop-autostart-owner=steam",
         L"host.exe --snowdesktop-application-recovery", L"host.exe --wait-for-pid=42",
         L"host.exe --snowdesktop-autostart-owner=unknown",
         L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
@@ -92,8 +114,14 @@ void CheckAutoStartLaunchRules()
             "every elevated desktop launch delegates regardless of source, background intent or owner arguments");
         platform.error = ERROR_ACCESS_DENIED;
         const auto denied = launch::Normalize(command, platform);
-        Check(denied.handled && denied.error == ERROR_ACCESS_DENIED && platform.launches == 2,
-            "failed ordinary launch handoff never falls back to an elevated desktop");
+        Check(denied.handled && denied.error == ERROR_CANCELLED && platform.launches == 2 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "failed ordinary launch handoff prompts before any elevated fallback");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(command, platform);
+        Check(!accepted.handled && accepted.error == ERROR_ACCESS_DENIED &&
+            accepted.currentPrivilegesAccepted && platform.prompts == 2 && platform.launches == 3,
+            "accepting a failed handoff continues in the current process with explicit per-launch consent");
     }
     for (const auto command : {L"host.exe --snowdesktop-explorer-relaunch",
         L"host.exe --snowdesktop-autostart --snowdesktop-explorer-relaunch"})
@@ -103,18 +131,67 @@ void CheckAutoStartLaunchRules()
             platform.launches == 0, "an ordinary Explorer child continues without another handoff");
         platform.elevated = true;
         const auto result = launch::Normalize(command, platform);
-        Check(result.handled && result.error == ERROR_ELEVATION_REQUIRED && platform.tokenChecks == 2 &&
-            platform.launches == 0, "a still-elevated child reports failure instead of looping or bypassing the check");
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.tokenChecks == 2 &&
+            platform.launches == 0 && platform.prompts == 1 &&
+            platform.promptedError == ERROR_ELEVATION_REQUIRED,
+            "a still-elevated child offers a decision instead of looping or exiting silently");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(command, platform);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.launches == 0 &&
+            platform.prompts == 2, "an elevated Explorer child can continue only after confirmation");
+    }
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-autostart-owner=steam",
+        L"host.exe --snowdesktop-autostart", L"host.exe --wait-for-pid=42",
+        L"host.exe --snowdesktop-autostart-owner=portable", L"host.exe --snowdesktop-autostart-owner=packaged",
+        L"host.exe --snowdesktop-application-recovery", L"host.exe --snowdesktop-explorer-relaunch",
+        L"host.exe --snowdesktop-autostart --snowdesktop-explorer-relaunch"})
+    {
+        for (const bool elevated : {false, true})
+        {
+            Platform platform;
+            platform.elevated = elevated;
+            platform.explorerElevated = true;
+            const auto result = launch::Normalize(command, platform);
+            Check(!result.handled && result.error == ERROR_SUCCESS && platform.launches == 0 &&
+                platform.prompts == 0 && (!elevated || platform.explorerChecks == 1),
+                "a high-privilege Explorer preserves current startup without a handoff or a warning");
+        }
+    }
+    {
+        Platform platform;
+        platform.elevated = true;
+        platform.explorerError = ERROR_ACCESS_DENIED;
+        Check(launch::Normalize(L"host.exe", platform).handled && platform.prompts == 1 &&
+            platform.promptedError == ERROR_ACCESS_DENIED && platform.launches == 0,
+            "an unreadable Explorer token requires a decision instead of assuming desktop privileges");
+        platform.continueStartup = true;
+        Check(!launch::Normalize(L"host.exe", platform).handled && platform.prompts == 2 &&
+            platform.launches == 0, "Explorer token inspection failure can continue with explicit consent");
     }
     {
         Platform platform;
         platform.tokenError = ERROR_ACCESS_DENIED;
         const auto result = launch::Normalize(L"host.exe", platform);
-        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 0,
-            "unknown privileges cannot silently enter desktop initialization");
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.launches == 0 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "unknown privileges offer a decision before desktop initialization");
         Check(!launch::Normalize(L"host.exe --shell-open-helper 123 456", platform, false).handled &&
-            platform.tokenChecks == 1 && platform.launches == 0,
+            platform.tokenChecks == 1 && platform.launches == 0 && platform.prompts == 1,
             "inherited-channel helper dispatch retains its handles and independent validation");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(L"host.exe", platform);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.prompts == 2,
+            "token-query failure can continue only after confirmation");
+    }
+    {
+        Platform platform;
+        platform.tokenError = ERROR_ACCESS_DENIED;
+        const auto accepted = launch::Normalize(L"host.exe", platform, true, true);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.tokenChecks == 0 &&
+            platform.explorerChecks == 0 && platform.prompts == 0 && platform.launches == 0,
+            "the launcher's PID-bound consent avoids a second decision in its own runtime child");
+        Check(!launch::Normalize(L"host.exe --shell-open-helper", platform, false, true).currentPrivilegesAccepted,
+            "desktop startup consent never changes helper dispatch");
     }
 }
 }

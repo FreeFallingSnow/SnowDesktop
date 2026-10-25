@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "动态壁纸预览",
   "modules.wallpaperPreview.purpose": "为添加组件菜单的预览获取 Wallpaper Engine 当前画面。",
   "modules.wallpaperPreview.impact": "禁用后：预览使用静态壁纸或纯色背景，组件和 Wallpaper Engine 本身继续运行。",
-  "modules.wallpaperPreview.conflict": "图形捕获或叠加层工具可能影响相同的画面呈现和捕获路径。"
+  "modules.wallpaperPreview.conflict": "图形捕获或叠加层工具可能影响相同的画面呈现和捕获路径。",
+  "app.startup.privilegesFailed": "无法以普通用户权限启动 SnowDesktop。可以保留当前权限继续启动，但从文件资源管理器拖入文件等操作可能受限。是否仍然启动？",
+  "app.startup.startAnyway": "仍然启动"
 }

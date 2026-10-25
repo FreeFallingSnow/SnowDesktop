@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "動態桌布預覽",
   "modules.wallpaperPreview.purpose": "為新增元件選單的預覽取得 Wallpaper Engine 目前畫面。",
   "modules.wallpaperPreview.impact": "停用後：預覽使用靜態桌布或純色背景，元件與 Wallpaper Engine 本身繼續執行。",
-  "modules.wallpaperPreview.conflict": "圖形擷取或覆疊工具可能影響相同的畫面呈現與擷取路徑。"
+  "modules.wallpaperPreview.conflict": "圖形擷取或覆疊工具可能影響相同的畫面呈現與擷取路徑。",
+  "app.startup.privilegesFailed": "無法以一般使用者權限啟動 SnowDesktop。您可以保留目前權限繼續啟動，但從檔案總管拖入檔案等操作可能受限。是否仍要啟動？",
+  "app.startup.startAnyway": "仍然啟動"
 }

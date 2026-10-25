@@ -186,6 +186,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/auto_start_elevation.cpp
     src/platform/auto_start_elevation.h
     src/platform/auto_start_rules.h
+    src/platform/startup_privileges_dialog.h
     src/platform/application_crash_watchdog.cpp
     src/desktop/desktop_namespace_registry.cpp
     src/desktop/desktop_namespace_registry.h
@@ -982,7 +983,7 @@ snowdesktop_enable_native_window_compatibility(SnowDesktop)
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
 file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
-set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
+set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; const wchar_t* startupPrivileges; const wchar_t* startAnyway; const wchar_t* cancel; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
 foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${catalog}")
     get_filename_component(language "${catalog}" NAME_WE)
@@ -992,7 +993,10 @@ foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     string(JSON warning GET "${catalog_json}" "app.launcher.warning")
     string(JSON startup GET "${catalog_json}" "app.operation.startFailed")
     string(JSON security_hint GET "${catalog_json}" "app.launcher.securitySoftwareHint")
-    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\"},\n")
+    string(JSON startup_privileges GET "${catalog_json}" "app.startup.privilegesFailed")
+    string(JSON start_anyway GET "${catalog_json}" "app.startup.startAnyway")
+    string(JSON cancel GET "${catalog_json}" "settings.dialog.cancel")
+    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\", LR\"LAUNCHER(${startup_privileges})LAUNCHER\", LR\"LAUNCHER(${start_anyway})LAUNCHER\", LR\"LAUNCHER(${cancel})LAUNCHER\"},\n")
 endforeach()
 string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "};\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h"
@@ -1008,8 +1012,10 @@ add_executable(SnowDesktopLauncher WIN32
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
 target_include_directories(SnowDesktopLauncher PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32 advapi32)
+target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32 advapi32 comctl32)
 if (MSVC)
+    target_link_options(SnowDesktopLauncher PRIVATE
+        "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
     set_property(TARGET SnowDesktopLauncher PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopLauncher PRIVATE
@@ -2166,9 +2172,13 @@ if (BUILD_TESTING)
             tests/auto_start_manager_tests.cpp
             src/platform/auto_start_manager.cpp
             src/platform/auto_start_elevation.cpp
-        INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32 comctl32
         LABELS contract rules settings startup)
+    if (MSVC)
+        target_link_options(SnowDesktopAutoStartRulesTests PRIVATE
+            "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
+    endif()
 
     add_test(NAME auto_start_scheduler
         COMMAND $<TARGET_FILE:SnowDesktopAutoStartRulesTests> --scheduler)

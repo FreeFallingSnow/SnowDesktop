@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "Prévias de papel de parede dinâmico",
   "modules.wallpaperPreview.purpose": "Capturar o quadro atual do Wallpaper Engine para as prévias do menu de widgets.",
   "modules.wallpaperPreview.impact": "Ao desativar: as prévias usam um papel de parede estático ou fundo sólido. Os widgets e o Wallpaper Engine continuam funcionando.",
-  "modules.wallpaperPreview.conflict": "Ferramentas de captura gráfica e sobreposição podem afetar o mesmo caminho de apresentação ou captura."
+  "modules.wallpaperPreview.conflict": "Ferramentas de captura gráfica e sobreposição podem afetar o mesmo caminho de apresentação ou captura.",
+  "app.startup.privilegesFailed": "Não foi possível iniciar o SnowDesktop com permissões de usuário padrão. Você pode continuar com as permissões atuais, mas talvez não seja possível arrastar arquivos do Explorador de Arquivos. Iniciar mesmo assim?",
+  "app.startup.startAnyway": "Iniciar mesmo assim"
 }

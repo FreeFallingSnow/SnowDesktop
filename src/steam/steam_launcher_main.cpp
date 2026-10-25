@@ -130,11 +130,12 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
 
 bool LaunchRuntime(const std::filesystem::path& executable,
     const std::vector<std::wstring>& arguments, unsigned protocol,
-    DWORD& error, bool& ready, bool& canRecover, bool& pending)
+    DWORD& error, bool& ready, bool& canRecover, bool& pending,
+    bool currentPrivilegesAccepted)
 {
     canRecover = true;
     snowdesktop::steam_runtime::startup::Channel channel;
-    if (protocol != 0 && !channel.Create())
+    if (protocol != 0 && !channel.Create(currentPrivilegesAccepted))
     {
         error = ERROR_INVALID_HANDLE;
         return false;
@@ -236,7 +237,7 @@ bool LaunchRuntime(const std::filesystem::path& executable,
 }
 }
 
-int RunLauncher(bool& maintenance)
+int RunLauncher(bool& maintenance, bool currentPrivilegesAccepted)
 {
     const std::filesystem::path installRoot = CurrentExecutableDirectory();
     if (installRoot.empty())
@@ -324,7 +325,7 @@ int RunLauncher(bool& maintenance)
         bool canRecover = false;
         bool pending = false;
         if (LaunchRuntime(applied.executable, forwarded, applied.launcherProtocol,
-                launchError, ready, canRecover, pending))
+                launchError, ready, canRecover, pending, currentPrivilegesAccepted))
         {
             if (ready)
             {
@@ -374,17 +375,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // Steam, login tasks and other launchers may pass an elevated token.
     // Normalize every launch before the runtime handshake or runtime updates.
     const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
-    if (autoStartLaunch.handled)
+    if (autoStartLaunch.handled || autoStartLaunch.error)
     {
         const std::wstring detail = std::wstring(autoStartLaunch.operation) +
             L" error=" + std::to_wstring(autoStartLaunch.error) +
-            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId) +
+            (autoStartLaunch.currentPrivilegesAccepted ? L"; continuing with current privileges" : L"");
         std::string utf8(detail.size() * 4 + 1, '\0');
         const int size = WideCharToMultiByte(CP_UTF8, 0, detail.c_str(), -1,
             utf8.data(), static_cast<int>(utf8.size()), nullptr, nullptr);
         utf8.resize(size > 0 ? static_cast<std::size_t>(size - 1) : 0);
         AppendLauncherLog(CurrentExecutableDirectory(), utf8);
-        return static_cast<int>(autoStartLaunch.error);
+        if (autoStartLaunch.handled) return static_cast<int>(autoStartLaunch.error);
     }
     // Loader/critical-error dialogs can block CreateProcess itself, before
     // our exit monitoring starts. Report those failures through our log/UI.
@@ -394,7 +396,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     {
         retryRequested = false;
         int result = ERROR_INSTALL_FAILURE;
-        try { result = RunLauncher(maintenance); }
+        try { result = RunLauncher(maintenance, autoStartLaunch.currentPrivilegesAccepted); }
         catch (const std::exception& error)
         {
             const auto root = CurrentExecutableDirectory();

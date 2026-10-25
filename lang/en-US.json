@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "Dynamic wallpaper previews",
   "modules.wallpaperPreview.purpose": "Capture the current Wallpaper Engine frame for widget menu previews.",
   "modules.wallpaperPreview.impact": "When disabled: previews use a static wallpaper or solid background. Widgets and Wallpaper Engine keep running.",
-  "modules.wallpaperPreview.conflict": "Graphics capture and overlay tools may affect the same presentation or capture path."
+  "modules.wallpaperPreview.conflict": "Graphics capture and overlay tools may affect the same presentation or capture path.",
+  "app.startup.privilegesFailed": "SnowDesktop could not start with standard user privileges. You can continue with the current privileges, but dragging files from File Explorer may not work. Start anyway?",
+  "app.startup.startAnyway": "Start anyway"
 }

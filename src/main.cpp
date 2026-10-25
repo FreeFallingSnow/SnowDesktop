@@ -370,15 +370,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             commandLine ? commandLine : L"") != 0;
     // Normalize every desktop launch before the Steam startup channel, data
     // discovery and the single-instance mutex acquire any process identity.
-    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize(!inheritedHelper);
-    if (autoStartLaunch.handled)
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize(!inheritedHelper,
+        !inheritedHelper && snowdesktop::steam_runtime::startup::CurrentPrivilegesAcceptedFromEnvironment());
+    if (autoStartLaunch.handled || autoStartLaunch.error)
     {
         const std::wstring message = std::wstring(autoStartLaunch.operation) +
             L" error=" + std::to_wstring(autoStartLaunch.error) +
-            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
-        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.error
-            ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
-        return static_cast<int>(autoStartLaunch.error);
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId) +
+            (autoStartLaunch.currentPrivilegesAccepted ? L"; continuing with current privileges" : L"");
+        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.currentPrivilegesAccepted
+            ? DiagnosticLogLevel::Warning : autoStartLaunch.error
+                ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
+        if (autoStartLaunch.handled) return static_cast<int>(autoStartLaunch.error);
     }
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.

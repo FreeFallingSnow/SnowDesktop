@@ -1,6 +1,7 @@
 #pragma once
 
 #include "auto_start_rules.h"
+#include "startup_privileges_dialog.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -17,7 +18,7 @@
 
 namespace snowdesktop::auto_start_launch
 {
-// Internal handoff marker, never an exemption from the actual token check.
+// Internal handoff marker; desktop privileges are still checked after handoff.
 inline constexpr wchar_t kExplorerRelaunchArgument[] = L"--snowdesktop-explorer-relaunch";
 
 struct Failure
@@ -83,6 +84,7 @@ struct Result
     DWORD error = ERROR_SUCCESS;
     DWORD childProcessId = 0; // Shell automation does not return a process ID.
     const wchar_t* operation = L"Standard-user Explorer launch requested";
+    bool currentPrivilegesAccepted = false;
 };
 inline std::wstring QuoteArgument(std::wstring_view argument)
 {
@@ -190,12 +192,44 @@ public:
 
     bool IsElevated()
     {
-        struct Token
+        return ProcessIsElevated(GetCurrentProcess());
+    }
+
+    bool IsExplorerElevated()
+    {
+        // At logon the interactive shell may not have created its window yet.
+        const ULONGLONG deadline = GetTickCount64() + 30000;
+        HWND shell = GetShellWindow();
+        while (!shell && GetTickCount64() < deadline)
         {
-            HANDLE value = nullptr;
-            ~Token() { if (value) CloseHandle(value); }
-        } token;
-        Require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.value) != FALSE,
+            Sleep(100);
+            shell = GetShellWindow();
+        }
+        if (!shell) throw Failure{ERROR_TIMEOUT, L"GetShellWindow(startup privileges)"};
+        DWORD processId = 0;
+        Require(GetWindowThreadProcessId(shell, &processId) != 0 && processId != 0,
+            L"GetWindowThreadProcessId(Explorer startup privileges)");
+        Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)};
+        Require(process.value != nullptr, L"OpenProcess(Explorer startup privileges)");
+        return ProcessIsElevated(process.value);
+    }
+
+    bool ConfirmContinue(const Failure& failure)
+    {
+        return ConfirmCurrentStartupPrivileges(failure.operation, failure.code);
+    }
+
+private:
+    struct Handle
+    {
+        HANDLE value = nullptr;
+        ~Handle() { if (value) CloseHandle(value); }
+    };
+
+    static bool ProcessIsElevated(HANDLE process)
+    {
+        Handle token;
+        Require(OpenProcessToken(process, TOKEN_QUERY, &token.value) != FALSE,
             L"OpenProcessToken(startup privileges)");
         TOKEN_ELEVATION elevation{};
         DWORD size = 0;
@@ -212,6 +246,7 @@ public:
         return elevation.TokenIsElevated != 0 || integrity > SECURITY_MANDATORY_MEDIUM_RID;
     }
 
+public:
     DWORD Relaunch(std::wstring_view command)
     {
         std::wstring executable(32768, L'\0');
@@ -246,13 +281,25 @@ private:
 
 template<typename Platform>
 Result Normalize(std::wstring_view command, Platform& platform,
-    bool desktopLaunch = true) noexcept
+    bool desktopLaunch = true, bool currentPrivilegesAccepted = false) noexcept
 {
+    const auto failureResult = [&](const Failure& failure) noexcept -> Result {
+        try
+        {
+            if (platform.ConfirmContinue(failure))
+                return {false, failure.code, 0, failure.operation, true};
+        }
+        catch (...) {} // A failed dialog is never consent.
+        return {true, ERROR_CANCELLED, 0, failure.operation};
+    };
     try
     {
         // Helpers with inherited handles cannot survive an Explorer handoff.
         // Their real dispatch/validation runs separately from desktop startup.
         if (!desktopLaunch) return {};
+        // Only the supervising launcher's PID-bound startup channel supplies
+        // this decision. It is not a persistent setting or a command-line flag.
+        if (currentPrivilegesAccepted) return {false, ERROR_SUCCESS, 0, L"Startup privileges accepted", true};
         const bool elevated = platform.IsElevated();
         const Arguments arguments(command);
         bool autoStart = false;
@@ -263,35 +310,37 @@ Result Normalize(std::wstring_view command, Platform& platform,
             relaunched = relaunched || arguments.value[index] ==
                 std::wstring_view(kExplorerRelaunchArgument);
         }
+        if (relaunched && !elevated) return {};
+        if (!autoStart && !elevated) return {};
+        // A high-privilege Explorer cannot lower us. Match that desktop
+        // without another process, including login and already-handed-off launches.
+        if (platform.IsExplorerElevated()) return {};
         if (relaunched)
         {
-            // Compatibility RUNASADMIN or an elevated shell may elevate the
-            // child again. Never loop or continue into the desktop with it.
-            if (elevated)
-                throw Failure{ERROR_ELEVATION_REQUIRED, L"Explorer child still has elevated startup privileges"};
-            return {};
+            // RUNASADMIN may elevate the child again even with an ordinary
+            // Explorer. Ask before continuing; never loop through Explorer.
+            throw Failure{ERROR_ELEVATION_REQUIRED, L"Explorer child still has elevated startup privileges"};
         }
-        if (!autoStart && !elevated) return {};
         return {true, ERROR_SUCCESS, platform.Relaunch(command)};
     }
     catch (const Failure& failure)
     {
-        return {true, failure.code, 0, failure.operation};
+        return failureResult(failure);
     }
     catch (const std::bad_alloc&)
     {
-        return {true, ERROR_OUTOFMEMORY, 0, L"AutoStart shell launch allocation"};
+        return failureResult({ERROR_OUTOFMEMORY, L"AutoStart shell launch allocation"});
     }
     catch (...)
     {
-        return {true, ERROR_GEN_FAILURE, 0, L"AutoStart shell launch exception"};
+        return failureResult({ERROR_GEN_FAILURE, L"AutoStart shell launch exception"});
     }
 }
 
-inline Result Normalize(bool desktopLaunch = true) noexcept
+inline Result Normalize(bool desktopLaunch = true, bool currentPrivilegesAccepted = false) noexcept
 {
     NativePlatform platform;
-    return Normalize(GetCommandLineW(), platform, desktopLaunch);
+    return Normalize(GetCommandLineW(), platform, desktopLaunch, currentPrivilegesAccepted);
 }
 }
 #pragma pop_macro("ShellExecute")

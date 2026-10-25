@@ -2633,5 +2633,7 @@
   "modules.wallpaperPreview.name": "Vistas previas de fondo animado",
   "modules.wallpaperPreview.purpose": "Capturar la imagen actual de Wallpaper Engine para las vistas previas del menú de widgets.",
   "modules.wallpaperPreview.impact": "Al desactivar: las vistas previas usarán un fondo estático o un color sólido. Los widgets y Wallpaper Engine seguirán funcionando.",
-  "modules.wallpaperPreview.conflict": "Las herramientas de captura gráfica y superposición pueden afectar la misma ruta de presentación o captura."
+  "modules.wallpaperPreview.conflict": "Las herramientas de captura gráfica y superposición pueden afectar la misma ruta de presentación o captura.",
+  "app.startup.privilegesFailed": "SnowDesktop no pudo iniciarse con permisos de usuario estándar. Puedes continuar con los permisos actuales, pero es posible que no puedas arrastrar archivos desde el Explorador de archivos. ¿Iniciar de todos modos?",
+  "app.startup.startAnyway": "Iniciar de todos modos"
 }
