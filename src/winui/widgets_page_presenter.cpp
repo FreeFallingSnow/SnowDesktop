@@ -138,6 +138,8 @@ void UpdatePackageDescriptionLayout(const muxc::Grid& details)
     muxc::Grid::SetRow(description, stacked ? 1 : 0);
     muxc::Grid::SetColumn(description, hasTags && !stacked ? 1 : 0);
     muxc::Grid::SetColumnSpan(description, hasTags && !stacked ? 1 : 2);
+    // Match the tag's first text baseline without centering wrapped text.
+    description.Margin({0.0, hasTags && !stacked ? 2.0 : 0.0, 0.0, 0.0});
 }
 
 void ApplyAccentButtonStyle(const muxc::Button& button) noexcept
@@ -2514,6 +2516,7 @@ struct WidgetsPagePresenter::Impl
         tags.Orientation(muxc::Orientation::Horizontal);
         tags.Spacing(6.0);
         tags.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        tags.VerticalAlignment(mux::VerticalAlignment::Top);
         PopulatePackageTags(tags, package);
 
         muxc::StackPanel body;
@@ -2525,7 +2528,7 @@ struct WidgetsPagePresenter::Impl
         description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
-        description.VerticalAlignment(mux::VerticalAlignment::Center);
+        description.VerticalAlignment(mux::VerticalAlignment::Top);
         muxc::Grid descriptionRow;
         descriptionRow.ColumnSpacing(12.0);
         muxc::ColumnDefinition tagsColumn, descriptionColumn;

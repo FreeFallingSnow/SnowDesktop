@@ -1433,6 +1433,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 package.name = english ? L"Workspace overview and daily progress" : L"工作区概览与每日进度"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
                 package.name += L" " + std::to_wstring(index + 1);
                 package.description = english ? L"An example component with a longer description for layout review." : L"用于检查长名称、状态与操作排列的示例组件。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                if (index == 1)
+                    package.description = english ? L"A desktop clock inspired by Xiaomi HyperOS, displaying 17:27 as Chinese numerals and full hours in a separate format, with configurable ink color, opacity, horizontal or vertical layout, and handwritten fonts." : L"一个仿小米澎湃系统的桌面时钟，用汉字数字写时间：17:27 显示「十七 二七」，整点显示「十七时」；可配置墨色、透明度、横竖排列与手迹字体。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
                 package.enabled = index != 2; packages.installed.push_back(std::move(package));
                 WidgetRuntimeDiagnosticSnapshot diagnostic;
