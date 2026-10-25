@@ -380,11 +380,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
         return 0;
     }
-    if (snowdesktop::performance::IsStateChangeMessage(msg))
-    {
-        PublishHomeAboutStatus();
-        return 0;
-    }
+    if (snowdesktop::performance::IsStateChangeMessage(msg)) return 0;
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
         static const UINT performanceControl = RegisterWindowMessageW(
@@ -407,22 +403,6 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 if (app->widgetEngine_)
                 {
                     app->widgetEngine_->RecordPerformanceResources();
-                    for (const auto& widget : app->widgetEngine_->GetWidgets())
-                    {
-                        if (widget.quota)
-                        {
-                            Value("widget.memory", "lua_bytes", widget.widgetId,
-                                static_cast<double>(widget.quota->memoryBytes));
-                            snowdesktop::lua_runtime::SampleAllocationTraffic(*widget.quota, widget.widgetId);
-                        }
-                        Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
-                        Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
-                        Value("widget.state", "timers", widget.widgetId,
-                            static_cast<double>(widget.namedTimers.Size()));
-                        Value("widget.state", "animation_requests", widget.widgetId,
-                            static_cast<double>(widget.animationFrames.Size()));
-                        Value("widget.package", widget.packageId, widget.widgetId, 1);
-                    }
                 }
                 double hiddenBytes = 0;
                 std::size_t hiddenResident = 0;
@@ -467,7 +447,6 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     if (host)
                         recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
                             reinterpret_cast<std::uintptr_t>(host.get())));
-                app->PublishHomeAboutStatus();
             }, this);
     }
     if (msg == WM_DESTROY)

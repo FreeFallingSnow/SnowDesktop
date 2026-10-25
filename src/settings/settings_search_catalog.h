@@ -698,7 +698,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Debug, "debug.animation",
         "app.settings.animation_diagnostics",
         "app.settings.animation_diagnostics_desc"},
-    {SettingsPage::Debug, "debug.performance", "performance.title", "performance.hint"},
     {SettingsPage::Debug, "debug.resetUnlock", "settings.debug.resetUnlock",
         "settings.debug.resetUnlock.description"},
     {SettingsPage::Debug, "debug.crash", "app.settings.crash_test",

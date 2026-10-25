@@ -136,7 +136,7 @@ try {
         events=@(Sql-Records $tables.events);widgets=@(Sql-Records $tables.widgets);tasks=@(Sql-Records $tables.tasks)
         animations=@(Sql-Records $tables.animations);compositor=@(Sql-Records $tables.compositor)
         resourceTrends=$resourceTrends;processWakeupsPerSecond=$null
-        limitations=@('Host process only; excluded processes are listed in the manifest.',
+        limitations=@('One measured process only; its role and excluded processes are listed in the manifest.',
             'Inclusive thread CPU is sampled by the SDK; missing CPU remains null. Self CPU is unavailable when full child coverage is not proved.',
             'Module and instance CPU use outermost synchronous scopes per group. They remain inclusive views, overlap across groups, include native/shared child work, and must not be added as exclusive CPU. Lua protected calls are not pure VM CPU.',
             'Wall time includes waiting and nested work. App callbacks, updates and commits do not measure OS wakeups or presented frames.',

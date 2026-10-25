@@ -45,7 +45,6 @@ struct HomeAboutPageActions
     std::function<void(std::uint64_t, bool)> setDebugProfileEnabled;
     std::function<void(std::uint64_t)> chooseDebugDesktop;
     std::function<void(std::uint64_t)> clearDebugProfile;
-    std::function<void(std::uint64_t, const PerformanceCaptureRequest&)> performance;
     /** Makes the conditional Debug route visible; true permits navigation. */
     std::function<bool(std::uint64_t generation)> unlockDebug;
     /** The host confirms and clears the local Steam unlock state. */

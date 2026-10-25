@@ -94,6 +94,8 @@ const char* PresetName(CapturePreset preset) noexcept
     switch (preset) { case CapturePreset::Resource: return "idle"; case CapturePreset::Interaction: return "interaction"; case CapturePreset::Widget: return "widget-detail"; }
     return "invalid";
 }
+const char* ProcessRole(CaptureProcessRole role) noexcept
+{ return role == CaptureProcessRole::WidgetPreview ? "widget-preview" : "host"; }
 std::vector<std::string> Categories(CapturePreset preset)
 {
     std::vector<std::string> result{ "snow.resource", "snow.lua.callback", "snow.task", "snow.frame", "snow.profiler" };
@@ -107,7 +109,7 @@ std::string ConfigHash(const CaptureOptions& options)
 {
     std::string canonical;
     const auto add = [&](std::string_view part) { canonical += std::to_string(part.size()); canonical += ':'; canonical += part; };
-    add("snowdesktop.capture.config.v2"); add(PresetName(options.preset)); add(std::to_string(options.seconds));
+    add("snowdesktop.capture.config.v3"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
     add(std::to_string(options.bufferKiB)); add(std::to_string(options.maximumFileBytes)); add(options.scopeCpu ? "cpu" : "wall");
     add(std::to_string(options.selectedInstances.size()));
     for (const auto& owner : options.selectedInstances) add(Utf8(owner));
@@ -127,7 +129,7 @@ bool SameRequest(const CaptureOptions& a, const CaptureOptions& b)
 {
     return a.session == b.session && a.requestId == b.requestId && a.output == b.output &&
         a.seconds == b.seconds && a.bufferKiB == b.bufferKiB && a.maximumFileBytes == b.maximumFileBytes &&
-        a.preset == b.preset && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances;
+        a.preset == b.preset && a.processRole == b.processRole && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances;
 }
 struct File
 {
@@ -305,7 +307,7 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
         << ",\"managedStorage\":" << (record.managedRoot.empty() ? "false" : "true")
         << ",\"finalWidgetSampleConfirmed\":" << (record.finalWidgetSample ? "true" : "false")
-        << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":\"host\",\"sourceCommit\":null,\"executableSha256\":"
+        << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":" << Quote(ProcessRole(record.options.processRole)) << ",\"sourceCommit\":null,\"executableSha256\":"
         << (record.executableSha256.empty() ? "null" : Quote(record.executableSha256))
         << ",\"traceSha256\":" << (record.traceSha256.empty() ? "null" : Quote(record.traceSha256))
         << ",\"logicalProcessors\":" << (allProcessors ? allProcessors : system.dwNumberOfProcessors) << ",\"preset\":" << Quote(PresetName(record.options.preset))
@@ -322,7 +324,7 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"requestedSeconds\":" << record.options.seconds << ",\"bufferKiB\":" << record.options.bufferKiB
         << ",\"firstTraceNs\":" << Quote(std::to_string(record.firstTraceNs)) << ",\"lastTraceNs\":" << Quote(std::to_string(record.lastTraceNs))
         << ",\"durationMs\":" << record.snapshot.elapsedMs << ",\"traceFile\":" << Quote(Utf8(record.snapshot.trace.filename().wstring()))
-        << ",\"coverage\":\"pending-analysis\",\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId()
+        << ",\"coverage\":\"pending-analysis\",\"participants\":[{\"role\":" << Quote(ProcessRole(record.options.processRole)) << ",\"pid\":" << GetCurrentProcessId()
         << ",\"included\":true},{\"role\":\"settings\",\"included\":false}],\"probeQuality\":{\"droppedOwners\":" << record.quality.droppedOwners
         << ",\"droppedCounters\":" << record.quality.droppedCounters << ",\"droppedLinks\":" << record.quality.droppedLinks
         << ",\"droppedTracks\":" << record.quality.droppedTracks
@@ -408,7 +410,7 @@ void Worker(std::shared_ptr<Record> record) noexcept
         const auto deadline = record->started + std::chrono::seconds(record->options.seconds);
         {
             std::unique_ptr<CompositorClock> compositor;
-            if (record->options.preset != CapturePreset::Resource) compositor = std::make_unique<CompositorClock>();
+            if (record->options.processRole == CaptureProcessRole::Host && record->options.preset != CapturePreset::Resource) compositor = std::make_unique<CompositorClock>();
             while (!state.stopRequested.load() && Clock::now() < deadline)
             {
                 std::unique_lock lock(state.mutex);
@@ -523,7 +525,8 @@ bool Start(const CaptureOptions& requested, std::string& error)
     std::lock_guard startLock(state.startMutex);
     auto options = requested;
     if (options.requestId.empty()) options.requestId = options.session;
-    if (!ValidId(options.session) || !ValidId(options.requestId) || options.seconds < 1 || options.seconds > 600 ||
+    if ((options.processRole != CaptureProcessRole::Host && options.processRole != CaptureProcessRole::WidgetPreview) ||
+        !ValidId(options.session) || !ValidId(options.requestId) || options.seconds < 1 || options.seconds > 600 ||
         options.bufferKiB < 64 || options.bufferKiB > 65536 || options.maximumFileBytes < 1024 ||
         options.maximumFileBytes > 256ULL * 1024 * 1024 || options.selectedInstances.size() > 8 ||
         (options.preset != CapturePreset::Resource && options.preset != CapturePreset::Interaction && options.preset != CapturePreset::Widget) ||

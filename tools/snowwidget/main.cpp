@@ -6,6 +6,7 @@
 #include "widget/api/widget_system_contract_json.h"
 #include "widget/api/widget_view_contract_json.h"
 #include "gpu_diagnostics.h"
+#include "common/json_value.h"
 
 #include <windows.h>
 
@@ -39,6 +40,7 @@ void PrintUsage()
         << "  snowwidget quality <package-directory>\n"
         << "  snowwidget test <package-directory>\n"
         << "  snowwidget permissions <package-directory>\n"
+        << "  snowwidget profile <package-directory> <new-output-directory> [--seconds 1..60] [--warmup-seconds 0..30] [--workload idle|redraw] [--interval-ms 8..1000] [--scope-cpu] [--offline] [preview options]\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
            " [--canvas-size N] [--padding N]"
@@ -300,7 +302,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     const std::filesystem::path& backgroundImage,
     int canvasSize, int padding,
     bool contentOnly,
-    const std::vector<std::wstring>& storage)
+    const std::vector<std::wstring>& storage, bool profiling = false)
 {
     const auto resultPath = CreateResultPath();
     if (!resultPath)
@@ -339,11 +341,30 @@ int RunPreviewHost(const std::filesystem::path& host,
     std::vector<wchar_t> mutableCommand(
         commandLine.begin(), commandLine.end());
     mutableCommand.push_back(L'\0');
-    const BOOL launched = CreateProcessW(host.c_str(),
+    HANDLE profileJob = nullptr;
+    if (profiling)
+    {
+        profileJob = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!profileJob || !SetInformationJobObject(profileJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+        {
+            if (profileJob) CloseHandle(profileJob);
+            std::cerr << "{\"ok\":false,\"stage\":\"performance.launch\",\"error\":\"cannot create profiling lifetime job\"}\n";
+            return 1;
+        }
+    }
+    BOOL launched = CreateProcessW(host.c_str(),
         mutableCommand.data(), nullptr, nullptr, FALSE,
-        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+        CREATE_NO_WINDOW | (profiling ? CREATE_SUSPENDED : 0), nullptr, nullptr, &startup, &process);
+    if (launched && profiling && (!AssignProcessToJobObject(profileJob, process.hProcess) || ResumeThread(process.hThread) == static_cast<DWORD>(-1)))
+    {
+        TerminateProcess(process.hProcess, ERROR_PROCESS_ABORTED); WaitForSingleObject(process.hProcess, 5000);
+        CloseHandle(process.hThread); CloseHandle(process.hProcess); launched = FALSE;
+    }
     if (!launched)
     {
+        if (profileJob) CloseHandle(profileJob);
         std::error_code removeError;
         std::filesystem::remove(*resultPath, removeError);
         std::cerr << "{\"ok\":false,\"stage\":\"host.launch\","
@@ -352,7 +373,7 @@ int RunPreviewHost(const std::filesystem::path& host,
         return 1;
     }
     CloseHandle(process.hThread);
-    const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
+    const DWORD wait = WaitForSingleObject(process.hProcess, profiling ? 300000 : 120000);
     if (wait == WAIT_TIMEOUT)
     {
         TerminateProcess(process.hProcess, ERROR_TIMEOUT);
@@ -361,9 +382,21 @@ int RunPreviewHost(const std::filesystem::path& host,
     DWORD exitCode = 1;
     GetExitCodeProcess(process.hProcess, &exitCode);
     CloseHandle(process.hProcess);
+    if (profileJob) CloseHandle(profileJob);
     const std::string json = ReadUtf8File(*resultPath);
     std::error_code removeError;
     std::filesystem::remove(*resultPath, removeError);
+    if (profiling && exitCode == 0)
+    {
+        JsonValue value; std::string error;
+        const auto* performance = ParseJson(json, value, &error) ? value.Find("performance") : nullptr;
+        const auto* report = performance && performance->IsObject() ? performance->Find("report") : nullptr;
+        if (!report || !report->IsString() || report->string.empty())
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"performance.capability\",\"error\":\"host did not provide a performance report; use a host advertising performanceProfile\"}\n";
+            return 1;
+        }
+    }
     if (!json.empty())
         std::cout << json << (json.back() == '\n' ? "" : "\n");
     else
@@ -472,6 +505,7 @@ int wmain(int argc, wchar_t** argv)
                "\"executableSchemaVersions\":[2],"
                "\"executableApiVersions\":[2],"
                "\"gpuDiagnostics\":{\"schemaVersion\":1,\"format\":\"jsonl\"},"
+               "\"performanceProfile\":{\"schemaVersion\":1,\"backend\":\"perfetto\",\"processRole\":\"widget-preview\",\"maxSeconds\":60,\"workloads\":[\"idle\",\"redraw\"]},"
                "\"preview\":{\"contentOnly\":true},"
                "\"nativePreview\":{\"resultVersion\":2,"
                "\"contentOnly\":true,"
@@ -479,7 +513,7 @@ int wmain(int argc, wchar_t** argv)
                "\"dateHeaders\",\"showFileCategories\","
                "\"showSearchBox\"]},\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
+               "\"lint\",\"quality\",\"test\",\"profile\",\"preview\",\"permissions\","
                "\"preview-native\",\"gpu-diagnostics\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
@@ -795,14 +829,21 @@ int wmain(int argc, wchar_t** argv)
         std::cout << permissionReport.json << '\n';
         return permissionReport.ok ? 0 : 1;
     }
-    if (command == L"preview")
+    if (command == L"preview" || command == L"profile")
     {
+        const bool profiling = command == L"profile";
         if (argc < 4 || source.extension() == L".snowwidget")
         {
             std::cerr << "{\"ok\":false,\"error\":\"preview requires an unpacked component directory and output PNG\"}\n";
             return 2;
         }
-        const std::filesystem::path output = argv[3];
+        const auto profileDirectory = std::filesystem::absolute(argv[3]).lexically_normal();
+        if (profiling && std::filesystem::exists(profileDirectory))
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"performance.output\",\"error\":\"performance output directory must be new\"}\n";
+            return 2;
+        }
+        const std::filesystem::path output = profiling ? profileDirectory / L"preview.png" : std::filesystem::path(argv[3]);
         std::wstring extension = output.extension().wstring();
         std::transform(extension.begin(), extension.end(), extension.begin(),
             [](wchar_t character) { return static_cast<wchar_t>(
@@ -833,11 +874,28 @@ int wmain(int argc, wchar_t** argv)
         bool themeSpecified = false;
         bool appearanceSpecified = false;
         bool contentOnly = false;
+        int profileSeconds = 5, profileWarmup = 1, profileInterval = 16;
+        bool profileCpu = false, profileOffline = false;
+        std::wstring profileWorkload = L"redraw";
         std::filesystem::path explicitHost;
         std::vector<std::wstring> storage;
         for (int index = 4; index < argc; ++index)
         {
             const std::wstring_view option(argv[index]);
+            if (profiling && (option == L"--seconds" || option == L"--warmup-seconds" || option == L"--interval-ms" || option == L"--workload"))
+            {
+                if (index + 1 >= argc) { std::cerr << "{\"ok\":false,\"error\":\"profile option requires a value\"}\n"; return 2; }
+                const std::wstring_view value(argv[++index]);
+                bool valid = false;
+                if (option == L"--seconds") valid = ParseInteger(value, 1, 60, profileSeconds);
+                else if (option == L"--warmup-seconds") valid = ParseInteger(value, 0, 30, profileWarmup);
+                else if (option == L"--interval-ms") valid = ParseInteger(value, 8, 1000, profileInterval);
+                else { valid = value == L"idle" || value == L"redraw"; profileWorkload = value; }
+                if (!valid) { std::cerr << "{\"ok\":false,\"error\":\"profile option outside its supported range\"}\n"; return 2; }
+                continue;
+            }
+            if (profiling && option == L"--scope-cpu") { profileCpu = true; continue; }
+            if (profiling && option == L"--offline") { profileOffline = true; continue; }
             if ((option == L"--columns" || option == L"--rows" ||
                     option == L"--dpi" || option == L"--canvas-size" ||
                     option == L"--padding" || option == L"--storage" ||
@@ -1001,10 +1059,20 @@ int wmain(int argc, wchar_t** argv)
                 "\"error\":\"SnowDesktop.exe was not found; pass --host or set SNOWDESKTOP_HOST\"}\n";
             return 1;
         }
+        if (profiling)
+        {
+            storage.push_back(L"@profile.directory=" + profileDirectory.wstring());
+            storage.push_back(L"@profile.seconds=" + std::to_wstring(profileSeconds));
+            storage.push_back(L"@profile.warmup=" + std::to_wstring(profileWarmup));
+            storage.push_back(L"@profile.interval=" + std::to_wstring(profileInterval));
+            storage.push_back(L"@profile.workload=" + profileWorkload);
+            if (profileCpu) storage.push_back(L"@profile.cpu=1");
+            if (profileOffline) storage.push_back(L"@profile.offline=1");
+        }
         return RunPreviewHost(*host, source, output,
             columns, rows, dpi, locale, theme, appearance,
             dataState, backgroundImage, canvasSize, padding,
-            contentOnly, storage);
+            contentOnly, storage, profiling);
     }
     if (command == L"pack")
     {

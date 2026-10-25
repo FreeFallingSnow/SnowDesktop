@@ -22109,7 +22109,7 @@ void WidgetEngine::ApplyWidgetHostVisibility(
         d2dState_->backgroundCache.Erase(widget.widgetId);
         d2dState_->textLayoutCache.Erase(widget.widgetId);
     }
-    const auto timerNow = widget.preview
+    const auto timerNow = widget.preview && (!previewOnly_ || !widgetTimerRequestCallback_)
         ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
             std::chrono::milliseconds(snowdesktop::widget_runtime::
                 PreviewMonotonicMilliseconds) }
@@ -22141,7 +22141,7 @@ void WidgetEngine::SetWidgetDesktopVisible(
     const int index = FindWidget(widgetId);
     if (index < 0) return;
     auto& widget = widgets_[index];
-    if (!widget.valid || widget.preview)
+    if (!widget.valid || (widget.preview && (!previewOnly_ || !widgetTimerRequestCallback_)))
         return;
     widget.keepRuntimeActiveForHiddenPage =
         !visible && keepRuntimeActive;
@@ -27310,7 +27310,7 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
         widgetTimerKillCallback_(widget.namedTimerId);
     widget.namedTimerId = 0;
 
-    if (widget.preview)
+    if (widget.preview && (!previewOnly_ || !widgetTimerRequestCallback_))
         return;
 
     if (!widgetTimerRequestCallback_)
@@ -27344,7 +27344,7 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
         (widget.panelActive && widget.panelViewTransitions.HasActive()) ||
         indeterminateProgressActive;
     const bool pending = highRateAnimationPending || nativeMarqueeActive;
-    if (widget.preview || (!widget.hostVisible && !widget.panelActive) ||
+    if ((widget.preview && (!previewOnly_ || !widgetTimerRequestCallback_)) || (!widget.hostVisible && !widget.panelActive) ||
         !pending ||
         !widgetTimerRequestCallback_)
         return false;
@@ -31514,7 +31514,20 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
             std::unordered_set<const Pixels*> pixels;
         };
         std::map<std::wstring_view, Usage> owners;
-        for (const auto& widget : widgets_) owners.try_emplace(widget.widgetId);
+        for (const auto& widget : widgets_)
+        {
+            owners.try_emplace(widget.widgetId);
+            if (widget.quota)
+            {
+                Value("widget.memory", "lua_bytes", widget.widgetId, static_cast<double>(widget.quota->memoryBytes));
+                snowdesktop::lua_runtime::SampleAllocationTraffic(*widget.quota, widget.widgetId);
+            }
+            Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
+            Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
+            Value("widget.state", "timers", widget.widgetId, static_cast<double>(widget.namedTimers.Size()));
+            Value("widget.state", "animation_requests", widget.widgetId, static_cast<double>(widget.animationFrames.Size()));
+            Value("widget.package", widget.packageId, widget.widgetId, 1);
+        }
         std::unordered_set<const Pixels*> uniquePixels;
         std::size_t pixelBytes = 0;
         for (const auto& [key, resource] : d2dState_->runtimeImages)

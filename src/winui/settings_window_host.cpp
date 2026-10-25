@@ -2457,16 +2457,6 @@ struct SettingsWindowHost::Impl
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
         };
-        homeAbout.performance = [weak](std::uint64_t generation, const PerformanceCaptureRequest& command) {
-            const auto state = weak.lock();
-            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
-                !state->owner->DebugPageVisible() || !state->owner->controller->IsGenerationCurrent(generation)) return;
-            SettingsHostActions::Request request;
-            request.action = SettingsHostActions::Action::PerformanceCapture;
-            request.performance = command;
-            const auto result = state->owner->controller->InvokeHostAction(request);
-            if (state->alive.load() && state->owner) state->owner->ShowActionError(result);
-        };
         const auto invokeDebugProfile = [weak](std::uint64_t generation,
             SettingsHostActions::Action action, bool enabled, std::wstring value) {
             const auto state = weak.lock();

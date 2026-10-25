@@ -45,7 +45,7 @@ std::wstring Argument(std::wstring_view value)
     result.append(slashes * 2, L'\\'); result.push_back(L'"'); return result;
 }
 }
-AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::atomic<bool>* cancel)
+AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::atomic<bool>* cancel, bool offline)
 {
     AnalysisResult result;
     try
@@ -86,7 +86,7 @@ AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::
         if (!job.value || !SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
         { attributeCleanup(); result.error = "analysisLaunchFailed"; return result; }
         auto command = Argument(shell.wstring()) + L" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " +
-            Argument(script.wstring()) + L" -ManifestPath " + Argument(manifest.wstring());
+            Argument(script.wstring()) + L" -ManifestPath " + Argument(manifest.wstring()) + (offline ? L" -Offline" : L"");
         PROCESS_INFORMATION process{};
         const auto launched = CreateProcessW(shell.c_str(), command.data(), nullptr, nullptr, TRUE,
             CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,

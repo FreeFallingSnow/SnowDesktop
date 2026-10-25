@@ -1,7 +1,6 @@
 #pragma once
 
 #include "settings/settings_route.h"
-#include "settings/performance_capture_settings.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +41,6 @@ struct HomeAboutStatusPatch
     std::optional<std::wstring> debugDesktopDirectory;
     std::optional<std::wstring> animationDiagnosticsStatus;
     std::optional<bool> usageGuideExpanded;
-    std::optional<PerformanceCaptureStatus> performance;
 };
 
 // Shared by requested snapshots and unsolicited host publications. This

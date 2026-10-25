@@ -16,6 +16,7 @@ inline constexpr LRESULT ProtocolIdle = 0x53445010, ProtocolRecording = 0x534450
     ProtocolFinishing = 0x53445012, ProtocolFailed = 0x53445013, ProtocolStarting = 0x53445014;
 
 enum class CapturePreset { Resource, Interaction, Widget };
+enum class CaptureProcessRole { Host, WidgetPreview };
 enum class CapturePhase { Idle, Starting, Recording, Stopping, Finalizing, Completed, Failed };
 struct CaptureOptions
 {
@@ -24,6 +25,7 @@ struct CaptureOptions
     unsigned seconds = 120, bufferKiB = 32768;
     std::uint64_t maximumFileBytes = 256ULL * 1024 * 1024;
     CapturePreset preset = CapturePreset::Resource;
+    CaptureProcessRole processRole = CaptureProcessRole::Host;
     bool scopeCpu = false;
     std::vector<std::wstring> selectedInstances;
 };

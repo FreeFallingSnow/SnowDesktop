@@ -137,6 +137,9 @@ void InspectPackageInlineLayout(const x::FrameworkElement& root,
         // settings while retaining its real tag, font, text and wrapping path.
         for (const auto& row : rows)
         {
+            const auto paragraph = row.Blocks().GetAt(0).as<d::Paragraph>();
+            paragraph.LineStackingStrategy(x::LineStackingStrategy::MaxHeight);
+            paragraph.LineHeight(0.0);
             row.LineStackingStrategy(x::LineStackingStrategy::MaxHeight);
             row.LineHeight(0.0);
             row.Padding({0, 0, 0, 0});
@@ -1499,18 +1502,6 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
         status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
         status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
-        if (page == SettingsPage::Debug)
-        {
-            status.performance.emplace(); auto& capture = *status.performance;
-            capture.session = "preview-capture"; capture.generation = 1;
-            capture.phase = expanded ? "recording" : "completed";
-            capture.requestedSeconds = 120; capture.elapsedMs = 42000; capture.bufferKiB = 32768;
-            capture.preset = 2; capture.threadCpu = true;
-            capture.instances = {{L"preview-clock", L"Clock"}, {L"preview-calendar", L"Calendar"}};
-            capture.selectedInstances = {L"preview-clock"};
-            capture.trace = L"C:\\Preview\\Performance\\trace.pftrace";
-            if (!expanded) { capture.analysis = "completed"; capture.quality = "valid"; capture.report = L"C:\\Preview\\Performance\\report.md"; }
-        }
         (void)shell->ApplyHomeAboutStatusPatch(status);
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
         {
@@ -2162,14 +2153,6 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             (focusId == "package-inline-layout" || focusId == "package-inline-layout-old"))
             InspectPackageInlineLayout(shell.as<x::FrameworkElement>(), output,
                 focusId == "package-inline-layout-old");
-        if (page == SettingsPage::Debug && expanded)
-        {
-            const auto list = PreviewControl<c::ListView>(cards, L"PerformanceCaptureInstances");
-            if (list.SelectedItems().Size() != 1 ||
-                winrt::unbox_value<winrt::hstring>(list.SelectedItems().GetAt(0).as<c::ListViewItem>().Tag()) != L"preview-clock")
-                throw std::runtime_error("recording capture must retain the host-selected instance after layout");
-            std::ofstream(output / L"performance-selection.tsv") << "selected-instance\tcount\npreview-clock\t1\n";
-        }
         if (secretInput && page == SettingsPage::WidgetSettings)
             ExerciseSecretInput(shell.as<x::FrameworkElement>(), widgets, output);
         if (controlsGallery && page == SettingsPage::WidgetSettings)

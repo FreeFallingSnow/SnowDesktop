@@ -540,8 +540,6 @@ set(SNOWDESKTOP_SOURCES
     src/settings/category_rule_creation.h
     src/winui/runtime_modules_page_presenter.cpp
     src/winui/home_about_page_presenter.cpp
-    src/winui/performance_capture_presenter.cpp
-    src/winui/performance_capture_presenter.h
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
     src/winui/home_about_page_presenter.h
@@ -594,6 +592,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/preview/component_preview.cpp
     src/ui/preview/native_component_preview_export.cpp
     src/ui/preview/preview_png_writer.cpp
+    src/widget/authoring/widget_author_profile.cpp
+    src/widget/authoring/widget_author_profile.h
     src/widget/authoring/widget_author_preview.cpp
     src/widget/preview/widget_preview_stage.cpp
     src/widget/preview/widget_wallpaper_pixels.h
@@ -2412,6 +2412,19 @@ if (BUILD_TESTING)
     set_tests_properties(widget_package_file_export PROPERTIES
         TIMEOUT 30 LABELS "authoring;contract;data;security;widget"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorToolsTests>")
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAuthorProfileCliTests
+        widget_author_profile_cli
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/widget/authoring/widget_author_profile_cli_tests.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES SnowDesktopBuildToolTestSupport
+        COMMAND_ARGUMENTS "$<TARGET_FILE:snowwidget>" "$<TARGET_FILE:SnowDesktop>"
+        LABELS authoring integration performance widget host-runtime)
+    add_dependencies(SnowDesktopWidgetAuthorProfileCliTests snowwidget SnowDesktop)
+    set_tests_properties(widget_author_profile_cli PROPERTIES TIMEOUT 150)
+    set_target_properties(SnowDesktopWidgetAuthorProfileCliTests PROPERTIES VS_GLOBAL_UseCommonOutputDirectory "true")
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
