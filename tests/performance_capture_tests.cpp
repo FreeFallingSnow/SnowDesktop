@@ -2,6 +2,9 @@
 #include "diagnostics/performance_trace.h"
 #include "common/json_value.h"
 #include "widget/runtime/lua_runtime.h"
+#include "diagnostics/perfetto_session.h"
+#include <psapi.h>
+#include <tlhelp32.h>
 
 extern "C" {
 #include <lauxlib.h>
@@ -198,6 +201,7 @@ void ExerciseCli(const std::filesystem::path& root)
 }
 }
 void AssertNativeTraceSql(const std::filesystem::path&, std::string_view);
+void ExercisePerformanceWorkloads(const std::filesystem::path&);
 void RunPerformanceCaptureTests()
 {
     const auto root = std::filesystem::temp_directory_path() /
@@ -250,6 +254,48 @@ void RunPerformanceCaptureTests()
     Check(std::filesystem::exists(failed.output.wstring() + L".partial") && !Read(failed.output.parent_path()/L"session.json").Find("completion")->boolean, "failure evidence retained");
     auto invalid = Options(root, "invalid"); invalid.output = root / "bad.json";
     Check(!perf::Start(invalid, error), "legacy output extension rejected");
+    for (const auto* name : {L"trace:stream.pftrace", L"CON.pftrace", L"trace .pftrace:stream", L"LPT1.pftrace"})
+    {
+        invalid.output = root / name;
+        Check(!perf::Start(invalid, error) && error == "invalidOutputPath", "capture output rejects alternate streams and device aliases");
+    }
+    auto filtered = Options(root, "request-identity"); filtered.selectedInstances = {L"a", L"b"}; filtered.seconds = 1;
+    Check(perf::Start(filtered, error), "accept bounded filtered capture");
+    auto ambiguous = filtered; ambiguous.selectedInstances = {L"a|b"};
+    Check(!perf::Start(ambiguous, error) && error == "requestIdConflict", "delimiter ambiguity must not replay different selected instances");
+    Check(WaitFor(filtered.session, true).phase == perf::CapturePhase::Completed, "persistent worker finishes queued capture");
+    Check(perf::Start(options, error), "historical replay compares original parameters after later captures");
+    auto workload = Options(root, "real-workload"); workload.scopeCpu = true;
+    Check(perf::Start(workload, error), "accept real worker/scheduler workload capture");
+    Check(WaitFor(workload.session, false).phase == perf::CapturePhase::Recording, "workload starts after SDK ack");
+    ExercisePerformanceWorkloads(root);
+    perf::RequestStop(workload.session);
+    Check(WaitFor(workload.session, true).phase == perf::CapturePhase::Completed, "real workload evidence publishes");
+    AssertNativeTraceSql(workload.output,
+        "SELECT ((SELECT COUNT(*) FROM slice WHERE name='task.queued')=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='filesystem' AND EXTRACT_ARG(arg_set_id,'debug.module')='task.worker')=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='task.completed')=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='animation.lifetime' AND dur>0)=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='animation.update')=8"
+        " AND (SELECT MAX(EXTRACT_ARG(arg_set_id,'debug.late_ms')) FROM slice WHERE name='animation.update')>5"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='animation.presentation')=4"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='animation.commit')=4) AS passed;");
+    Check(perf::RequestAnalysis(workload.session, perf::Snapshot(workload.session).generation, error), "host controller queues fixed offline analyzer");
+    const auto analysisDeadline = GetTickCount64() + 60000;
+    perf::CaptureSnapshot analyzed;
+    do
+    {
+        analyzed = perf::Snapshot(workload.session);
+        if (analyzed.analysis == "completed" || analyzed.analysis == "failed") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (GetTickCount64() < analysisDeadline);
+    Check(analyzed.analysis == "completed" && analyzed.quality == "valid" && !analyzed.report.empty(), "actual worker process publishes report and independent quality");
+    const auto analyzedSummary = Read(analyzed.report.parent_path() / L"summary.json");
+    const auto* instanceRows = analyzedSummary.Find("widgets");
+    bool nestedDeduplicated = false;
+    if (instanceRows && instanceRows->IsArray()) for (const auto& row : instanceRows->array)
+        if (Number(row, "recordedCalls") == 2 && Number(row, "rootScopes") == 1) nestedDeduplicated = true;
+    Check(nestedDeduplicated, "production SQL excludes nested same-instance CPU roots rather than summing both");
     const auto protocol = perf::ProcessControlRequest(R"({"protocolVersion":3,"requestId":"test-status","command":"status","sessionId":"coupled-test"})");
     JsonValue reply; Check(ParseJson(protocol, reply, &error), "control returns JSON");
     Check(String(reply, "requestId") == "test-status" && String(reply, "state") == "completed", "status queries retain per-session result and echo request identity");
@@ -270,39 +316,94 @@ int RunPerformanceOverheadBenchmark(const char* directory)
     if (std::filesystem::exists(root)) return 2;
     std::filesystem::create_directories(root);
     constexpr int iterations = 10000;
-    std::uint64_t result = 0;
-    for (int round = 0; round < 3; ++round)
-    {
-        for (int step = 0; step < 4; ++step)
+    const auto cpuTime = [] {
+        FILETIME created{}, exited{}, kernel{}, user{};
+        Check(GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user) != FALSE, "benchmark process CPU available");
+        const auto value = [](FILETIME time) { return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
+        return static_cast<double>(value(kernel) + value(user)) / 10000.0;
+    };
+    const auto memory = [] {
+        PROCESS_MEMORY_COUNTERS_EX value{}; value.cb = sizeof(value);
+        Check(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&value), sizeof(value)) != FALSE,
+            "benchmark process memory available"); return value;
+    };
+    const auto threads = [] {
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        Check(snapshot != INVALID_HANDLE_VALUE, "benchmark thread inventory available");
+        THREADENTRY32 entry{}; entry.dwSize = sizeof(entry); unsigned count = 0;
+        if (Thread32First(snapshot, &entry)) do { if (entry.th32OwnerProcessID == GetCurrentProcessId()) ++count; } while (Thread32Next(snapshot, &entry));
+        CloseHandle(snapshot); return count;
+    };
+    const auto run = [&](int mode, int round, const char* name) {
+        LuaRuntimeQuota quota;
+        auto* lua = lua_newstate(snowdesktop::lua_runtime::QuotaAllocator, &quota);
+        Check(lua != nullptr, "benchmark real quota Lua state");
+        lua_pushlightuserdata(lua, &quota); lua_setfield(lua, LUA_REGISTRYINDEX, "__quota_ptr");
+        Check(luaL_loadstring(lua, "return function(seed) local t={} local n=seed for i=1,2000 do n=n+i end for i=1,64 do t[i]=n+i end return t[64] end") == LUA_OK &&
+            lua_pcall(lua, 0, 1, 0) == LUA_OK, "benchmark loads real allocating Lua workload");
+        const auto function = luaL_ref(lua, LUA_REGISTRYINDEX);
+        for (int warm = 0; warm < 100; ++warm)
+        { lua_rawgeti(lua, LUA_REGISTRYINDEX, function); lua_pushinteger(lua, warm); Check(snowdesktop::lua_runtime::ProtectedCall(lua, 1, 1)==LUA_OK, "warm Lua"); lua_pop(lua, 1); }
+        const std::string session = std::string(name) + "-" + std::to_string(round + 1);
+        auto options = Options(root, session);
+        options.preset = mode == 1 ? perf::CapturePreset::Resource : mode == 4 ? perf::CapturePreset::Widget : perf::CapturePreset::Interaction;
+        options.scopeCpu = mode == 3;
+        if (mode == 4) options.selectedInstances = {L"benchmark-instance"};
+        std::string error;
+        const auto setup = std::chrono::steady_clock::now();
+        if (mode)
         {
-            // Rotate order so a consistently earlier warmup is not favored.
-            const int mode = (step + round) % 4;
-            const char* name = mode == 0 ? "off" : mode == 1 ? "idle" :
-                mode == 2 ? "interaction" : "interaction-cpu";
-            std::string error;
-            const std::string session = std::string(name) + "-" + std::to_string(round);
-            auto options = Options(root, session);
-            options.preset = mode == 1 ? perf::CapturePreset::Resource : perf::CapturePreset::Interaction;
-            options.scopeCpu = mode == 3;
-            if (mode && !perf::Start(options, error)) return 3;
-            if (mode && WaitFor(session, false).phase != perf::CapturePhase::Recording) return 4;
-            const auto begin = std::chrono::steady_clock::now();
-            for (int i = 0; i < iterations; ++i)
-            {
-                perf::Scope event("widget.event", "frame", L"benchmark-widget-123456");
-                { perf::Scope lua("lua", "protectedCall"); result = result * 33 + i; }
-                { perf::Scope invalidate("widget.invalidate", "desktop", L"benchmark-widget-123456");
-                  perf::DrawLink("desktop", L"benchmark-widget-123456", false); }
-                { perf::Scope draw("widget.composition", "draw", L"benchmark-widget-123456");
-                  perf::DrawLink("desktop", L"benchmark-widget-123456", true); }
-            }
-            const double elapsed = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - begin).count();
-            if (mode) perf::Shutdown();
-            std::cout << "{\"mode\":\"" << name << "\",\"round\":" << round
-                << ",\"iterations\":" << iterations << ",\"scopeCount\":" << iterations * 4
-                << ",\"elapsedMs\":" << elapsed << ",\"result\":" << result << "}\n";
+            Check(perf::Start(options, error), "benchmark capture accepted");
+            Check(WaitFor(session, false).phase == perf::CapturePhase::Recording, "benchmark SDK ack");
+            snowdesktop::lua_runtime::SampleAllocationTraffic(quota, L"benchmark-instance");
         }
-    }
+        const auto setupMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-setup).count();
+        const auto before = memory(); const auto cpuBefore = cpuTime();
+        const auto begin = std::chrono::steady_clock::now();
+        std::uint64_t result = 0;
+        for (int i = 0; i < iterations; ++i)
+        {
+            perf::Scope event("widget.event", "timer", L"benchmark-instance");
+            lua_rawgeti(lua, LUA_REGISTRYINDEX, function); lua_pushinteger(lua, i);
+            Check(snowdesktop::lua_runtime::ProtectedCall(lua, 1, 1) == LUA_OK, "benchmark preserves real Lua execution");
+            result += static_cast<std::uint64_t>(lua_tointeger(lua, -1)); lua_pop(lua, 1);
+            perf::Value("widget.view.layout_cache", i % 2 ? "hit" : "miss", L"benchmark-instance", 1);
+            { perf::Scope invalidate("widget.invalidate", "desktop", L"benchmark-instance"); perf::DrawLink("desktop", L"benchmark-instance", false); }
+            { perf::Scope draw("widget.composition", "draw", L"benchmark-instance"); perf::DrawLink("desktop", L"benchmark-instance", true); }
+        }
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count();
+        const auto cpuMs = cpuTime()-cpuBefore; const auto after = memory();
+        Check(result == static_cast<std::uint64_t>(iterations) * (2001000 + 64) +
+            static_cast<std::uint64_t>(iterations) * (iterations - 1) / 2, "identical known-answer work in all capture modes");
+        std::cout << "{\"mode\":\"" << name << "\",\"round\":" << round << ",\"phase\":\"work\",\"iterations\":" << iterations
+            << ",\"elapsedMs\":" << elapsed << ",\"cpuMs\":" << cpuMs << ",\"cpuMsPerSecond\":" << cpuMs * 1000 / elapsed
+            << ",\"setupMs\":" << setupMs << ",\"privateBytesBefore\":" << before.PrivateUsage << ",\"privateBytesAfter\":" << after.PrivateUsage
+            << ",\"sdkInitialized\":" << (perf::PerfettoSession::Initialized() ? "true" : "false") << ",\"result\":" << result << "}\n";
+        if (mode)
+        {
+            snowdesktop::lua_runtime::SampleAllocationTraffic(quota, L"benchmark-instance");
+            Check(perf::RequestStop(session), "benchmark normal stop accepted");
+            Check(WaitFor(session, true).phase == perf::CapturePhase::Completed, "benchmark normal stop completes without worker shutdown");
+        }
+        lua_close(lua);
+        const auto quietMemory = memory(); const auto quietThreads = threads(); const auto quietCpu = cpuTime();
+        const auto quietStart = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1250));
+        const auto quietMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-quietStart).count();
+        const auto quietCpuMs = cpuTime()-quietCpu;
+        std::cout << "{\"mode\":\"" << name << "\",\"round\":" << round << ",\"phase\":\"quiet-after-stop\",\"elapsedMs\":" << quietMs
+            << ",\"cpuMs\":" << quietCpuMs << ",\"cpuMsPerSecond\":" << quietCpuMs * 1000 / quietMs << ",\"privateBytes\":" << quietMemory.PrivateUsage
+            << ",\"threads\":" << quietThreads << ",\"captureEnabled\":" << (perf::Enabled() ? "true" : "false") << "}\n";
+    };
+    Check(!perf::PerfettoSession::Initialized(), "cold off benchmark starts before SDK initialization");
+    run(0, -1, "off-cold");
+    for (int round = 0; round < 5; ++round)
+        for (int step = 0; step < 5; ++step)
+        {
+            const int mode = (step + round + 1) % 5;
+            const char* names[]{"off-warm", "idle", "interaction", "interaction-cpu", "widget-detail"};
+            run(mode, round, names[mode]);
+        }
+    perf::Shutdown();
     return 0;
 }

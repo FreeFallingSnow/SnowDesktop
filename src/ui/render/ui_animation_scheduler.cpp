@@ -2,6 +2,9 @@
 #include "settings/animation_settings.h"
 #include "ui_animation_scheduler_rules.h"
 #include "ui_presentation_scope.h"
+#include "diagnostics/performance_trace.h"
+#include "diagnostics/performance_trace_control.h"
+#include "diagnostics/performance_animation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +15,13 @@ namespace snowdesktop
 namespace
 {
 using namespace ui_animation_scheduler_rules;
+const char* SurfaceName(UiAnimationSurface surface) noexcept
+{
+    constexpr const char* names[]{"desktop", "floating-dock", "quick-navigation", "popup", "window-transition", "unknown"};
+    return names[(std::min)(static_cast<std::size_t>(surface), std::size(names) - 1)];
+}
+std::uint64_t AnimationKey(const void* scheduler, UiScheduleToken token) noexcept
+{ return reinterpret_cast<std::uintptr_t>(scheduler) ^ (token * 0x9e3779b97f4a7c15ULL); }
 
 BOOL CALLBACK AccumulateMonitorRefreshRate(
     HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
@@ -155,14 +165,21 @@ UiScheduleToken UiAnimationScheduler::NextToken()
 }
 
 UiScheduleToken UiAnimationScheduler::StartAnimation(
-    UiAnimationSurface surface, FrameCallback callback)
+    UiAnimationSurface surface, FrameCallback callback, std::source_location source)
 {
     if (!callback || (!timer_ && !Initialize()))
         return 0;
 
     const UiScheduleToken token = NextToken();
     frameEntries_.emplace(
-        token, FrameEntry{ surface, std::move(callback) });
+        token, FrameEntry{ surface, std::move(callback), source.function_name() });
+    if (const auto generation = performance::CaptureGeneration())
+    {
+        auto& entry = frameEntries_.at(token);
+        entry.traceGeneration = generation;
+        entry.traceId = performance::AnimationBegin(AnimationKey(this, token), entry.type, SurfaceName(surface),
+            1000.0 / targetRefreshHz_, EffectiveFrameIntervalMs(), false);
+    }
     if (frameEntries_.size() == 1)
     {
         const double now = MonotonicMilliseconds();
@@ -214,6 +231,8 @@ void UiAnimationScheduler::Cancel(UiScheduleToken token)
 {
     if (!token)
         return;
+    if (const auto entry = frameEntries_.find(token); entry != frameEntries_.end() && entry->second.traceGeneration == performance::CaptureGeneration())
+        performance::AnimationEnd(entry->second.traceId, true);
     frameEntries_.erase(token);
     timerEntries_.erase(token);
     if (frameEntries_.empty())
@@ -229,6 +248,11 @@ void UiAnimationScheduler::Cancel(UiScheduleToken token)
 
 void UiAnimationScheduler::CancelAll()
 {
+    for (const auto& [token, entry] : frameEntries_)
+    {
+        (void)token;
+        if (entry.traceGeneration == performance::CaptureGeneration()) performance::AnimationEnd(entry.traceId, true);
+    }
     frameEntries_.clear();
     timerEntries_.clear();
     pendingPresentations_.clear();
@@ -258,6 +282,7 @@ void UiAnimationScheduler::DispatchDue()
     } guard{dispatching_, advancingFrame_, dispatchingTimers_};
 
     const double now = MonotonicMilliseconds();
+    performance::Scope dispatchTrace("animation.scheduler", "dispatch");
     std::vector<UiScheduleToken> dueTimers;
     dueTimers.reserve(timerEntries_.size());
     for (const auto& [token, entry] : timerEntries_)
@@ -290,6 +315,7 @@ void UiAnimationScheduler::DispatchDue()
 
         try
         {
+            performance::Scope timerTrace("timer.callback", "scheduler", {}, AnimationKey(this, token));
             callback(token);
         }
         catch (...)
@@ -315,6 +341,7 @@ void UiAnimationScheduler::DispatchDue()
             skippedFrames_ += missed;
         }
         requestedFrames_ += missed + 1;
+        traceFrame_ = performance::Enabled() ? performance::OperationId(AnimationKey(this, ++traceFrameSequence_)) : 0;
 
         if (diagnosticsEnabled_ &&
             lastDeliveredFrameMilliseconds_ > 0.0)
@@ -340,9 +367,22 @@ void UiAnimationScheduler::DispatchDue()
                 continue;
 
             FrameCallback callback = found->second.callback;
+            if (const auto generation = performance::CaptureGeneration())
+            {
+                auto& entry = found->second;
+                if (entry.traceGeneration != generation)
+                {
+                    entry.traceGeneration = generation;
+                    entry.traceId = performance::AnimationBegin(AnimationKey(this, token), entry.type, SurfaceName(entry.surface),
+                        1000.0 / targetRefreshHz_, interval, true);
+                }
+                performance::AnimationUpdate(entry.traceId, traceFrame_, interval,
+                    (std::max)(0.0, frameNow - nextFrameMilliseconds_), missed);
+            }
             bool keep = false;
             try
             {
+                performance::Scope callbackTrace("animation.callback", SurfaceName(found->second.surface), {}, AnimationKey(this, token));
                 keep = callback(frameNow);
             }
             catch (...)
@@ -350,7 +390,11 @@ void UiAnimationScheduler::DispatchDue()
                 keep = false;
             }
             if (!keep)
+            {
+                if (const auto completed = frameEntries_.find(token); completed != frameEntries_.end() &&
+                    completed->second.traceGeneration == performance::CaptureGeneration()) performance::AnimationEnd(completed->second.traceId, false);
                 frameEntries_.erase(token);
+            }
         }
         advancingFrame_ = false;
         // Keep dispatching_ guarded while presenting: a paint or native menu
@@ -381,6 +425,7 @@ void UiAnimationScheduler::DispatchDue()
     // registered; otherwise queued component surfaces would never be drawn.
     FlushPresentations();
     ArmNextWakeup();
+    traceFrame_ = 0;
 }
 
 void UiAnimationScheduler::RequestFramePresentation(
@@ -434,7 +479,12 @@ void UiAnimationScheduler::FlushPresentations()
     for (auto& presentation : presentations)
     {
         if (presentationCancellation_ != cancellation) break;
-        try { presentation.callback(); }
+        try
+        {
+            performance::Presentation(traceFrame_, reinterpret_cast<std::uintptr_t>(presentation.owner), true);
+            performance::Scope presentTrace("composition.shared", "scheduled.presentation");
+            presentation.callback();
+        }
         catch (...) {}
     }
 }
@@ -508,6 +558,8 @@ UiAnimationMetricsSnapshot UiAnimationScheduler::Metrics() const
 
 void UiAnimationScheduler::RecordCommitDuration(double milliseconds)
 {
+    if (performance::Enabled() && milliseconds >= 0.0)
+        performance::CompositionCommit(traceFrame_, AnimationKey(this, ++traceCommitSequence_), milliseconds);
     if (diagnosticsEnabled_ && milliseconds >= 0.0)
         PushSample(commitSamples_, milliseconds);
 }

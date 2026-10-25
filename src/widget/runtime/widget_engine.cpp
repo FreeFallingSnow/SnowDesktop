@@ -12074,34 +12074,6 @@ static int lua_DrawIcon(lua_State* L)
 }
 
 // ── WidgetEngine ──────────────────────────────────────────────────
-static void* LuaQuotaAllocator(void* userData, void* pointer,
-    size_t oldSize, size_t newSize)
-{
-    auto* quota = static_cast<LuaRuntimeQuota*>(userData);
-    if (!quota) return nullptr;
-    if (newSize == 0)
-    {
-        if (pointer)
-            quota->memoryBytes = oldSize > quota->memoryBytes
-                ? 0 : quota->memoryBytes - oldSize;
-        std::free(pointer);
-        return nullptr;
-    }
-    const size_t current = pointer ? oldSize : 0;
-    const size_t withoutCurrent = current > quota->memoryBytes
-        ? 0 : quota->memoryBytes - current;
-    if (newSize > quota->memoryLimit ||
-        withoutCurrent > quota->memoryLimit - newSize)
-    {
-        quota->memoryExceeded = true;
-        return nullptr;
-    }
-    void* result = std::realloc(pointer, newSize);
-    if (result)
-        quota->memoryBytes = withoutCurrent + newSize;
-    return result;
-}
-
 WidgetEngine::~WidgetEngine()
 {
     Shutdown();
@@ -16595,7 +16567,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     auto quota = std::make_unique<LuaRuntimeQuota>();
     auto storageWriteBudget = std::make_unique<
         snowdesktop::widget_runtime::WidgetStorageWriteBudget>();
-    lua_State* state = lua_newstate(LuaQuotaAllocator, quota.get());
+    lua_State* state = lua_newstate(snowdesktop::lua_runtime::QuotaAllocator, quota.get());
     if (!state)
     {
         RuntimeRecordError(widgetId, "Cannot allocate isolated Lua state");

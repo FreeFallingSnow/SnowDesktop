@@ -1,4 +1,5 @@
 #include "widget_media_task_executor.h"
+#include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_media_session_registry.h"
 #include "system/controls/system_control_windows.h"
 
@@ -298,6 +299,7 @@ void WidgetMediaTaskExecutor::WorkerMain(std::stop_token stopToken)
         {
             const system_control::Cancellation cancellation{request.canceled,
                 std::chrono::steady_clock::now() + std::chrono::seconds(5)};
+            performance::TaskExecution trace(request.id, "media");
             result = runner_(request.request, cancellation);
         }
         catch (...)

@@ -1,4 +1,5 @@
 #include "widget_audio_output_task_executor.h"
+#include "diagnostics/performance_trace.h"
 
 #include <windows.h>
 #include <endpointvolume.h>
@@ -236,6 +237,7 @@ void WidgetAudioOutputTaskExecutor::WorkerMain(
         WidgetAudioOutputTaskRunResult result;
         try
         {
+            performance::TaskExecution trace(request.id, "audio.output");
             result = runner_(request.request);
         }
         catch (...)

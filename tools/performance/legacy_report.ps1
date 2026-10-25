@@ -57,7 +57,8 @@ function Get-Summary($Report) {
 function Export-Summary([string]$Path) {
     $report = Read-Capture $Path
     $summary = Get-Summary $report
-    $directory = Split-Path -Parent ([IO.Path]::GetFullPath($Path))
+    $directory = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($Path))) ('legacy-analysis-' + [Guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($directory) | Out-Null
     $summaryPath = Join-Path $directory 'summary.json'
     Write-JsonFile $summary $summaryPath
     $summary.scopes | Export-Csv -LiteralPath (Join-Path $directory 'scopes.csv') -NoTypeInformation -Encoding UTF8

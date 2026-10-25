@@ -39,7 +39,8 @@ CLI 通过控制窗口发现 PID 并惰性打开 v3 本地管道。双向检查�
 确认均有上限。客户端不能指定服务端写入任意路径；`OutputDirectory` 是完成后
 由客户端复制证据的目标目录。
 
-宿主默认写入数据目录 diagnostics/performance/<session>/。`.pftrace.partial`
+宿主默认写入当前用户 LocalAppData/SnowDesktop/diagnostics/performance/<session>/，
+不依赖便携软件安装目录是否可写。`.pftrace.partial`
 和 `session.json.partial` 独占创建；flush、close 后原子发布，不覆盖同名文件。
 失败保留 partial，且不会被报告为完成。总空间为 1 GiB、最多 20 个完成会话；
 失败证据也计入空间，不自动删除。达到上限后需用户选择清理证据再采集。
@@ -52,6 +53,9 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 
 固定 SQL 位于 tools/performance/sql，直接交给官方 Trace Processor。分析目录保存
 最终 SQL、CSV、summary.json、查询哈希、诊断日志及 perfetto_analysis_report.md。
+查询包 v2 只接受 probeSchemaVersion 2 的原生会话；旧 JSON 继续通过 report 只读分析，
+旧原生会话仍可直接用 Perfetto 查看。查询输出每流最多 4 MiB、错误日志最多 256 KiB、
+摘要最多 16 MiB；每次托管分析预留 64 MiB，总空间继续受 1 GiB 限额约束。
 
 - 窗口使用原生 capture.start/capture.stop；只分析完全包含的闭合 slice。
   未闭合、跨边界、数据丢失和探针丢弃单独报告，不能以完整汇总掩盖。
@@ -59,14 +63,36 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
   过滤掉的工作仍可能包含在该值中，不能等同独占线程 CPU。
 - thread CPU 由 SDK 提供，只对实际具有 thread_dur 的 slice 汇总。没有 CPU 样本时
   保持 null；无法证明子调用完整覆盖时 selfCpuMs 保持 null。
+  模块和实例的 rootInclusiveCpuMs 只取本组最外层同步 Scope，避免同组嵌套重复；
+  仍包含 native API 和共享子工作，各组会重叠，不得相加或称为实例独占/纯 Lua VM CPU。
 - 进程 CPU 使用 GetProcessTimes 的累计值差，分母是该 counter 实际首尾采样窗口。
   同时输出 CPU ms/s、单核百分比及按逻辑处理器数归一化的百分比。
 - 内存等 gauge 不累加；明确的累计量才计算差值/速率，且至少两个样本、正窗口和
   无计数器回退。缺样本、重置或无效证据保持 null。
 - GPU 数据只能表达进程级引擎/内存观测，不按 Lua 实例分摊 GPU 时间。
+  进程数据复用现有系统数据提供器的 GPU 查询。采集只增删 performance-capture
+  consumer，不停止组件或系统面板的订阅。
   回调、应用更新和提交不代表操作系统唤醒、DWM 呈现或显示器实际帧率。
 - 跨会话匿名实例标识不同。比较工具只比较相同查询/预设配置的有效模块观测；
-  仍须人工核对机器、显示、组件、布局和负载，不能据数值变化直接判断因果。
+  已知 SDK、系统、处理器、显示、DPI、刷新率和电源差异会拒绝比较；无法证明的
+  机器身份、组件内容、布局和负载保留 unknown，不能据数值变化直接判断因果。
+
+调试设置中的“性能采集”调用同一宿主控制器。设置窗口只发送命令并接收状态；
+关闭窗口不会停止会话，再次打开也能看到 CLI 启动的采集。停止绑定会话及代次。
+首次分析可下载固定哈希的官方工具；分析在采集工作线程执行，状态和数据质量独立显示。
+
+Lua 配额分配器只在采集代次有效时累计成功的逻辑分配、重分配和释放，低频输出
+字节流量、次数、基线和存量峰值。不逐次发送分配事件；失败分配不计入流量。
+增长是窗口内观测，不是泄漏结论。任务队列到实际执行线程使用 SDK flow，CPU
+只来自同步执行 Scope；协程只记录同步阶段，外部服务等待没有伪造 CPU。
+
+动画生命周期使用 SDK 异步轨道，应用更新和实际回调分开记录；合并呈现及真实
+Commit 另记事件。每个会话最多分配 1024 个动画轨道；轨道 ID 与对象地址及回调键
+分离，复用对象仍产生独立生命周期，超过上限写入 droppedTracks 并使质量判据失败。
+animations.csv 的 updateFps 是应用更新频率，presentedFps 和
+droppedFrames 在无法归因时保持 null。交互预设在 Windows 11 可选读取 Compositor
+Clock 显示合成统计，每次最多 10 ms、256 帧及 16 个目标，不等待或提升系统合成时钟。
+compositor.csv 仅表达显示合成，不能代表每个动画，也不能完整覆盖 independent flip。
 
 ## 验证与实施边界
 
@@ -75,6 +101,12 @@ CPU 可用/不可用、层级、flow、预设过滤、重启、幂等、会话�
 控制专用 HWND 仅用于实际 CLI/管道集成，不启动桌面宿主。渲染回归通过 SDK
 Interceptor 观察已序列化事件，不保留另一套产品 profiler。
 
-当前链路覆盖宿主。独立设置进程在 manifest 明确排除；跨进程覆盖、设置页控制、
-Lua 分配 churn/后台归因、调度与原生动画诊断、共享 GPU 数据源及完整负载开销验收
-仍属于本方案后续实施项。标准构建或合成夹具不替代桌面实际显示与交互验收。
+当前链路覆盖宿主，独立设置进程在 manifest 明确排除。设置页、Lua 分配流量、
+后台任务归因、调度事件和共享 GPU 数据源使用上述实际产品入口。跨进程分析、
+显示呈现到具体视觉对象的归因及目标机器上的完整负载开销仍需独立验证。
+标准构建、可控工作负载和独立设置预览不能替代桌面实际显示与交互验收。
+
+`SnowDesktopWidgetRuntimeDiagnosticsTests --performance-overhead <全新目录>` 执行
+真实 Lua 配额分配/回调与固定探针负载，轮换五种采集模式各五次，记录进程 CPU、
+墙钟、常驻内存和停止后的安静窗口。冷关闭与 SDK 初始化后的关闭分开记录；
+这项测量只适用于明确的夹具工作负载，不代表整个桌面应用的开销验收。

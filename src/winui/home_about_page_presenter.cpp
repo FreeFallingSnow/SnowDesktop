@@ -2,6 +2,7 @@
 
 #include "home_about_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "performance_capture_presenter.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
@@ -94,6 +95,7 @@ struct HomeAboutPagePresenter::Impl
     mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel aboutRoot{nullptr};
     muxc::StackPanel debugRoot{nullptr};
+    std::unique_ptr<PerformanceCapturePresenter> performance;
     muxc::Expander credits{nullptr};
 
     Section advancedSection;
@@ -390,6 +392,11 @@ struct HomeAboutPagePresenter::Impl
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
+        performance = std::make_unique<PerformanceCapturePresenter>(localize, cardStyle);
+        performance->SetAction([this](const PerformanceCaptureRequest& request) {
+            if (CanInvokeDebug() && actions.performance) actions.performance(generation, request);
+        });
+        debugRoot.Children().Append(performance->Root());
         InitializeSection(forceRestartSection, cardStyle, debugRoot);
         forceRestartSection.title.Visibility(mux::Visibility::Collapsed);
         forceRestartToggle = muxc::ToggleSwitch{};
@@ -762,6 +769,7 @@ struct HomeAboutPagePresenter::Impl
     {
         if (closed)
             return;
+        performance->RefreshText();
         advancedRow.SetText(L("modules.showAdvanced"), L("modules.showAdvancedDescription"));
         credits.Header(winrt::box_value(L("settings.about.licensesAndCredits", L"Third-party notices and credits")));
 
@@ -880,6 +888,7 @@ struct HomeAboutPagePresenter::Impl
         profileDirectory.clear();
         simulatedDesktop.clear();
         animationDiagnosticsStatus.clear();
+        performance->ApplyStatus({});
     }
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)
@@ -929,6 +938,7 @@ struct HomeAboutPagePresenter::Impl
             applicationVersion = *patch.applicationVersion;
         if (patch.packaged)
             packaged = *patch.packaged;
+        if (patch.performance) performance->ApplyStatus(*patch.performance);
         if (patch.animationDiagnosticsEnabled)
             animationDiagnosticsEnabled =
                 *patch.animationDiagnosticsEnabled;
@@ -965,6 +975,7 @@ struct HomeAboutPagePresenter::Impl
         }
         if (page == SettingsPage::Debug)
         {
+            if (focusId == "debug.performance") return performance->FocusTarget();
             if (focusId == "debug.forceRestartHotkey") return forceRestartToggle;
             if (focusId == "debug.forceRestartHotkey.hotkey")
                 return forceRestartEnabled ? forceRestartRecorder.FocusTarget() : forceRestartToggle;
@@ -1075,6 +1086,10 @@ void HomeAboutPagePresenter::Activate(SettingsPage page) noexcept
         return;
     impl_->active = page == SettingsPage::About || page == SettingsPage::Debug;
     impl_->activePage = page;
+    if (page == SettingsPage::Debug && impl_->actions.performance)
+    {
+        try { impl_->actions.performance(impl_->generation, {}); } catch (...) {}
+    }
 }
 
 void HomeAboutPagePresenter::Deactivate() noexcept

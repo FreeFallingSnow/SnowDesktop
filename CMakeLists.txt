@@ -540,6 +540,8 @@ set(SNOWDESKTOP_SOURCES
     src/settings/category_rule_creation.h
     src/winui/runtime_modules_page_presenter.cpp
     src/winui/home_about_page_presenter.cpp
+    src/winui/performance_capture_presenter.cpp
+    src/winui/performance_capture_presenter.h
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
     src/winui/home_about_page_presenter.h
@@ -664,6 +666,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
     src/diagnostics/performance_capture.cpp
+    src/diagnostics/performance_analysis.cpp
+    src/diagnostics/performance_environment.cpp
     src/diagnostics/performance_control_pipe.cpp
     src/widget/runtime/widget_runtime_scheduler.cpp
     src/widget/runtime/widget_timer_dispatch.h
@@ -1639,12 +1643,19 @@ if (BUILD_TESTING)
             tests/widget_runtime_diagnostics_tests.cpp
             tests/performance_capture_tests.cpp
             tests/diagnostics/perfetto_session_tests.cpp
+            tests/diagnostics/performance_workload_tests.cpp
             src/widget/runtime/widget_runtime_diagnostics.cpp
             src/diagnostics/performance_capture.cpp
+            src/diagnostics/performance_analysis.cpp
+            src/diagnostics/performance_environment.cpp
             src/diagnostics/performance_control_pipe.cpp
             src/widget/runtime/lua_runtime.cpp
+            src/widget/tasks/widget_task_broker.cpp
+            src/widget/tasks/widget_filesystem_task_executor.cpp
+            src/ui/render/ui_animation_scheduler.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua SnowDesktopPerfetto bcrypt advapi32 pdh psapi user32
+        LINK_LIBRARIES SnowDesktopLua SnowDesktopPerfetto bcrypt advapi32 pdh psapi user32 shell32 ole32 windowscodecs
         LABELS contract widget)
     target_compile_definitions(SnowDesktopWidgetRuntimeDiagnosticsTests PRIVATE
         SNOWDESKTOP_PERFORMANCE_SOURCE_ROOT=L"${CMAKE_SOURCE_DIR}")

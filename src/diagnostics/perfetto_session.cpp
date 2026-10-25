@@ -1,5 +1,6 @@
 #include "perfetto_session.h"
 #include "perfetto_categories.h"
+#include "performance_artifacts.h"
 
 #include <windows.h>
 
@@ -26,8 +27,7 @@ constexpr std::array<std::string_view, 14> categoryNames{
 
 bool SafeOutputDirectory(const std::filesystem::path& output)
 {
-    if (!output.is_absolute() || output != output.lexically_normal() ||
-        output.extension() != L".pftrace") return false;
+    if (!IsLocalCapturePath(output) || output.extension() != L".pftrace") return false;
     auto directory = output.parent_path();
     while (!directory.empty())
     {
@@ -113,6 +113,8 @@ bool PerfettoSession::Start(const PerfettoSessionOptions& options, std::string& 
             nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (signals->file == INVALID_HANDLE_VALUE)
         { error = "cannotReserveOutput"; impl_->Release(); return false; }
+        if (GetFileType(signals->file) != FILE_TYPE_DISK)
+        { error = "captureOutputNotDisk"; impl_->Release(); return false; }
 
         std::call_once(initializeOnce, [] {
             perfetto::TracingInitArgs args;

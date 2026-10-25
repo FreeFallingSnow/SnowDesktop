@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/settings_ipc_codec.h"
+#include "settings/settings_ipc_values.h"
 #include "home_about_page_model.h"
 
 // Shared by the settings process and codec regression tests. This status model
@@ -14,7 +15,7 @@ template<> struct Fields<winui::HomeAboutStatusPatch>
         return std::tie(v.generation, v.revision, v.applicationVersion, v.installedWidgetCount,
             v.packaged, v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
             v.animationDiagnosticsStatus, v.temporaryInitializationEnabled,
-            v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory);
+            v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory, v.performance);
     }
 };
 }

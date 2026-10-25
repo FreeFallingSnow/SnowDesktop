@@ -12,6 +12,7 @@
 #include "layout/page_navigation_rules.h"
 #include "settings/settings_update_rules.h"
 #include "theme/theme_library_settings.h"
+#include "diagnostics/performance_capture.h"
 
 #include <cstring>
 #include <cwctype>
@@ -572,6 +573,21 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
 
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
+    const auto capture = snowdesktop::performance::Snapshot();
+    snowdesktop::PerformanceCaptureStatus performance;
+    constexpr const char* phases[]{"idle", "starting", "recording", "stopping", "finalizing", "completed", "failed"};
+    performance.phase = phases[static_cast<unsigned>(capture.phase)];
+    performance.session = capture.session; performance.generation = capture.generation;
+    performance.requestedSeconds = capture.requestedSeconds; performance.elapsedMs = capture.elapsedMs;
+    performance.preset = capture.preset; performance.bufferKiB = capture.bufferKiB; performance.selectedInstances = capture.selectedInstances;
+    performance.threadCpu = capture.scopeCpu; performance.trace = capture.trace.wstring();
+    performance.report = capture.report.wstring(); performance.analysis = capture.analysis;
+    performance.quality = capture.quality;
+    performance.error = capture.error.empty() ? capture.analysisError : capture.error;
+    if (widgetEngine_)
+        for (const auto& widget : widgetEngine_->GetWidgets())
+            if (performance.instances.size() < 256) performance.instances.push_back({widget.widgetId, Utf8ToWide(widget.name)});
+    patch.performance = std::move(performance);
     return patch;
 }
 
@@ -1552,6 +1568,62 @@ public:
                 request.boolValue);
             app_.PublishHomeAboutStatus();
             break;
+        case Action::PerformanceCapture:
+        {
+            namespace perf = snowdesktop::performance;
+            const auto& command = request.performance;
+            using Command = snowdesktop::PerformanceCaptureRequest::Action;
+            std::string error;
+            perf::ConfigureControl(app_.controlHwnd_, {});
+            const auto provider = app_.systemDataProvider_;
+            perf::ConfigureGpuDemand([provider](bool active) {
+                if (!provider) return;
+                if (active) (void)provider->StartTopic("performance-capture", "system.gpu", std::chrono::milliseconds(1000));
+                else provider->RemoveConsumer("performance-capture");
+            });
+            if (command.action == Command::Start)
+            {
+                if (command.preset > 2 || command.bufferMiB < 1 || command.bufferMiB > 64 || command.instances.size() > 8)
+                    return snowdesktop::SettingsActionResult::Failure(_LW("performance.invalidOptions"));
+                for (const auto& id : command.instances)
+                    if (!app_.widgetEngine_ || std::none_of(app_.widgetEngine_->GetWidgets().begin(), app_.widgetEngine_->GetWidgets().end(),
+                        [&](const auto& widget) { return widget.widgetId == id; }))
+                        return snowdesktop::SettingsActionResult::Failure(_LW("performance.selectHint"));
+                GUID guid{}; wchar_t text[40]{};
+                if (FAILED(CoCreateGuid(&guid)) || !StringFromGUID2(guid, text, static_cast<int>(std::size(text))))
+                    return snowdesktop::SettingsActionResult::Failure(_LW("performance.invalidOptions"));
+                perf::CaptureOptions options;
+                options.session = "ui-" + WideToUtf8(std::wstring(text + 1, 36)); options.requestId = options.session;
+                options.preset = static_cast<perf::CapturePreset>(command.preset);
+                options.seconds = command.seconds; options.bufferKiB = command.bufferMiB * 1024;
+                options.scopeCpu = command.threadCpu; options.selectedInstances = command.instances;
+                if (!perf::Start(options, error)) return snowdesktop::SettingsActionResult::Failure(
+                    std::wstring(_LW("performance.requestFailed")) + L" " + Utf8ToWide(error));
+            }
+            else if (command.action == Command::Stop)
+            {
+                if (!command.generation || !perf::RequestStop(command.session, command.generation)) error = "sessionMismatch";
+            }
+            else if (command.action == Command::Analyze)
+            {
+                (void)perf::RequestAnalysis(command.session, command.generation, error);
+            }
+            else if (command.action == Command::OpenFolder || command.action == Command::OpenReport)
+            {
+                const auto snapshot = perf::Snapshot(command.session);
+                if (snapshot.generation != command.generation || !command.generation) error = "sessionMismatch";
+                else
+                {
+                    const auto target = command.action == Command::OpenFolder ? snapshot.trace.parent_path() : snapshot.report;
+                    if (target.empty() || !snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                        app_.controlHwnd_, target.wstring(), nullptr, SW_SHOWNORMAL, false)) error = "artifactOpenFailed";
+                }
+            }
+            else if (command.action != Command::Query) error = "unsupportedCommand";
+            app_.PublishHomeAboutStatus();
+            if (!error.empty()) return snowdesktop::SettingsActionResult::Failure(std::wstring(_LW("performance.requestFailed")) + L" " + Utf8ToWide(error));
+            break;
+        }
         case Action::SetDebugProfileEnabled:
         case Action::SetDebugDesktopDirectory:
         case Action::ClearDebugProfile:

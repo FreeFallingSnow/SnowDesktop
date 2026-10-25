@@ -1,4 +1,5 @@
 #include "widget_native_task_executor.h"
+#include "diagnostics/performance_trace.h"
 #include "widget/packages/widget_package.h"
 #include "common/json_value.h"
 
@@ -310,6 +311,7 @@ struct WidgetNativeTaskExecutor::State
         const std::shared_ptr<State>& state)
     {
         using namespace snowdesktop::widget;
+        performance::TaskExecution trace(id, "native.helper");
         NativeTaskMessage result{ id, true, false, "nativeLaunchFailed", {} };
         auto deadline = GetTickCount64() + static_cast<ULONGLONG>(options.timeoutMs);
         DirectoryWatch directoryWatch;

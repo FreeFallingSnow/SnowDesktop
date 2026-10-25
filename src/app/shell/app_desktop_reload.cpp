@@ -380,13 +380,25 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
         return 0;
     }
+    if (snowdesktop::performance::IsStateChangeMessage(msg))
+    {
+        PublishHomeAboutStatus();
+        return 0;
+    }
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
         static const UINT performanceControl = RegisterWindowMessageW(
             snowdesktop::performance::ControlMessageName);
         if (performanceControl && msg == performanceControl)
-            snowdesktop::performance::ConfigureControl(hwnd,
-                std::filesystem::path(GetDataDirectoryPath()) / L"diagnostics" / L"performance");
+        {
+            snowdesktop::performance::ConfigureControl(hwnd, {});
+            const auto provider = systemDataProvider_;
+            snowdesktop::performance::ConfigureGpuDemand([provider](bool active) {
+                if (!provider) return;
+                if (active) (void)provider->StartTopic("performance-capture", "system.gpu", std::chrono::milliseconds(1000));
+                else provider->RemoveConsumer("performance-capture");
+            });
+        }
         return snowdesktop::performance::HandleControlMessage(
             hwnd, msg, wp, lp, +[](void* context) {
                 auto* app = static_cast<DesktopApp*>(context);
@@ -398,8 +410,11 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     for (const auto& widget : app->widgetEngine_->GetWidgets())
                     {
                         if (widget.quota)
+                        {
                             Value("widget.memory", "lua_bytes", widget.widgetId,
                                 static_cast<double>(widget.quota->memoryBytes));
+                            snowdesktop::lua_runtime::SampleAllocationTraffic(*widget.quota, widget.widgetId);
+                        }
                         Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
                         Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
                         Value("widget.state", "timers", widget.widgetId,
@@ -452,6 +467,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                     if (host)
                         recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
                             reinterpret_cast<std::uintptr_t>(host.get())));
+                app->PublishHomeAboutStatus();
             }, this);
     }
     if (msg == WM_DESTROY)

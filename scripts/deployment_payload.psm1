@@ -107,17 +107,22 @@ function Read-SnowDesktopDeploymentManifest {
     )
     $noticeDestinations = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
+    $perfettoNotice = 'licenses/Perfetto-LICENSE.txt'
     foreach ($entry in @($manifest.notices)) {
         $destination = [string]$entry.destination
-        if (-not $noticeDestinations.Add($destination)) {
+        if (($destination -cnotin $requiredNoticeDestinations -and $destination -cne $perfettoNotice) -or
+            -not $noticeDestinations.Add($destination)) {
             throw "Deployment manifest contains an invalid or duplicate notice destination."
         }
         [void](Resolve-SnowDesktopDeploymentPath `
             -Root $BuildOutput -RelativePath $destination)
     }
+    $hasPerformanceTools = @($manifest.files | Where-Object { ([string]$_.path).Replace('\','/').StartsWith('performance/',[StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    $expectedNoticeCount = $requiredNoticeDestinations.Count + [int]$noticeDestinations.Contains($perfettoNotice)
     if (@($manifest.files).Count -eq 0 -or
         @($manifest.appxFragments).Count -eq 0 -or
-        @($manifest.notices).Count -ne $requiredNoticeDestinations.Count -or
+        @($manifest.notices).Count -ne $expectedNoticeCount -or
+        ($hasPerformanceTools -and -not $noticeDestinations.Contains($perfettoNotice)) -or
         @($requiredNoticeDestinations | Where-Object {
             -not $noticeDestinations.Contains($_)
         }).Count -ne 0) {

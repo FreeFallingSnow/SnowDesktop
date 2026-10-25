@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,9 +31,12 @@ struct CaptureSnapshot
 {
     CapturePhase phase = CapturePhase::Idle;
     std::string session, requestId, error, configHash;
+    std::string analysis = "none", analysisError, quality = "unknown";
     std::uint64_t generation = 0;
-    std::filesystem::path trace, manifest;
+    std::filesystem::path trace, manifest, report;
     unsigned requestedSeconds = 0;
+    unsigned preset = 0, bufferKiB = 0;
+    std::vector<std::wstring> selectedInstances;
     double elapsedMs = 0;
     bool scopeCpu = false, found = true;
 };
@@ -41,11 +45,14 @@ struct CaptureSnapshot
 // the SDK acknowledges startup. Completion is a per-session result, not Idle.
 bool Start(const CaptureOptions& options, std::string& error);
 bool RequestStop(std::string_view session, std::uint64_t generation = 0) noexcept;
+bool RequestAnalysis(std::string_view session, std::uint64_t generation, std::string& error);
 CaptureSnapshot Snapshot(std::string_view session = {});
 std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view replyRequestId = {});
 std::string ProcessControlRequest(std::string_view request) noexcept;
 void ConfigureControl(HWND window, const std::filesystem::path& outputRoot);
+void ConfigureGpuDemand(std::function<void(bool)> demand);
 void Shutdown() noexcept;
+bool IsStateChangeMessage(UINT message) noexcept;
 LRESULT Status() noexcept;
 bool IsControlMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;
 LRESULT HandleControlMessage(HWND window, UINT message, WPARAM wParam,

@@ -15,7 +15,7 @@ namespace snowdesktop::test
 // No product callback, timing stack, aggregation or alternate capture backend.
 struct NativeTraceEvent
 {
-    enum Kind { Begin, Counter, Instant } kind = Instant;
+    enum Kind { Begin, Numeric, Counter = Numeric, Instant } kind = Instant;
     std::string module, name;
     std::wstring owner;
     std::uint64_t operation = 0;
@@ -63,6 +63,8 @@ public:
             if (key == "module") result.module = Text(arg.string_value());
             if (key == "owner") owner = arg.uint_value();
             if (key == "operation") result.operation = arg.uint_value();
+            if (key == "metric") { result.name = Text(arg.string_value()); result.kind = NativeTraceEvent::Numeric; }
+            if (key == "value") result.value = arg.double_value();
         }
         if (event.type() == pb::TrackEvent::TYPE_SLICE_BEGIN) result.kind = NativeTraceEvent::Begin;
         else if (event.type() == pb::TrackEvent::TYPE_COUNTER)

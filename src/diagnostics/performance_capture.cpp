@@ -4,12 +4,15 @@
 #include "performance_control_pipe.h"
 #include "perfetto_session.h"
 #include "perfetto_categories.h"
+#include "performance_artifacts.h"
+#include "performance_analysis.h"
+#include "performance_compositor_clock.h"
+#include "performance_environment.h"
 #include "common/json_value.h"
 
 #include <bcrypt.h>
-#include <pdh.h>
-#include <pdhmsg.h>
 #include <psapi.h>
+#include <shlobj.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -102,14 +105,29 @@ std::vector<std::string> Categories(CapturePreset preset)
 }
 std::string ConfigHash(const CaptureOptions& options)
 {
-    const auto text = std::string(PresetName(options.preset)) + "|" + std::to_string(options.seconds) + "|" +
-        std::to_string(options.bufferKiB) + "|" + std::to_string(options.maximumFileBytes) + "|" + (options.scopeCpu ? "cpu" : "wall");
-    std::uint64_t value = 1469598103934665603ULL;
-    const auto add = [&](std::string_view part) { for (const unsigned char ch : part) { value ^= ch; value *= 1099511628211ULL; } };
-    add(text);
-    for (const auto& owner : options.selectedInstances) { add("|"); add(Utf8(owner)); }
-    std::ostringstream out; out << std::hex << std::setw(16) << std::setfill('0') << value;
+    std::string canonical;
+    const auto add = [&](std::string_view part) { canonical += std::to_string(part.size()); canonical += ':'; canonical += part; };
+    add("snowdesktop.capture.config.v2"); add(PresetName(options.preset)); add(std::to_string(options.seconds));
+    add(std::to_string(options.bufferKiB)); add(std::to_string(options.maximumFileBytes)); add(options.scopeCpu ? "cpu" : "wall");
+    add(std::to_string(options.selectedInstances.size()));
+    for (const auto& owner : options.selectedInstances) add(Utf8(owner));
+    std::array<unsigned char, 32> digest{};
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        throw std::runtime_error("configFingerprintFailed");
+    const auto status = BCryptHash(algorithm, nullptr, 0, reinterpret_cast<PUCHAR>(canonical.data()),
+        static_cast<ULONG>(canonical.size()), digest.data(), static_cast<ULONG>(digest.size()));
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (status < 0) throw std::runtime_error("configFingerprintFailed");
+    std::ostringstream out;
+    for (const auto byte : digest) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
     return out.str();
+}
+bool SameRequest(const CaptureOptions& a, const CaptureOptions& b)
+{
+    return a.session == b.session && a.requestId == b.requestId && a.output == b.output &&
+        a.seconds == b.seconds && a.bufferKiB == b.bufferKiB && a.maximumFileBytes == b.maximumFileBytes &&
+        a.preset == b.preset && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances;
 }
 struct File
 {
@@ -150,6 +168,7 @@ std::string ExecutableHash()
 }
 bool SafeDirectory(const std::filesystem::path& path, bool allowMissing)
 {
+    if (!IsLocalCapturePath(path)) return false;
     auto current = path;
     while (!current.empty())
     {
@@ -197,9 +216,14 @@ std::uint64_t StorageRemaining(const std::filesystem::path& root)
 struct Record
 {
     CaptureOptions options;
+    std::filesystem::path managedRoot;
+    std::function<void(bool)> gpuDemand;
     CaptureSnapshot snapshot;
     Clock::time_point started{};
     std::string executableSha256, traceSha256;
+    std::string environment = "null";
+    std::vector<std::uint64_t> selectedOwners;
+    bool finalWidgetSample = false;
     std::uint64_t firstTraceNs = 0, lastTraceNs = 0;
     TraceQuality quality;
 };
@@ -209,85 +233,28 @@ struct State
     std::condition_variable wake;
     std::thread worker;
     std::atomic<bool> stopRequested{ false };
+    std::atomic<bool> analysisCancel{ false };
+    std::atomic<std::uint64_t> widgetSamples{0};
     std::atomic<HWND> window{ nullptr };
-    std::shared_ptr<Record> current;
-    std::deque<CaptureSnapshot> history;
+    std::shared_ptr<Record> current, pending, pendingAnalysis;
+    std::deque<std::shared_ptr<Record>> history;
     std::filesystem::path root;
+    std::function<void(bool)> gpuDemand;
     std::uint64_t generation = 0;
-    ~State() { stopRequested.store(true); wake.notify_all(); if (worker.joinable()) worker.join(); }
+    bool workerExit = false, analysisActive = false;
+    ~State() { { std::lock_guard lock(mutex); workerExit = true; stopRequested.store(true); analysisCancel.store(true); } wake.notify_all(); if (worker.joinable()) worker.join(); }
 };
 State state;
 UINT SampleMessage() noexcept
 { static const auto message = RegisterWindowMessageW(L"FreeFallingSnow.SnowDesktop.Performance.Sample.v3"); return message; }
 UINT ControlMessage() noexcept
 { static const auto message = RegisterWindowMessageW(ControlMessageName); return message; }
+UINT StateMessage() noexcept
+{ static const auto message = RegisterWindowMessageW(L"FreeFallingSnow.SnowDesktop.Performance.State.v3"); return message; }
+void NotifyState() noexcept
+{ const auto window = state.window.load(); if (window && StateMessage()) PostMessageW(window, StateMessage(), 0, 0); }
 void SetPhase(const std::shared_ptr<Record>& record, CapturePhase phase)
-{ std::lock_guard lock(state.mutex); record->snapshot.phase = phase; }
-
-class GpuSampler
-{
-public:
-    GpuSampler()
-    {
-        Scope setup("profiler", "gpu.initialize");
-        if (PdhOpenQueryW(nullptr, 0, &query_) != ERROR_SUCCESS) return;
-        Add(L"\\GPU Engine(*)\\Utilization Percentage", engine_);
-        Add(L"\\GPU Process Memory(*)\\Dedicated Usage", dedicated_);
-        Add(L"\\GPU Process Memory(*)\\Shared Usage", shared_);
-        baseline_ = PdhCollectQueryData(query_) == ERROR_SUCCESS;
-    }
-    ~GpuSampler() { if (query_) PdhCloseQuery(query_); }
-    void Sample()
-    {
-        if (!query_ || PdhCollectQueryData(query_) != ERROR_SUCCESS)
-        {
-            Value("process", "gpu_query_available", {}, 0);
-            return;
-        }
-        if (!baseline_) { baseline_ = true; return; }
-        const auto engineCount = Emit(engine_, "gpu_engine_percent");
-        const auto dedicatedCount = Emit(dedicated_, "gpu_dedicated_bytes");
-        const auto sharedCount = Emit(shared_, "gpu_shared_bytes");
-        // No matching PID instance is unavailable, not a fabricated zero.
-        Value("process", "gpu_engine_instances", {}, engineCount);
-        Value("process", "gpu_dedicated_instances", {}, dedicatedCount);
-        Value("process", "gpu_shared_instances", {}, sharedCount);
-    }
-private:
-    void Add(const wchar_t* path, PDH_HCOUNTER& counter)
-    {
-        if (PdhAddEnglishCounterW(query_, path, 0, &counter) != ERROR_SUCCESS)
-            counter = nullptr;
-    }
-    unsigned Emit(PDH_HCOUNTER counter, const char* name)
-    {
-        if (!counter) return 0;
-        DWORD bytes = 0, count = 0;
-        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                &bytes, &count, nullptr) != PDH_MORE_DATA ||
-            bytes > 16 * 1024 * 1024) return 0;
-        std::vector<std::uint64_t> storage((bytes + 7) / 8);
-        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(storage.data());
-        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                &bytes, &count, items) != ERROR_SUCCESS) return 0;
-        const std::wstring prefix = L"pid_" +
-            std::to_wstring(GetCurrentProcessId()) + L"_";
-        unsigned matches = 0;
-        for (DWORD i = 0; i < count; ++i)
-        {
-            const auto& item = items[i];
-            if (!item.szName || !std::wstring_view(item.szName).starts_with(prefix) ||
-                (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA &&
-                 item.FmtValue.CStatus != PDH_CSTATUS_NEW_DATA)) continue;
-            Value("process", name, item.szName, item.FmtValue.doubleValue);
-            ++matches;
-        }
-        return matches;
-    }
-    PDH_HQUERY query_ = nullptr;
-    PDH_HCOUNTER engine_ = nullptr, dedicated_ = nullptr, shared_ = nullptr;
-    bool baseline_ = false;
-};
+{ { std::lock_guard lock(state.mutex); record->snapshot.phase = phase; } NotifyState(); }
 
 void SampleProcess()
 {
@@ -322,24 +289,35 @@ void SampleIo()
     Value("process", "io_read_operations", {}, static_cast<double>(counters.ReadOperationCount));
     Value("process", "io_write_operations", {}, static_cast<double>(counters.WriteOperationCount));
 }
-void RequestWidgetSample(std::uint64_t generation)
+bool RequestWidgetSample(std::uint64_t generation)
 {
     const auto window = state.window.load();
-    if (window && SampleMessage()) PostMessageW(window, SampleMessage(), static_cast<WPARAM>(generation), 0);
+    return window && SampleMessage() && PostMessageW(window, SampleMessage(), static_cast<WPARAM>(generation), 0);
 }
 std::string Manifest(const Record& record, bool complete)
 {
     SYSTEM_INFO system{}; GetSystemInfo(&system);
+    const auto allProcessors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     std::ostringstream out; out.imbue(std::locale::classic()); out << std::setprecision(12);
-    out << "{\"schemaVersion\":2,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
+    out << "{\"schemaVersion\":2,\"probeSchemaVersion\":2,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
         << ",\"generation\":" << record.snapshot.generation << ",\"requestId\":" << Quote(record.snapshot.requestId)
         << ",\"state\":" << Quote(complete ? "completed" : "failed") << ",\"completion\":" << (complete ? "true" : "false")
         << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
+        << ",\"managedStorage\":" << (record.managedRoot.empty() ? "false" : "true")
+        << ",\"finalWidgetSampleConfirmed\":" << (record.finalWidgetSample ? "true" : "false")
         << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":\"host\",\"sourceCommit\":null,\"executableSha256\":"
         << (record.executableSha256.empty() ? "null" : Quote(record.executableSha256))
         << ",\"traceSha256\":" << (record.traceSha256.empty() ? "null" : Quote(record.traceSha256))
-        << ",\"logicalProcessors\":" << system.dwNumberOfProcessors << ",\"preset\":" << Quote(PresetName(record.options.preset))
+        << ",\"logicalProcessors\":" << (allProcessors ? allProcessors : system.dwNumberOfProcessors) << ",\"preset\":" << Quote(PresetName(record.options.preset))
         << ",\"configHash\":" << Quote(record.snapshot.configHash) << ",\"scopeCpuEnabled\":" << (record.options.scopeCpu ? "true" : "false")
+        << ",\"environment\":" << record.environment << ",\"selectedInstances\":[";
+    for (std::size_t i = 0; i < record.selectedOwners.size(); ++i)
+    {
+        if (i) out << ',';
+        std::ostringstream owner; owner << std::hex << std::setw(16) << std::setfill('0') << record.selectedOwners[i];
+        out << "{\"ordinal\":" << i + 1 << ",\"owner\":" << Quote(owner.str()) << '}';
+    }
+    out << ']'
         << ",\"threadCpuSource\":" << (record.options.scopeCpu ? "\"perfetto.thread_time\"" : "null")
         << ",\"requestedSeconds\":" << record.options.seconds << ",\"bufferKiB\":" << record.options.bufferKiB
         << ",\"firstTraceNs\":" << Quote(std::to_string(record.firstTraceNs)) << ",\"lastTraceNs\":" << Quote(std::to_string(record.lastTraceNs))
@@ -347,6 +325,7 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"coverage\":\"pending-analysis\",\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId()
         << ",\"included\":true},{\"role\":\"settings\",\"included\":false}],\"probeQuality\":{\"droppedOwners\":" << record.quality.droppedOwners
         << ",\"droppedCounters\":" << record.quality.droppedCounters << ",\"droppedLinks\":" << record.quality.droppedLinks
+        << ",\"droppedTracks\":" << record.quality.droppedTracks
         << ",\"probeErrors\":" << record.quality.probeErrors << "}}";
     return out.str();
 }
@@ -354,17 +333,36 @@ void Worker(std::shared_ptr<Record> record) noexcept
 {
     std::string error;
     bool complete = false;
+    bool gpuDemandStarted = false;
     File manifest, storageLease;
-    const auto partialManifest = std::filesystem::path(record->snapshot.manifest.wstring() + L".partial");
+    std::filesystem::path partialManifest;
     try
     {
+        if (record->snapshot.trace.empty())
+        {
+            auto root = record->managedRoot;
+            if (root.empty())
+            {
+                PWSTR local = nullptr;
+                if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &local)))
+                    throw std::runtime_error("captureUserDirectoryUnavailable");
+                try { root = std::filesystem::path(local) / L"SnowDesktop/diagnostics/performance"; }
+                catch (...) { CoTaskMemFree(local); throw; }
+                CoTaskMemFree(local);
+                record->managedRoot = root;
+            }
+            const auto trace = root / Wide(record->options.session) / L"trace.pftrace";
+            std::lock_guard lock(state.mutex);
+            record->snapshot.trace = trace;
+            record->snapshot.manifest = trace.parent_path() / L"session.json";
+        }
+        partialManifest = std::filesystem::path(record->snapshot.manifest.wstring() + L".partial");
         const auto directory = record->snapshot.trace.parent_path();
         if (!SafeDirectory(directory, true)) throw std::runtime_error("capturePathRejected");
         std::filesystem::create_directories(directory);
         if (!SafeDirectory(directory, false)) throw std::runtime_error("capturePathRejected");
         std::uint64_t fileLimit = record->options.maximumFileBytes;
-        std::filesystem::path managedRoot;
-        { std::lock_guard lock(state.mutex); managedRoot = state.root; }
+        const auto& managedRoot = record->managedRoot;
         if (!managedRoot.empty() && directory.parent_path() == managedRoot)
         {
             const auto leasePath = managedRoot / L".capture-storage.lock";
@@ -383,6 +381,7 @@ void Worker(std::shared_ptr<Record> record) noexcept
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (manifest.value == INVALID_HANDLE_VALUE) throw std::runtime_error("cannotReserveManifest");
         record->executableSha256 = ExecutableHash();
+        record->environment = CaptureEnvironmentJson();
         PerfettoSession session;
         PerfettoSessionOptions native;
         native.output = record->snapshot.trace;
@@ -395,26 +394,37 @@ void Worker(std::shared_ptr<Record> record) noexcept
         if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&salt), sizeof(salt), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
             throw std::runtime_error("captureIdentityRandomFailed");
         ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances);
+        for (const auto& instance : record->options.selectedInstances) record->selectedOwners.push_back(OwnerId(instance));
         record->firstTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
         {
             std::lock_guard lock(state.mutex);
             record->started = Clock::now();
             record->snapshot.phase = CapturePhase::Recording;
         }
+        NotifyState();
         { Scope marker("profiler", "capture.start"); }
+        if (record->gpuDemand) { gpuDemandStarted = true; record->gpuDemand(true); }
         SampleProcess(); SampleIo(); RequestWidgetSample(record->snapshot.generation);
         const auto deadline = record->started + std::chrono::seconds(record->options.seconds);
         {
-            GpuSampler gpu;
+            std::unique_ptr<CompositorClock> compositor;
+            if (record->options.preset != CapturePreset::Resource) compositor = std::make_unique<CompositorClock>();
             while (!state.stopRequested.load() && Clock::now() < deadline)
             {
                 std::unique_lock lock(state.mutex);
                 state.wake.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::seconds(1)), [] { return state.stopRequested.load(); });
                 lock.unlock();
                 SampleProcess(); SampleIo();
-                { Scope scope("profiler", "sample.gpu"); gpu.Sample(); }
+                if (compositor) compositor->Sample();
                 RequestWidgetSample(record->snapshot.generation);
             }
+        }
+        const auto sampleBefore = state.widgetSamples.load();
+        if (RequestWidgetSample(record->snapshot.generation))
+        {
+            std::unique_lock lock(state.mutex);
+            state.wake.wait_for(lock, std::chrono::milliseconds(250), [&] { return state.workerExit || state.widgetSamples.load() > sampleBefore; });
+            record->finalWidgetSample = state.widgetSamples.load() > sampleBefore;
         }
         { Scope marker("profiler", "capture.stop"); }
         record->lastTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
@@ -424,6 +434,7 @@ void Worker(std::shared_ptr<Record> record) noexcept
             record->snapshot.elapsedMs = static_cast<double>(record->lastTraceNs - record->firstTraceNs) / 1e6;
         }
         SetPhase(record, CapturePhase::Finalizing);
+        if (gpuDemandStarted) { record->gpuDemand(false); gpuDemandStarted = false; }
         complete = session.Stop(error);
         if (complete)
         {
@@ -438,6 +449,7 @@ void Worker(std::shared_ptr<Record> record) noexcept
             ? std::string(detail) : "captureWorkerFailed";
     }
     catch (...) { error = "captureWorkerFailed"; }
+    if (gpuDemandStarted) { try { record->gpuDemand(false); } catch (...) { error = "captureGpuCleanupFailed"; } }
     if (Enabled()) record->quality = DeactivateTrace();
     {
         std::lock_guard lock(state.mutex);
@@ -464,10 +476,44 @@ void Worker(std::shared_ptr<Record> record) noexcept
     }
     // Terminal status is published only after SDK export and the immutable
     // manifest are finished. The final record is cached for idempotent callers.
-    std::lock_guard lock(state.mutex);
-    record->snapshot.phase = complete ? CapturePhase::Completed : CapturePhase::Failed;
-    state.history.push_back(record->snapshot);
-    if (state.history.size() > 20) state.history.pop_front();
+    if (storageLease.value != INVALID_HANDLE_VALUE) { CloseHandle(storageLease.value); storageLease.value = INVALID_HANDLE_VALUE; }
+    {
+        std::lock_guard lock(state.mutex);
+        record->snapshot.phase = complete ? CapturePhase::Completed : CapturePhase::Failed;
+        state.history.push_back(record);
+        if (state.history.size() > 20) state.history.pop_front();
+    }
+    NotifyState();
+}
+void WorkerLoop() noexcept
+{
+    for (;;)
+    {
+        std::shared_ptr<Record> record;
+        bool analysis = false;
+        {
+            std::unique_lock lock(state.mutex);
+            state.wake.wait(lock, [] { return state.workerExit || state.pending || state.pendingAnalysis; });
+            if (!state.pending && !state.pendingAnalysis && state.workerExit) return;
+            if (state.pending) record = std::move(state.pending);
+            else { record = std::move(state.pendingAnalysis); analysis = true; record->snapshot.analysis = "running"; }
+        }
+        if (!analysis) Worker(std::move(record));
+        else
+        {
+            NotifyState();
+            const auto result = AnalyzeCapture(record->snapshot.manifest, &state.analysisCancel);
+            {
+                std::lock_guard lock(state.mutex);
+                record->snapshot.analysis = result.error.empty() ? "completed" : "failed";
+                record->snapshot.report = result.report;
+                record->snapshot.analysisError = result.error;
+                record->snapshot.quality = result.quality;
+                state.analysisActive = false;
+            }
+            NotifyState();
+        }
+    }
 }
 }
 
@@ -484,51 +530,56 @@ bool Start(const CaptureOptions& requested, std::string& error)
         (options.preset == CapturePreset::Widget && options.selectedInstances.empty()) ||
         std::any_of(options.selectedInstances.begin(), options.selectedInstances.end(), [](const auto& id) { return id.empty() || id.size() > 256; }))
     { error = "invalidCaptureOptions"; return false; }
-    const auto config = ConfigHash(options);
+    if (!options.output.empty() && (!IsLocalCapturePath(options.output) || options.output.extension() != L".pftrace"))
+    { error = "invalidOutputPath"; return false; }
+    try
     {
         std::lock_guard lock(state.mutex);
         if (state.current && state.current->snapshot.requestId == options.requestId)
         {
-            if (state.current->snapshot.session == options.session && state.current->snapshot.configHash == config &&
-                (options.output.empty() || options.output == state.current->options.output)) return true;
+            if (SameRequest(options, state.current->options)) return true;
             error = "requestIdConflict"; return false;
         }
         for (const auto& old : state.history)
-            if (old.requestId == options.requestId)
+            if (old->snapshot.requestId == options.requestId)
             {
-                if (old.session == options.session && old.configHash == config && (options.output.empty() || options.output == old.trace)) return true;
+                if (SameRequest(options, old->options)) return true;
                 error = "requestIdConflict"; return false;
             }
+        if (state.analysisActive) { error = "analysisBusy"; return false; }
         if (state.current && Running(state.current->snapshot.phase)) { error = "captureBusy"; return false; }
-        if (std::any_of(state.history.begin(), state.history.end(), [&](const auto& old) { return old.session == options.session || old.requestId == options.requestId; }))
+        if (std::any_of(state.history.begin(), state.history.end(), [&](const auto& old) { return old->snapshot.session == options.session; }) ||
+            (state.current && state.current->snapshot.session == options.session))
         { error = "sessionAlreadyExists"; return false; }
-        if (options.output.empty()) options.output = state.root / Wide(options.session) / L"trace.pftrace";
-    }
-    if (!options.output.is_absolute() || options.output != options.output.lexically_normal() || options.output.extension() != L".pftrace")
-    { error = "invalidOutputPath"; return false; }
-    if (state.worker.joinable()) state.worker.join();
-    auto record = std::make_shared<Record>();
-    record->options = options;
-    record->snapshot.session = options.session;
-    record->snapshot.requestId = options.requestId;
-    record->snapshot.configHash = config;
-    record->snapshot.trace = options.output;
-    record->snapshot.manifest = options.output.parent_path() / L"session.json";
-    record->snapshot.requestedSeconds = options.seconds;
-    record->snapshot.scopeCpu = options.scopeCpu;
-    record->snapshot.phase = CapturePhase::Starting;
-    {
-        std::lock_guard lock(state.mutex);
+        auto record = std::make_shared<Record>();
+        record->options = options;
+        record->gpuDemand = state.gpuDemand;
+        if (options.output.empty()) record->managedRoot = state.root;
+        record->snapshot.session = options.session;
+        record->snapshot.requestId = options.requestId;
+        record->snapshot.configHash = ConfigHash(options);
+        record->snapshot.trace = options.output;
+        if (!options.output.empty()) record->snapshot.manifest = options.output.parent_path() / L"session.json";
+        record->snapshot.requestedSeconds = options.seconds;
+        record->snapshot.preset = static_cast<unsigned>(options.preset); record->snapshot.bufferKiB = options.bufferKiB;
+        record->snapshot.selectedInstances = options.selectedInstances;
+        record->snapshot.scopeCpu = options.scopeCpu;
+        record->snapshot.phase = CapturePhase::Starting;
+        if (!state.worker.joinable())
+        {
+            state.workerExit = false;
+            state.worker = std::thread(WorkerLoop);
+        }
         record->snapshot.generation = ++state.generation;
         state.current = record;
+        state.pending = record;
         state.stopRequested.store(false);
+        state.wake.notify_all();
+        NotifyState();
     }
-    try { state.worker = std::thread(Worker, record); }
     catch (...)
     {
-        std::lock_guard lock(state.mutex);
-        record->snapshot.phase = CapturePhase::Failed; record->snapshot.error = "captureWorkerStartFailed";
-        error = record->snapshot.error; return false;
+        error = "captureWorkerStartFailed"; return false;
     }
     return true;
 }
@@ -539,14 +590,30 @@ bool RequestStop(std::string_view session, std::uint64_t generation) noexcept
         (generation && generation != state.current->snapshot.generation))
     {
         return std::any_of(state.history.begin(), state.history.end(), [&](const auto& old) {
-            return old.session == session && (!generation || old.generation == generation) && !Running(old.phase);
+            return old->snapshot.session == session && (!generation || old->snapshot.generation == generation) && !Running(old->snapshot.phase);
         });
     }
     if (state.current->snapshot.phase == CapturePhase::Completed || state.current->snapshot.phase == CapturePhase::Failed) return true;
     state.stopRequested.store(true);
     if (state.current->snapshot.phase == CapturePhase::Recording) state.current->snapshot.phase = CapturePhase::Stopping;
     state.wake.notify_all();
+    NotifyState();
     return true;
+}
+bool RequestAnalysis(std::string_view session, std::uint64_t generation, std::string& error)
+{
+    error.clear();
+    std::lock_guard lock(state.mutex);
+    auto record = state.current;
+    if (!record || record->snapshot.session != session || record->snapshot.generation != generation)
+    { error = "sessionMismatch"; return false; }
+    if (record->snapshot.phase != CapturePhase::Completed || state.analysisActive)
+    { error = "captureBusy"; return false; }
+    if (record->snapshot.analysis == "completed") return true;
+    record->snapshot.analysis = "queued"; record->snapshot.analysisError.clear();
+    state.analysisCancel.store(false);
+    state.pendingAnalysis = record; state.analysisActive = true;
+    state.wake.notify_all(); NotifyState(); return true;
 }
 CaptureSnapshot Snapshot(std::string_view session)
 {
@@ -558,7 +625,7 @@ CaptureSnapshot Snapshot(std::string_view session)
             result.elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - state.current->started).count();
         return result;
     }
-    for (const auto& old : state.history) if (old.session == session) return old;
+    for (const auto& old : state.history) if (old->snapshot.session == session) return old->snapshot;
     CaptureSnapshot result;
     result.found = session.empty(); result.session = session;
     if (!result.found) { result.phase = CapturePhase::Failed; result.error = "unknownSession"; }
@@ -572,8 +639,12 @@ std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view reply
         << ",\"generation\":" << snapshot.generation << ",\"state\":" << Quote(PhaseName(snapshot.phase))
         << ",\"processId\":" << GetCurrentProcessId() << ",\"elapsedMs\":" << snapshot.elapsedMs
         << ",\"requestedSeconds\":" << snapshot.requestedSeconds << ",\"configHash\":" << Quote(snapshot.configHash)
+        << ",\"analysis\":" << Quote(snapshot.analysis) << ",\"analysisError\":" << Quote(snapshot.analysisError)
+        << ",\"quality\":" << Quote(snapshot.quality) << ",\"preset\":" << Quote(PresetName(static_cast<CapturePreset>(snapshot.preset)))
+        << ",\"bufferKiB\":" << snapshot.bufferKiB << ",\"scopeCpuEnabled\":" << (snapshot.scopeCpu ? "true" : "false")
         << ",\"errorCode\":" << Quote(snapshot.error) << ",\"retryable\":" << (snapshot.error == "captureBusy" ? "true" : "false")
         << ",\"paths\":{\"trace\":" << Quote(Utf8(snapshot.trace.wstring())) << ",\"manifest\":" << Quote(Utf8(snapshot.manifest.wstring()))
+        << ",\"report\":" << Quote(Utf8(snapshot.report.wstring()))
         << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3},"
         << "\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId() << ",\"included\":true}]}";
     return out.str();
@@ -650,13 +721,22 @@ void ConfigureControl(HWND window, const std::filesystem::path& root)
     state.root = root;
     state.window.store(window);
 }
+void ConfigureGpuDemand(std::function<void(bool)> demand)
+{ std::lock_guard lock(state.mutex); state.gpuDemand = std::move(demand); }
 void Shutdown() noexcept
 {
     state.window.store(nullptr);
     StopControlPipe();
-    state.stopRequested.store(true); state.wake.notify_all();
     std::lock_guard startLock(state.startMutex);
+    { std::lock_guard lock(state.mutex); state.workerExit = true; state.stopRequested.store(true); state.analysisCancel.store(true); }
+    state.wake.notify_all();
     if (state.worker.joinable()) state.worker.join();
+    {
+        std::lock_guard lock(state.mutex);
+        state.gpuDemand = {};
+        if (state.current) state.current->gpuDemand = {};
+        for (const auto& record : state.history) record->gpuDemand = {};
+    }
 }
 LRESULT Status() noexcept
 {
@@ -671,6 +751,7 @@ LRESULT Status() noexcept
     default: return ProtocolIdle;
     }
 }
+bool IsStateChangeMessage(UINT message) noexcept { return message && message == StateMessage(); }
 bool IsControlMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept
 {
     if ((message == ControlMessage() && message) || (message == SampleMessage() && message)) return true;
@@ -688,7 +769,11 @@ LRESULT HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM,
         if (message == SampleMessage())
         {
             const auto snapshot = Snapshot();
-            if (Enabled() && snapshot.generation == static_cast<std::uint64_t>(wParam) && sampleWidgets) sampleWidgets(owner);
+            if (Enabled() && snapshot.generation == static_cast<std::uint64_t>(wParam) && sampleWidgets)
+            {
+                sampleWidgets(owner);
+                state.widgetSamples.fetch_add(1); state.wake.notify_all();
+            }
             return 1;
         }
         // Old WM_COPYDATA starts cannot authenticate the caller and cannot

@@ -1,4 +1,5 @@
 #include "widget_task_broker.h"
+#include "diagnostics/performance_trace.h"
 
 #include <algorithm>
 #include <utility>
@@ -74,6 +75,7 @@ TaskStartResult WidgetTaskBroker::Start(
         task.instanceId,
         task.name, task.preview, task.arguments });
     tasks_.emplace(id, std::move(task));
+    performance::TaskQueued(id, tasks_.at(id).instanceId);
     return { id, {} };
 }
 
@@ -127,6 +129,7 @@ bool WidgetTaskBroker::Complete(
     completions_.push_back({ id, found->second.ownerToken,
         found->second.instanceId,
         found->second.name, ok, std::move(error) });
+    performance::TaskCompleted(id, ok);
     tasks_.erase(found);
     return true;
 }

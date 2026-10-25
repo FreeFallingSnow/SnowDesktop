@@ -362,7 +362,15 @@ void TestCodec()
     guide.debugProfileEnabled = true;
     guide.debugDataDirectory = L"D:\\data.debug\\data";
     guide.debugDesktopDirectory = L"D:\\模拟桌面";
+    guide.performance.emplace(); guide.performance->session = "cli-started-session";
+    guide.performance->phase = "recording"; guide.performance->generation = 48;
+    guide.performance->instances.push_back({L"local-instance", L"本地名称"});
+    guide.performance->selectedInstances = {L"local-instance"}; guide.performance->preset = 2;
     const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(restoredGuide.performance && restoredGuide.performance->generation == 48 &&
+        restoredGuide.performance->session == "cli-started-session" && restoredGuide.performance->preset == 2 &&
+        restoredGuide.performance->instances[0].name == L"本地名称" && restoredGuide.performance->selectedInstances == guide.performance->selectedInstances,
+        "settings reopen retains host-owned capture identity and private local selection");
     Check(restoredGuide.debugProfileEnabled == guide.debugProfileEnabled &&
         restoredGuide.debugDataDirectory == guide.debugDataDirectory &&
         restoredGuide.debugDesktopDirectory == guide.debugDesktopDirectory,

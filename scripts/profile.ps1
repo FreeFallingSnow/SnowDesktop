@@ -45,6 +45,8 @@ function Wait-Capture([string]$Id, [UInt64]$ExpectedGeneration) {
 }
 try {
     if ($Mode) { $Preset = if ($Mode -eq 'summary') {'idle'} else {'interaction'} }
+    if (-not $PSBoundParameters.ContainsKey('Seconds')) { $Seconds = if ($Preset -eq 'idle') {120} elseif ($Preset -eq 'widget-detail') {30} else {60} }
+    if (-not $PSBoundParameters.ContainsKey('BufferKiB')) { $BufferKiB = if ($Preset -eq 'idle') {32768} else {65536} }
     if ($Command -eq 'setup') {
         [pscustomobject]@{version='v58.2';path=(Get-SnowDesktopTraceProcessor -Offline:$Offline)} | ConvertTo-Json -Compress
         exit 0
@@ -62,9 +64,18 @@ try {
         $after = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($before.schemaVersion -ne 2 -or $after.schemaVersion -ne 2) { throw 'comparisonRequiresNativeSummaryV2: historical reports remain readable through report.' }
         if (-not $before.quality.valid -or -not $after.quality.valid -or $before.configHash -ne $after.configHash -or
-            $before.queryVersion -ne $after.queryVersion) { throw 'incompatibleComparison: capture configuration, query version and complete evidence must match.' }
+            $before.queryVersion -ne $after.queryVersion -or $before.sdkVersion -ne $after.sdkVersion -or
+            $before.quality.scopeCoverage -ne 'complete_recorded' -or $after.quality.scopeCoverage -ne 'complete_recorded') {
+            throw 'incompatibleComparison: capture configuration, SDK/query versions and complete recorded scope coverage must match.' }
         foreach ($query in $before.queryHashes.PSObject.Properties) {
             if ($after.queryHashes.($query.Name) -ne $query.Value) { throw 'incompatibleQueryPackage' }
+        }
+        $unknown = [Collections.Generic.List[string]]::new()
+        foreach ($field in @('osBuild','processorArchitecture','logicalProcessors','physicalMemoryBytes','acPower','batterySaver','displays','machineIdentity','packageFingerprint','layoutFingerprint','workload')) {
+            $left = if ($before.PSObject.Properties['environment'] -and $before.environment -and $before.environment.PSObject.Properties[$field]) { $before.environment.$field } else { $null }
+            $right = if ($after.PSObject.Properties['environment'] -and $after.environment -and $after.environment.PSObject.Properties[$field]) { $after.environment.$field } else { $null }
+            if ($null -eq $left -or $null -eq $right) { $unknown.Add($field); continue }
+            if ((ConvertTo-Json -InputObject $left -Depth 6 -Compress) -cne (ConvertTo-Json -InputObject $right -Depth 6 -Compress)) { throw ('incompatibleEnvironment: ' + $field) }
         }
         $keys = @{}; foreach ($row in $before.modules) { $keys[$row.module] = $row }
         $rows = @($after.modules | ForEach-Object {
@@ -74,7 +85,8 @@ try {
                 baselineCallsPerSecond=if($old){[double]$old.calls*1000/$before.effectiveDurationMs}else{$null}
                 currentCallsPerSecond=[double]$_.calls*1000/$after.effectiveDurationMs}
         })
-        [pscustomobject]@{schemaVersion=2;modules=$rows;note='Module observations only. Instance identities are session-local. Match machine, display, packages, layout and workload before interpreting differences.'} | ConvertTo-Json -Depth 6
+        [pscustomobject]@{schemaVersion=2;modules=$rows;compatibilityConfirmed=($unknown.Count -eq 0);unknownEnvironment=@($unknown)
+            note='Module observations only. Instance identities are session-local. Unknown compatibility requires separate evidence before interpreting differences.'} | ConvertTo-Json -Depth 6
         exit 0
     }
     if (-not ('SnowDesktopPerformanceClientV3' -as [type])) {

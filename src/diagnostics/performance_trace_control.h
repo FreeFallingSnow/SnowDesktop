@@ -7,7 +7,7 @@ namespace snowdesktop::performance
 {
 struct TraceQuality
 {
-    std::uint64_t droppedOwners = 0, droppedCounters = 0, droppedLinks = 0, probeErrors = 0;
+    std::uint64_t droppedOwners = 0, droppedCounters = 0, droppedLinks = 0, probeErrors = 0, droppedTracks = 0;
 };
 struct TraceOwnerDescription
 {
@@ -21,4 +21,7 @@ TraceQuality DeactivateTrace() noexcept;
 std::vector<TraceOwnerDescription> DescribeTraceOwners();
 // Session-local correlation identity; do not export a HWND/address verbatim.
 std::uint64_t OperationId(std::uint64_t correlation) noexcept;
+// Single atomic load for allocation/task probes. Zero means recording is off.
+std::uint64_t CaptureGeneration() noexcept;
+std::uint64_t ReserveAnimationTrack() noexcept;
 }

@@ -1412,6 +1412,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
         status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
         status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
+        if (page == SettingsPage::Debug)
+        {
+            status.performance.emplace(); auto& capture = *status.performance;
+            capture.session = "preview-capture"; capture.generation = 1;
+            capture.phase = expanded ? "recording" : "completed";
+            capture.requestedSeconds = 120; capture.elapsedMs = 42000; capture.bufferKiB = 32768;
+            capture.preset = 2; capture.threadCpu = true;
+            capture.instances = {{L"preview-clock", L"Clock"}, {L"preview-calendar", L"Calendar"}};
+            capture.selectedInstances = {L"preview-clock"};
+            capture.trace = L"C:\\Preview\\Performance\\trace.pftrace";
+            if (!expanded) { capture.analysis = "completed"; capture.quality = "valid"; capture.report = L"C:\\Preview\\Performance\\report.md"; }
+        }
         (void)shell->ApplyHomeAboutStatusPatch(status);
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
         {

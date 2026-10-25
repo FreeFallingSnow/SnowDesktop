@@ -142,10 +142,13 @@ SD_IPC_FIELDS(SettingsSnapshot,
     v.route, v.values, v.domainRevisions, v.dirtyDomains,
     v.pendingPreviewDomains, v.pendingCommitDomains, v.retryRequired, v.externalReplacementPending,
     v.lastActionMessage);
+SD_IPC_FIELDS(PerformanceCaptureRequest, v.action, v.session, v.generation, v.preset, v.seconds, v.bufferMiB, v.threadCpu, v.instances);
+SD_IPC_FIELDS(PerformanceCaptureInstance, v.id, v.name);
+SD_IPC_FIELDS(PerformanceCaptureStatus, v.session, v.phase, v.error, v.analysis, v.generation, v.requestedSeconds, v.elapsedMs, v.threadCpu, v.trace, v.report, v.instances, v.preset, v.bufferKiB, v.selectedInstances, v.quality);
 SD_IPC_FIELDS(SettingsHostActions::Request,
     v.action, v.widgetInstanceId, v.value, v.boolValue,
     v.hotkeyTarget, v.modifiers, v.virtualKey,
-    v.desktopStyleDockPosition, v.desktopStyleDockAttached);
+    v.desktopStyleDockPosition, v.desktopStyleDockAttached, v.performance);
 SD_IPC_FIELDS(PageLayoutEntry,
     v.id, v.name, v.columns, v.rows, v.itemCount,
     v.widgetCount, v.guideCount, v.role, v.monitorOrdinal, v.visible,

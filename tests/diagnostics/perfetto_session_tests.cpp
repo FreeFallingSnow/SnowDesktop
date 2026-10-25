@@ -3,6 +3,8 @@
 #include <propkey.h>
 #include "diagnostics/perfetto_categories.h"
 #include "diagnostics/perfetto_session.h"
+#include "diagnostics/performance_animation.h"
+#include "diagnostics/performance_trace_control.h"
 
 #include <chrono>
 #include <atomic>
@@ -205,6 +207,25 @@ void RunPerfettoSessionTests()
     AssertSql(options.output,
         "SELECT (SELECT SUM(value) FROM stats WHERE name GLOB 'traced_buf_*'"
         " AND (severity='data_loss' OR name GLOB '*discard*' OR name GLOB '*overwrit*'))>0 AS passed;");
+    options.output = root / L"track-bound.pftrace";
+    options.bufferKiB = 32768;
+    options.categories = { "snow.frame", "snow.profiler" };
+    Check(session.Start(options, error), "start bounded animation identity capture");
+    perf::ActivateTrace(10000, 1);
+    for (int animation = 0; animation < 1025; ++animation)
+    {
+        // Reusing a scheduler key must still produce separate lifetime tracks.
+        const auto identity = perf::AnimationBegin(0, "fixture.bound", "desktop", 16.666, 16.666, false);
+        Check((identity != 0) == (animation < 1024), "animation tracks stop at the session bound");
+        if (identity) perf::AnimationEnd(identity, false);
+    }
+    const auto quality = perf::DeactivateTrace();
+    Check(quality.droppedTracks == 1, "track exhaustion is visible in capture quality");
+    Check(session.Stop(error), "publish bounded animation fixture");
+    AssertSql(options.output,
+        "SELECT ((SELECT COUNT(*) FROM slice WHERE name='animation.lifetime' AND dur>=0)=1024"
+        " AND (SELECT COUNT(DISTINCT extract_arg(arg_set_id,'debug.animation')) FROM slice"
+        " WHERE name='animation.lifetime')=1024) AS passed;");
     std::cout << "Native Perfetto fixture passed: " << root.string() << '\n';
     // Only this fixture's individually named generated files are removed.
     for (const auto& item : std::filesystem::directory_iterator(root))

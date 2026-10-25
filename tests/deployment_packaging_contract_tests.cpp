@@ -29,6 +29,62 @@ std::string ReadText(const std::filesystem::path& path)
     return text;
 }
 
+void TestPerformanceDeployment(const std::filesystem::path& root)
+{
+    const auto fixture = build_test::temporary("perfetto-deployment-contract");
+    const auto script = fixture / "contract.ps1";
+    build_test::write(script, R"ps(
+param([string]$Repository,[string]$Root)
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+Import-Module (Join-Path $Repository 'scripts/deployment_payload.psm1') -Force
+function Write-Fixture([string]$Relative) {
+    $path=Join-Path $Root $Relative
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))|Out-Null
+    [IO.File]::WriteAllText($path,'fixture')
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+$names=@('CppWinRT-LICENSE.txt','WindowsAppSDK-LICENSE.txt','WindowsAppSDK-NOTICE.txt',
+    'WindowsML-LICENSE.txt','WindowsML-NOTICE.txt','WebView2-LICENSE.txt','WebView2-NOTICE.txt',
+    'YASB-LICENSE.txt','MiSans-LICENSE.pdf','HarmonyOS-Sans-LICENSE.txt')
+$notices=@(foreach($name in $names) {
+    $path='.deployment/licenses/'+$name
+    [ordered]@{path=$path;destination=('licenses/'+$name);sha256=(Write-Fixture $path)}
+})
+$manifest=[ordered]@{schemaVersion=1;architecture='x64';windowsAppSdkPackageVersion='2.4.0';cppWinRtPackageVersion='3.0.260818.1'
+    files=@([ordered]@{path='fixture.bin';source='Generated';sha256=(Write-Fixture 'fixture.bin')})
+    appxFragments=@([ordered]@{path='.deployment/appxfragments/fixture.appxfragment';source='fixture';sha256=(Write-Fixture '.deployment/appxfragments/fixture.appxfragment')})
+    notices=$notices}
+function Save { [IO.File]::WriteAllText((Join-Path $Root 'SnowDesktop.deployment.json'),($manifest|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false)) }
+Save
+$legacy=Read-SnowDesktopDeploymentManifest -BuildOutput $Root
+if(@($legacy.notices).Count -ne 10){throw 'legacy ten-notice manifest must remain readable'}
+$tool='performance/scripts/profile.ps1'
+$manifest.files+=([ordered]@{path=$tool;source='SnowDesktop';sha256=(Write-Fixture $tool)})
+Save
+$rejected=$false
+try { Read-SnowDesktopDeploymentManifest -BuildOutput $Root|Out-Null } catch { $rejected=$true }
+if(-not $rejected){throw 'performance tools without Perfetto license must be rejected'}
+$perfetto=[ordered]@{path='.deployment/licenses/Perfetto-LICENSE.txt';destination='licenses/Perfetto-LICENSE.txt';sha256=(Write-Fixture '.deployment/licenses/Perfetto-LICENSE.txt')}
+$manifest.notices+= $perfetto
+Save
+$current=Read-SnowDesktopDeploymentManifest -BuildOutput $Root
+if(@($current.notices).Count -ne 11){throw 'current eleven-notice manifest must be accepted'}
+$delivery=Join-Path $Root 'delivery'
+Copy-SnowDesktopDeploymentPayload -BuildOutput $Root -Destination $delivery -RuntimeDirectory 'SnowDesktop.Runtime'|Out-Null
+if(-not (Test-Path -LiteralPath (Join-Path $delivery $tool)) -or (Test-Path -LiteralPath (Join-Path $delivery ('SnowDesktop.Runtime/'+$tool)))){throw 'host analysis tools must stay beside the executable'}
+if(-not (Test-Path -LiteralPath (Join-Path $delivery 'licenses/Perfetto-LICENSE.txt'))){throw 'Perfetto notice must be distributed'}
+$perfetto.destination='licenses/Unexpected.txt'
+Save
+$rejected=$false
+try { Read-SnowDesktopDeploymentManifest -BuildOutput $Root|Out-Null } catch { $rejected=$true }
+if(-not $rejected){throw 'extending one known notice must not accept arbitrary destinations'}
+)ps");
+    const auto result = build_test::run({build_test::powershell(true).wstring(), L"-NoProfile", L"-NonInteractive",
+        L"-ExecutionPolicy", L"Bypass", L"-File", script.wstring(), L"-Repository", root.wstring(), L"-Root", fixture.wstring()}, fixture, 25);
+    build_test::require(result.code == 0, "production deployment reader/copy handles legacy and Perfetto notice contracts: " + result.out + result.err);
+}
+
 void TestExecutableVersionResources(const std::filesystem::path& root)
 {
     namespace fs = std::filesystem;
@@ -841,6 +897,8 @@ int main(int argc, char** argv)
     if (argc == 2)
     {
         const std::filesystem::path root(argv[1]);
+        try { TestPerformanceDeployment(root); }
+        catch (const std::exception& error) { std::cerr << error.what() << '\n'; Check(false, "Perfetto deployment compatibility and license enforcement"); }
         try { TestExecutableVersionResources(root); }
         catch (const std::exception& error) {
             std::cerr << error.what() << '\n';

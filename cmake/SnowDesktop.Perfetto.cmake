@@ -46,7 +46,9 @@ target_link_libraries(SnowDesktopPerfettoSdk PUBLIC ws2_32)
 add_library(SnowDesktopPerfetto STATIC
     src/diagnostics/perfetto_categories.cpp
     src/diagnostics/perfetto_session.cpp
-    src/diagnostics/performance_trace.cpp)
+    src/diagnostics/performance_trace.cpp
+    src/diagnostics/performance_animation.cpp
+    src/diagnostics/performance_compositor_clock.cpp)
 target_include_directories(SnowDesktopPerfetto PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(SnowDesktopPerfetto PUBLIC cxx_std_20)
 target_link_libraries(SnowDesktopPerfetto PUBLIC SnowDesktopPerfettoSdk)
@@ -84,10 +86,21 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/shell/shell_extension_service.cpp
     src/system/status_bar/status_bar.cpp
     src/widget/data/widget_audio_analysis_provider.cpp
+    src/widget/data/widget_gpu_sampler.cpp
     src/widget/data/widget_system_data_provider.cpp
     src/widget/runtime/lua_runtime.cpp
     src/widget/runtime/widget_engine.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp
+    src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_filesystem_task_executor.cpp
+    src/widget/tasks/widget_audio_output_task_executor.cpp
+    src/widget/tasks/widget_clipboard_task_executor.cpp
+    tests/widget/clipboard_platform_contract_tests.cpp
+    src/widget/tasks/widget_media_task_executor.cpp
+    src/widget/tasks/widget_app_task_executor.cpp
+    src/widget/tasks/widget_native_task_executor.cpp
+    src/widget/tasks/widget_location_task_executor.cpp
+    src/ui/render/ui_animation_scheduler.cpp
     src/widget/view/widget_view_lua.cpp
     src/winui/settings_window_host.cpp
 )

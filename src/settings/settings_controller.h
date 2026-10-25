@@ -1,4 +1,5 @@
 #pragma once
+#include "performance_capture_settings.h"
 
 #include "category_settings.h"
 #include "desktop/desktop_display_settings.h"
@@ -242,6 +243,7 @@ public:
         ApplyDesktopStyleAnimations,
         GetDockRunningApplications,
         GetDockTrayApplications,
+        PerformanceCapture,
     };
 
     struct Request
@@ -256,6 +258,7 @@ public:
         // Host-private desktop style draft, applied atomically with the preset.
         DockPosition desktopStyleDockPosition = DockPosition::Bottom;
         bool desktopStyleDockAttached = false;
+        PerformanceCaptureRequest performance;
     };
 
     virtual ~SettingsHostActions() = default;

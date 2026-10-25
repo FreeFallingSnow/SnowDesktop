@@ -1,4 +1,5 @@
 #include "widget_app_task_executor.h"
+#include "diagnostics/performance_trace.h"
 
 #include <array>
 #include <iomanip>
@@ -191,6 +192,7 @@ void WidgetAppTaskExecutor::WorkerMain(std::stop_token stopToken)
         }
 
         WidgetAppSearchCompletion completion;
+        performance::TaskExecution trace(request.id, "app.search");
         completion.id = request.id;
         completion.catalogRevision = request.catalogRevision;
         completion.ok = true;
@@ -325,6 +327,7 @@ void WidgetExternalSearchTaskExecutor::WorkerMain(
         }
 
         WidgetAppSearchCompletion completion;
+        performance::TaskExecution trace(request.id, "external.search");
         completion.id = request.id;
         completion.catalogRevision = 1;
         try
