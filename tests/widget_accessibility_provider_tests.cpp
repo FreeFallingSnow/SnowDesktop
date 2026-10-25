@@ -1072,7 +1072,16 @@ struct ApartmentFixture
     void ReplaceSnapshot()
     {
         auto replacement = Snapshot();
-        replacement.nodes[5].valueText = std::string(text.begin(), text.end());
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            text.data(), static_cast<int>(text.size()),
+            nullptr, 0, nullptr, nullptr);
+        Check(bytes > 0, "fixture text must encode as UTF-8");
+        replacement.nodes[5].valueText.resize(static_cast<std::size_t>(bytes));
+        Check(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                text.data(), static_cast<int>(text.size()),
+                replacement.nodes[5].valueText.data(), bytes,
+                nullptr, nullptr) == bytes,
+            "fixture text conversion must preserve every UTF-8 byte");
         auto access = std::make_shared<snowdesktop::text_input::TextAccess>();
         access->document = [this]() ->
             std::optional<snowdesktop::text_input::AccessibleDocument> {
@@ -1216,7 +1225,7 @@ void TestRealUiaApartmentAndLifetime()
             }
             Check(SUCCEEDED(button->SetFocus()) && fixture.focuses > 0,
                 "background UIA focus must reach the owning STA");
-            BSTR replacementValue = SysAllocString(L"after");
+            BSTR replacementValue = SysAllocString(L"after \u97f3\u4e50");
             Check(replacementValue != nullptr,
                 "the client value argument must be an allocated BSTR");
             const HRESULT writeResult = value->SetValue(replacementValue);
@@ -1226,14 +1235,14 @@ void TestRealUiaApartmentAndLifetime()
             BSTR currentValue = nullptr;
             Check(SUCCEEDED(value->get_CurrentValue(&currentValue)) &&
                     currentValue &&
-                    std::wstring(currentValue, SysStringLen(currentValue)) == L"after",
+                    std::wstring(currentValue, SysStringLen(currentValue)) == L"after \u97f3\u4e50",
                 "marshalling must preserve live values without waiting for paint events");
             SysFreeString(currentValue);
             ComPtr<IUIAutomationTextRange> range;
             BSTR currentText = nullptr;
             Check(SUCCEEDED(text->get_DocumentRange(&range)) && range &&
                     SUCCEEDED(range->GetText(-1, &currentText)) && currentText &&
-                    std::wstring(currentText, SysStringLen(currentText)) == L"after" &&
+                    std::wstring(currentText, SysStringLen(currentText)) == L"after \u97f3\u4e50" &&
                     SUCCEEDED(range->Select()),
                 "retained text ranges must read and select through the owning STA");
             SysFreeString(currentText);
