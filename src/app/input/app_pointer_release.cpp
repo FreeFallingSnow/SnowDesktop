@@ -566,6 +566,9 @@ void DesktopApp::FlushShellHoverTrace()
 
 bool DesktopApp::HandleDockClickRelease(POINT point)
 {
+    // Crossing the drag threshold owns the complete gesture, including a
+    // release back on its source or at an unchanged insertion boundary.
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive()) return false;
     DockContainer* dock = dockPressedContainer_;
     if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
@@ -1441,10 +1444,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         wp = releaseKeyState;
         dropPreviewMods = static_cast<int>(releaseKeyState & (MK_CONTROL | MK_ALT | MK_SHIFT));
     }
-
-    // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
-    if (!rightDrop && HandleDockClickRelease(upPoint))
-        goto cleanup;
 
     if (IsExternalDropWindowAt(upPoint))
     {

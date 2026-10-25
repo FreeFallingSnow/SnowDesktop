@@ -140,6 +140,19 @@
             check(SUCCEEDED(cpu->Unmap()), "unmap pixel reference");
             return result;
         };
+        const auto paintedBounds = [&](const std::vector<std::uint32_t>& pixels) {
+            RECT bounds{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
+            for (UINT y = 0; y < height; ++y)
+            for (UINT x = 0; x < width; ++x)
+                if ((pixels[static_cast<size_t>(y) * width + x] >> 24) != 0)
+                {
+                    bounds.left = std::min(bounds.left, static_cast<LONG>(x));
+                    bounds.top = std::min(bounds.top, static_cast<LONG>(y));
+                    bounds.right = std::max(bounds.right, static_cast<LONG>(x + 1));
+                    bounds.bottom = std::max(bounds.bottom, static_cast<LONG>(y + 1));
+                }
+            return bounds;
+        };
         std::array<DockContainer*, 3> docks{};
         const auto reference = [&] {
             std::array<DockContainer::PresentationState, 3> before;
@@ -414,13 +427,18 @@
                 check(EqualRect(&beforeDrag, &duringDrag) &&
                     docks[0]->IsMagnificationAnimating() == (effect != 0),
                     "internal and external drag entry must preserve partial hover geometry and its timeline");
-                check(IsRectEmpty(&docks[0]->GetHoveredTitleBounds(first)),
+                const RECT dragTitle = docks[0]->GetHoveredTitleBounds(first);
+                check(IsRectEmpty(&dragTitle),
                     "drag hover must not put a title over the insertion feedback");
                 docks[0]->AdvanceMagnificationAnimation(hoverNow + 1000);
                 const RECT expanded = docks[0]->GetElementVisualRect(base, first);
                 check(effect == 0 ? EqualRect(&base, &expanded) != FALSE :
                     docks[0]->GetElementIconSize(base, expanded) > docks[0]->GetElementIconSize(base, base),
                     "stationary drag hover must finish the configured growth effect");
+                const RECT hidden = docks[0]->GetSlots().back()->GetBounds();
+                const RECT hiddenVisual = docks[0]->GetElementVisualRect(hidden, first);
+                check(IsRectEmpty(&hidden) && EqualRect(&hidden, &hiddenVisual),
+                    "a hidden Search insertion boundary must remain empty and undisplaced during hover");
                 POINT tip = first;
                 if (effect != 0)
                 {
@@ -452,6 +470,26 @@
                 check(line.x >= 0 && line.y >= 0 && line.x < static_cast<LONG>(width) && line.y < static_cast<LONG>(height) &&
                     indicator[static_cast<size_t>(line.y) * width + static_cast<size_t>(line.x)] != 0,
                     "the blue insertion line must follow the animated next-slot edge rather than its original pitch");
+                const RECT linePixels = paintedBounds(indicator);
+                const LONG lineLength = vertical ? linePixels.right - linePixels.left : linePixels.bottom - linePixels.top;
+                const LONG baseLength = (vertical ? base.right - base.left : base.bottom - base.top) - 20;
+                check(effect == 0 ? std::abs(lineLength - baseLength) <= 2 : lineLength > baseLength,
+                    "the insertion line must lengthen with either adjacent hover owner, including slight single-icon growth");
+                check(effect != 2 || (vertical ? linePixels.bottom - linePixels.top : linePixels.right - linePixels.left) > 4,
+                    "wave hover must also enlarge insertion-line thickness");
+
+                referenceContext->SetTarget(complete.Get());
+                referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                app.brushCache_.clear(); app.brushCacheContext_ = referenceContext.Get();
+                docks[0]->DrawDropPreview(referenceContext.Get(), docks[0]->GetSlots().front().get(), HitRegion::Handoff);
+                check(SUCCEEDED(referenceContext->EndDraw()), "render the actual green Dock handoff frame");
+                referenceContext->SetTarget(nullptr);
+                app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
+                const RECT greenPixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+                const RECT focusedVisual = docks[0]->GetElementVisualRect(base, tip);
+                check(greenPixels.left <= focusedVisual.left + 1 && greenPixels.top <= focusedVisual.top + 1 &&
+                    greenPixels.right >= focusedVisual.right - 1 && greenPixels.bottom >= focusedVisual.bottom - 1,
+                    "the green handoff frame must enclose the full animated icon rather than its original cell");
                 const RECT beforeRelease = docks[0]->GetElementVisualRect(base, tip);
                 app.dragSession_.End();
                 const RECT released = docks[0]->GetElementVisualRect(base, tip);
@@ -466,6 +504,26 @@
                     "re-entering during a drag must resume the configured hover animation");
                 app.dragSession_.End();
             }
+
+            // The previous release route converted a drag back onto its source
+            // into a click. Double-click launch mode makes that faulty route
+            // observable as a pending click, without launching an application.
+            app.lastMousePoint_ = first;
+            auto* self = docks[0]->GetSlots().front()->GetItem();
+            app.dragSession_.Begin(docks[0], {self}, app.BuildDragSourceList({self}, docks[0]), first, first);
+            app.mouseDown_ = true; app.mouseDownPoint_ = first;
+            app.dockPressedContainer_ = docks[0]; app.dockPressedEntry_ = 0;
+            app.dockPressedWindowAction_ = snowdesktop::dock_window_rules::DockClickAction::Launch;
+            app.dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+            const bool singleClick = app.dockSettings_.singleClickLaunchItems;
+            app.dockSettings_.singleClickLaunchItems = false;
+            check(!app.HandleDockClickRelease(first) && app.dragSession_.IsActive(),
+                "an active drag must never enter Dock click execution even with stale pressed state");
+            app.OnLeftButtonUpAt(0, first, false);
+            check(!app.dragSession_.HasContext() && app.dockPendingDoubleClickEntry_ == static_cast<size_t>(-1) &&
+                app.dockEntries_.size() == 3 && app.dockEntries_.front().reference == app.items_.front().layoutKey,
+                "the actual button-up route must end a self drop without arming a click or changing Dock order");
+            app.dockSettings_.singleClickLaunchItems = singleClick;
         }
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;

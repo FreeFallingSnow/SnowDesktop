@@ -774,6 +774,7 @@ void DesktopApp::OnMouseMoveAt(
             // From this point the drag session owns the logical interaction.
             // Do not retain the original wrapper pointer across object rebuilds.
             mouseDownHit_ = nullptr;
+            ClearDockPressedState();
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;

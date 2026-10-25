@@ -2,6 +2,7 @@
 #include "dock.h"
 
 #include "app/app.h"
+#include "app/dock/dock_running_drag_state.h"
 #include "common/constants.h"
 #include "dock/dock_magnification.h"
 #include "dock/merged_dock_presentation.h"
@@ -17,6 +18,32 @@
 #include <cmath>
 #include <limits>
 #include <shlwapi.h>
+
+namespace
+{
+float DockPreviewScale(const RECT& base, const RECT& visual, int iconSize)
+{
+    return static_cast<float>(snowdesktop::dock_magnification::
+        IconSizeForVisualRect(base, visual, iconSize)) / static_cast<float>(std::max(1, iconSize));
+}
+
+void DrawDockInsertionIndicator(ID2D1DeviceContext* context,
+    const RECT& base, const RECT& visual, float axis, bool vertical, int iconSize)
+{
+    const float scale = DockPreviewScale(base, visual, iconSize);
+    const float center = vertical
+        ? static_cast<float>(visual.left + visual.right) / 2.0f : static_cast<float>(visual.top + visual.bottom) / 2.0f;
+    const float length = static_cast<float>(std::max(0L,
+        (vertical ? base.right - base.left : base.bottom - base.top) - 20)) * scale;
+    const float radius = 2.0f * scale;
+    const D2D1_RECT_F line = vertical
+        ? D2D1::RectF(center - length / 2, axis - radius, center + length / 2, axis + radius)
+        : D2D1::RectF(axis - radius, center - length / 2, axis + radius, center + length / 2);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush)))
+        context->FillRoundedRectangle(D2D1::RoundedRect(line, radius, radius), brush.Get());
+}
+}
 
 DockRunningItem::DockRunningItem(
     DesktopApp* app, Container* container, size_t runningIndex)
@@ -1226,6 +1253,9 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
 RECT DockContainer::GetElementVisualRect(
     RECT baseRect, POINT pointer) const
 {
+    // Hidden controls retain a zero-sized logical insertion boundary. They
+    // must not acquire growth, displacement or an invisible drag hit area.
+    if (IsRectEmpty(&baseRect)) return baseRect;
     return MagnifyElementRect(baseRect, ResolveMagnificationFocusRect(pointer), pointer);
 }
 
@@ -2107,6 +2137,37 @@ HitRegion DockContainer::RedirectDragToNearestInsertion(
 
 void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const
 {
+    if (!context) return;
+    if (app_ && app_->dockRunningDrag_)
+    {
+        namespace running = snowdesktop::dock_running_drag;
+        const POINT pointer = app_->dragSession_.CurrentPoint();
+        const auto target = GetRunningDragTarget(pointer);
+        if (target.area == running::Area::None) return;
+        const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+        const size_t count = entries_ ? entries_->size() : 0;
+        const size_t main = SortableEntryCount();
+        const size_t runningEnd = count + app_->dockUnpinnedRunningApps_.size();
+        const size_t begin = target.area == running::Area::Running ? count :
+            target.area == running::Area::Files ? main : 0;
+        const size_t end = target.area == running::Area::Running ? runningEnd :
+            target.area == running::Area::Files ? main + FolderEntryCount() : main;
+        const size_t boundary = target.area == running::Area::Running ? count + target.index : target.index;
+        const size_t anchor = boundary < end ? boundary : end > begin ? end - 1 :
+            target.area == running::Area::Files && runningEnd > count ? runningEnd - 1 : count;
+        RECT base = anchor < slots.size() ? slots[anchor]->GetBounds() : GetBounds();
+        RECT visual = GetElementVisualRect(base, pointer);
+        if (boundary > begin && boundary - 1 < slots.size())
+        {
+            const RECT previousBase = slots[boundary - 1]->GetBounds();
+            const RECT previousVisual = GetElementVisualRect(previousBase, pointer);
+            if (DockPreviewScale(previousBase, previousVisual, ItemIconSize()) > DockPreviewScale(base, visual, ItemIconSize()))
+            { base = previousBase; visual = previousVisual; }
+        }
+        DrawDockInsertionIndicator(context, base, visual,
+            static_cast<float>(target.axis), IsVertical(), ItemIconSize());
+        return;
+    }
     if (HasMixedFolderDragSource())
     {
         const auto main = SortableEntryCount(), folders = FolderEntryCount();
@@ -2125,9 +2186,6 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     const size_t end = range.end;
     insertIndex = std::clamp(insertIndex, begin, end);
     RECT bounds = GetBounds();
-    ComPtr<ID2D1SolidColorBrush> brush;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush);
-    if (!brush) return;
     if (HasOnlyRecycleBinDragSource())
     {
         const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
@@ -2135,11 +2193,13 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         const RECT indicator = snowdesktop::dock_drop_rules::
             RecycleBinInsertionIndicatorBounds(
                 bounds, GetElementVisualRect(slots.back()->GetBounds(), app_->lastMousePoint_), IsVertical());
-        context->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(static_cast<float>(indicator.left),
-                static_cast<float>(indicator.top),
-                static_cast<float>(indicator.right),
-                static_cast<float>(indicator.bottom)), 2.0f, 2.0f), brush.Get());
+        RECT base = slots.back()->GetBounds();
+        if (IsRectEmpty(&base))
+            base = entries_ && !entries_->empty() ? slots[entries_->size() - 1]->GetBounds() : bounds;
+        const float axis = IsVertical() ? static_cast<float>(indicator.top + indicator.bottom) / 2.0f :
+            static_cast<float>(indicator.left + indicator.right) / 2.0f;
+        DrawDockInsertionIndicator(context, base, GetElementVisualRect(base, app_->lastMousePoint_),
+            axis, IsVertical(), ItemIconSize());
         return;
     }
     // The insertion line follows the same animated slot edges as hit testing.
@@ -2155,7 +2215,9 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         boundary = slots[end - 1]->GetBounds();
         after = true;
     }
-    if (!IsRectEmpty(&boundary)) boundary = GetElementVisualRect(boundary, pointer);
+    RECT base = IsRectEmpty(&boundary) ? bounds : boundary;
+    RECT visual = GetElementVisualRect(base, pointer);
+    if (!IsRectEmpty(&boundary)) boundary = visual;
     float axis = static_cast<float>(IsVertical()
         ? (after ? boundary.bottom : boundary.top)
         : (after ? boundary.right : boundary.left));
@@ -2166,18 +2228,16 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
             ? std::clamp(axis, static_cast<float>(viewport.top), static_cast<float>(viewport.bottom))
             : std::clamp(axis, static_cast<float>(viewport.left), static_cast<float>(viewport.right));
     }
-    if (IsVertical())
+    // Either adjacent icon can own the hover; use the larger growth budget so
+    // a line after the focused icon also extends in single-icon hover mode.
+    if (insertIndex > begin && insertIndex - 1 < slots.size())
     {
-        context->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(static_cast<float>(bounds.left + 10), axis - 2.0f,
-                static_cast<float>(bounds.right - 10), axis + 2.0f), 2.0f, 2.0f),
-            brush.Get());
-        return;
+        const RECT previousBase = slots[insertIndex - 1]->GetBounds();
+        const RECT previousVisual = GetElementVisualRect(previousBase, pointer);
+        if (DockPreviewScale(previousBase, previousVisual, ItemIconSize()) > DockPreviewScale(base, visual, ItemIconSize()))
+        { base = previousBase; visual = previousVisual; }
     }
-    context->FillRoundedRectangle(D2D1::RoundedRect(
-        D2D1::RectF(axis - 2.0f, static_cast<float>(bounds.top + 10),
-            axis + 2.0f, static_cast<float>(bounds.bottom - 10)), 2.0f, 2.0f),
-        brush.Get());
+    DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
 }
 
 void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
@@ -3056,10 +3116,12 @@ void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegi
     }
     if (region == HitRegion::Handoff)
     {
-        RECT bounds = GetElementVisualRect(slot->GetBounds(), app_->lastMousePoint_);
-        app_->DrawD2DRoundedRectangle(ctx, bounds, 12.0f,
+        const RECT base = slot->GetBounds();
+        const RECT bounds = GetElementVisualRect(base, app_->lastMousePoint_);
+        const float scale = DockPreviewScale(base, bounds, ItemIconSize());
+        app_->DrawD2DRoundedRectangle(ctx, bounds, 12.0f * scale,
             D2D1::ColorF(0.28f, 0.80f, 0.48f, 0.18f),
-            D2D1::ColorF(0.28f, 0.90f, 0.52f, 0.88f), 2.0f);
+            D2D1::ColorF(0.28f, 0.90f, 0.52f, 0.88f), 2.0f * scale);
         return;
     }
     DrawInsertionPreview(
