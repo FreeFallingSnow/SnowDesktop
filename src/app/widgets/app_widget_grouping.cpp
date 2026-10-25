@@ -876,6 +876,10 @@ size_t DesktopApp::HitTestCollectionGroupIndex(
             continue;
         RECT bounds = widgets_[i].bounds;
         if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
+        else for (const auto& container : containers_)
+            if (const auto* group = dynamic_cast<WidgetContainer*>(container.get());
+                group && group->GetWidgetData() == &widgets_[i])
+            { bounds = group->GetFrameRect(); break; }
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }
@@ -907,6 +911,10 @@ size_t DesktopApp::HitTestFileGroupIndex(
             continue;
         RECT bounds = widgets_[i].bounds;
         if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
+        else for (const auto& container : containers_)
+            if (const auto* group = dynamic_cast<WidgetContainer*>(container.get());
+                group && group->GetWidgetData() == &widgets_[i])
+            { bounds = group->GetFrameRect(); break; }
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }

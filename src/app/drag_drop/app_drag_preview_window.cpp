@@ -2,6 +2,7 @@
 #include "drag_drop/drag_visual_rules.h"
 #include "system/tray/tray_service.h"
 #include "app/popup/popup_window_pair_z_order.h"
+#include "widgets/group_tab_drag_preview.h"
 
 // Compact top-level DComp surface used only for the custom drag ghost. The
 // desktop, floating Dock and popup surfaces keep rendering drop guidance, but
@@ -293,10 +294,7 @@ void DesktopApp::SyncDragPreviewWindow()
         EndTrayDragPreview();
     }
     const auto& dragItems = dragSession_.Items();
-    if (!snowdesktop::drag_visual_rules::ShouldShowPreview(
-            dragSession_.IsActive(),
-            dragSession_.IsVisualVisible(),
-            !dragItems.empty()))
+    if (!snowdesktop::group_tab_drag_preview::ShouldShowFloatingPreview(dragSession_))
     {
         HideDragPreviewWindow();
         return;

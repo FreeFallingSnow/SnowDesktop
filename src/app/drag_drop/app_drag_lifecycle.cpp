@@ -439,9 +439,17 @@ void DesktopApp::PresentPointerInteractionFrame(
     {
         if (widgetDragFeedbackChanged)
         {
-            // Grid, Dock and group feedback lives on the shared foreground
-            // surface. Redraw it only when the logical target changes; plain
-            // pointer movement inside one target has no visual work.
+            // Tab insertion changes the retained group surface as well as the
+            // shared overlay. Repaint both the old and new owner on handoff.
+            const auto updateGroup = [&](size_t index) {
+                if (index >= widgets_.size() || !IsGroupWidgetType(widgets_[index].type) ||
+                    GetOpenPopupWidget() == &widgets_[index]) return;
+                (void)QueueDesktopWidgetComposition(widgets_[index].id);
+            };
+            updateGroup(presentedWidgetDragFeedback_.groupTargetIndex);
+            if (widgetDragFeedback.groupTargetIndex != presentedWidgetDragFeedback_.groupTargetIndex)
+                updateGroup(widgetDragFeedback.groupTargetIndex);
+            (void)PresentQueuedDesktopWidgetComposition();
             widgetInteractionPresented =
                 presentInteractionForeground();
         }

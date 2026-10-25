@@ -533,11 +533,17 @@ RECT CollectionGroup::GetTabRectById(
 
 snowdesktop::group_tab_drag_preview::Layout CollectionGroup::GetTabDragPreviewLayout() const
 {
-    if (!app_ || IsPreviewRendering() || !app_->dragSession_.IsActive() ||
-        app_->dragSession_.TargetContainer() != this) return {};
+    if (!app_ || IsPreviewRendering()) return {};
     auto& view = *const_cast<CollectionGroup*>(this);
+    auto source = snowdesktop::group_tab_drag_preview::FromSession(view, app_->dragSession_);
+    if (app_->widgetAction_ == DesktopApp::WidgetAction::Move &&
+        app_->mouseDownWidgetIndex_ < app_->widgets_.size() &&
+        app_->widgetCollectionGroupTargetIndex_ < app_->widgets_.size() &&
+        &app_->widgets_[app_->widgetCollectionGroupTargetIndex_] == data_ &&
+        app_->widgetCollectionGroupInsertIndex_ != static_cast<size_t>(-1))
+        source = {{app_->widgets_[app_->mouseDownWidgetIndex_].id}, app_->widgetCollectionGroupInsertIndex_};
     const auto visible = GetVisibleCollectionIds();
-    return snowdesktop::group_tab_drag_preview::Build(view, app_->dragSession_, app_->widgets_,
+    return snowdesktop::group_tab_drag_preview::Build(view, source, app_->widgets_,
         visible, CollectionGroupTabsRect(&view), [&](const DesktopWidget& child) {
             std::wstring label = app_->ShouldUseDemoCollectionIdentity(&child)
                 ? app_->GetDemoCollectionCategoryTitle(child) : child.title;
@@ -931,7 +937,10 @@ HitRegion CollectionGroup::HitTestDrag(
     InflateRect(&tabZone, Cu(6.0f), Cu(6.0f));
     const bool memberInsertion = app_ && (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
         app_->dragSession_.SourceList().SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
-        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup));
+        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup) ||
+        (app_->widgetAction_ == DesktopApp::WidgetAction::Move && app_->mouseDownWidgetIndex_ < app_->widgets_.size() &&
+            snowdesktop::widget_group_drop::AcceptsChild(DesktopWidgetType::CollectionGroup,
+                app_->widgets_[app_->mouseDownWidgetIndex_].type)));
     const size_t tabIndex = (ownLabels || (memberInsertion && PtInRect(&tabZone, pt)))
         ? snowdesktop::group_tab_drag_preview::NearestTab(GetVisibleCollectionIds().size(), pt,
             [this](size_t i) { return CollectionGroupTabRect(this, i); })
@@ -959,7 +968,7 @@ void CollectionGroup::DrawDropPreview(
     HitRegion region)
 {
     if (!ctx) return;
-    if (GetTabDragPreviewLayout().active) return;
+    if (GetTabDragPreviewLayout().inserting) return;
     if (app_ &&
         (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
             app_->dragSession_.SourceList().SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||

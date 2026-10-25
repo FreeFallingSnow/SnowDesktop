@@ -383,7 +383,8 @@ void DesktopApp::DrawDynamicOverlays(
                 ScaleWidgetCu(3.0f, cellScale);
             InflateRect(
                 &target, targetPadding, targetPadding);
-            if (snowdesktop::foreground_paint_region::Intersects(
+            if ((pairActive || widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1)) &&
+                snowdesktop::foreground_paint_region::Intersects(
                     updateRect, target, ScaleWidgetCu(2.5f, cellScale) + 2))
                 DrawD2DRoundedRectangle(
                 ctx, target,

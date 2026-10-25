@@ -65,6 +65,42 @@
     {
         app.ResolveCurrentDragTargetAt({-100, -100});
     }
+    static bool GroupSurfaceGhostWanted(DesktopApp& app)
+    {
+        return snowdesktop::group_tab_drag_preview::ShouldShowFloatingPreview(app.dragSession_);
+    }
+    static inline bool groupSurfaceGhostHidden = false;
+    static BOOL WINAPI GroupSurfaceGhostVisible(HWND window) { return window == completionWindow; }
+    static BOOL WINAPI GroupSurfaceGhostShow(HWND window, int command)
+    {
+        if (window == completionWindow && command == SW_HIDE) groupSurfaceGhostHidden = true;
+        return TRUE;
+    }
+    static bool GroupSurfaceRetiresActualGhost(DesktopApp& app)
+    {
+        bool validBounds = false;
+        for (const auto* item : app.dragSession_.Items())
+            if (item) { const RECT bounds = item->GetBounds(); validBounds = validBounds || !IsRectEmpty(&bounds); }
+        if (!validBounds) throw std::runtime_error("ghost retirement requires real label geometry, not an empty visual");
+        // Observe the real Sync -> Hide path using only the fixture's message
+        // window. Imported ShowWindow is captured; no desktop window is shown.
+        const HWND saved = app.dragPreviewHwnd_;
+        auto indices = app.dragPreviewItemIndices_;
+        app.dragPreviewHwnd_ = completionWindow;
+        app.dragPreviewItemIndices_ = {static_cast<size_t>(-1)};
+        groupSurfaceGhostHidden = false;
+        InputSafetyImport visible("IsWindowVisible", reinterpret_cast<ULONG_PTR>(&GroupSurfaceGhostVisible));
+        InputSafetyImport show("ShowWindow", reinterpret_cast<ULONG_PTR>(&GroupSurfaceGhostShow));
+        app.SyncDragPreviewWindow();
+        const bool retiredBeforeGeometry = groupSurfaceGhostHidden &&
+            app.dragPreviewItemIndices_ == std::vector<size_t>{static_cast<size_t>(-1)};
+        app.dragPreviewHwnd_ = saved; app.dragPreviewItemIndices_ = std::move(indices);
+        return retiredBeforeGeometry;
+    }
+    static void GroupSurfaceTransportVisual(DesktopApp& app, bool visible)
+    {
+        app.dragSession_.SetVisualVisible(visible);
+    }
     static void BeginGroupComponentMove(DesktopApp& app, const std::wstring& id)
     {
         const auto index = app.FindWidgetIndexById(id);

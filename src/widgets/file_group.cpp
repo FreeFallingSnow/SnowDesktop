@@ -1349,7 +1349,10 @@ size_t FileGroup::GetDropInsertIndex(
         if (app_ &&
             (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
                 snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
-                    app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
+                    app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup) ||
+                (app_->widgetAction_ == DesktopApp::WidgetAction::Move && app_->mouseDownWidgetIndex_ < app_->widgets_.size() &&
+                    snowdesktop::widget_group_drop::AcceptsChild(DesktopWidgetType::FileGroup,
+                        app_->widgets_[app_->mouseDownWidgetIndex_].type))))
         {
             size_t index = std::min(
                 targetSlot->GetIndex(),
@@ -1673,7 +1676,10 @@ HitRegion FileGroup::HitTestDrag(
     RECT tabZone = FileGroupSourceTabsRect(this);
     InflateRect(&tabZone, Cu(6.0f), Cu(6.0f));
     const bool memberInsertion = app_ && (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
-        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup));
+        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup) ||
+        (app_->widgetAction_ == DesktopApp::WidgetAction::Move && app_->mouseDownWidgetIndex_ < app_->widgets_.size() &&
+            snowdesktop::widget_group_drop::AcceptsChild(DesktopWidgetType::FileGroup,
+                app_->widgets_[app_->mouseDownWidgetIndex_].type)));
     const size_t sourceTab = (ownLabels || (memberInsertion && PtInRect(&tabZone, pt)))
         ? snowdesktop::group_tab_drag_preview::NearestTab(GetVisibleSourceIds().size(), pt,
             [this](size_t i) { return FileGroupSourceTabRect(this, i); })
@@ -1763,7 +1769,7 @@ void FileGroup::DrawDropPreview(
     HitRegion region)
 {
     if (!context) return;
-    if (GetTabDragPreviewLayout().active) return;
+    if (GetTabDragPreviewLayout().inserting) return;
     if (app_ &&
         (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
             snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
@@ -2220,11 +2226,17 @@ void FileGroup::DrawContent(
 
 snowdesktop::group_tab_drag_preview::Layout FileGroup::GetTabDragPreviewLayout() const
 {
-    if (!app_ || IsPreviewRendering() || !app_->dragSession_.IsActive() ||
-        app_->dragSession_.TargetContainer() != this) return {};
+    if (!app_ || IsPreviewRendering()) return {};
     auto& view = *const_cast<FileGroup*>(this);
+    auto source = snowdesktop::group_tab_drag_preview::FromSession(view, app_->dragSession_);
+    if (app_->widgetAction_ == DesktopApp::WidgetAction::Move &&
+        app_->mouseDownWidgetIndex_ < app_->widgets_.size() &&
+        app_->widgetCollectionGroupTargetIndex_ < app_->widgets_.size() &&
+        &app_->widgets_[app_->widgetCollectionGroupTargetIndex_] == data_ &&
+        app_->widgetCollectionGroupInsertIndex_ != static_cast<size_t>(-1))
+        source = {{app_->widgets_[app_->mouseDownWidgetIndex_].id}, app_->widgetCollectionGroupInsertIndex_};
     const auto visible = GetVisibleSourceIds();
-    return snowdesktop::group_tab_drag_preview::Build(view, app_->dragSession_, app_->widgets_,
+    return snowdesktop::group_tab_drag_preview::Build(view, source, app_->widgets_,
         visible, FileGroupSourceTabsRect(&view), [&](const DesktopWidget& child) {
             std::wstring label = child.title;
             if (ShowGroupTabItemCounts()) label += L" " + std::to_wstring(

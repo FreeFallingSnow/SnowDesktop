@@ -12,6 +12,7 @@
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "native_item_drag_source.h"
+#include "widgets/group_tab_drag_preview.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -915,7 +916,7 @@ void DesktopApp::OnMouseMoveAt(
                 }
             widgetCollectionGroupTargetIndex_ = groupTarget;
             widgetCollectionGroupInsertIndex_ =
-                widgets_[groupTarget].childWidgetIds.size();
+                static_cast<size_t>(-1);
             for (auto& container : containers_)
             {
                 auto* group =
@@ -926,25 +927,18 @@ void DesktopApp::OnMouseMoveAt(
                     continue;
                 Slot* slot = nullptr;
                 HitRegion region = group->HitTestDrag(current, slot);
-                const bool overTab =
-                    widgets_[groupTarget].type ==
-                        DesktopWidgetType::CollectionGroup
-                        ? !dynamic_cast<CollectionGroup*>(group)->
-                            CategoryIdAtPoint(current).empty()
-                        : !dynamic_cast<FileGroup*>(group)->
-                            SourceIdAtPoint(current).empty();
-                if (overTab && slot)
+                if (snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region))
                     widgetCollectionGroupInsertIndex_ =
-                        std::min(slot->GetIndex() + (region == HitRegion::SortAfter ? 1 : 0),
+                        std::min(group->GetDropInsertIndex(slot, region),
                             widgets_[groupTarget].childWidgetIds.size());
                 break;
             }
             widgetDockTarget_ = false;
             widgetDockTargetContainer_ = nullptr;
-            ShowDragHintWindow(current,
-                _LW(movingCollection
-                    ? "core.drag.move_collection_group"
-                    : "core.drag.move_file_group"));
+            if (widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1))
+                ShowDragHintWindow(current, _LW(movingCollection
+                    ? "core.drag.move_collection_group" : "core.drag.move_file_group"));
+            else HideDragHintWindow();
             return;
         }
         widgetCollectionGroupTargetIndex_ =
@@ -1058,9 +1052,13 @@ void DesktopApp::OnMouseMoveAt(
         }
 
         RevealSoftwareDesktopForDockDrag(current);
-        SyncDragPreviewWindow();
-        if (dragPreviewSynced)
-            *dragPreviewSynced = true;
+        // Tab landings replace the floating block. Resolve this sample's
+        // landing first so the end-of-input presentation switches atomically.
+        if (!snowdesktop::group_tab_drag_preview::CarriesTabs(dragSession_.SourceList()))
+        {
+            SyncDragPreviewWindow();
+            if (dragPreviewSynced) *dragPreviewSynced = true;
+        }
         bool overExternal = IsExternalDropWindowAt(current);
 
         if (overExternal)
