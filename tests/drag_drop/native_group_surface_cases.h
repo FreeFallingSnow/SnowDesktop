@@ -217,13 +217,19 @@ inline void RunInsertionZones()
             {
                 if (widget.id == L"surface-group") widget.childWidgetIds = expected;
                 if (widget.id == L"source-group") { widget.childWidgetIds = {L"F"}; widget.activeCategoryId = L"F"; }
-                const auto actual = Configuration(native_widget_pair_cases::Widget(app, widget.id));
-                const auto expectedConfiguration = Configuration(widget);
-                if (actual != expectedConfiguration)
+                const auto& actualWidget = native_widget_pair_cases::Widget(app, widget.id);
+                // Stored Windows membership keys are case-insensitive. The
+                // loader uppercases them; compare their complete order using
+                // that existing identity contract, separately from settings.
+                const auto actual = Configuration(actualWidget, true, false);
+                const auto expectedConfiguration = Configuration(widget, true, false);
+                const bool sameMembers = OrderedKeys(actualWidget) == OrderedKeys(widget);
+                if (actual != expectedConfiguration || !sameMembers)
                     std::cerr << "cross-group phase=" << phase << " child=" << WideToUtf8(widget.id)
-                        << " expected=" << expectedConfiguration << " actual=" << actual << '\n';
-                Require(actual == expectedConfiguration,
+                        << " expected=" << Configuration(widget) << " actual=" << Configuration(actualWidget) << '\n';
+                Require(actual == expectedConfiguration && sameMembers,
                     "cross-group drop changes only expected membership/order and preserves component data and identity: " + phase);
+                if (widget.type == mapping) CheckChild(app, widget);
             }
             samples.Check(); CheckRuntime(app);
         };
