@@ -2638,5 +2638,6 @@
   "app.startup.startAnyway": "Iniciar de todos modos",
   "app.startup.instanceUnavailable": "Otro proceso de SnowDesktop se está iniciando o no responde y no es posible comunicarse con él. Inténtalo más tarde; no ejecutes varias instancias a la vez.",
   "app.startup.recoveryStopped": "SnowDesktop se ha cerrado inesperadamente varias veces en poco tiempo, por lo que se ha pausado el reinicio automático. Selecciona «Iniciar de todos modos» para intentarlo una vez más.",
-  "app.startup.recoveryFailed": "No se ha podido reiniciar SnowDesktop. Selecciona «Iniciar de todos modos» para volver a intentarlo, o cancela."
+  "app.startup.recoveryFailed": "No se ha podido reiniciar SnowDesktop. Selecciona «Iniciar de todos modos» para volver a intentarlo, o cancela.",
+  "statusBar.showOnlyWhenSummoned.description": "Al activar esta opción, la barra no reserva espacio en la pantalla. Las barras combinadas usan la configuración de visualización y activación del Dock."
 }

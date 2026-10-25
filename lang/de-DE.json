@@ -2638,5 +2638,6 @@
   "app.startup.startAnyway": "Trotzdem starten",
   "app.startup.instanceUnavailable": "Ein anderer SnowDesktop-Prozess startet gerade oder reagiert nicht und ist nicht erreichbar. Versuchen Sie es später erneut. Starten Sie nicht mehrere Instanzen gleichzeitig.",
   "app.startup.recoveryStopped": "SnowDesktop ist in kurzer Zeit mehrfach abgestürzt. Der automatische Neustart wurde daher angehalten. Wählen Sie „Trotzdem starten“, um es noch einmal zu versuchen.",
-  "app.startup.recoveryFailed": "SnowDesktop konnte nicht neu gestartet werden. Wählen Sie „Trotzdem starten“, um es erneut zu versuchen, oder brechen Sie ab."
+  "app.startup.recoveryFailed": "SnowDesktop konnte nicht neu gestartet werden. Wählen Sie „Trotzdem starten“, um es erneut zu versuchen, oder brechen Sie ab.",
+  "statusBar.showOnlyWhenSummoned.description": "Wenn aktiviert, reserviert die Leiste keinen Bildschirmbereich. Zusammengeführte Leisten verwenden die Anzeige- und Einblendeinstellungen des Docks."
 }

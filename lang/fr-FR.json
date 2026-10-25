@@ -2638,5 +2638,6 @@
   "app.startup.startAnyway": "Démarrer quand même",
   "app.startup.instanceUnavailable": "Un autre processus SnowDesktop est en cours de démarrage ou ne répond pas et reste inaccessible. Réessayez plus tard ; n’exécutez pas plusieurs instances à la fois.",
   "app.startup.recoveryStopped": "SnowDesktop s’est arrêté anormalement plusieurs fois en peu de temps. Le redémarrage automatique est donc suspendu. Choisissez « Démarrer quand même » pour réessayer une fois.",
-  "app.startup.recoveryFailed": "SnowDesktop n’a pas pu redémarrer. Choisissez « Démarrer quand même » pour réessayer, ou annulez."
+  "app.startup.recoveryFailed": "SnowDesktop n’a pas pu redémarrer. Choisissez « Démarrer quand même » pour réessayer, ou annulez.",
+  "statusBar.showOnlyWhenSummoned.description": "Lorsque cette option est activée, la barre ne réserve aucun espace à l’écran. Les barres fusionnées suivent les réglages d’affichage et d’activation du Dock."
 }

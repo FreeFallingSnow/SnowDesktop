@@ -2638,5 +2638,6 @@
   "app.startup.startAnyway": "Iniciar mesmo assim",
   "app.startup.instanceUnavailable": "Outro processo do SnowDesktop está iniciando ou não está respondendo e não pode ser acessado. Tente novamente mais tarde; não execute várias instâncias ao mesmo tempo.",
   "app.startup.recoveryStopped": "O SnowDesktop foi encerrado inesperadamente várias vezes em pouco tempo, então a reinicialização automática foi pausada. Escolha “Iniciar mesmo assim” para tentar mais uma vez.",
-  "app.startup.recoveryFailed": "Não foi possível reiniciar o SnowDesktop. Escolha “Iniciar mesmo assim” para tentar novamente ou cancele."
+  "app.startup.recoveryFailed": "Não foi possível reiniciar o SnowDesktop. Escolha “Iniciar mesmo assim” para tentar novamente ou cancele.",
+  "statusBar.showOnlyWhenSummoned.description": "Quando ativada, a barra não reserva espaço na tela. As barras unificadas seguem as configurações de exibição e acionamento do Dock."
 }

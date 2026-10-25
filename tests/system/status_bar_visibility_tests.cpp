@@ -2,6 +2,7 @@
 #include "system/status_bar/status_bar_glyphs.h"
 #include "system/status_bar/status_bar_interaction.h"
 #include "system/status_bar/status_bar_fullscreen.h"
+#include "system/status_bar/status_bar_reveal.h"
 #include "common/l10n.h"
 #include "ui/render/app_font.h"
 #include "tray_geometry_cases.h"
@@ -43,6 +44,59 @@ using Microsoft::WRL::ComPtr;
 void Check(bool passed, const char* message)
 {
     if (!passed) { std::cerr << message << '\n'; std::exit(1); }
+}
+void CheckIndependentReveal()
+{
+    const RECT monitor{-1920, -1080, 0, 0}, bar{-1920, -1080, 0, -1048};
+    const POINT edge{-1000, -1080}, inside{-1000, -1060}, outside{-1000, -900};
+    StatusBarRevealState state, otherMonitor;
+    Check(!state.Update(edge, monitor, bar, DockPosition::Top, 100, 96, 1, false) && !state.Revealed(),
+        "hover does not reveal an independent bar on initial edge contact");
+    Check(!state.Update(edge, monitor, bar, DockPosition::Top, 349, 96, 1, false),
+        "hover waits for Dock's default dwell rather than revealing early");
+    Check(state.Update(edge, monitor, bar, DockPosition::Top, 350, 96, 1, false) && state.Revealed() && !otherMonitor.Revealed(),
+        "default hover reveals only the requested monitor, including negative screen coordinates");
+    state.Update(inside, monitor, bar, DockPosition::Top, 500, 96, 1, false);
+    state.Update(outside, monitor, bar, DockPosition::Top, 600, 96, 1, false);
+    Check(!state.Update(outside, monitor, bar, DockPosition::Top, 959, 96, 1, false) && state.Revealed(),
+        "pointer leave keeps a short grace period for crossing into an owned surface");
+    state.Update(outside, monitor, bar, DockPosition::Top, 960, 96, 1, true);
+    state.Update(outside, monitor, bar, DockPosition::Top, 2000, 96, 1, true);
+    Check(state.Revealed(), "an owned menu or system panel retains the revealed bar beyond the leave deadline");
+    state.Update(outside, monitor, bar, DockPosition::Top, 2100, 96, 1, false);
+    Check(state.Update(outside, monitor, bar, DockPosition::Top, 2460, 96, 1, false) && !state.Revealed(),
+        "ending the interaction and leaving the bar dismisses after a new grace period");
+    state.Update(outside, monitor, bar, DockPosition::Top, 2500, 96, 1, false);
+    state.Update(edge, monitor, bar, DockPosition::Top, 2600, 96, 1, false);
+    state.Update(edge, monitor, bar, DockPosition::Top, 2850, 96, 1, false);
+    state.Dismiss();
+    Check(!state.Update(edge, monitor, bar, DockPosition::Top, 4000, 96, 1, false) && !state.Revealed(),
+        "explicit dismissal suppresses repeated hover until the pointer leaves the edge");
+    state.Reset();
+    const RECT bottom{0, 0, 2560, 1440}, bottomBar{0, 1376, 2560, 1440};
+    state.Update({500, 1439}, bottom, bottomBar, DockPosition::Bottom, 5000, 192, 0, false);
+    Check(!state.Update({643, 1439}, bottom, bottomBar, DockPosition::Bottom, 5100, 192, 0, false),
+        "swipe travel is DPI scaled, and a short stroke does not trigger");
+    Check(state.Update({644, 1439}, bottom, bottomBar, DockPosition::Bottom, 5150, 192, 0, false) && state.Revealed(),
+        "a bottom-edge swipe at the scaled threshold reveals the bar");
+    state.Reset();
+    state.Update(edge, monitor, bar, DockPosition::Top, 6000, 96, 0, false);
+    Check(!state.Update(edge, monitor, bar, DockPosition::Top, 6500, 96, 0, false) && !state.Revealed(),
+        "stationary hover cannot trigger when swipe is selected");
+    Check(HideIndependentStatusBar(false, true, false, false) &&
+        !HideIndependentStatusBar(false, true, true, false) &&
+        !HideIndependentStatusBar(false, true, false, true) &&
+        !HideIndependentStatusBar(false, false, false, false) &&
+        HideIndependentStatusBar(true, false, true, false),
+        "summon-only and interaction gates preserve fullscreen hiding and ordinary persistent bars");
+    for (const bool summonOnly : {false, true})
+    {
+        Check(ReserveIndependentStatusBarSpace(false, true, summonOnly) == !summonOnly,
+            "independent summon-only bars release the desktop work area");
+        for (const bool dockReservation : {false, true})
+            Check(ReserveIndependentStatusBarSpace(true, dockReservation, summonOnly) == dockReservation,
+                "merged reservations follow Dock regardless of independent status-bar preferences");
+    }
 }
 void CheckFullscreenRounds()
 {
@@ -391,6 +445,7 @@ int main(int argc, char** argv)
     Check(argc == 2 || (argc == 3 && (control == "--uncached-resource-control" || control == "--unaligned-hover-control" || control == "--full-scroll-control" || control == "--full-content-control" || control == "--legacy-focus-return" || control == "--legacy-geometry-noop-control")),
         "expected repository root and optional offscreen regression control");
     CheckFullscreenRounds();
+    CheckIndependentReveal();
     Locale::Instance().Init((std::filesystem::path(argv[1]) / L"lang").c_str());
     Locale::Instance().SetLanguage("en-US");
     ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;

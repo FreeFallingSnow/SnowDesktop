@@ -269,6 +269,11 @@ void TestShippedTaskVocabulary(const std::filesystem::path& projectRoot)
     struct Task { const char* language; const wchar_t* query; const char* focus; SettingsPage page; };
     const Task tasks[]{
         {"zh-CN", L"Dock自动隐藏", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {"zh-CN", L"状态栏 仅在唤起时显示", "statusBar.showOnlyWhenSummoned", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 屏幕边缘唤起方式", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 悬停", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 扫动", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"en-US", L"Status bar screen edge reveal", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
         {"zh-CN", L"屏幕边缘悬停延时", "dock.edgeHoverDelayMs", SettingsPage::Dock},
         {"en-US", L"Screen edge hover delay", "dock.edgeHoverDelayMs", SettingsPage::Dock},
         {"zh-CN", L"多显示器布局", "pages.order", SettingsPage::DesktopPages},

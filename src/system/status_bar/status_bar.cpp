@@ -7,6 +7,7 @@
 #include "status_bar_interaction.h"
 #include "status_bar_appbar.h"
 #include "status_bar_fullscreen.h"
+#include "status_bar_reveal.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "app/render/desktop_backdrop_compositor.h"
 #include "theme/panel_gradient_renderer.h"
@@ -46,7 +47,8 @@ namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
-constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5;
+constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
+    kRevealTimer = 6;
 std::map<HWND, StatusBarFullscreenRequest*> liveBars; // All access, including hooks, on the UI thread.
 bool PostFullscreen(HWND receiver) { return PostMessageW(receiver, kFullscreen, 0, 0) != FALSE; }
 void QueueFullscreen(HWND window)
@@ -177,6 +179,7 @@ struct StatusBar::Impl
         bool checkingFullscreen = false, clockTimerActive = false;
         bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
+        StatusBarRevealState revealState;
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
@@ -425,14 +428,15 @@ struct StatusBar::Impl
                 if (changed && owner.dockChanged) owner.dockChanged(false);
                 return;
             }
-            const bool next = fullscreenState.ShouldHide(dock.interacting);
+            const bool next = HideIndependentStatusBar(fullscreenState.ShouldHide(dock.interacting),
+                owner.settings.showOnlyWhenSummoned, revealState.Revealed(), dock.interacting);
             const HWND source = fullscreenState.Source();
             const bool changed = next != fullscreen;
             fullscreen = next;
             if (changed)
             {
                 wchar_t name[128]{}, message[256]{};if (source) GetClassNameW(source,name,static_cast<int>(std::size(name)));
-                swprintf_s(message,L"StatusBar fullscreen monitor=%p bar=%p hidden=%d source=%p class=%s",monitor,hwnd,fullscreen,source,name);
+                swprintf_s(message,L"StatusBar visibility monitor=%p bar=%p hidden=%d source=%p class=%s",monitor,hwnd,fullscreen,source,name);
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
             }
             const bool shown = IsWindowVisible(hwnd) != FALSE;
@@ -440,7 +444,32 @@ struct StatusBar::Impl
             // Shell/Dock restacks can reveal a popup without a new fullscreen
             // transition. Reconcile physical visibility as well as state.
             if (fullscreen || !owner.presentationEnabled) { if (changed || shown || topmost) Hide(); }
-            else if (appbar.Registered() && !failed && (changed || !shown || !topmost)) Show();
+            else if (positioned && !failed && (changed || !shown || !topmost)) Show();
+        }
+        void PollReveal()
+        {
+            if (mergedDockHeight || !owner.settings.showOnlyWhenSummoned) return;
+            if (!owner.presentationEnabled || closing || failed || !positioned)
+            { revealState.Reset(); return; }
+            MONITORINFO info{sizeof(info)};
+            POINT pointer{};
+            if (!GetMonitorInfoW(monitor, &info) || !GetCursorPos(&pointer)) return;
+            const bool interacting = (owner.interactionSessionProvider && owner.interactionSessionProvider(monitor)) ||
+                GetCapture() == hwnd || GetFocus() == hwnd;
+            if (!revealState.Update(pointer, info.rcMonitor, placedBounds, owner.settings.position,
+                GetTickCount(), dpi, owner.settings.edgeRevealGesture, interacting)) return;
+            if (revealState.Revealed())
+            {
+                // Refresh the source before applying an explicit reveal, even
+                // when the fullscreen event has not reached this bar yet.
+                CheckFullscreen();
+                fullscreenState.BeginDockReveal(true);
+                dockFullscreenProcess = 0;
+                if (const HWND source = fullscreenState.DockSource())
+                    GetWindowThreadProcessId(source, &dockFullscreenProcess);
+            }
+            else fullscreenState.DismissReveal();
+            CheckFullscreen();
         }
         bool OwnsPointer(POINT clientPoint) const
         {
@@ -1253,6 +1282,7 @@ struct StatusBar::Impl
                     },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
                     [&] {
+                        self->revealState.Dismiss();
                         self->fullscreenState.DismissReveal();
                         QueueFullscreen(window);
                         self->DismissSurfaces();
@@ -1304,6 +1334,7 @@ struct StatusBar::Impl
                 else if (wp == kTrayScrollTimer) self->TickTrayScroll();
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 else if (wp == kPlacementTimer) self->Place();
+                else if (wp == kRevealTimer) self->PollReveal();
                 return 0;
             case WM_DPICHANGED:
             case WM_DISPLAYCHANGE:
@@ -1940,6 +1971,8 @@ void StatusBar::PrepareDockReveal(HMONITOR monitor)
         if (!window || window->monitor != monitor) continue;
         window->CheckFullscreen();
         window->fullscreenState.BeginDockReveal(!window->mergedDockHeight);
+        if (!window->mergedDockHeight && window->fullscreenState.Revealed() && impl_->settings.showOnlyWhenSummoned)
+            window->revealState.Reveal();
         window->dockFullscreenProcess = 0;
         if (const HWND source = window->fullscreenState.DockSource())
             GetWindowThreadProcessId(source, &window->dockFullscreenProcess);
@@ -1955,7 +1988,7 @@ bool StatusBar::HasTemporaryReveal(HMONITOR monitor) const
     {
         (void)id;
         if (window && window->monitor == monitor && !window->mergedDockHeight)
-            return window->fullscreenState.Revealed();
+            return window->fullscreenState.Revealed() || window->revealState.Revealed();
     }
     return false;
 }
@@ -1965,7 +1998,9 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (!window || window->monitor != monitor || !window->fullscreenState.Revealed()) continue;
+        if (!window || window->monitor != monitor || window->mergedDockHeight ||
+            (!window->fullscreenState.Revealed() && !window->revealState.Revealed())) continue;
+        window->revealState.Dismiss();
         window->fullscreenState.DismissReveal();
         // Let the existing popup close path consume the outside down first.
         QueueFullscreen(window->hwnd);
@@ -2067,6 +2102,8 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     NormalizeStatusBarSettings(settings);
     auto& self = *impl_;
     const bool changed = settings != self.settings || global != self.globalAppearance;
+    const bool revealChanged = settings.showOnlyWhenSummoned != self.settings.showOnlyWhenSummoned ||
+        settings.edgeRevealGesture != self.settings.edgeRevealGesture || settings.position != self.settings.position;
     self.settings = std::move(settings);
     self.globalAppearance = global;
     self.tooltipAppearance = tooltipAppearance ? *tooltipAppearance : global;
@@ -2143,11 +2180,13 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         if (self.settings.inputMethod) SetTimer(window->hwnd, kInputMethodTimer, 200, nullptr);
         else KillTimer(window->hwnd, kInputMethodTimer);
         if(window->monitor!=monitor.monitor)
-        {window->Hide();window->fullscreenState={};window->dockFullscreenProcess=0;
+        {window->Hide();window->fullscreenState={};window->revealState.Reset();window->dockFullscreenProcess=0;
          window->surface.Reset();window->backgroundSurface.Reset();window->appearanceDirty=window->backgroundDirty=window->paintDirty=true;}
         window->monitor = monitor.monitor;
         window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
-        const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight || window->reserveSpace != monitor.reserveSpace;
+        const bool reserveSpace = ReserveIndependentStatusBarSpace(monitor.mergedDockHeight != 0,
+            monitor.reserveSpace, self.settings.showOnlyWhenSummoned);
+        const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight || window->reserveSpace != reserveSpace;
         const bool mergedModeChanged = (window->mergedDockHeight > 0) != (monitor.mergedDockHeight > 0);
         if (mergedChanged || changed)
         {
@@ -2156,7 +2195,11 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             if (GetCapture() == window->hwnd) ReleaseCapture();
         }
         window->mergedDockHeight = monitor.mergedDockHeight;
-        window->reserveSpace = monitor.reserveSpace;
+        window->reserveSpace = reserveSpace;
+        if (revealChanged || mergedModeChanged) window->revealState.Reset();
+        if (!monitor.mergedDockHeight && self.settings.showOnlyWhenSummoned)
+            SetTimer(window->hwnd, kRevealTimer, 30, nullptr);
+        else KillTimer(window->hwnd, kRevealTimer);
         if (mergedModeChanged)
         {
             window->fullscreenState.DismissReveal();
@@ -2203,7 +2246,7 @@ void StatusBar::SetPresentationEnabled(bool enabled)
     {
         (void)id;
         if (!window) continue;
-        if (!enabled) window->Hide(false);
+        if (!enabled) { window->revealState.Reset(); window->Hide(false); }
         else window->CheckFullscreen();
     }
 }

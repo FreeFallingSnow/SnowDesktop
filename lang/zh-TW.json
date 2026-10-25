@@ -2638,5 +2638,6 @@
   "app.startup.startAnyway": "仍然啟動",
   "app.startup.instanceUnavailable": "另一個 SnowDesktop 程序正在啟動或沒有回應，暫時無法連線。請稍後再試；請勿同時啟動多個執行個體。",
   "app.startup.recoveryStopped": "SnowDesktop 在短時間內多次異常結束，已暫停自動重新啟動。選擇「仍然啟動」可再試一次。",
-  "app.startup.recoveryFailed": "無法重新啟動 SnowDesktop。您可以選擇「仍然啟動」再試一次，或取消。"
+  "app.startup.recoveryFailed": "無法重新啟動 SnowDesktop。您可以選擇「仍然啟動」再試一次，或取消。",
+  "statusBar.showOnlyWhenSummoned.description": "開啟後不預留螢幕空間。融合欄的顯示與喚起跟隨 Dock。"
 }

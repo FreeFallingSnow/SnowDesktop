@@ -762,7 +762,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
         constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230,
-            controlDisplayBase = 42240;
+            controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -774,6 +774,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command >= monitorBase && command < monitorBase + 3)
                 glyph = command == monitorBase + 2 ? L"\uEB96" : L"\uF359"; // square_multiple / desktop_20
             else if (command >= scaleBase && command < scaleBase + 6) glyph = L"\uF8C4"; // zoom_in_20
+            else if (command == summonOnlyCommand || command == revealGestureBase + 1) glyph = L"\uE5F2"; // eye_20
+            else if (command == revealGestureBase) glyph = L"\uF8E5"; // arrow_move_20
             else if (command == clockBase || command == clockBase + 1) glyph = L"\uE24E"; // calendar_ltr_20
             else if (command == timePositionBase) glyph = L"\uE025"; // align_center_horizontal_20
             else if (command == timePositionBase + 1) glyph = L"\uE039"; // align_right_20
@@ -802,6 +804,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (key == "statusBar.clockPanel") glyph = L"\uE24E"; // calendar_ltr_20
             else if (key == "settings.dock.monitor") glyph = L"\uF359"; // desktop_20
             else if (key == "statusBar.scale") glyph = L"\uF8C4"; // zoom_in_20
+            else if (key == "settings.dock.visibilityAndSummon") glyph = L"\uE5F2"; // eye_20
+            else if (key == "settings.dock.edgeRevealGesture") glyph = L"\uF8E5"; // arrow_move_20
             SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), glyph, MenuIconFont::FluentRegular);
             return child;
         };
@@ -894,6 +898,18 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
             }
             HMENU independentStatus = merged ? CreatePopupMenu() : settingsMenu;
+            if (const auto visibility = independentStatus ? submenu(independentStatus, "settings.dock.visibilityAndSummon") : nullptr)
+            {
+                const std::wstring label = std::wstring(_LW("settings.dock.showOnlyWhenSummoned")) + L"\t" +
+                    _LW(currentSettings.showOnlyWhenSummoned ? "app.interact.on" : "app.interact.off");
+                AppendMenuW(visibility, MF_STRING, summonOnlyCommand, label.c_str());
+                SetMenuItemIcon(visibility, summonOnlyCommand, L"\uE5F2", MenuIconFont::FluentRegular);
+                if (const auto gesture = submenu(visibility, "settings.dock.edgeRevealGesture"))
+                {
+                    addChoice(gesture, revealGestureBase, _LW("settings.dock.gestureSwipe"), currentSettings.edgeRevealGesture == 0);
+                    addChoice(gesture, revealGestureBase + 1, _LW("settings.dock.gestureHover"), currentSettings.edgeRevealGesture == 1);
+                }
+            }
             if (const auto scale = independentStatus ? submenu(independentStatus, "statusBar.scale") : nullptr)
                 for (UINT index = 0; index < 6; ++index)
                 {
@@ -968,6 +984,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
                 bar.scale = scales[command - scaleBase];
             }
+            else if (command == summonOnlyCommand) bar.showOnlyWhenSummoned = !bar.showOnlyWhenSummoned;
+            else if (command == revealGestureBase || command == revealGestureBase + 1)
+                bar.edgeRevealGesture = static_cast<int>(command - revealGestureBase);
             else if (command == clockBase || command == clockBase + 1) bar.clockSystemPanel = command == clockBase + 1;
             else if (command == inputPanelBase || command == inputPanelBase + 1) bar.inputMethodSystemPanel = command == inputPanelBase + 1;
             else if (command == timePositionBase || command == timePositionBase + 1)

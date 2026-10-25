@@ -28,6 +28,8 @@ struct StatusBarSettings
     bool enabled = false;
     DockPosition position = DockPosition::Top;
     DockMonitorScope monitorScope = DockMonitorScope::First;
+    bool showOnlyWhenSummoned = false;
+    int edgeRevealGesture = 1; // 0=swipe, 1=hover; independent bars default to hover.
     float scale = 1.0f;
     SurfaceTheme theme;
     StatusBarAppearanceRule noWindow, maximizedWindow;
@@ -74,6 +76,7 @@ template<class Visitor> void VisitStatusBarStoredAppearanceRules(Visitor visit)
 template<class Visitor> void VisitStatusBarFlags(Visitor visit)
 {
     visit("enabled", &StatusBarSettings::enabled);
+    visit("showOnlyWhenSummoned", &StatusBarSettings::showOnlyWhenSummoned);
     visit("menu", &StatusBarSettings::menu);
     visit("quickSearch", &StatusBarSettings::quickSearch);
     visit("taskView", &StatusBarSettings::taskView);
@@ -112,6 +115,7 @@ inline void NormalizeStatusBarSettings(StatusBarSettings& value)
     if (value.position != DockPosition::Bottom && value.position != DockPosition::Top)
         value.position = DockPosition::Top;
     value.monitorScope = static_cast<DockMonitorScope>(std::clamp(static_cast<int>(value.monitorScope), 0, 2));
+    value.edgeRevealGesture = value.edgeRevealGesture == 0 ? 0 : 1;
     value.scale = std::isfinite(value.scale) ? std::clamp(value.scale, .75f, 3.0f) : 1.0f;
     const StatusBarSettings defaults;
     const auto normalizeOrder = [](auto& items, const auto& supported) {
@@ -174,6 +178,11 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
         if (!field->IsNumber() || !std::isfinite(field->number)) return false;
         value.scale = static_cast<float>(field->number);
     }
+    if (const auto* field = input.Find("edgeRevealGesture"))
+    {
+        if (!field->IsNumber() || (field->number != 0 && field->number != 1)) return false;
+        value.edgeRevealGesture = static_cast<int>(field->number);
+    }
     if (const auto* field = input.Find("theme"))
         valid = DecodeSurfaceTheme(*field, value.theme, true) && valid;
     VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {
@@ -220,6 +229,7 @@ inline std::string EncodeStatusBarSettings(StatusBarSettings value)
     text.imbue(std::locale::classic());
     text << "{\"sceneRulesVersion\":2,\"position\":" << static_cast<int>(value.position)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
+         << ",\"edgeRevealGesture\":" << value.edgeRevealGesture
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;
     bool valid = true;
     VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {

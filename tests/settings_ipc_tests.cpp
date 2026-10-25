@@ -115,6 +115,30 @@ void TestCodec()
     }
     {
         snowdesktop::StatusBarSettings statusBar;
+        Check(!statusBar.showOnlyWhenSummoned && statusBar.edgeRevealGesture == 1,
+            "independent bars default to persistent display and hover reveal");
+        for (const bool summoned : {false, true}) for (const int gesture : {0, 1})
+        {
+            auto selected = statusBar;
+            selected.showOnlyWhenSummoned = summoned;
+            selected.edgeRevealGesture = gesture;
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(selected)) == selected,
+                "both reveal choices cross the settings process IPC boundary without loss");
+            JsonValue stored;
+            snowdesktop::StatusBarSettings restored;
+            Check(ParseJson(snowdesktop::EncodeStatusBarSettings(selected), stored) &&
+                snowdesktop::DecodeStatusBarSettings(stored, restored) &&
+                restored.showOnlyWhenSummoned == summoned && restored.edgeRevealGesture == gesture,
+                "all independent reveal preferences survive persistence round trips");
+        }
+        for (const auto* json : {"{\"showOnlyWhenSummoned\":1}", "{\"edgeRevealGesture\":true}",
+            "{\"edgeRevealGesture\":-1}", "{\"edgeRevealGesture\":2}", "{\"edgeRevealGesture\":0.5}"})
+        {
+            JsonValue invalid;
+            const auto before = statusBar;
+            Check(ParseJson(json, invalid) && !snowdesktop::DecodeStatusBarSettings(invalid, statusBar) && statusBar == before,
+                "invalid reveal settings are rejected without partially replacing valid preferences");
+        }
         for (const bool show : {false, true}) for (const bool single : {false, true})
         {
             auto selected = statusBar;
@@ -127,7 +151,9 @@ void TestCodec()
         JsonValue legacy;
         Check(ParseJson("{\"enabled\":true}", legacy), "legacy status bar JSON parses");
         statusBar.batteryPercentage = true;
-        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage,
+        statusBar.showOnlyWhenSummoned = true; statusBar.edgeRevealGesture = 0;
+        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage &&
+            !statusBar.showOnlyWhenSummoned && statusBar.edgeRevealGesture == 1,
             "existing profiles without the new flag retain compact control-center icons");
         for (const bool enabled : {false, true})
         {

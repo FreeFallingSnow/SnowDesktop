@@ -258,6 +258,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar_task_view_input.h
     src/system/status_bar/status_bar_interaction.h
     src/system/status_bar/status_bar_settings.h
+    src/system/status_bar/status_bar_reveal.h
     src/system/status_bar/status_bar_appbar.h
     src/app/dock/app_dock_menu.cpp
     src/app/dock/app_dock_model.cpp

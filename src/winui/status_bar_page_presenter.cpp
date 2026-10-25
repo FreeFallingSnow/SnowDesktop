@@ -33,8 +33,9 @@ struct StatusBarPagePresenter::Impl
     muxc::StackPanel root, basic, leftItems, infoItems, appearanceRoot;
     bool centralizedAppearance = false;
     muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
-    muxc::TextBlock layoutTitle, clickTitle;
-    muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition, controlDisplay;
+    muxc::TextBlock layoutTitle, clickTitle, visibilityTitle;
+    muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition, controlDisplay, edgeRevealGesture;
+    SettingRow edgeRevealGestureRow;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
     muxc::Button scaleReset;
@@ -223,6 +224,19 @@ struct StatusBarPagePresenter::Impl
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) layout.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         layout.Children().Append(mergedHeight->Content());
+        Title(visibilityTitle);
+        auto visibility = Card(style, visibilityTitle);
+        ToggleRow(visibility, "settings.dock.showOnlyWhenSummoned", "statusBar.showOnlyWhenSummoned",
+            &StatusBarSettings::showOnlyWhenSummoned);
+        edgeRevealGesture.Width(200);
+        edgeRevealGestureRow.Initialize(edgeRevealGesture);
+        edgeRevealGestureRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        visibility.Children().Append(edgeRevealGestureRow.root);
+        const auto revealSelection = edgeRevealGesture.SelectionChanged([this](const auto&, const auto&) {
+            const int selected = edgeRevealGesture.SelectedIndex();
+            if (selected >= 0 && selected <= 1) Emit([selected](auto& settings) { settings.edgeRevealGesture = selected; });
+        });
+        revoke.push_back([control = edgeRevealGesture, revealSelection] { control.SelectionChanged(revealSelection); });
         for (auto section : {leftSection, infoSection, controlCenterSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -432,6 +446,7 @@ struct StatusBarPagePresenter::Impl
         syncing = true;
         for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
+        edgeRevealGesture.SelectedIndex(value.edgeRevealGesture);
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
         controlDisplay.SelectedIndex(!value.controlCenter ? 2 : value.controlCenterSingleIcon ? 1 : 0);
@@ -453,6 +468,7 @@ struct StatusBarPagePresenter::Impl
         }
         edgeRow.SetEnabled(value.enabled); monitorsRow.SetEnabled(value.enabled);
         scaleRow.SetEnabled(value.enabled);
+        edgeRevealGestureRow.SetEnabled(value.enabled);
         clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
         inputPanelRow.SetEnabled(value.enabled && value.inputMethod);
         timeNotificationPositionRow.SetEnabled(value.enabled);
@@ -481,8 +497,20 @@ struct StatusBarPagePresenter::Impl
     {
         Flush();
         syncing = true;
-        for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
+        for (auto& toggle : toggles)
+        {
+            toggle->row.SetText(L(toggle->key), toggle->member == &StatusBarSettings::showOnlyWhenSummoned
+                ? L("statusBar.showOnlyWhenSummoned.description") : L"");
+            mux::Automation::AutomationProperties::SetName(toggle->control, toggle->row.label.Text());
+            mux::Automation::AutomationProperties::SetHelpText(toggle->control, toggle->row.help.Text());
+        }
         layoutTitle.Text(L("statusBar.layout"));
+        visibilityTitle.Text(L("settings.dock.visibilityAndSummon"));
+        edgeRevealGestureRow.SetText(L("settings.dock.edgeRevealGesture"));
+        mux::Automation::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
+        edgeRevealGesture.Items().Clear();
+        for (const auto key : {"settings.dock.gestureSwipe", "settings.dock.gestureHover"})
+            edgeRevealGesture.Items().Append(winrt::box_value(L(key)));
         clickTitle.Text(L("statusBar.clickBehavior"));
         leftSection.Header(winrt::box_value(L("statusBar.barItems")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
@@ -689,6 +717,7 @@ void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::
 {
     target("statusBar.position", impl_->edgeRow.root); target("statusBar.monitor", impl_->monitorsRow.root);
     target("statusBar.scale", impl_->scaleRow.root);
+    target("statusBar.edgeRevealGesture", impl_->edgeRevealGestureRow.root);
     target("statusBar.mergedBarHeight", impl_->availability.anyMerged
         ? impl_->mergedHeight->FocusTarget().as<mux::FrameworkElement>() : impl_->edgeRow.root);
     target("statusBar.clockPanel", impl_->clockPanelRow.root);
