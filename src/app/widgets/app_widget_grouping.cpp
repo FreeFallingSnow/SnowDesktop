@@ -986,7 +986,11 @@ bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
     const bool overTab = groupType == DesktopWidgetType::CollectionGroup
         ? !static_cast<CollectionGroup*>(group)->CategoryIdAtPoint(dragSession_.CurrentPoint()).empty()
         : !static_cast<FileGroup*>(group)->SourceIdAtPoint(dragSession_.CurrentPoint()).empty();
-    if (!overTab) insertIndex = target->childWidgetIds.size();
+    const bool tabInsertion = targetSlot &&
+        (targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionGroupTab ||
+         targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::FileGroupSourceTab) &&
+        (region == HitRegion::SortBefore || region == HitRegion::SortAfter);
+    if (!overTab && !tabInsertion) insertIndex = target->childWidgetIds.size();
     const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source,
         snowdesktop::slot_contract::SurfaceForWidgetType(groupType), mods);
     std::vector<std::wstring> movingIds;

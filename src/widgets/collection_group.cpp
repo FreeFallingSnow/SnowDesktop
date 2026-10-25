@@ -11,6 +11,7 @@
 #include "core/drop_model.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
+#include "group_tab_drag_preview.h"
 #include "navigation/search_match.h"
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
@@ -530,6 +531,21 @@ RECT CollectionGroup::GetTabRectById(
             std::distance(children.begin(), it)));
 }
 
+snowdesktop::group_tab_drag_preview::Layout CollectionGroup::GetTabDragPreviewLayout() const
+{
+    if (!app_ || IsPreviewRendering() || !app_->dragSession_.IsActive() ||
+        app_->dragSession_.TargetContainer() != this) return {};
+    auto& view = *const_cast<CollectionGroup*>(this);
+    const auto visible = GetVisibleCollectionIds();
+    return snowdesktop::group_tab_drag_preview::Build(view, app_->dragSession_, app_->widgets_,
+        visible, CollectionGroupTabsRect(&view), [&](const DesktopWidget& child) {
+            std::wstring label = app_->ShouldUseDemoCollectionIdentity(&child)
+                ? app_->GetDemoCollectionCategoryTitle(child) : child.title;
+            if (ShowGroupTabItemCounts()) label += L" " + std::to_wstring(child.itemKeys.size());
+            return label;
+        });
+}
+
 void CollectionGroup::EnsureTabVisible(size_t tabIndex)
 {
     if (!data_) return;
@@ -909,8 +925,17 @@ HitRegion CollectionGroup::HitTestDrag(
     if (!PtInRect(&frame, pt))
         return HitRegion::None;
 
-    const size_t tabIndex =
-        CollectionGroupTabIndexAtPoint(this, pt);
+    const bool ownLabels = app_ && app_->dragSession_.Source() == this &&
+        snowdesktop::group_tab_drag_preview::IsLabelDrag(app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup);
+    RECT tabZone = CollectionGroupTabsRect(this);
+    InflateRect(&tabZone, Cu(6.0f), Cu(6.0f));
+    const bool memberInsertion = app_ && (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+        app_->dragSession_.SourceList().SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
+        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup));
+    const size_t tabIndex = (ownLabels || (memberInsertion && PtInRect(&tabZone, pt)))
+        ? snowdesktop::group_tab_drag_preview::NearestTab(GetVisibleCollectionIds().size(), pt,
+            [this](size_t i) { return CollectionGroupTabRect(this, i); })
+        : CollectionGroupTabIndexAtPoint(this, pt);
     if (tabIndex != static_cast<size_t>(-1))
     {
         RECT tab = CollectionGroupTabRect(this, tabIndex);
@@ -937,6 +962,7 @@ void CollectionGroup::DrawDropPreview(
     HitRegion region)
 {
     if (!ctx) return;
+    if (GetTabDragPreviewLayout().active) return;
     if (app_ &&
         (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
             snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
@@ -999,7 +1025,8 @@ void CollectionGroup::OnItemsDropped(
     }
     if (sourceListForMembership.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
     {
-        const size_t insertion = CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()
+        const size_t insertion = !snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) &&
+            CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()
             ? data_->childWidgetIds.size() : GetDropInsertIndex(targetSlot, region);
         app_->MoveWidgetSourcesToGroup(sourceItems, app_->FindWidgetIndexById(data_->id), insertion);
         return;
@@ -1022,7 +1049,7 @@ void CollectionGroup::OnItemsDropped(
         app_->BuildDropPreviewList(
             sourceList, this, targetSlot, region,
             mods, app_->dragSession_.CurrentPoint());
-    if (allCollections &&
+    if (allCollections && !snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) &&
         CategoryIdAtPoint(
             app_->dragSession_.CurrentPoint()).empty())
     {
@@ -1073,14 +1100,17 @@ void CollectionGroup::DrawContent(
         const std::wstring active =
             CollectionGroupActiveCategory(this);
         const size_t tabCount = children.size();
-        const int totalWidth = CollectionGroupTabsTotalWidth(
+        const auto preview = GetTabDragPreviewLayout();
+        const int totalWidth = preview.active ? preview.totalWidth : CollectionGroupTabsTotalWidth(
             CollectionGroupTabWidths(this, tabs.right - tabs.left));
-        const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+        const int scroll = preview.active ? preview.scroll : snowdesktop::collection_group_rules::ClampIndependentTabScroll(
             data_->tabScrollOffset, totalWidth, tabs.right - tabs.left);
         const snowdesktop::ScrollContentClip tabsClip(
             context, tabContentFadeCache_, tabs, scroll, totalWidth,
             static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
-        for (size_t i = 0; i < tabCount; ++i)
+        if (preview.active)
+            snowdesktop::group_tab_drag_preview::Draw(*this, context, preview, tabs, active);
+        for (size_t i = 0; !preview.active && i < tabCount; ++i)
         {
             RECT layoutTab = CollectionGroupTabLayoutRect(this, i);
             RECT hitTab = CollectionGroupTabRect(this, i);

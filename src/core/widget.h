@@ -41,6 +41,7 @@
 struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
+namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 class WidgetEngine;
 struct GridPage;
 namespace snowdesktop
@@ -875,6 +876,7 @@ public:
     std::wstring GetActiveCollectionId() const;
     CollectionGroupEntryItem* GetTabItemAtPoint(POINT pt) const;
     RECT GetTabRectById(const std::wstring& collectionId) const;
+    snowdesktop::group_tab_drag_preview::Layout GetTabDragPreviewLayout() const;
     void EnsureTabVisible(size_t tabIndex);
     void InvalidateFilterCache();
 
@@ -977,6 +979,7 @@ public:
     std::wstring SourceIdAtPoint(POINT pt) const;
     FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;
     RECT GetSourceTabRectById(const std::wstring& childId) const;
+    snowdesktop::group_tab_drag_preview::Layout GetTabDragPreviewLayout() const;
     void EnsureSourceTabVisible(size_t tabIndex);
     void EnsureCategoryTabVisible(size_t index) override;
     void InvalidateHostedView();

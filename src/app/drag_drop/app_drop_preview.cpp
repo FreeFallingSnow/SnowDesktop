@@ -610,7 +610,11 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                 (dynamic_cast<FileGroup*>(widget) &&
                     dynamic_cast<FileGroup*>(widget)->
                         SourceIdAtPoint(dropPoint).empty());
-            if (emptyGroupTabPoint)
+            const bool tabInsertion = targetSlot &&
+                (targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionGroupTab ||
+                 targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::FileGroupSourceTab) &&
+                (region == HitRegion::SortBefore || region == HitRegion::SortAfter);
+            if (emptyGroupTabPoint && !tabInsertion)
                 preview.insertIndex =
                     preview.targetWidget->childWidgetIds.size();
             for (const auto& entry : sourceList.entries)

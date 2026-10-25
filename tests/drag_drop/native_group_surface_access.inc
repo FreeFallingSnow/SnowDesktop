@@ -8,26 +8,46 @@
         if (auto* group = dynamic_cast<FileGroup*>(view)) return group->GetSourceTabRectById(childId);
         throw std::runtime_error("group surface fixture requires a native group");
     }
+    static auto GroupSurfaceTabLayout(DesktopApp& app, const std::wstring& groupId)
+    {
+        auto* view = MemberContainer(app, groupId);
+        if (auto* group = dynamic_cast<CollectionGroup*>(view)) return group->GetTabDragPreviewLayout();
+        if (auto* group = dynamic_cast<FileGroup*>(view)) return group->GetTabDragPreviewLayout();
+        throw std::runtime_error("tab preview requires a native group");
+    }
+    static DropPreviewList GroupSurfacePointPreview(DesktopApp& app, const std::wstring& groupId, POINT point)
+    {
+        auto* view = MemberContainer(app, groupId);
+        app.ResolveCurrentDragTargetAt(point);
+        if (app.dragSession_.TargetContainer() != view)
+            throw std::runtime_error("actual resolver must retain the requested native group");
+        return app.BuildDropPreviewList(app.dragSession_.SourceList(), view, app.dragSession_.TargetSlot(),
+            app.dragSession_.TargetRegion(), 0, point);
+    }
     static DropPreviewList GroupSurfaceLabelPreview(DesktopApp& app, const std::wstring& groupId,
-        const std::wstring& boundaryId, bool after)
+        const std::wstring& boundaryId, bool after, int zone = 0)
     {
         auto* view = MemberContainer(app, groupId);
         const RECT frame = GroupSurfaceTabRect(app, groupId, boundaryId);
         if (IsRectEmpty(&frame)) throw std::runtime_error("group surface boundary must be a visible native tab");
-        const POINT point{after ? frame.right - 1 : frame.left + 1, (frame.top + frame.bottom) / 2};
-        app.dragSession_.UpdatePoint(point);
-        Slot* slot = nullptr;
-        const auto region = view->HitTestDrag(point, slot);
+        POINT point{after ? frame.right - 1 : frame.left + 1, (frame.top + frame.bottom) / 2};
+        const RECT component = view->GetFrameRect();
+        if (zone == 1) point.y = component.bottom - 1;
+        if (zone == 2) point.y = component.top + 1;
+        if (zone == 3) point.y = (component.top + component.bottom) / 2;
+        const auto preview = GroupSurfacePointPreview(app, groupId, point);
+        Slot* slot = app.dragSession_.TargetSlot();
+        const auto region = app.dragSession_.TargetRegion();
         if (!slot || region != (after ? HitRegion::SortAfter : HitRegion::SortBefore))
             throw std::runtime_error("native group tab hit must publish the requested insertion edge");
-        return app.BuildDropPreviewList(app.dragSession_.SourceList(), view, slot, region, 0, point);
+        return preview;
     }
     static void DropGroupSurfaceLabels(DesktopApp& app, const std::wstring& groupId)
     {
         auto* target = MemberContainer(app, groupId);
         Slot* slot = nullptr;
         const auto region = target->HitTestDrag(app.dragSession_.CurrentPoint(), slot);
-        if (!slot || (region != HitRegion::SortBefore && region != HitRegion::SortAfter))
+        if ((!slot || (region != HitRegion::SortBefore && region != HitRegion::SortAfter)) && region != HitRegion::Empty)
             throw std::runtime_error("group label release requires its actual native tab boundary");
         auto* origin = app.dragSession_.Source();
         const auto items = app.dragSession_.Items();
@@ -35,6 +55,10 @@
         target->OnItemsDropped(items, origin, slot, region, 0);
         app.SaveLayoutSlots(); app.ClearSelection(); app.EndDragSession();
         app.ApplyPageMapping(); app.LayoutItems();
+    }
+    static void LeaveGroupSurface(DesktopApp& app)
+    {
+        app.ResolveCurrentDragTargetAt({-100, -100});
     }
     static void GroupSurfaceDateHeaders(DesktopApp& app, bool enabled)
     {

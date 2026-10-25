@@ -7,6 +7,7 @@
 #include "diagnostics/input_diagnostics.h"
 #include "system/status_bar/status_bar_interaction.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "widgets/group_tab_drag_preview.h"
 #include "../test_temporary_directory.h"
 #include <fstream>
 

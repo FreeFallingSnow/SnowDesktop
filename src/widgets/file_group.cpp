@@ -11,6 +11,7 @@
 #include "core/drop_model.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
+#include "group_tab_drag_preview.h"
 #include "widget_chrome_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "navigation/search_match.h"
@@ -1667,8 +1668,16 @@ HitRegion FileGroup::HitTestDrag(
     if (!PtInRect(&frame, pt))
         return HitRegion::None;
 
-    const size_t sourceTab =
-        FileGroupSourceTabIndexAtPoint(this, pt);
+    const bool ownLabels = app_ && app_->dragSession_.Source() == this &&
+        snowdesktop::group_tab_drag_preview::IsLabelDrag(app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup);
+    RECT tabZone = FileGroupSourceTabsRect(this);
+    InflateRect(&tabZone, Cu(6.0f), Cu(6.0f));
+    const bool memberInsertion = app_ && (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+        snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup));
+    const size_t sourceTab = (ownLabels || (memberInsertion && PtInRect(&tabZone, pt)))
+        ? snowdesktop::group_tab_drag_preview::NearestTab(GetVisibleSourceIds().size(), pt,
+            [this](size_t i) { return FileGroupSourceTabRect(this, i); })
+        : FileGroupSourceTabIndexAtPoint(this, pt);
     if (sourceTab != static_cast<size_t>(-1))
     {
         RECT tab = FileGroupSourceTabRect(this, sourceTab);
@@ -1757,6 +1766,7 @@ void FileGroup::DrawDropPreview(
     HitRegion region)
 {
     if (!context) return;
+    if (GetTabDragPreviewLayout().active) return;
     if (app_ &&
         (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
             snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
@@ -1907,7 +1917,7 @@ void FileGroup::OnItemsDropped(
         size_t insertIndex =
             GetDropInsertIndex(
                 targetSlot, region);
-        if (SourceIdAtPoint(
+        if (!snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) && SourceIdAtPoint(
                 app_->dragSession_.
                     CurrentPoint()).empty())
             insertIndex =
@@ -2209,20 +2219,38 @@ void FileGroup::DrawContent(
     DrawSourceTabs(context);
 }
 
+snowdesktop::group_tab_drag_preview::Layout FileGroup::GetTabDragPreviewLayout() const
+{
+    if (!app_ || IsPreviewRendering() || !app_->dragSession_.IsActive() ||
+        app_->dragSession_.TargetContainer() != this) return {};
+    auto& view = *const_cast<FileGroup*>(this);
+    const auto visible = GetVisibleSourceIds();
+    return snowdesktop::group_tab_drag_preview::Build(view, app_->dragSession_, app_->widgets_,
+        visible, FileGroupSourceTabsRect(&view), [&](const DesktopWidget& child) {
+            std::wstring label = child.title;
+            if (ShowGroupTabItemCounts()) label += L" " + std::to_wstring(
+                child.type == DesktopWidgetType::FolderMapping ? child.folderEntries.size() : child.itemKeys.size());
+            return label;
+        });
+}
+
 void FileGroup::DrawSourceTabs(ID2D1DeviceContext* context)
 {
     const auto& sources = GetVisibleSourceIds();
     RECT tabs = FileGroupSourceTabsRect(this);
     if (IsRectEmptyRect(tabs)) return;
     const std::wstring active = GetActiveSourceId();
-    const int totalWidth = TotalTabWidth(
+    const auto preview = GetTabDragPreviewLayout();
+    const int totalWidth = preview.active ? preview.totalWidth : TotalTabWidth(
         FileGroupSourceTabWidths(this, tabs.right - tabs.left));
-    const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+    const int scroll = preview.active ? preview.scroll : snowdesktop::collection_group_rules::ClampIndependentTabScroll(
         data_->tabScrollOffset, totalWidth, tabs.right - tabs.left);
     const snowdesktop::ScrollContentClip tabsClip(
         context, tabContentFadeCache_, tabs, scroll, totalWidth,
         static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
-    for (size_t i = 0; i < sources.size(); ++i)
+    if (preview.active)
+        snowdesktop::group_tab_drag_preview::Draw(*this, context, preview, tabs, active);
+    for (size_t i = 0; !preview.active && i < sources.size(); ++i)
     {
         RECT layoutTab =
             FileGroupSourceTabLayoutRect(this, i);
