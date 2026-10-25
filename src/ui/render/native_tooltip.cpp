@@ -363,19 +363,24 @@ struct NativeTooltip::Impl
             paintDirty = false; lastError = S_OK;
         }
         PublishName();
+        if (show || visible)
+        {
+            // A reused tooltip can already be paired in the TOPMOST band
+            // behind a newer popup. Pair synchronization preserves that
+            // order, so explicitly raise the content before repairing glass.
+            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            backdrop.SetPopupWindowPairZOrder(window, HWND_TOPMOST, true);
+        }
         if (show && !visible)
         {
             KillTimer(window, kHoverTimer);
-            backdrop.SetPopupWindowPairZOrder(window, HWND_TOPMOST, true);
             backdrop.ShowPopupWindowPair(window);
             visible = IsWindowVisible(window) != FALSE;
             { std::lock_guard guard(accessible->mutex); accessible->visible = visible; }
             if (visible && provider && UiaClientsAreListening()) UiaRaiseAutomationEvent(provider.Get(), UIA_ToolTipOpenedEventId);
         }
         else if (visible && glass) backdrop.SetVisible(true);
-        if (visible && dragFeedback)
-            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {

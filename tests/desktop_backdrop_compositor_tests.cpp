@@ -412,6 +412,57 @@ int CheckNativeTooltipLifecycle()
         return windows;
     };
     const auto baseline = backdrops();
+    // Status-bar tips reuse their HWND after a panel opens. Exercise the real
+    // tooltip entry point against a newer topmost popup on this private desktop.
+    for (const bool glass : {false, true})
+    {
+        appearance.glassEnabled = glass;
+        tooltip.Configure(owner.handle, composition.Get(), text.Get(), appearance);
+        const auto showTooltip = [&] {
+            tooltip.SetTarget("private/z-order", L"Status-bar tooltip", {100, 100, 180, 140},
+                snowdesktop::NativeTooltipPlacement::Below, true);
+        };
+        showTooltip();
+        const HWND tip = tooltip.Window();
+        tooltip.Hide();
+        PopupWindow popup;
+        if (!check(popup.handle != nullptr, "tooltip layer fixture creates a competing popup")) continue;
+        const auto above = [](HWND upper, HWND lower) {
+            for (HWND window = upper; window; window = GetWindow(window, GW_HWNDNEXT))
+                if (window == lower) return true;
+            return false;
+        };
+        const auto raisePopup = [&] {
+            return SetWindowPos(popup.handle, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE;
+        };
+        check(raisePopup() && above(popup.handle, tip),
+            "a newer panel starts above the reused hidden tooltip");
+        SetActiveWindow(popup.handle);
+        SetFocus(popup.handle);
+        const HWND active = GetActiveWindow(), focus = GetFocus();
+        const auto checkTooltipLayer = [&] {
+            check(tooltip.Visible() && tooltip.Window() == tip && above(tip, popup.handle),
+                "reused and refreshed tooltip content stays above the popup");
+            HWND helper = nullptr;
+            for (const HWND window : backdrops())
+                if (std::find(baseline.begin(), baseline.end(), window) == baseline.end()) helper = window;
+            check(glass ? helper && IsWindowVisible(helper) &&
+                    GetWindow(helper, GW_HWNDPREV) == tip && above(helper, popup.handle) : !helper,
+                "tooltip glass stays directly behind its content and above the popup; opaque tips need no glass");
+            check(GetActiveWindow() == active && GetFocus() == focus,
+                "raising a tooltip preserves the popup's activation and keyboard focus");
+        };
+        showTooltip();
+        checkTooltipLayer();
+        check(raisePopup() && above(popup.handle, tip),
+            "a panel can overtake an already-visible tooltip before its next refresh");
+        showTooltip();
+        checkTooltipLayer();
+        tooltip.Hide();
+    }
+    appearance.glassEnabled = true;
+    tooltip.Configure(owner.handle, composition.Get(), text.Get(), appearance);
     for (int scenario = 0; scenario < 5; ++scenario)
     {
         ShowWindow(owner.handle, SW_SHOWNOACTIVATE);
