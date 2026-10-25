@@ -370,7 +370,7 @@ struct StatusBarPagePresenter::Impl
             if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Calendar, "calendar.events"));
         });
         revoke.push_back([control = calendarLink, calendarToken] { control.Click(calendarToken); });
-        for (const auto panel : {basic, layout, leftItems, infoItems, controlCenter, clickBehavior})
+        for (const auto panel : {basic, layout, visibility, leftItems, infoItems, controlCenter, clickBehavior})
             presenter_controls::UpdateSettingsSubrows(panel, 0);
         auto token = edge.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = edge.SelectedIndex();
