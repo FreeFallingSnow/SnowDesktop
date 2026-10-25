@@ -147,6 +147,8 @@ void InspectPackageInlineLayout(const x::FrameworkElement& root,
         Settle(root);
     }
     std::ofstream metrics(output / L"package-inline-layout.tsv");
+    std::ofstream characters(output / L"package-inline-characters.tsv");
+    characters << "row\tindex\tcode_unit\toffset\tx\ty\twidth\theight\trow_baseline\traster_scale\tfont_size\n";
     metrics << "row\ttag_bottom\trow_height\tbaseline_error\tsecond_line_top\tsecond_line_x\tgap\tline_height\tpadding_bottom\n";
     bool foundWrappedDescription = false;
     for (std::size_t index = 0; index < rows.size(); ++index)
@@ -175,6 +177,19 @@ void InspectPackageInlineLayout(const x::FrameworkElement& root,
         double secondTop = -1.0, secondX = -1.0;
         if (description && !description.Text().empty())
         {
+            for (std::uint32_t offset = 0; offset < description.Text().size(); ++offset)
+            {
+                const auto pointer = description.ContentStart().GetPositionAtOffset(
+                    static_cast<int>(offset), d::LogicalDirection::Forward);
+                if (!pointer) break;
+                const auto bounds = pointer.GetCharacterRect(d::LogicalDirection::Forward);
+                characters << index << '\t' << offset << '\t'
+                    << static_cast<std::uint32_t>(description.Text()[offset]) << '\t'
+                    << pointer.Offset() << '\t' << bounds.X << '\t' << bounds.Y << '\t'
+                    << bounds.Width << '\t' << bounds.Height << '\t' << row.BaselineOffset() << '\t'
+                    << row.XamlRoot().RasterizationScale() << '\t' << row.FontSize() << '\n';
+            }
+            characters.flush();
             const auto first = description.ContentStart().GetCharacterRect(d::LogicalDirection::Forward);
             for (std::uint32_t offset = 1; offset < description.Text().size(); ++offset)
             {
