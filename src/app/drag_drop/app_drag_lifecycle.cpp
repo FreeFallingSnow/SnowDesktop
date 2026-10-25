@@ -441,15 +441,21 @@ void DesktopApp::PresentPointerInteractionFrame(
         {
             // Tab insertion changes the retained group surface as well as the
             // shared overlay. Repaint both the old and new owner on handoff.
-            const auto updateGroup = [&](size_t index) {
-                if (index >= widgets_.size() || !IsGroupWidgetType(widgets_[index].type) ||
+            bool groupQueued = false;
+            const bool previousBatch = desktopWidgetPointerBatchActive_;
+            desktopWidgetPointerBatchActive_ = true;
+            const auto updateGroup = [&](size_t index, size_t insertion) {
+                if (insertion == static_cast<size_t>(-1) || index >= widgets_.size() || !IsGroupWidgetType(widgets_[index].type) ||
                     GetOpenPopupWidget() == &widgets_[index]) return;
-                (void)QueueDesktopWidgetComposition(widgets_[index].id);
+                groupQueued = QueueDesktopWidgetComposition(widgets_[index].id) || groupQueued;
             };
-            updateGroup(presentedWidgetDragFeedback_.groupTargetIndex);
-            if (widgetDragFeedback.groupTargetIndex != presentedWidgetDragFeedback_.groupTargetIndex)
-                updateGroup(widgetDragFeedback.groupTargetIndex);
-            (void)PresentQueuedDesktopWidgetComposition();
+            updateGroup(presentedWidgetDragFeedback_.groupTargetIndex, presentedWidgetDragFeedback_.groupInsertIndex);
+            updateGroup(widgetDragFeedback.groupTargetIndex, widgetDragFeedback.groupInsertIndex);
+            desktopWidgetPointerBatchActive_ = previousBatch;
+            // Draw child updates now, then let the foreground/end-of-message
+            // boundary commit them together. Grid/body feedback has no child
+            // update and must keep its existing single-commit presentation.
+            if (groupQueued) (void)FlushPendingDesktopWidgetComposition();
             widgetInteractionPresented =
                 presentInteractionForeground();
         }
