@@ -408,11 +408,10 @@ void TestBuildOutputLayout(const std::string& cmake,
 void TestReleaseManagerShellReload(const std::string& manager,
     const std::string& documentation)
 {
-    Check(manager.find("[switch]$ReloadShell") != std::string::npos &&
-            manager.find("\"--reload-shell\"") != std::string::npos &&
-            manager.find("-BatchArguments $buildArguments") !=
-                std::string::npos,
-        "release manager forwards the explicit shell reload option to the standard build");
+    Check(manager.find("Invoke-SnowDesktopPackagingBuild $repositoryRoot") != std::string::npos &&
+            manager.find("Get-SnowDesktopPackagingContext $repositoryRoot $ArtifactRun") != std::string::npos &&
+            manager.find("@('-ArtifactRun', $ArtifactRun)") != std::string::npos,
+        "release manager packages the producing saved Run instead of rebuilding active output");
     Check(manager.find("Get-BuildOccupancy") != std::string::npos &&
             manager.find("SnowDesktopTaskbarHook.dll") !=
                 std::string::npos &&

@@ -179,7 +179,8 @@ scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPub
 构建入口默认不会关闭 SnowDesktop 或重启 Explorer。任务栏与 Wallpaper Engine Hook 均从
 进程专属临时副本注入，所以正常退出后残留在目标进程中的临时模块不会阻止下一次构建；只有旧版本仍直接加载构建目录 DLL
 等确实占用构建输出的情况才需要 `--reload-shell`。脚本会明确提示并短暂重启 Shell。发布 CLI
-对应使用 `-ReloadShell`；发布 TUI 检测到实际构建输出占用时会在执行前请求一次明确确认。
+保留 `-ReloadShell` 兼容参数；发行打包现使用冻结候选目录构建或直接传入 `-ArtifactRun`，
+不再为打包关闭活动应用或重启 Shell。上面的占用处理仍适用于更新活动运行目录的普通构建。
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
 Release/Debug 预设分别构建 `SnowDesktopReleaseBuild` / `SnowDesktopDebugBuild` 聚合目标，
