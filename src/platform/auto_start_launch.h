@@ -59,20 +59,25 @@ inline bool IsExplorerAckArgument(std::wstring_view value)
     return value.starts_with(kExplorerAckPrefix);
 }
 
-inline void AcknowledgeExplorerLaunch(std::wstring_view command)
+inline void AcknowledgeExplorerLaunch(std::wstring_view command) noexcept
 {
-    const Arguments arguments(command);
-    for (int index = 1; index < arguments.count; ++index)
+    if (command.find(kExplorerAckPrefix) == std::wstring_view::npos) return;
+    try
     {
-        const std::wstring_view argument(arguments.value[index]);
-        if (!IsExplorerAckArgument(argument)) continue;
-        const auto token = argument.substr(std::size(kExplorerAckPrefix) - 1);
-        if (token.size() != 38 || token.find_first_not_of(L"{}-0123456789abcdefABCDEF") != std::wstring_view::npos)
-            continue;
-        const std::wstring name = std::wstring(kExplorerAckEventPrefix) + std::wstring(token);
-        const HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, name.c_str());
-        if (event) { SetEvent(event); CloseHandle(event); }
+        const Arguments arguments(command);
+        for (int index = 1; index < arguments.count; ++index)
+        {
+            const std::wstring_view argument(arguments.value[index]);
+            if (!IsExplorerAckArgument(argument)) continue;
+            const auto token = argument.substr(std::size(kExplorerAckPrefix) - 1);
+            if (token.size() != 38 || token.find_first_not_of(L"{}-0123456789abcdefABCDEF") != std::wstring_view::npos)
+                continue;
+            const std::wstring name = std::wstring(kExplorerAckEventPrefix) + std::wstring(token);
+            const HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, name.c_str());
+            if (event) { SetEvent(event); CloseHandle(event); }
+        }
     }
+    catch (...) {} // An optional receipt must never prevent the child from starting.
 }
 
 inline bool IsOwnerArgument(std::wstring_view value)
@@ -208,12 +213,15 @@ inline void ExecuteThroughExplorer(const std::wstring& executable,
 }
 
 using ShellExecutor = decltype(&ExecuteThroughExplorer);
+using AckEventCreator = decltype(&CreateEventW);
+using AckWaiter = decltype(&WaitForSingleObject);
 
 class NativePlatform final
 {
 public:
-    explicit NativePlatform(ShellExecutor execute = &ExecuteThroughExplorer, DWORD handoffTimeout = 15000)
-        : execute_(execute), handoffTimeout_(handoffTimeout) {}
+    explicit NativePlatform(ShellExecutor execute = &ExecuteThroughExplorer, DWORD handoffTimeout = 15000,
+        AckEventCreator createAckEvent = &CreateEventW, AckWaiter waitForAck = &WaitForSingleObject)
+        : execute_(execute), handoffTimeout_(handoffTimeout), createAckEvent_(createAckEvent), waitForAck_(waitForAck) {}
 
     bool IsElevated()
     {
@@ -274,28 +282,6 @@ private:
 public:
     DWORD Relaunch(std::wstring_view command)
     {
-        GUID token{};
-        CheckHr(CoCreateGuid(&token), L"CoCreateGuid(Explorer launch acknowledgement)");
-        wchar_t tokenText[40]{};
-        Require(StringFromGUID2(token, tokenText, static_cast<int>(std::size(tokenText))) != 0,
-            L"StringFromGUID2(Explorer launch acknowledgement)");
-        struct SecurityDescriptor
-        {
-            PSECURITY_DESCRIPTOR value = nullptr;
-            ~SecurityDescriptor() { if (value) LocalFree(value); }
-        } descriptor;
-        // The ordinary Explorer child must be able to signal an elevated
-        // parent's event. This acknowledgement never authorizes privileges.
-        Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"D:(A;;GA;;;SY)(A;;GA;;;IU)S:(ML;;NW;;;ME)", SDDL_REVISION_1,
-            &descriptor.value, nullptr) != FALSE, L"Explorer launch acknowledgement security");
-        SECURITY_ATTRIBUTES security{sizeof(security), descriptor.value, FALSE};
-        const std::wstring eventName = std::wstring(kExplorerAckEventPrefix) + tokenText;
-        Handle acknowledgement{CreateEventW(&security, TRUE, FALSE, eventName.c_str())};
-        const DWORD eventError = GetLastError();
-        Require(acknowledgement.value != nullptr, L"CreateEvent(Explorer launch acknowledgement)");
-        if (eventError == ERROR_ALREADY_EXISTS)
-            throw Failure{ERROR_ALREADY_EXISTS, L"Explorer launch acknowledgement identity"};
         std::wstring executable(32768, L'\0');
         const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
             static_cast<DWORD>(executable.size()));
@@ -317,20 +303,60 @@ public:
                 kAutoStartBackgroundArgument : arguments.value[index]);
         }
         if (!parameters.empty()) parameters.push_back(L' ');
-        parameters += QuoteArgument(std::wstring(kExplorerAckPrefix) + tokenText);
-        parameters.push_back(L' ');
         parameters += QuoteArgument(kExplorerRelaunchArgument);
+        Handle acknowledgement;
+        const auto originalParametersSize = parameters.size();
+        try
+        {
+            GUID token{};
+            CheckHr(CoCreateGuid(&token), L"CoCreateGuid(Explorer launch acknowledgement)");
+            wchar_t tokenText[40]{};
+            Require(StringFromGUID2(token, tokenText, static_cast<int>(std::size(tokenText))) != 0,
+                L"StringFromGUID2(Explorer launch acknowledgement)");
+            struct SecurityDescriptor
+            {
+                PSECURITY_DESCRIPTOR value = nullptr;
+                ~SecurityDescriptor() { if (value) LocalFree(value); }
+            } descriptor;
+            // The ordinary Explorer child must be able to signal an elevated
+            // parent's event. This acknowledgement never authorizes privileges.
+            Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                L"D:(A;;GA;;;SY)(A;;GA;;;IU)S:(ML;;NW;;;ME)", SDDL_REVISION_1,
+                &descriptor.value, nullptr) != FALSE, L"Explorer launch acknowledgement security");
+            SECURITY_ATTRIBUTES security{sizeof(security), descriptor.value, FALSE};
+            const std::wstring eventName = std::wstring(kExplorerAckEventPrefix) + tokenText;
+            acknowledgement.value = createAckEvent_(&security, TRUE, FALSE, eventName.c_str());
+            const DWORD eventError = GetLastError();
+            Require(acknowledgement.value != nullptr, L"CreateEvent(Explorer launch acknowledgement)");
+            if (eventError == ERROR_ALREADY_EXISTS)
+                throw Failure{ERROR_ALREADY_EXISTS, L"Explorer launch acknowledgement identity"};
+            parameters.push_back(L' ');
+            parameters += QuoteArgument(std::wstring(kExplorerAckPrefix) + tokenText);
+        }
+        catch (...)
+        {
+            parameters.resize(originalParametersSize);
+            if (acknowledgement.value) CloseHandle(acknowledgement.value);
+            acknowledgement.value = nullptr;
+            OutputDebugStringW(L"SnowDesktop: startup receipt unavailable; continuing the Explorer launch without it.\n");
+        }
         execute_(executable, parameters, directory);
-        const DWORD waited = WaitForSingleObject(acknowledgement.value, handoffTimeout_);
-        if (waited != WAIT_OBJECT_0)
-            throw Failure{waited == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError(),
-                L"Explorer child did not acknowledge startup"};
+        if (acknowledgement.value)
+        {
+            const DWORD waited = waitForAck_(acknowledgement.value, handoffTimeout_);
+            if (waited == WAIT_TIMEOUT)
+                throw Failure{ERROR_TIMEOUT, L"Explorer child did not acknowledge startup"};
+            if (waited != WAIT_OBJECT_0)
+                OutputDebugStringW(L"SnowDesktop: startup receipt could not be observed; preserving the submitted Explorer launch.\n");
+        }
         return 0;
     }
 
 private:
     ShellExecutor execute_;
     DWORD handoffTimeout_;
+    AckEventCreator createAckEvent_;
+    AckWaiter waitForAck_;
 };
 
 template<typename Platform>

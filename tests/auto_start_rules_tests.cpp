@@ -89,6 +89,76 @@ void CheckUnacknowledgedExplorerLaunch()
     Check(timedOut, "a successful Shell request without a child acknowledgement is not reported as successful startup");
 }
 
+int receiptChildStarts = 0;
+int failedReceiptWaits = 0;
+bool receiptArgumentExpected = false;
+HANDLE WINAPI DenyReceiptEvent(LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR)
+{
+    SetLastError(ERROR_ACCESS_DENIED);
+    return nullptr;
+}
+DWORD WINAPI FailReceiptWait(HANDLE, DWORD)
+{
+    ++failedReceiptWaits;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return WAIT_FAILED;
+}
+void StartReceiptFallbackChild(const std::wstring& executable,
+    const std::wstring& parameters, const std::wstring& directory)
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    const launch::Arguments arguments(L"host.exe " + parameters);
+    bool receiptArgument = false, guard = false, background = false;
+    for (int index = 1; index < arguments.count; ++index)
+    {
+        const std::wstring_view argument(arguments.value[index]);
+        receiptArgument = receiptArgument || launch::IsExplorerAckArgument(argument);
+        guard = guard || argument == launch::kExplorerRelaunchArgument;
+        background = background || argument == snowdesktop::kAutoStartBackgroundArgument;
+    }
+    Check(receiptArgument == receiptArgumentExpected && guard && background,
+        "optional receipt failure preserves the restart guard and background launch arguments");
+    // Only the Explorer submission boundary is replaced. The native parent
+    // path and an actual isolated child still run when receipt APIs fail.
+    std::wstring command = launch::QuoteArgument(executable) + L" " + parameters;
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &child))
+    {
+        Check(false, "receipt fallback creates a real isolated child");
+        return;
+    }
+    ++receiptChildStarts;
+    CloseHandle(child.hThread);
+    const DWORD waited = WaitForSingleObject(child.hProcess, 5000);
+    DWORD exitCode = STILL_ACTIVE;
+    Check(waited == WAIT_OBJECT_0 && GetExitCodeProcess(child.hProcess, &exitCode) && exitCode == 0,
+        "the child starts and exits normally despite the failed optional receipt mechanism");
+    if (waited != WAIT_OBJECT_0) TerminateProcess(child.hProcess, ERROR_TIMEOUT);
+    CloseHandle(child.hProcess);
+}
+void CheckOptionalReceiptFailure()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    for (const bool eventDenied : {true, false})
+    {
+        receiptArgumentExpected = !eventDenied;
+        launch::NativePlatform native{&StartReceiptFallbackChild, 10,
+            eventDenied ? &DenyReceiptEvent : &CreateEventW, &FailReceiptWait};
+        bool requested = false;
+        try
+        {
+            requested = native.Relaunch(
+                L"host.exe --receipt-fallback-child --snowdesktop-autostart-owner=portable") == 0;
+        }
+        catch (...) {}
+        Check(requested, "receipt setup or observation failure does not become a new startup prerequisite");
+    }
+    Check(receiptChildStarts == 2 && failedReceiptWaits == 1,
+        "both optional receipt failures still start a child, and unavailable channels are never waited on");
+}
+
 void CheckAutoStartLaunchRules()
 {
     namespace launch = snowdesktop::auto_start_launch;
@@ -274,6 +344,7 @@ int main(int argc, char** argv)
     if (argc > 1) return 0;
     CheckStartupDialogChoices();
     CheckUnacknowledgedExplorerLaunch();
+    CheckOptionalReceiptFailure();
     CheckAutoStartLaunchRules();
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;
