@@ -22,27 +22,26 @@ Agent、CI 或其他自动化调用：
 scripts\release.bat status
 scripts\release.bat status -Json
 scripts\release.bat package
-scripts\release.bat package -ReloadShell
 scripts\release.bat package-steam
 scripts\release.bat steam-preview
 scripts\release.bat steam-upload-public -Yes `
   -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
 scripts\release.bat prepare
-scripts\release.bat prepare -ReloadShell
 scripts\release.bat open
 ```
 
-`prepare` 与 `package` 均构建并生成发行包，不创建提交或推送。发布流程不再读取、
+`prepare` 与 `package` 默认构建并生成发行包，也可用 `-ArtifactRun <runId>` 选取已保存的运行文件，
+不创建提交或推送。发布流程不再读取、
 同步或推送本地 `release\` 目录，也不依赖该目录存在。
 
 旧 `sync-release` 命令已移除；调用方应删除同步步骤。`status -Json` 不再返回
 `ReleaseExists`、`ReleaseBranch`、`ReleaseStatus`、`ReleaseDirty` 和 `ReleaseOrigin`；
 发布状态改为记录 `sourceRepositoryPublishedAt`。已有状态文件中的旧字段仅作为历史记录保留。
 
-发布 CLI 默认不会关闭 SnowDesktop 或重启 Explorer。构建产物被正在运行的
-SnowDesktop 或 Explorer 任务栏 Hook 占用时，应先正常退出应用；需要自动解除占用时，
-为 `package` 或 `prepare` 增加 `-ReloadShell`。该选项会终止 SnowDesktop 并短暂重启
-Explorer。发布 TUI 检测到占用时会显示相同副作用并请求确认。
+发布 TUI 与 CLI 使用冻结候选目录构建，或通过 `-ArtifactRun` 读取已保存的运行文件；
+无需为打包提前关闭 SnowDesktop 或重启 Explorer。原检出的应用及 Hook 占用不阻断候选编译与打包。
+`-ReloadShell` 仅保留为兼容参数，不是 `package` 或 `prepare` 的前置步骤，不应据此要求用户退出软件。
+协作构建成功后更新本检出运行文件的激活流程另见[脚本说明](../scripts/README.md)，与发行打包分开。
 
 会改变源码 Git 历史或远程状态的命令必须显式确认版本：
 

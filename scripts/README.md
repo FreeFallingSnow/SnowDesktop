@@ -12,12 +12,15 @@
 二者共用原生驱动，`--all` 保留完整诊断入口。资源场景在有界观察返回非终态时继续等待同一存活 Run，
 达到场景期限仍未执行则失败并保留排队原因；不重新提交、不关闭内存保护，也不将未执行算作通过。
 
-普通 Release、Debug、测试及 IDE 包装入口先核对共享输出是否空闲，再提交持久 Run 并观察结果；退出观察方不会取消已提交执行。新协作批次使用第4版候选协议，所有等待方读取同一冻结尝试的结果；活动第1～3版批次保留原执行方式。独立启动、观察和显式取消仍可用 `build.bat run`：
+普通 Release、Debug、测试及 IDE 包装入口先取得本地执行权，再提交持久 Run 并观察结果；执行权冲突不要求关闭软件，退出观察方不会取消已提交执行。新协作批次使用第4版候选协议，所有等待方读取同一冻结尝试的结果；活动第1～3版批次保留原执行方式。独立启动、观察和显式取消仍可用 `build.bat run`：
 
 第4版在首位成员就绪时封闭成员集合，新任务等待下一编辑窗口；已有成员仍可用同ID重开并更新修订。
 所有成员就绪并通过所需检查后，Run在原工作区短暂持有执行租约捕获源码和工具快照，保存不可变的
 `<run>.candidate-binding.json`，再把冻结尝试移入 `state.activeCandidates` 并释放原编辑窗口。
 随后在稳定私有编译槽排队、编译、测试和保存运行文件。新编辑与旧候选运行可以并行；旧结果只退役其对应尝试。
+
+候选编译无需提前关闭原检出的 SnowDesktop 或重启 Explorer。编辑、就绪、等待资源和编译期间，
+原检出的应用与 Hook 占用观察只作为信息保留，不阻断独立候选，也不构成要求用户退出或追加进程处理参数的理由。
 
 共同候选的完整 Release 产品构建成功后，立即保存运行文件并更新本检出 `.build/Release`，再开始测试；后续测试失败不撤回已交付的新构建。`productBuild`、`artifact`、`activation` 和最终测试结果分别保留。替换只处理已校验清单内的运行文件，保留原启动参数、`data/` 和 `data.debug/`；正在运行时先正常退出宿主，更新后恢复运行，旧运行文件保存在 `.build/activation-backups/`。本检出应用未运行时只安装新文件，回执为 `installed`，保持关闭以供下次启动；其他安装目录中的应用保持原状。本检出进程存在但控制窗口尚不可用时明确失败，保留现有文件。较旧源码快照不会覆盖已安装的新快照。复制或启动失败时恢复旧运行文件及原先的运行状态并记录失败，不把切换失败写成构建失败。Hook 已载入的外部进程保持运行，其现有映像在正常重启前仍属于旧构建。补切已有产品可使用 `scripts/build_activate.ps1 -ArtifactRun <runId>`，不需要等待或重跑测试。
 只读 `status -Batch B`、`wait ID -Batch B -Revision R`、原始日志及逐条证据仍绑定原批次，不能将新窗口的结果替代旧结果。
@@ -169,18 +172,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\steam_local_deploy.p
 scripts\release.bat
 scripts\release.bat status -Json
 scripts\release.bat package
-scripts\release.bat package -ReloadShell
 scripts\release.bat package-steam
 scripts\release.bat steam-preview
 scripts\release.bat steam-upload-dev -Yes -ConfirmVersion 1.0.5.0 -ConfirmPrivateBranch internal-dev
 scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPublicBranch public
 ```
 
-构建入口默认不会关闭 SnowDesktop 或重启 Explorer。任务栏与 Wallpaper Engine Hook 均从
-进程专属临时副本注入，所以正常退出后残留在目标进程中的临时模块不会阻止下一次构建；只有旧版本仍直接加载构建目录 DLL
-等确实占用构建输出的情况才需要 `--reload-shell`。脚本会明确提示并短暂重启 Shell。发布 CLI
-保留 `-ReloadShell` 兼容参数；发行打包现使用冻结候选目录构建或直接传入 `-ArtifactRun`，
-不再为打包关闭活动应用或重启 Shell。上面的占用处理仍适用于更新活动运行目录的普通构建。
+当前第4版协作构建在独立候选目录中编译，预检只针对实际候选输出，不要求关闭原检出的应用或重启 Explorer。
+完整 Release 产品构建成功后的运行文件切换由激活阶段负责，正在运行的本检出宿主会正常退出并恢复运行，
+无需用户预先退出。任务栏与 Wallpaper Engine Hook 从进程专属临时副本注入；外部进程保持运行，
+已载入的旧映像在其正常重启前继续使用。
+
+旧第1～3版批次及直接写入活动运行目录的入口仍核对该输出目录的真实占用；只有确认占用目标路径、
+取得执行权且即将编译时，才使用显式 `--close-application` 或 `--reload-shell` 处理。
+这些选项不是独立候选构建的前置步骤。发布 CLI 保留 `-ReloadShell` 兼容参数；发行打包使用冻结候选目录
+或已保存的 `-ArtifactRun`，无需为打包关闭活动应用或重启 Shell。
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
 Release/Debug 预设分别构建 `SnowDesktopReleaseBuild` / `SnowDesktopDebugBuild` 聚合目标，
@@ -341,7 +347,7 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 
 普通 Release、Debug、测试入口（包括会先配置的 `list`）和
 `powershell.exe -NoProfile -File scripts/build_entry.ps1 -Action ide [-Configuration Debug] [-Targets target]`
-共用本地 `state.lock/build.lock`。先取得执行权，再检查输出占用、配置、编译或整理；活动 editing、
+共用本地 `state.lock/build.lock`。先取得执行权，再按实际输出路径进行预检、配置、编译或整理；活动 editing、
 冻结批次或独占产物租约存在时返回 2，带批次/阶段/参与者摘要，不停止应用。
 协调器冻结后的子进程使用绑定存活 owner、启动时间、进程祖先、批次身份及独占租约的凭据。
 任意设置环境变量、旧凭据或另一进程的凭据均不能绕过；普通入口期间新 begin 也不能登记编辑。
@@ -469,11 +475,15 @@ scripts\build.bat status -Batch <batchId>
 scripts\build.bat wait task-a -Batch <batchId> -Revision <editRevision>
 ```
 
-When only closing SnowDesktop is authorized, use `scripts\build.bat --close-application`
-or append `-CloseApplication` to `ready-and-wait`. The execution owner closes only
-identified application processes. Existing or newly observed Explorer Hook owners,
-and unknown owners, stop the build; this option never terminates or restarts Explorer.
-It is mutually exclusive with `--reload-shell` / `-ReloadShell`.
+Legacy process-action options apply only when the build actually overwrites an occupied
+runtime directory. After verifying the output path and process identity, the execution owner
+may use `scripts\build.bat --close-application` or `ready-and-wait -CloseApplication`
+to close identified application owners only. Existing or newly observed Explorer Hook owners,
+and unknown owners, stop that operation; it never terminates or restarts Explorer.
+The option is mutually exclusive with `--reload-shell` / `-ReloadShell`.
+Current protocol-v4 candidate compilation does not require these options or a manual
+application exit. Updating the originating checkout after a successful full Release product
+build is a separate activation step that gracefully exits and restores an already running host.
 
 示例测试名必须替换为 `scripts\test.bat list` 的实际名称。`ready-and-wait` 默认在原工具进程中标记就绪、执行计划中的轻量检查、等待屏障和共同结果；不依赖 Python 或隐藏后台启动。工具 yield 后续等同一 session。`wait` 仅观察；兼容 `finish -AutoCheck` 使用同一执行路径。`ready` 仅为明确选择的后台模式：同修订存活 worker 复用，启动失败保留 pending 登记、报告 unavailable 和前台接管命令，不假报已运行。Windows PowerShell 路径按系统目录解析，pwsh 调用可用。
 
@@ -491,7 +501,12 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 
 冻结时合并、去重并持久化 `<batch>.plan.json`，之后不可改写；`coverage.json` 记录每个任务请求、实际覆盖、失败和执行前测试二进制 SHA-256。覆盖关联不是缺陷责任认定。源码摘要 v2 按文件内容计算，HEAD 作为元数据，不因只改变提交身份而失效。结果另记实际构建阶段及可观测输出二进制身份。端点身份检查不能排除构建途中改动后恢复、外部 SDK 或未登记写入者。
 
-全部就绪后只读核对输出占用；未请求 ReloadShell 则保留编辑批次等待释放。按 AGENTS 允许的既有授权执行前告知副作用并声明 ReloadShell，无需重复确认。当前执行者获得冻结和构建权后才使用显式 `ready/finish -ReloadShell` 授权，优先关闭已核对路径的应用，必要时重载确实占用输出的 Explorer。无法核对身份的进程不得终止。新批次不继承授权；普通 `begin/status/check` 不会停止应用。
+第4版批次全部就绪后捕获冻结输入，在独立编译槽中执行；原检出应用或 Hook 的占用不阻断候选，
+不得因此提示用户先关闭软件或默认追加 `ReloadShell` / `CloseApplication`。构建成功后的本检出更新
+按前述激活流程处理，编译、激活和测试结果分别报告。
+只有仍使用旧第1～3版协议、确实覆盖已占用输出的批次，才在未显式请求进程处理时等待该输出释放；
+执行者须核对路径和进程身份、取得执行权、告知实际副作用后再处理，无法核对身份的进程不得终止。
+普通 `begin/status/check` 不会停止应用。
 
 Git 提交使用协作事务租约与明确认领的路径，不把其他任务的暂存文件混进提交，也不 reset/stash：
 

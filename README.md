@@ -82,9 +82,10 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 .\scripts\build.bat
 ```
 
-默认构建不会终止 SnowDesktop 或重启 Explorer。如果任务栏 Hook DLL 正被占用，
-预检会在编译前停止并提示。请先正常退出 SnowDesktop；需要自动解除占用时可使用
-`.\scripts\build.bat --reload-shell`，该参数会终止 SnowDesktop 并短暂重启 Explorer。
+当前协作构建在独立候选目录中编译，无需提前关闭 SnowDesktop 或重启 Explorer。
+完整 Release 产品构建成功后，脚本将新版更新到本检出的 `.build/Release`：应用原先正在运行时，
+自动正常退出、更新并恢复运行；原先未运行时只更新文件，保持关闭。用户布局和设置保留。
+直接写入活动运行目录的入口仍需核对实际输出占用，具体边界见[构建脚本说明](scripts/README.md)。
 
 ## 🧱 技术栈
 
