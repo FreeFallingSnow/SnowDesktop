@@ -182,10 +182,30 @@ void ExerciseCli(const std::filesystem::path& root)
     std::wstring command = L"\"" + executable.wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
         (scripts / L"profile.ps1").wstring() + L"\" capture -Seconds 1 -Preset interaction -Offline -Session cli-fixture -TargetProcessId " +
         std::to_wstring(GetCurrentProcessId()) + L" -OutputDirectory \"" + output.wstring() + L"\"";
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    const auto commandLog = root / L"cli-process.log";
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    const auto commandOutput = CreateFileW(commandLog.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+        &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const auto commandInput = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(commandOutput != INVALID_HANDLE_VALUE && commandInput != INVALID_HANDLE_VALUE, "reserve isolated CLI streams");
+    STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = commandOutput;
+    startup.StartupInfo.hStdInput = commandInput;
+    SIZE_T attributeBytes = 0; InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+    std::vector<unsigned char> attributes(attributeBytes);
+    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    Check(InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeBytes) != FALSE, "initialize CLI stream inheritance");
+    HANDLE handles[]{commandOutput, commandInput};
+    const bool configured = UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        handles, sizeof(handles), nullptr, nullptr) != FALSE;
     PROCESS_INFORMATION child{};
-    Check(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != FALSE, "launch actual CLI against isolated host");
+    const bool launched = configured && CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &child) != FALSE;
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    CloseHandle(commandOutput); CloseHandle(commandInput);
+    Check(launched, "launch actual CLI against isolated host with valid bounded streams");
     const auto deadline = GetTickCount64() + 45000;
     while (WaitForSingleObject(child.hProcess, 0) != WAIT_OBJECT_0 && GetTickCount64() < deadline)
     {
@@ -199,6 +219,13 @@ void ExerciseCli(const std::filesystem::path& root)
     CloseHandle(child.hThread); CloseHandle(child.hProcess);
     KillTimer(window, 1); DestroyWindow(window);
     MSG ignored{}; PeekMessageW(&ignored, nullptr, WM_QUIT, WM_QUIT, PM_REMOVE);
+    if (wait != WAIT_OBJECT_0 || exitCode != 0)
+    {
+        std::ifstream stream(commandLog, std::ios::binary);
+        std::vector<char> diagnostic(65536);
+        stream.read(diagnostic.data(), static_cast<std::streamsize>(diagnostic.size()));
+        std::cerr << "CLI child exit=" << exitCode << ": " << std::string(diagnostic.data(), static_cast<std::size_t>(stream.gcount())) << '\n';
+    }
     Check(wait == WAIT_OBJECT_0 && exitCode == 0, "real CLI, authenticated pipe, duration, export and fixed SQL must complete");
     bool summaryFound = false;
     for (const auto& entry : std::filesystem::directory_iterator(output))
