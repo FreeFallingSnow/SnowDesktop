@@ -15,6 +15,11 @@
         if (auto* group = dynamic_cast<FileGroup*>(view)) return group->GetTabDragPreviewLayout();
         throw std::runtime_error("tab preview requires a native group");
     }
+    static std::wstring GroupSurfaceLabelHint(DesktopApp& app, const std::wstring& groupId)
+    {
+        return MemberContainer(app, groupId)->GetDragHint(app.dragSession_.TargetSlot(),
+            app.dragSession_.TargetRegion(), app.dragSession_.Items(), app.dragSession_.Source(), 0);
+    }
     static DropPreviewList GroupSurfacePointPreview(DesktopApp& app, const std::wstring& groupId, POINT point)
     {
         auto* view = MemberContainer(app, groupId);

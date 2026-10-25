@@ -948,10 +948,7 @@ HitRegion CollectionGroup::HitTestDrag(
             : HitRegion::SortAfter;
     }
 
-    if (app_ &&
-        (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
-            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
-                app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup)))
+    if (memberInsertion)
         return HitRegion::Empty;
 
     return WidgetContainer::HitTestDrag(pt, outSlot);
@@ -965,6 +962,7 @@ void CollectionGroup::DrawDropPreview(
     if (GetTabDragPreviewLayout().active) return;
     if (app_ &&
         (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+            app_->dragSession_.SourceList().SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
             snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
                 DesktopWidgetType::CollectionGroup, DropActionToMods(app_->dragSession_.Action()))) &&
         (region == HitRegion::Empty ||
@@ -995,7 +993,8 @@ std::wstring CollectionGroup::GetDragHint(
         return L"";
     if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
             app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup, mods))
-        return _LW("widget.collection_group.add_hint");
+        return snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region)
+            ? L"" : _LW("widget.collection_group.add_hint");
     const bool allCollections = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -1004,8 +1003,8 @@ std::wstring CollectionGroup::GetDragHint(
             return dock && dock->GetEntryType() == DockEntryType::Collection;
         });
     if (allCollections)
-        return origin == this
-            ? _LW("widget.collection_group.reorder_hint")
+        return origin == this || snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region)
+            ? L""
             : _LW("widget.collection_group.add_hint");
     return WidgetContainer::GetDragHint(
         slot, region, sourceItems, origin, mods);

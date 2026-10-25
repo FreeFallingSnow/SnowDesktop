@@ -505,6 +505,8 @@ void DesktopApp::DrawDynamicOverlays(
              (dragSession_.SourceList().
                     hasCollectionGroupEntries &&
                 dynamic_cast<CollectionGroup*>(wc)) ||
+             (dragSession_.SourceList().SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget &&
+                dynamic_cast<CollectionGroup*>(wc)) ||
              (dragSession_.SourceList().
                     UsesFileGroupSourceInsertion() &&
                 dynamic_cast<FileGroup*>(wc)));
@@ -617,7 +619,10 @@ void DesktopApp::DrawDynamicOverlays(
         }
         else
         {
-            if (popupTarget && targetSlot &&
+            // Group labels own their tab displacement/placeholder feedback.
+            // The generic popup insertion bar would draw a second blue line
+            // over that live layout (including the group's content-area hit).
+            if (popupTarget && !groupEntryTarget && targetSlot &&
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {

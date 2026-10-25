@@ -104,6 +104,8 @@ inline void RunLabels()
             const auto projected = Access::GroupSurfaceLabelPreview(app, L"surface-group", move.boundary, move.after, zone);
             Require(!projected.Empty() && projected.insertIndex == move.insert,
                 "own label drag uses tab insertion across the complete source component");
+            Require(Access::GroupSurfaceLabelHint(app, L"surface-group").empty(),
+                "same-group sorting has live position feedback without a floating text hint");
             const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
             std::vector<std::wstring> order, placeholders;
             LONG previousRight = LONG_MIN;
@@ -189,6 +191,9 @@ inline void RunInsertionZones()
             : std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"};
         Require(visual.active == (zone != 3),
             "cross-group body keeps membership-box feedback; only the expanded tab strip uses live insertion");
+        Require(Access::GroupSurfaceLabelHint(app, L"surface-group") == (zone == 3
+                ? _LW(fileGroup ? "widget.file_group.add_hint" : "widget.collection_group.add_hint") : L""),
+            "only the yellow cross-group membership box publishes a floating text hint; tab insertion remains silent");
         if (visual.active)
         {
             std::vector<std::wstring> order;

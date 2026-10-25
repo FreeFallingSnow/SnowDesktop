@@ -1694,10 +1694,7 @@ HitRegion FileGroup::HitTestDrag(
             : HitRegion::SortAfter;
     }
 
-    if (app_ &&
-        (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
-            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
-                app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
+    if (memberInsertion)
         return HitRegion::Empty;
 
     if (IsGroupSearchActive())
@@ -1837,17 +1834,19 @@ std::wstring FileGroup::GetDragHint(
         region == HitRegion::Blocked ||
         sourceItems.empty())
         return L"";
-    if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
-            app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup, mods))
-        return _LW("widget.file_group.add_hint");
+    if (app_ && (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup, mods)))
+        return origin == this || snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region)
+            ? L"" : _LW("widget.file_group.add_hint");
     const bool allSources = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
             return dynamic_cast<FileGroupEntryItem*>(item) != nullptr;
         });
     if (allSources)
-        return origin == this
-            ? _LW("widget.file_group.reorder_hint")
+        return origin == this || snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region)
+            ? L""
             : _LW("widget.file_group.add_hint");
     auto* source = GetActiveSourceContainer();
     if (!source)
