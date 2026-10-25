@@ -140,6 +140,9 @@ PreviewProfileResult WidgetAuthorProfile::Measure(const std::function<bool()>& d
         if (!state.dirty) return true;
         state.dirty = false;
         perf::Scope render("author.preview", "render", Instance);
+        // This offscreen host owns the desktop-surface draw, just as the real
+        // composition host does. Consume actual component invalidations here.
+        perf::DrawLink("desktop", Instance, true);
         if (!draw()) return false;
         ++result.drawCalls;
         return true;
