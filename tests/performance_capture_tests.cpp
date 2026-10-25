@@ -305,6 +305,9 @@ void RunPerformanceCaptureTests()
             if (analyzed.analysis == "completed" || analyzed.analysis == "failed") break;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } while (GetTickCount64() < analysisDeadline);
+        if (analyzed.analysis != "completed" || analyzed.quality != "valid" || analyzed.report.empty())
+            std::cerr << "Analysis result: state=" << analyzed.analysis << ", error=" << analyzed.analysisError
+                << ", quality=" << analyzed.quality << ", report=" << analyzed.report.string() << '\n';
         Check(analyzed.analysis == "completed" && analyzed.quality == "valid" && !analyzed.report.empty(), "actual worker process publishes report and independent quality");
         wchar_t inheritedModulePath[256]{};
         Check(GetEnvironmentVariableW(L"PSModulePath", inheritedModulePath, 256) > 0 &&

@@ -122,8 +122,12 @@ AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::
             if (valid && valid->IsBoolean()) result.quality = valid->boolean ?
                 (coverage && coverage->IsString() && coverage->string == "partial" ? "partial" : "valid") : "invalid";
         }
+        // PowerShell resolves Win32 short names/case aliases. Compare the actual
+        // containing directory identity, keeping the report inside this session.
+        std::error_code identityError;
         if (result.report.filename() != L"perfetto_analysis_report.md" ||
-            result.report.parent_path().parent_path() != manifest.parent_path() || !std::filesystem::is_regular_file(result.report))
+            !std::filesystem::equivalent(result.report.parent_path().parent_path(), manifest.parent_path(), identityError) ||
+            identityError || !std::filesystem::is_regular_file(result.report))
         { result.report.clear(); result.error = "analysisResultInvalid"; }
     }
     catch (...) { result.error = "analysisFailed"; }
