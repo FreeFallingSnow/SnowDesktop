@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "Dossiers",
   "settings.contextMenu.folderBackground": "Arrière-plan du dossier",
   "settings.contextMenu.desktop": "Bureau",
-  "settings.debug.profile.recover": "Impossible de démarrer l’environnement de débogage. Revenir au mode normal ? Les données de débogage seront conservées.",
+  "settings.debug.profile.recover": "L’environnement de débogage n’a pas pu démarrer. Choisissez « Démarrer quand même » pour rétablir le mode normal. Vos données de débogage seront conservées.",
   "settings.debug.profile.recoveryFailed": "Impossible d’enregistrer les paramètres de récupération.",
   "settings.debug.profile.title": "Environnement de débogage",
   "settings.debug.profile.enabled": "Mode débogage",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "Désactivé : les aperçus utilisent un fond statique ou uni. Les widgets et Wallpaper Engine continuent de fonctionner.",
   "modules.wallpaperPreview.conflict": "Les outils de capture graphique et de superposition peuvent affecter le même chemin d’affichage ou de capture.",
   "app.startup.privilegesFailed": "SnowDesktop n’a pas pu démarrer avec les droits d’un utilisateur standard. Vous pouvez continuer avec les droits actuels, mais le glisser-déposer de fichiers depuis l’Explorateur de fichiers risque de ne pas fonctionner. Démarrer quand même ?",
-  "app.startup.startAnyway": "Démarrer quand même"
+  "app.startup.startAnyway": "Démarrer quand même",
+  "app.startup.instanceUnavailable": "Un autre processus SnowDesktop est en cours de démarrage ou ne répond pas et reste inaccessible. Réessayez plus tard ; n’exécutez pas plusieurs instances à la fois.",
+  "app.startup.recoveryStopped": "SnowDesktop s’est arrêté anormalement plusieurs fois en peu de temps. Le redémarrage automatique est donc suspendu. Choisissez « Démarrer quand même » pour réessayer une fois.",
+  "app.startup.recoveryFailed": "SnowDesktop n’a pas pu redémarrer. Choisissez « Démarrer quand même » pour réessayer, ou annulez."
 }

@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "文件夹",
   "settings.contextMenu.folderBackground": "文件夹空白处",
   "settings.contextMenu.desktop": "桌面",
-  "settings.debug.profile.recover": "无法启动调试环境。是否恢复正常模式？调试数据会保留。",
+  "settings.debug.profile.recover": "无法启动调试环境。选择“仍然启动”将恢复正常模式，调试数据会保留。",
   "settings.debug.profile.recoveryFailed": "无法保存恢复设置。",
   "settings.debug.profile.title": "调试环境",
   "settings.debug.profile.enabled": "调试模式",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "禁用后：预览使用静态壁纸或纯色背景，组件和 Wallpaper Engine 本身继续运行。",
   "modules.wallpaperPreview.conflict": "图形捕获或叠加层工具可能影响相同的画面呈现和捕获路径。",
   "app.startup.privilegesFailed": "无法以普通用户权限启动 SnowDesktop。可以保留当前权限继续启动，但从文件资源管理器拖入文件等操作可能受限。是否仍然启动？",
-  "app.startup.startAnyway": "仍然启动"
+  "app.startup.startAnyway": "仍然启动",
+  "app.startup.instanceUnavailable": "另一个 SnowDesktop 进程正在启动或没有响应，暂时无法连接。请稍后重试；不要同时启动多个实例。",
+  "app.startup.recoveryStopped": "SnowDesktop 短时间内多次异常退出，已暂停自动重启。选择“仍然启动”可再尝试一次。",
+  "app.startup.recoveryFailed": "无法重新启动 SnowDesktop。可以选择“仍然启动”再次尝试，或取消。"
 }

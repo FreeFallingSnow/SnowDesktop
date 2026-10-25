@@ -21,6 +21,74 @@ void Check(bool condition, const char* message)
     std::cerr << "FAIL: " << message << '\n';
 }
 
+int primaryChoice = IDCONTINUE;
+int fallbackChoice = IDCONTINUE;
+bool primaryUnavailable = false;
+int fallbackCalls = 0;
+HRESULT WINAPI TestStartupTaskDialog(const TASKDIALOGCONFIG* dialog, int* selected, int*, BOOL*)
+{
+    Check(dialog->cButtons == 2 && dialog->pButtons[0].nButtonID == IDCONTINUE &&
+        std::wstring_view(dialog->pButtons[0].pszButtonText) == L"仍然启动" &&
+        dialog->pButtons[1].nButtonID == IDCANCEL,
+        "startup decisions expose an explicit Start anyway action and cancellation");
+    *selected = primaryChoice;
+    return primaryUnavailable ? E_FAIL : S_OK;
+}
+int TestStartupFallback(const wchar_t* content,
+    const snowdesktop::auto_start_launch::StartupChoiceLabels& labels) noexcept
+{
+    ++fallbackCalls;
+    namespace launch = snowdesktop::auto_start_launch;
+    const auto data = launch::StartupChoiceTemplate(content, labels);
+    // Create the actual fallback resource without WS_VISIBLE. This exercises
+    // native controls/labels, not a source-text check or the desktop host UI.
+    const HWND window = CreateDialogIndirectParamW(GetModuleHandleW(nullptr),
+        reinterpret_cast<const DLGTEMPLATE*>(data.data()), nullptr, launch::StartupChoiceWindowProc, 0);
+    Check(window != nullptr, "the native startup fallback template creates a hidden dialog");
+    if (window)
+    {
+        wchar_t label[128]{}, cancel[128]{}, details[128]{};
+        GetDlgItemTextW(window, IDCONTINUE, label, 128);
+        GetDlgItemTextW(window, IDCANCEL, cancel, 128);
+        GetDlgItemTextW(window, 100, details, 128);
+        Check(std::wstring_view(label) == labels.start && std::wstring_view(cancel) == labels.cancel &&
+            !GetDlgItem(window, IDOK) && std::wstring_view(details) == content && !IsWindowVisible(window),
+            "fallback preserves the actual Start anyway button, cancellation and full failure details");
+        DestroyWindow(window);
+    }
+    return fallbackChoice;
+}
+void CheckStartupDialogChoices()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    const launch::StartupDialogApi api{&TestStartupTaskDialog, &TestStartupFallback};
+    const launch::StartupChoiceLabels labels{L"仍然启动", L"取消"};
+    Check(launch::ConfirmStartupContinuation(L"startup failure", labels, api) && fallbackCalls == 0,
+        "explicit primary-dialog continuation proceeds without another dialog");
+    primaryChoice = IDCANCEL;
+    Check(!launch::ConfirmStartupContinuation(L"startup failure", labels, api),
+        "primary-dialog cancellation cannot proceed");
+    primaryUnavailable = true;
+    for (const int choice : {IDCONTINUE, IDCANCEL, IDOK, -1})
+    {
+        fallbackChoice = choice;
+        Check(launch::ConfirmStartupContinuation(L"startup failure", labels, api) == (choice == IDCONTINUE),
+            "only the explicit fallback continuation action can proceed, including UI errors and unknown results");
+    }
+    Check(fallbackCalls == 4, "an unavailable TaskDialog invokes the labelled native fallback once per decision");
+}
+
+void ShellReportsSuccessWithoutChild(const std::wstring&, const std::wstring&, const std::wstring&) {}
+void CheckUnacknowledgedExplorerLaunch()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    launch::NativePlatform native{&ShellReportsSuccessWithoutChild, 10};
+    bool timedOut = false;
+    try { (void)native.Relaunch(L"host.exe"); }
+    catch (const launch::Failure& failure) { timedOut = failure.code == ERROR_TIMEOUT; }
+    Check(timedOut, "a successful Shell request without a child acknowledgement is not reported as successful startup");
+}
+
 void CheckAutoStartLaunchRules()
 {
     namespace launch = snowdesktop::auto_start_launch;
@@ -204,6 +272,8 @@ int main(int argc, char** argv)
         return RunAutoStartManagerTests();
     // A test task must remain harmless if a logon happens during the test.
     if (argc > 1) return 0;
+    CheckStartupDialogChoices();
+    CheckUnacknowledgedExplorerLaunch();
     CheckAutoStartLaunchRules();
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;

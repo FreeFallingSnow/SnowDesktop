@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "Ordner",
   "settings.contextMenu.folderBackground": "Ordnerhintergrund",
   "settings.contextMenu.desktop": "Desktop",
-  "settings.debug.profile.recover": "Die Debug-Umgebung konnte nicht gestartet werden. Zum normalen Modus zurückkehren? Debug-Daten bleiben erhalten.",
+  "settings.debug.profile.recover": "Die Debug-Umgebung konnte nicht gestartet werden. Wählen Sie „Trotzdem starten“, um den normalen Modus wiederherzustellen. Ihre Debug-Daten bleiben erhalten.",
   "settings.debug.profile.recoveryFailed": "Die Wiederherstellungseinstellungen konnten nicht gespeichert werden.",
   "settings.debug.profile.title": "Debug-Umgebung",
   "settings.debug.profile.enabled": "Debug-Modus",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "Deaktiviert: Die Vorschau nutzt ein statisches Hintergrundbild oder eine Vollfarbe. Widgets und Wallpaper Engine laufen weiter.",
   "modules.wallpaperPreview.conflict": "Aufnahme- und Overlay-Tools können denselben Darstellungs- oder Erfassungspfad beeinflussen.",
   "app.startup.privilegesFailed": "SnowDesktop konnte nicht mit normalen Benutzerrechten gestartet werden. Sie können mit den aktuellen Berechtigungen fortfahren, aber das Ziehen von Dateien aus dem Datei-Explorer funktioniert möglicherweise nicht. Trotzdem starten?",
-  "app.startup.startAnyway": "Trotzdem starten"
+  "app.startup.startAnyway": "Trotzdem starten",
+  "app.startup.instanceUnavailable": "Ein anderer SnowDesktop-Prozess startet gerade oder reagiert nicht und ist nicht erreichbar. Versuchen Sie es später erneut. Starten Sie nicht mehrere Instanzen gleichzeitig.",
+  "app.startup.recoveryStopped": "SnowDesktop ist in kurzer Zeit mehrfach abgestürzt. Der automatische Neustart wurde daher angehalten. Wählen Sie „Trotzdem starten“, um es noch einmal zu versuchen.",
+  "app.startup.recoveryFailed": "SnowDesktop konnte nicht neu gestartet werden. Wählen Sie „Trotzdem starten“, um es erneut zu versuchen, oder brechen Sie ab."
 }

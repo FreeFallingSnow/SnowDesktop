@@ -82,8 +82,44 @@ enum class ExistingLaunchAction
 {
     ExitNewInstance,
     ReplaceManagedRuntime,
-    PromptVersionConflict
+    PromptVersionConflict,
+    ActivationFailed
 };
+
+enum class StartupResolution { ExitNewInstance, RetryLaunch };
+struct StartupAcquisition
+{
+    bool primary = false;
+    DWORD error = ERROR_SUCCESS;
+};
+
+// Keep the actual bounded startup loop shared with regression tests. Find and
+// resolve are the window/UI boundaries; Guard still owns the native mutex.
+template<typename Find, typename Resolve, typename Report>
+StartupAcquisition AcquireForStartup(Guard& guard, Find&& find, Resolve&& resolve,
+    Report&& report, const wchar_t* mutexName = kMutexName)
+{
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        if (const auto running = find(0))
+        {
+            if (resolve(*running) == StartupResolution::ExitNewInstance) return {};
+            continue;
+        }
+        const auto acquired = guard.Acquire(mutexName);
+        if (acquired == AcquireResult::Primary) return {true};
+        if (acquired == AcquireResult::Error)
+        {
+            const DWORD error = guard.LastError() ? guard.LastError() : ERROR_GEN_FAILURE;
+            report(error);
+            return {false, error};
+        }
+        (void)find(5000);
+    }
+    // A live mutex without a usable control window is not a successful handoff.
+    report(ERROR_BUSY);
+    return {false, ERROR_BUSY};
+}
 
 // Accept a full command line (including the executable) so quoted paths and
 // values cannot be mistaken for a background launch marker.

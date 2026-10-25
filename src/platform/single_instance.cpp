@@ -544,8 +544,8 @@ ExistingLaunchAction HandleExistingInstanceLaunch(
         !DataDirectoriesMatch(running.dataDirectory, requested.dataDirectory);
     if (versionsMatch && !knownDataDirectoriesDiffer)
     {
-        NotifyExistingInstance(running);
-        return ExistingLaunchAction::ExitNewInstance;
+        return NotifyExistingInstance(running) ? ExistingLaunchAction::ExitNewInstance :
+            ExistingLaunchAction::ActivationFailed;
     }
     return ExistingLaunchAction::PromptVersionConflict;
 }

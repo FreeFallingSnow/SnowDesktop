@@ -20,11 +20,13 @@ struct WatchResult
     bool restartAttempted = false;
     bool restartLaunched = false;
 };
+using RecoveryChoiceCallback = std::function<bool(const WatchResult&)>;
 
 /** Waits for and closes an owned process handle. */
 WatchResult WatchProcess(HANDLE ownedProcessHandle,
     const PreventRestartCallback& preventRestart,
-    const LaunchRestartCallback& launchRestart);
+    const LaunchRestartCallback& launchRestart,
+    const RecoveryChoiceCallback& chooseRecovery = {});
 
 /** Starts a restricted child watcher for the current process. */
 bool StartForCurrentProcess(std::wstring_view executablePath);

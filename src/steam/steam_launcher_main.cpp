@@ -277,7 +277,8 @@ int RunLauncher(bool& maintenance, bool currentPrivilegesAccepted)
             noUi = true;
         }
         else if (wcscmp(rawArguments[index],
-                snowdesktop::auto_start_launch::kExplorerRelaunchArgument) == 0)
+                snowdesktop::auto_start_launch::kExplorerRelaunchArgument) == 0 ||
+            snowdesktop::auto_start_launch::IsExplorerAckArgument(rawArguments[index]))
         {
             // This guard belongs to the launcher process. The runtime must
             // still get its own first handoff if its token is elevated.

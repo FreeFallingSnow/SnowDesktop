@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "資料夾",
   "settings.contextMenu.folderBackground": "資料夾空白處",
   "settings.contextMenu.desktop": "桌面",
-  "settings.debug.profile.recover": "無法啟動偵錯環境。是否恢復正常模式？偵錯資料會保留。",
+  "settings.debug.profile.recover": "無法啟動偵錯環境。選擇「仍然啟動」將恢復正常模式，偵錯資料會保留。",
   "settings.debug.profile.recoveryFailed": "無法儲存復原設定。",
   "settings.debug.profile.title": "偵錯環境",
   "settings.debug.profile.enabled": "偵錯模式",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "停用後：預覽使用靜態桌布或純色背景，元件與 Wallpaper Engine 本身繼續執行。",
   "modules.wallpaperPreview.conflict": "圖形擷取或覆疊工具可能影響相同的畫面呈現與擷取路徑。",
   "app.startup.privilegesFailed": "無法以一般使用者權限啟動 SnowDesktop。您可以保留目前權限繼續啟動，但從檔案總管拖入檔案等操作可能受限。是否仍要啟動？",
-  "app.startup.startAnyway": "仍然啟動"
+  "app.startup.startAnyway": "仍然啟動",
+  "app.startup.instanceUnavailable": "另一個 SnowDesktop 程序正在啟動或沒有回應，暫時無法連線。請稍後再試；請勿同時啟動多個執行個體。",
+  "app.startup.recoveryStopped": "SnowDesktop 在短時間內多次異常結束，已暫停自動重新啟動。選擇「仍然啟動」可再試一次。",
+  "app.startup.recoveryFailed": "無法重新啟動 SnowDesktop。您可以選擇「仍然啟動」再試一次，或取消。"
 }

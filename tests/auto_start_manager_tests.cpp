@@ -321,7 +321,7 @@ int RunAutoStartLaunchProbe()
         LPWSTR* value;
         ~Arguments() { LocalFree(value); }
     } cleanup{arguments};
-    if (count != 6) return ERROR_INVALID_DATA;
+    if (count != 7) return ERROR_INVALID_DATA;
     try
     {
         HANDLE token = nullptr;
@@ -335,7 +335,10 @@ int RunAutoStartLaunchProbe()
         if (!read) return static_cast<int>(error);
         std::wstring observed;
         for (int index = 1; index < count; ++index)
+        {
+            if (snowdesktop::auto_start_launch::IsExplorerAckArgument(arguments[index])) continue;
             observed += std::wstring(arguments[index]) + L"\n";
+        }
         observed += std::filesystem::current_path().wstring() + L"\n" +
             std::to_wstring(elevation.TokenIsElevated ? 1 : 0);
         const std::filesystem::path report(arguments[2]);

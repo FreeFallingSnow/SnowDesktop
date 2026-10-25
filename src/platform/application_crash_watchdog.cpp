@@ -10,7 +10,8 @@ namespace snowdesktop::application_crash_watchdog
 {
 WatchResult WatchProcess(HANDLE ownedProcessHandle,
     const PreventRestartCallback& preventRestart,
-    const LaunchRestartCallback& launchRestart)
+    const LaunchRestartCallback& launchRestart,
+    const RecoveryChoiceCallback& chooseRecovery)
 {
     WatchResult result;
     if (!ownedProcessHandle ||
@@ -35,12 +36,17 @@ WatchResult WatchProcess(HANDLE ownedProcessHandle,
         return result;
 
     result.restartPrevented = preventRestart && preventRestart();
-    if (result.restartPrevented)
+    if (result.restartPrevented && (!chooseRecovery || !chooseRecovery(result)))
         return result;
 
-    result.restartAttempted = true;
-    result.restartLaunched =
-        launchRestart && launchRestart(GetCurrentProcessId());
+    do
+    {
+        result.restartAttempted = true;
+        SetLastError(ERROR_SUCCESS);
+        result.restartLaunched = launchRestart && launchRestart(GetCurrentProcessId());
+        result.error = result.restartLaunched ? ERROR_SUCCESS : GetLastError();
+        if (!result.restartLaunched && !result.error) result.error = ERROR_GEN_FAILURE;
+    } while (!result.restartLaunched && chooseRecovery && chooseRecovery(result));
     return result;
 }
 

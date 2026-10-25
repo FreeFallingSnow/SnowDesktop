@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "フォルダー",
   "settings.contextMenu.folderBackground": "フォルダーの空白部分",
   "settings.contextMenu.desktop": "デスクトップ",
-  "settings.debug.profile.recover": "デバッグ環境を起動できませんでした。通常モードに戻しますか？デバッグデータは保持されます。",
+  "settings.debug.profile.recover": "デバッグ環境を起動できませんでした。「このまま起動」を選ぶと通常モードに戻ります。デバッグデータは保持されます。",
   "settings.debug.profile.recoveryFailed": "復旧設定を保存できませんでした。",
   "settings.debug.profile.title": "デバッグ環境",
   "settings.debug.profile.enabled": "デバッグモード",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "無効時：静止壁紙または単色の背景を使います。ウィジェットと Wallpaper Engine は動作を続けます。",
   "modules.wallpaperPreview.conflict": "画面キャプチャやオーバーレイのツールが同じ描画・取得経路に影響する場合があります。",
   "app.startup.privilegesFailed": "SnowDesktop を通常のユーザー権限で起動できませんでした。現在の権限のまま起動できますが、エクスプローラーからファイルをドラッグできない場合があります。このまま起動しますか？",
-  "app.startup.startAnyway": "このまま起動"
+  "app.startup.startAnyway": "このまま起動",
+  "app.startup.instanceUnavailable": "別の SnowDesktop プロセスが起動中、または応答していないため接続できません。しばらく待ってから再試行してください。複数のインスタンスを同時に起動しないでください。",
+  "app.startup.recoveryStopped": "SnowDesktop が短時間に繰り返し異常終了したため、自動再起動を一時停止しました。「このまま起動」を選ぶと、もう一度起動を試みます。",
+  "app.startup.recoveryFailed": "SnowDesktop を再起動できませんでした。「このまま起動」を選んで再試行するか、キャンセルしてください。"
 }

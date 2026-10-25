@@ -314,8 +314,8 @@ void TestRealProcessExit(DWORD exitCode, bool preventRestart,
                 launchCalled = predecessor == GetCurrentProcessId();
                 return launchSucceeds;
             });
-    Expect(result.error == ERROR_SUCCESS,
-        "watchdog reads the real child process exit code");
+    Expect(result.error == (expectedAttempt && !launchSucceeds ? ERROR_GEN_FAILURE : ERROR_SUCCESS),
+        "watchdog preserves successful observation and reports failed restart launch");
     Expect(result.exitCode == exitCode,
         "watchdog preserves the child process exit code");
     Expect(result.crashDetected == expectedCrash,
@@ -330,6 +330,37 @@ void TestRealProcessExit(DWORD exitCode, bool preventRestart,
     {
         Expect(result.restartLaunched == launchSucceeds,
             "watchdog reports the restart launcher result");
+    }
+}
+
+void TestRecoveryFailureDecisions()
+{
+    using namespace snowdesktop::application_crash_watchdog;
+    for (const int scenario : {0, 1, 2, 3})
+    {
+        HANDLE child = StartChild(L"--child-exit=3221225477");
+        Expect(child != nullptr, "recovery decision fixture starts a real isolated child");
+        if (!child) continue;
+        int launches = 0, choices = 0;
+        const bool prevented = scenario < 2;
+        const auto result = WatchProcess(child, [=] { return prevented; },
+            [&](DWORD predecessor) {
+                ++launches;
+                Expect(predecessor == GetCurrentProcessId(), "manual recovery waits for its watcher process");
+                if (scenario >= 2 && launches == 1) { SetLastError(ERROR_ACCESS_DENIED); return false; }
+                return true;
+            },
+            [&](const WatchResult& failure) {
+                ++choices;
+                Expect(failure.crashDetected && (failure.restartPrevented || failure.error == ERROR_ACCESS_DENIED),
+                    "continuation is offered only after actual crash throttling or a failed restart boundary");
+                return scenario == 1 || scenario == 3;
+            });
+        const int expectedLaunches = scenario == 0 ? 0 : scenario == 3 ? 2 : 1;
+        Expect(choices == 1 && launches == expectedLaunches && result.restartLaunched == (scenario == 1 || scenario == 3),
+            "crash recovery offers a real continue/cancel choice and never retries without consent");
+        Expect(result.error == (scenario == 2 ? ERROR_ACCESS_DENIED : ERROR_SUCCESS),
+            "recovery preserves the launch error or records a successful explicit continuation");
     }
 }
 
@@ -545,6 +576,7 @@ int wmain(int argc, wchar_t* argv[])
     using namespace snowdesktop::application_restart_policy;
     TestStartupDiagnostics();
     TestCrashHistoryRead();
+    TestRecoveryFailureDecisions();
     TestUserObjectRecovery();
     TestUserObjectRestartBudget();
     TestFailedStartupWindows();

@@ -74,7 +74,7 @@
   "settings.contextMenu.folders": "폴더",
   "settings.contextMenu.folderBackground": "폴더 빈 공간",
   "settings.contextMenu.desktop": "바탕 화면",
-  "settings.debug.profile.recover": "디버그 환경을 시작하지 못했습니다. 일반 모드로 돌아갈까요? 디버그 데이터는 유지됩니다.",
+  "settings.debug.profile.recover": "디버그 환경을 시작할 수 없습니다. '그래도 시작'을 선택하면 일반 모드로 복원됩니다. 디버그 데이터는 보존됩니다.",
   "settings.debug.profile.recoveryFailed": "복구 설정을 저장하지 못했습니다.",
   "settings.debug.profile.title": "디버그 환경",
   "settings.debug.profile.enabled": "디버그 모드",
@@ -2635,5 +2635,8 @@
   "modules.wallpaperPreview.impact": "비활성화하면 정적 배경 화면이나 단색 배경을 사용합니다. 위젯과 Wallpaper Engine은 계속 실행됩니다.",
   "modules.wallpaperPreview.conflict": "화면 캡처 또는 오버레이 도구가 같은 화면 표시 및 캡처 경로에 영향을 줄 수 있습니다.",
   "app.startup.privilegesFailed": "일반 사용자 권한으로 SnowDesktop을 시작할 수 없습니다. 현재 권한으로 계속할 수 있지만 파일 탐색기에서 파일을 끌어오는 기능이 작동하지 않을 수 있습니다. 그래도 시작하시겠습니까?",
-  "app.startup.startAnyway": "그래도 시작"
+  "app.startup.startAnyway": "그래도 시작",
+  "app.startup.instanceUnavailable": "다른 SnowDesktop 프로세스가 시작 중이거나 응답하지 않아 연결할 수 없습니다. 잠시 후 다시 시도하고 여러 인스턴스를 동시에 실행하지 마세요.",
+  "app.startup.recoveryStopped": "SnowDesktop이 짧은 시간에 여러 번 비정상 종료되어 자동 재시작이 일시 중지되었습니다. '그래도 시작'을 선택하면 한 번 더 시도합니다.",
+  "app.startup.recoveryFailed": "SnowDesktop을 다시 시작할 수 없습니다. '그래도 시작'을 선택해 다시 시도하거나 취소하세요."
 }
