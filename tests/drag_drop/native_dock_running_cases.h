@@ -58,8 +58,8 @@ inline void Run()
         const auto completed = Access::QueueNativeRunningDockPin(app, executable, matched, mapping, retired, explorer,
             explorerFixed, folderKnown);
         Wait([&] { return completed.expired() && Access::FileDropIdle(app); }, "actual generated Dock lookup, queued commit and model delivery must finish");
-        const bool generated = kind == 2 || explorerFixed;
-        const bool accepted = (matched || generated) && !retired && kind != 7;
+        const bool generated = kind == 2 || explorerFixed || kind == 7;
+        const bool accepted = (matched || generated) && !retired;
         const auto outputs = Outputs(desktop, existing);
         Require(outputs.size() == static_cast<std::size_t>(accepted && generated),
             "D10: only live Explorer with a defined target may generate one shortcut by dragging");
@@ -90,7 +90,7 @@ inline void Run()
             Require(keepOnDesktop ? native_dock_return_cases::SameCell(item.gridCell, before) && Access::HasVisibleIcon(app, item)
                 : item.gridCell.pageId == kDockPageId && !Access::HasVisibleIcon(app, item),
                 "U07: only exclusive pinning may move the original logical entry out of the free desktop");
-            if (kind == 2 && !mapping)
+            if ((kind == 2 || kind == 7) && !mapping)
             {
                 const auto repeated = Access::QueueNativeRunningDockPin(app, executable, false, false, false, true);
                 Wait([&] { return repeated.expired() && Access::FileDropIdle(app); }, "repeated folder pin completes through the real queue");

@@ -14,20 +14,40 @@ namespace
 struct RunningDesktopFolderSource
 {
     std::wstring key, path, stamp;
+    bool pinned = false;
     bool operator==(const RunningDesktopFolderSource&) const = default;
 };
 
-std::optional<std::wstring> MatchRunningFolderSource(const std::wstring& folder,
+std::vector<RunningDesktopFolderSource> ReadRunningFolderSources(
+    const std::vector<DesktopItem>& items, const std::vector<DockEntry>& entries)
+{
+    std::vector<RunningDesktopFolderSource> sources;
+    sources.reserve(items.size());
+    for (const auto& item : items)
+    {
+        const bool pinned = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(item.layoutKey);
+        });
+        sources.push_back({item.layoutKey, item.parsingName, snowdesktop::shell_icon_request::Stamp(item), pinned});
+    }
+    return sources;
+}
+
+std::wstring MatchRunningFolderSource(const std::wstring& folder,
     const std::vector<RunningDesktopFolderSource>& sources)
 {
     std::wstring matched;
+    bool ambiguous = false;
     for (const auto& source : sources)
         if (snowdesktop::dock_explorer_pin::AlreadyPinnedFolder(folder, {{source.path, source.key}}))
         {
-            if (!matched.empty()) return std::nullopt; // Do not choose an arbitrary duplicate launcher.
-            matched = source.key;
+            if (source.pinned) return source.key;
+            if (!matched.empty()) ambiguous = true;
+            else matched = source.key;
         }
-    return matched;
+    // Multiple desktop links do not make the recognized directory ambiguous.
+    // Create its explicit entry instead of moving an arbitrary desktop link.
+    return ambiguous ? std::wstring{} : matched;
 }
 }
 
@@ -121,19 +141,17 @@ bool DesktopApp::BeginDockRunningDrag(POINT point)
     DismissDockWindowPreviewUntilLeave();
     if (hwnd_) SetTimer(hwnd_, kNativeDragHoverRecoveryTimerId, kNativeDragHoverRecoveryIntervalMs, nullptr);
     const std::wstring explorerName = _LW("app.dock.explorer_name");
-    std::vector<RunningDesktopFolderSource> desktopSources;
-    if (state->explorer)
-        for (const auto& item : items_)
-            desktopSources.push_back({item.layoutKey, item.parsingName, snowdesktop::shell_icon_request::Stamp(item)});
+    const auto desktopSources = state->explorer ? ReadRunningFolderSources(items_, dockEntries_)
+        : std::vector<RunningDesktopFolderSource>{};
     const bool submitted = shellVisualWork_.Submit(L"dock-running-drag:" + std::to_wstring(state->serial),
         [state, explorerName, desktopSources] {
             auto folder = state->explorer ? ReadDockRunningPinTarget(state->running, true, explorerName) : nullptr;
             const auto key = folder ? MatchRunningFolderSource(folder->folderPath, desktopSources)
-                : std::optional<std::wstring>{L""};
+                : std::wstring{};
             return std::make_pair(std::move(folder), key);
         }, [this, state](const auto& targets) {
-            state->folder = targets.second ? targets.first : nullptr;
-            state->desktopFolderKey = targets.second.value_or(L"");
+            state->folder = targets.first;
+            state->desktopFolderKey = targets.second;
             state->resolved = true;
             // Presentation-only delivery is allowed while holding the pointer.
             if (dockRunningDrag_ == state && dragSession_.IsActive())
@@ -279,12 +297,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
     // Ordinary running applications still require an existing desktop entry.
     // Explorer has two well-defined targets and may materialize either one.
     if (!state->explorer || (position.area != drag::Area::Files && position.area != drag::Area::Fixed)) return;
-    const auto readSources = [this] {
-        std::vector<RunningDesktopFolderSource> sources;
-        for (const auto& item : items_)
-            sources.push_back({item.layoutKey, item.parsingName, snowdesktop::shell_icon_request::Stamp(item)});
-        return sources;
-    };
+    const auto readSources = [this] { return ReadRunningFolderSources(items_, dockEntries_); };
     const bool folder = position.area == drag::Area::Files;
     const auto sources = folder ? readSources() : std::vector<RunningDesktopFolderSource>{};
     // Snapshot every entry used by duplicate detection. Recheck on delivery;
@@ -297,7 +310,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             auto resolved = ready ? ready : ReadDockRunningPinTarget(
                 state->running, folder, explorerName);
             auto key = resolved && folder ? MatchRunningFolderSource(resolved->folderPath, sources)
-                : std::optional<std::wstring>{L""};
+                : std::wstring{};
             return std::make_pair(std::move(resolved), std::move(key));
         }, [this, state, position, mods, retry, sources, readSources, commitExisting](const auto& result) {
             if (exitRequested_ || !generalSettings_.dockEnabled) return;
@@ -311,10 +324,10 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
                 return;
             }
             const auto& [target, key] = result;
-            if (!target || !key) return; // Unknown folder or ambiguous existing identities.
-            if (!key->empty())
+            if (!target) return; // The current folder could not be identified.
+            if (!key.empty())
             {
-                const auto desktop = FindItemIndexByKey(*key);
+                const auto desktop = FindItemIndexByKey(key);
                 if (desktop < items_.size()) commitExisting(desktop, true);
                 return;
             }
