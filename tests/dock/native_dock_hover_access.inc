@@ -494,8 +494,13 @@
                 app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
                 const RECT greenPixels = paintedBounds(read(referenceContext.Get(), complete.Get()), true);
                 const RECT focusedVisual = docks[0]->GetElementVisualRect(base, tip);
-                check(greenPixels.left <= focusedVisual.left + 1 && greenPixels.top <= focusedVisual.top + 1 &&
-                    greenPixels.right >= focusedVisual.right - 1 && greenPixels.bottom >= focusedVisual.bottom - 1,
+                // A side wave can extend past this finite bitmap (CDB: x=-24).
+                // Every visible edge remains strict; off-image pixels cannot
+                // be observed by a readback starting at client x/y = 0.
+                RECT visibleFocus{};
+                check(IntersectRect(&visibleFocus, &focusedVisual, &client) && !IsRectEmpty(&greenPixels) &&
+                    greenPixels.left <= visibleFocus.left + 1 && greenPixels.top <= visibleFocus.top + 1 &&
+                    greenPixels.right >= visibleFocus.right - 1 && greenPixels.bottom >= visibleFocus.bottom - 1,
                     "the green handoff frame must enclose the full animated icon rather than its original cell");
                 const RECT beforeRelease = docks[0]->GetElementVisualRect(base, tip);
                 app.dragSession_.End();
