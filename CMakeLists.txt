@@ -3492,6 +3492,8 @@ if (BUILD_TESTING)
         LABELS rules animation)
 
     include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
+        build_tools/build_product_artifacts_tests.cpp "tools;integration;packaging" 120)
     # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
     # and pure logic cases can execute alongside these tests.
     get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)

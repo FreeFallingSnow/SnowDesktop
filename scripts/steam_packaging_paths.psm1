@@ -93,4 +93,4 @@ function Resolve-SnowDesktopSteamPackagingPaths {
     }
 }
 
-Export-ModuleMember -Function Resolve-SnowDesktopSteamPackagingPaths
+Export-ModuleMember -Function Resolve-SnowDesktopSteamPackagingPaths, Test-SnowDesktopFrozenPackagingSource

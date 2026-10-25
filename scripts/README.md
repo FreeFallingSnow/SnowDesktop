@@ -131,6 +131,21 @@ Run 先取得本工作树的输出权，再等待共享项目名额；期间不�
 - `package_steam.ps1`：生成 Steam 专属载荷，只允许在 `SnowDesktop.Runtime` 中携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
 - `steam_pipe.ps1`：为 Steam 专属载荷生成 SteamPipe VDF，支持不上传的 Preview、固定私有开发分支上传和独立确认的公开分支上传；
 - `write_deployment_manifest.ps1`：由 MSBuild 调用，生成确定性的 WinAppSDK 自包含部署清单；
+
+发行打包使用保存的 Release Run，不再读取活动 `.build/Release`。可将
+`-ArtifactRun RUN_ID` 传给 `package_steam.ps1`、`package_release.ps1`、
+`steam_pipe.ps1` 或 `release.bat`，直接消费该次通过且输入稳定的构建。
+不指定 Run 且需要构建时，打包入口通过统一执行器冻结源码并执行标准 Release，随后使用返回的
+Run ID；不会在普通构建后猜测最近候选。`-SkipBuild` 使用已激活构建的明确 Run，
+旧的残缺产物、失败或失效 Run 均拒绝，需从当前源码重新构建。
+显式 `-BuildOutputDirectory` 仅兼容指向选定 Run 的已保存 runtime，不能作为任意目录兜底。
+
+运行文件按部署清单的 `files`、实际 `buildPath`、`appxFragments`、`notices` 完整保存并在副本中复验；
+运行版本切换也在安装前后复验整套部署。组件、语言和 CLI 来自同次保存产物，文档、许可、图标、
+版本和打包模板来自同一源码快照的内容对象，导出至 `artifacts/vA.B.C.D/package-inputs/RUN_ID/source/`。
+载荷元数据记录 `buildProvenance`（Run、快照、源码摘要、产物清单摘要及捕获时 HEAD），
+其中捕获时 HEAD 不等同于包含当时未提交改动的源码提交。签名证书仍由显式参数提供；
+快照未包含的本地商店身份需显式传入，不会从后续工作区静默混入。
 - `deployment_payload.psm1`：供携带版、MSIX 与 Steam 打包共用的清单校验、第三方运行时隔离、复制和 AppX fragment 合并模块；
 - `squash_release_to_main.bat`：只执行本地 squash、提交和标签；
 - `widget_dev.ps1`：组件校验、开发目录同步与监听实现。

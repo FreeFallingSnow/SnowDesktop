@@ -6,6 +6,7 @@ param(
 
     [string]$SteamCmdPath = "",
     [switch]$SkipPackage,
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$ArtifactRun = '',
     [switch]$ReloadShell,
     [switch]$Yes,
     [string]$ConfirmVersion = "",
@@ -246,6 +247,7 @@ if (-not $SkipPackage) {
     if ($ReloadShell) {
         $packageArguments += "-ReloadShell"
     }
+    if ($ArtifactRun) { $packageArguments += @('-ArtifactRun', $ArtifactRun) }
     & (Get-BuildPowerShell) @packageArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Steam package generation failed with exit code $LASTEXITCODE."
@@ -262,6 +264,17 @@ Assert-SteamPayloadManifest `
     -Version $version `
     -AppId $appId `
     -DepotId $depotId
+
+. (Join-Path $scriptDirectory 'packaging_input.ps1')
+$savedPackage = Get-Content -LiteralPath $payloadManifest -Raw | ConvertFrom-Json
+if (-not $savedPackage.PSObject.Properties['buildProvenance']) { throw 'Steam package has no saved build provenance; regenerate it.' }
+if ($ArtifactRun -and $savedPackage.buildProvenance.runId -ne $ArtifactRun) { throw 'Steam package belongs to a different ArtifactRun.' }
+$packageContext = Get-SnowDesktopPackagingContext $repositoryRoot $savedPackage.buildProvenance.runId
+if ($packageContext.version -ne $version -or
+    $packageContext.provenance.artifactManifestDigest -ne $savedPackage.buildProvenance.artifactManifestDigest -or
+    $packageContext.provenance.sourceManifestDigest -ne $savedPackage.buildProvenance.sourceManifestDigest) {
+    throw 'Steam package source/build provenance changed.'
+}
 
 $steamPipeRoot = Join-Path $versionRoot "steampipe"
 $steamPipeScripts = Join-Path $steamPipeRoot "scripts"

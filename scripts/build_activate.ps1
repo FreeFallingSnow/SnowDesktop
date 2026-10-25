@@ -46,6 +46,8 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         status='pending';path=$executable;oldPid=$null;newPid=$null;sha256=$null;replacedFiles=0;backup=$null;
         dataDirectory=(Join-Path $targetRoot 'data');completedUtc=$null;error=''}
     try{
+        Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force
+        $null=Read-SnowDesktopDeploymentManifest -BuildOutput $Artifact.runtime
         $clock=[Diagnostics.Stopwatch]::StartNew()
         while(-not $lease){
             & $CheckCancellation
@@ -88,7 +90,10 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
             $target=Resolve-CandidatePath $targetRoot $_.path
             -not [IO.File]::Exists($target) -or (Get-FileDigest $target) -ne $_.sha256
         })
-        if(-not $changes.Count){$result.status='already-current';$result.newPid=$result.oldPid;$result.sha256=Get-FileDigest $executable;return $result}
+        if(-not $changes.Count){
+            $null=Read-SnowDesktopDeploymentManifest -BuildOutput $targetRoot
+            $result.status='already-current';$result.newPid=$result.oldPid;$result.sha256=Get-FileDigest $executable;return $result
+        }
         $backup=Resolve-CandidatePath $Root ('.build/activation-backups/'+$result.runId+'-'+[Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($backup);$result.backup=$backup
         & $CheckCancellation
@@ -112,6 +117,7 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
                 [IO.File]::Copy((Resolve-CandidatePath $Artifact.runtime $file.path),$target,$false)
                 if((Get-FileDigest $target) -ne $file.sha256){throw 'Installed runtime hash differs from the saved build.'}
             }
+            $null=Read-SnowDesktopDeploymentManifest -BuildOutput $targetRoot
             if($process){
                 $started=Start-ActivatedApplication $executable $arguments
                 if($started.WaitForExit(3000)){throw ('New application exited during startup: '+$started.ExitCode)}

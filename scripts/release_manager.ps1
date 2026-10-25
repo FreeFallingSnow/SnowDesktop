@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet(
@@ -21,6 +21,7 @@ param(
     [string]$CertificatePath = "",
     [string]$CertificateThumbprint = "",
     [string]$SteamCmdPath = "",
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$ArtifactRun = '',
     [string]$ConfirmPrivateBranch = "",
     [string]$ConfirmPublicBranch = "",
     [ValidateSet("CurrentUser", "LocalMachine")]
@@ -388,48 +389,10 @@ function Invoke-Package {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $buildLog = Join-Path $logsDirectory "build-$timestamp.log"
     $packageLog = Join-Path $logsDirectory "package-$timestamp.log"
-    $occupancy = Get-BuildOccupancy
-    if ($occupancy.Occupied -and -not $ReloadShellBeforeBuild) {
-        if (-not $AskBeforeBuild) {
-            throw "Release build output is in use. Exit SnowDesktop normally, or retry with -ReloadShell to stop SnowDesktop and briefly restart Explorer."
-        }
-
-        Write-Host ""
-        Write-Host "Release 构建产物正在使用中：" -ForegroundColor Yellow
-        if ($occupancy.SnowDesktopRunning) {
-            Write-Host "  - SnowDesktop 正在运行"
-        }
-        if ($occupancy.ExplorerHookLoaded) {
-            Write-Host "  - Explorer 已加载任务栏 Hook"
-        }
-        if (-not (Confirm-Interactive `
-            "继续将终止 SnowDesktop 并短暂重启 Explorer，确认继续吗？")) {
-            Write-Host "已取消构建。"
-            return $false
-        }
-        $ReloadShellBeforeBuild = $true
-    }
-    $buildArguments = @()
-    if ($ReloadShellBeforeBuild) {
-        $buildArguments += "--reload-shell"
-    }
-
-    Write-Host ""
-    Write-Host "[1/2] 使用 scripts/build.bat 构建 Release" -ForegroundColor Cyan
-    $buildExitCode = Invoke-BatchWithLiveLog `
-        -BatchPath $buildScript `
-        -LogPath $buildLog `
-        -BatchArguments $buildArguments
-    if ($buildExitCode -ne 0) {
-        throw "scripts/build.bat failed with exit code $buildExitCode. See $buildLog"
-    }
-    $releaseExecutable = Join-Path `
-        $repositoryRoot ".build\Release\SnowDesktop.exe"
-    if (-not (Test-Path -LiteralPath $releaseExecutable -PathType Leaf)) {
-        throw "Release executable was not generated: $releaseExecutable"
-    }
-
-    Write-Host ""
+    . (Join-Path $scriptDirectory 'packaging_input.ps1')
+    if (-not $ArtifactRun) { $ArtifactRun = Invoke-SnowDesktopPackagingBuild $repositoryRoot }
+    $savedContext = Get-SnowDesktopPackagingContext $repositoryRoot $ArtifactRun
+    if ($savedContext.version -ne $context.Version) { throw 'Selected ArtifactRun version differs from the release version.' }
     Write-Host "[2/2] 生成携带版、MSIX 和商店上传包" `
         -ForegroundColor Cyan
     $powershell = Get-BuildPowerShell
@@ -439,6 +402,7 @@ function Invoke-Package {
         "-SkipBuild",
         "-OutputDirectory", $context.VersionDirectory
     )
+    if ($ArtifactRun) { $packageArguments += @('-ArtifactRun', $ArtifactRun) }
     if ($Development) {
         $packageArguments += "-Development"
     }
@@ -833,6 +797,7 @@ function Invoke-SteamPipeAction {
         $arguments["ConfirmPublicBranch"] = $confirmedBranch
     }
 
+    if ($ArtifactRun) { $arguments['ArtifactRun'] = $ArtifactRun }
     & $steamPipeScript @arguments
 }
 
@@ -872,7 +837,8 @@ function Invoke-CommandAction {
                 -ReloadShellBeforeBuild:$ReloadShell)
         }
         "package-steam" {
-            & $steamPackageScript -ReloadShell:$ReloadShell
+            if ($ArtifactRun) { & $steamPackageScript -ArtifactRun $ArtifactRun }
+            else { & $steamPackageScript -ReloadShell:$ReloadShell }
         }
         "steam-preview" {
             Invoke-SteamPipeAction -Mode "Preview"

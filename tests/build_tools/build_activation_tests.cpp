@@ -1,8 +1,18 @@
 #include "../build_tool_test_support.h"
+#include "product_deployment_fixture.h"
 #include <iostream>
 
 using namespace build_test;
 namespace {
+void write_activation_script(const fs::path& path, std::string script) {
+    replace(script,"$artifact=",product_deployment_fixture()+R"PS(
+New-TestProductDeployment $payload 'new'
+$files=@(Get-ChildItem -LiteralPath $payload -Recurse -File|ForEach-Object {
+    [pscustomobject]@{path=$_.FullName.Substring($payload.Length+1).Replace('\','/');sha256=(Get-FileDigest $_.FullName)}
+})
+$artifact=)PS");
+    write(path,script,true);
+}
 std::wstring hostMarker;
 LRESULT CALLBACK host_window(HWND window,UINT message,WPARAM w,LPARAM l) {
     if(message==WM_CLOSE||message==WM_TIMER){
@@ -27,7 +37,7 @@ int host(const fs::path& marker) {
 }
 void activation(const fs::path& repo) {
     const auto root=temporary("build-activation"),runtime=root/L"payload",target=root/L".build/Release",state=root/L".build/collaboration";
-    copy(repo,root,{"scripts/build_activate.ps1","scripts/build_candidate.ps1","scripts/build_inputs.ps1","scripts/build_entry.ps1","scripts/build_protocol.ps1"});
+    copy(repo,root,{"scripts/build_activate.ps1","scripts/build_candidate.ps1","scripts/build_inputs.ps1","scripts/build_entry.ps1","scripts/build_protocol.ps1","scripts/deployment_payload.psm1"});
     fs::create_directories(runtime);fs::create_directories(state);fs::create_directories(target/L"data");fs::create_directories(target/L"data.debug");
     const auto old=target/L"SnowDesktop.exe",marker=root/L"launch.json";
     fs::copy_file(executable(),old);fs::copy_file(executable(),runtime/L"SnowDesktop.exe");
@@ -35,7 +45,7 @@ void activation(const fs::path& repo) {
     write(target/L"generation.txt","old");write(runtime/L"generation.txt","new");
     write(target/L"data/layout.json","preserved layout");write(target/L"data.debug/profile.json","preserved debug profile");
     write(state/L"state.json","{\"current\":{\"phase\":\"editing\",\"id\":\"new-editor\"}}");
-    write(root/L"activate.ps1",R"PS(param([string]$Captured='2026-10-22T12:00:00Z',[string]$Run='11111111111111111111111111111111')
+    write_activation_script(root/L"activate.ps1",R"PS(param([string]$Captured='2026-10-22T12:00:00Z',[string]$Run='11111111111111111111111111111111')
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')
 . (Join-Path $PSScriptRoot 'scripts/build_protocol.ps1')
@@ -48,7 +58,7 @@ $artifact=[pscustomobject]@{digest=('a'*64);runtime=$payload;manifest=[pscustomo
  runId=$Run;candidate=('b'*32);capturedUtc=$Captured;createdUtc='2026-10-22T13:00:00Z';files=$files}}
 $env:SNOWDESKTOP_EXECUTION_TOKEN='fixture-credential-must-not-reach-desktop'
 Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
-)PS",true);
+)PS");
     Child original({old.wstring(),L"--activation-host",marker.wstring()},root);
     until([&]{return fs::exists(marker);});
     const auto switched=run({powershell().wstring(),L"-NoProfile",L"-File",(root/L"activate.ps1").wstring()},root,30);
@@ -78,14 +88,14 @@ Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
 }
 void closed_activation(const fs::path& repo,bool oldClosed=false) {
     const auto root=temporary("closed-build-activation"),runtime=root/L"payload",target=root/L".build/Release",state=root/L".build/collaboration";
-    copy(repo,root,{"scripts/build_activate.ps1","scripts/build_candidate.ps1","scripts/build_inputs.ps1","scripts/build_entry.ps1","scripts/build_protocol.ps1"});
+    copy(repo,root,{"scripts/build_activate.ps1","scripts/build_candidate.ps1","scripts/build_inputs.ps1","scripts/build_entry.ps1","scripts/build_protocol.ps1","scripts/deployment_payload.psm1"});
     if(oldClosed){auto script=read(root/L"scripts/build_activate.ps1");replace(script,"$arguments=''","if(-not $process){$result.status='not-running';return $result};$arguments=''");write(root/L"scripts/build_activate.ps1",script,true);}
     fs::create_directories(runtime);fs::create_directories(state);fs::create_directories(target/L"data");fs::create_directories(target/L"data.debug");
     fs::copy_file(executable(),target/L"SnowDesktop.exe");fs::copy_file(executable(),runtime/L"SnowDesktop.exe");
     write(runtime/L"SnowDesktop.exe",read(runtime/L"SnowDesktop.exe")+"new-closed-build");
     write(target/L"generation.txt","old");write(runtime/L"generation.txt","new");
     write(target/L"data/layout.json","closed layout");write(target/L"data.debug/profile.json","closed debug profile");
-    write(root/L"activate.ps1",R"PS(param([string]$Captured='2026-10-22T12:00:00Z',[switch]$FailInstall)
+    write_activation_script(root/L"activate.ps1",R"PS(param([string]$Captured='2026-10-22T12:00:00Z',[switch]$FailInstall,[switch]$MissingSaved)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')
 . (Join-Path $PSScriptRoot 'scripts/build_protocol.ps1')
@@ -100,8 +110,9 @@ $files=@('SnowDesktop.exe','generation.txt'|ForEach-Object{[pscustomobject]@{pat
 $artifact=[pscustomobject]@{digest=('a'*64);runtime=$payload;manifest=[pscustomobject]@{productRuntime=$true;configuration='Release';
  runId=('c'*32);candidate=('b'*32);capturedUtc=$Captured;createdUtc='2026-10-22T13:00:00Z';files=$files}}
 if($FailInstall){[IO.File]::Delete((Join-Path $payload 'generation.txt'))}
+if($MissingSaved){[IO.File]::Delete((Join-Path $payload 'App.xbf'))}
 Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
-)PS",true);
+)PS");
     const auto invoke=[&](const std::vector<std::wstring>& extra={}){
         std::vector<std::wstring> args{powershell().wstring(),L"-NoProfile",L"-File",(root/L"activate.ps1").wstring()};
         args.insert(args.end(),extra.begin(),extra.end());const auto result=run(args,root,20);
@@ -109,10 +120,14 @@ Invoke-BuiltRuntimeActivation $PSScriptRoot $artifact|ConvertTo-Json -Depth 8
     };
     const auto installed=invoke();
     require(installed.at("status").str()=="installed"&&installed.at("oldPid").kind==Json::Kind::Null&&installed.at("newPid").kind==Json::Kind::Null&&
-        installed.at("replacedFiles").integer()==2&&read(target/L"generation.txt")=="new"&&read(target/L"SnowDesktop.exe")==read(runtime/L"SnowDesktop.exe"),
+        installed.at("replacedFiles").integer()>2&&read(target/L"generation.txt")=="new"&&read(target/L"SnowDesktop.exe")==read(runtime/L"SnowDesktop.exe")&&
+        read(target/L"SnowDesktop.winmd")=="new:SnowDesktop.winmd",
         "Closed application did not receive successful build: "+installed.dump());
     require(Json::parse(read(state/L"activation-current.json")).at("status").str()=="installed","Closed installation was not retained as the current runtime");
     require(invoke().at("status").str()=="already-current","Unchanged closed runtime was installed again");
+    const auto missing=invoke({L"-MissingSaved"});
+    require(missing.at("status").str()=="failed"&&read(target/L"SnowDesktop.winmd")=="new:SnowDesktop.winmd",
+        "Activation accepted an incomplete deployment or changed the installed runtime");
     require(invoke({L"-Captured",L"2026-10-22T11:00:00Z"}).at("status").str()=="superseded","Older build replaced a newer closed installation");
     const auto saved=read(target/L"SnowDesktop.exe");write(runtime/L"SnowDesktop.exe",saved+"failed-new-build");write(runtime/L"generation.txt","failed-new");
     const auto failed=invoke({L"-Captured",L"2026-10-22T14:00:00Z",L"-FailInstall"});

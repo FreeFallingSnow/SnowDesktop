@@ -10,8 +10,15 @@ function Get-CandidateRuntimeFiles($Context,[string]$Action) {
     $files=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $profile='test-files'
     if($Action -in 'release','debug','batch-product'){
-        Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force
-        $null=Read-SnowDesktopDeploymentManifest -BuildOutput $output
+        Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force -Global
+        $deployment=Read-SnowDesktopDeploymentManifest -BuildOutput $output
+        # The deployment manifest is the inventory, including build-layout
+        # aliases, XBF/WinMD, assets, fragments and notices. A second whitelist
+        # must never silently drop a dependency of the saved manifest.
+        foreach($file in @($deployment.files)+@($deployment.appxFragments)+@($deployment.notices)){
+            $relative=if($file.PSObject.Properties['buildPath'] -and $file.buildPath){$file.buildPath}else{$file.path}
+            [void]$files.Add((Get-CandidateRelativePath $relative))
+        }
         foreach($name in @('SnowDesktop.exe','snowwidget.exe','SnowDesktop.deployment.json')){
             if(-not [IO.File]::Exists((Resolve-CandidatePath $output $name))){throw 'Completed product build is missing its required runtime.'}
             [void]$files.Add($name)
@@ -19,7 +26,7 @@ function Get-CandidateRuntimeFiles($Context,[string]$Action) {
         foreach($file in [IO.Directory]::EnumerateFiles($output)){
             $name=[IO.Path]::GetFileName($file)
             if($name -in 'SnowDesktopLauncher.exe','SnowDesktopSteamBridge.exe','SnowDesktopWorkshopManager.exe' -or
-                [IO.Path]::GetExtension($name) -in '.manifest','.pri'){[void]$files.Add($name)}
+                [IO.Path]::GetExtension($name) -in '.manifest','.pri' -or $name -eq 'SnowDesktop.pdb'){[void]$files.Add($name)}
         }
         foreach($name in @('SnowDesktop.Runtime','widgets','lang','licenses')){
             $directory=Resolve-CandidatePath $output $name
@@ -92,6 +99,10 @@ function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCa
             if($digest -ne (Get-FileDigest $item.path)){throw 'Candidate runtime copy failed integrity verification.'}
             $records+=@([pscustomobject]@{path=$item.relative;sha256=$digest;bytes=$item.stream.Length})
         }
+        if($selection.profile -eq 'product-runtime'){
+            Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force -Global
+            $null=Read-SnowDesktopDeploymentManifest -BuildOutput $payload
+        }
         $manifest=[pscustomobject]@{schemaVersion=1;id=$Context.runId;runId=$Context.runId;candidate=$Context.snapshot;
             sourceDigest=$snapshot.manifest.sourceDigest;sourceManifestDigest=$snapshot.digest;sourceHead=$snapshot.manifest.head;
             contextDigest=$snapshot.manifest.context.digest;configuration=$Context.configuration;profile=$selection.profile;
@@ -136,6 +147,14 @@ function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDiges
     if($manifest.productRuntime){
         foreach($name in @('SnowDesktop.exe','snowwidget.exe','SnowDesktop.deployment.json')){
             if(-not $seen.Contains($name)){throw 'Candidate product runtime is incomplete.'}
+        }
+        if($VerifyFiles){
+            Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force -Global
+            $deployment=Read-SnowDesktopDeploymentManifest -BuildOutput $runtime
+            foreach($file in @($deployment.files)+@($deployment.appxFragments)+@($deployment.notices)){
+                $relative=if($file.PSObject.Properties['buildPath'] -and $file.buildPath){$file.buildPath}else{$file.path}
+                if(-not $seen.Contains($relative.Replace('\','/'))){throw 'Candidate product runtime omits a deployment dependency.'}
+            }
         }
     }
     return [pscustomobject]@{manifest=$manifest;path=$path;digest=$digest;runtime=$runtime}

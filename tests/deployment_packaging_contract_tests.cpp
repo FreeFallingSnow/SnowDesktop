@@ -246,6 +246,12 @@ void TestPackagers(const std::string& module,
             steam.find("Copy-SnowDesktopDeploymentPayload") !=
                 std::string::npos,
         "portable, MSIX, and Steam payloads use the same deployment manifest");
+    Check(release.find("Get-SnowDesktopPackagingContext") != std::string::npos &&
+            steam.find("Get-SnowDesktopPackagingContext") != std::string::npos &&
+            release.find("buildProvenance") != std::string::npos && steam.find("buildProvenance") != std::string::npos &&
+            release.find("Join-Path $buildOutput \"widgets\"") != std::string::npos &&
+            steam.find("Join-Path $buildOutput \"widgets\"") != std::string::npos,
+        "both packagers bind saved build provenance and built widget inputs");
     Check(module.find("Copy-SnowDesktopRepositoryLicenses") !=
                 std::string::npos &&
             module.find("Everything-SDK-LICENSE.txt") !=
