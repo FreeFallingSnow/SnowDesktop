@@ -28,6 +28,15 @@ function Get-CandidateRuntimeFiles($Context,[string]$Action) {
             if($name -in 'SnowDesktopLauncher.exe','SnowDesktopSteamBridge.exe','SnowDesktopWorkshopManager.exe' -or
                 [IO.Path]::GetExtension($name) -in '.manifest','.pri' -or $name -eq 'SnowDesktop.pdb'){[void]$files.Add($name)}
         }
+        # Steam's bridge has build-generated sidecars outside the WinAppSDK
+        # deployment inventory. Keep them with that executable, not with a
+        # mutable source checkout or a later packaging repair directory.
+        if($files.Contains('SnowDesktopSteamBridge.exe')){
+            foreach($name in @('SnowDesktopSteamBridge-LICENSE.txt','SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md')){
+                if(-not [IO.File]::Exists((Resolve-CandidatePath $output $name))){throw "Bridge build sidecar is missing: $name"}
+                [void]$files.Add($name)
+            }
+        }
         foreach($name in @('SnowDesktop.Runtime','widgets','lang','licenses')){
             $directory=Resolve-CandidatePath $output $name
             if(-not [IO.Directory]::Exists($directory)){continue}

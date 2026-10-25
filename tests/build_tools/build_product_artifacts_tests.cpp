@@ -77,7 +77,9 @@ foreach($generation in @('A','B')) {
         $output=Join-Path $slot.output 'Release'
         [void][IO.Directory]::CreateDirectory($output)
         New-TestProductDeployment $output $generation
-        foreach($name in @('SnowDesktop.exe','snowwidget.exe','SnowDesktop.pdb','widgets/example/widget.lua','lang/en-US.json')) {
+        foreach($name in @('SnowDesktop.exe','snowwidget.exe','SnowDesktop.pdb','SnowDesktopSteamBridge.exe',
+            'SnowDesktopSteamBridge-LICENSE.txt','SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md',
+            'widgets/example/widget.lua','lang/en-US.json')) {
             $file=Join-Path $output $name
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file))
             [IO.File]::WriteAllText($file,$generation+':'+$name)
@@ -112,7 +114,8 @@ Assert-SnowDesktopPackagingContext $context
     require(data.at("firstSlot").str()==data.at("slot").str(),"Fixture did not reuse the compiler workspace");
     const auto saved=fs::path(wide(data.at("saved").str())),second=fs::path(wide(data.at("second").str()));
     for(const auto* name:{"SnowDesktop.winmd","App.xbf","SettingsShell.xbf","Assets/Fonts/Example.ttf",
-        "Assets/Settings/Icons/example.svg","SnowDesktop.Runtime/Microsoft.ui.xaml.dll","SnowDesktop.pdb"}){
+        "Assets/Settings/Icons/example.svg","SnowDesktop.Runtime/Microsoft.ui.xaml.dll","SnowDesktop.pdb",
+        "SnowDesktopSteamBridge-LICENSE.txt","SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"}){
         require(read(saved/name)=="A:"+std::string(name),"Saved A omitted or changed "+std::string(name));
         require(read(second/name)=="B:"+std::string(name),"Second compiler output was not B");
     }
