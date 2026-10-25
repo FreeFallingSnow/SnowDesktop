@@ -2648,7 +2648,7 @@
   "performance.idle": "Ressources au repos",
   "performance.interaction": "Trace des interactions",
   "performance.widget": "Détails des widgets",
-  "performance.instances": "Instances Lua (8 maximum ; aucune sélection capture tout)",
+  "performance.instances": "Instances Lua (8 maximum ; requises pour les détails du composant)",
   "performance.selectHint": "Sélectionnez au plus 8 instances. Les détails des widgets nécessitent au moins une instance.",
   "performance.start": "Démarrer la capture",
   "performance.stop": "Arrêter la capture",

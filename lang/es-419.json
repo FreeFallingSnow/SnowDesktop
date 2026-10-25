@@ -2648,7 +2648,7 @@
   "performance.idle": "Recursos en reposo",
   "performance.interaction": "Traza de interacción",
   "performance.widget": "Detalles de widgets",
-  "performance.instances": "Instancias Lua (hasta 8; sin selección se capturan todas)",
+  "performance.instances": "Instancias de Lua (hasta 8; obligatorias para detalles del componente)",
   "performance.selectHint": "Selecciona hasta 8 instancias. Los detalles de widgets requieren al menos una.",
   "performance.start": "Iniciar captura",
   "performance.stop": "Detener captura",

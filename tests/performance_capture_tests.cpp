@@ -24,6 +24,19 @@ namespace
 {
 namespace perf = snowdesktop::performance;
 std::filesystem::path fixtureRoot;
+struct CaptureCleanup { ~CaptureCleanup() { perf::Shutdown(); } };
+struct IsolatedShellModulePath
+{
+    std::wstring original;
+    IsolatedShellModulePath()
+    {
+        const auto size = GetEnvironmentVariableW(L"PSModulePath", nullptr, 0);
+        if (size) { original.resize(size); original.resize(GetEnvironmentVariableW(L"PSModulePath", original.data(), size)); }
+        if (!SetEnvironmentVariableW(L"PSModulePath", L"C:\\SnowDesktopFixture\\PowerShell7Only"))
+            throw std::runtime_error("set isolated module-path fixture");
+    }
+    ~IsolatedShellModulePath() { SetEnvironmentVariableW(L"PSModulePath", original.empty() ? nullptr : original.c_str()); }
+};
 void Check(bool condition, const char* message)
 {
     if (!condition) { std::cerr << "FAIL: " << message << std::endl; throw std::runtime_error(message); }
@@ -204,6 +217,7 @@ void AssertNativeTraceSql(const std::filesystem::path&, std::string_view);
 void ExercisePerformanceWorkloads(const std::filesystem::path&);
 void RunPerformanceCaptureTests()
 {
+    CaptureCleanup cleanup;
     const auto root = std::filesystem::temp_directory_path() /
         (L"SnowDesktopPerfTests-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     std::filesystem::create_directory(root);
@@ -280,22 +294,29 @@ void RunPerformanceCaptureTests()
         " AND (SELECT MAX(EXTRACT_ARG(arg_set_id,'debug.late_ms')) FROM slice WHERE name='animation.update')>5"
         " AND (SELECT COUNT(*) FROM slice WHERE name='animation.presentation')=4"
         " AND (SELECT COUNT(*) FROM slice WHERE name='animation.commit')=4) AS passed;");
-    Check(perf::RequestAnalysis(workload.session, perf::Snapshot(workload.session).generation, error), "host controller queues fixed offline analyzer");
-    const auto analysisDeadline = GetTickCount64() + 60000;
-    perf::CaptureSnapshot analyzed;
-    do
     {
-        analyzed = perf::Snapshot(workload.session);
-        if (analyzed.analysis == "completed" || analyzed.analysis == "failed") break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (GetTickCount64() < analysisDeadline);
-    Check(analyzed.analysis == "completed" && analyzed.quality == "valid" && !analyzed.report.empty(), "actual worker process publishes report and independent quality");
-    const auto analyzedSummary = Read(analyzed.report.parent_path() / L"summary.json");
-    const auto* instanceRows = analyzedSummary.Find("widgets");
-    bool nestedDeduplicated = false;
-    if (instanceRows && instanceRows->IsArray()) for (const auto& row : instanceRows->array)
-        if (Number(row, "recordedCalls") == 2 && Number(row, "rootScopes") == 1) nestedDeduplicated = true;
-    Check(nestedDeduplicated, "production SQL excludes nested same-instance CPU roots rather than summing both");
+        IsolatedShellModulePath modulePath;
+        Check(perf::RequestAnalysis(workload.session, perf::Snapshot(workload.session).generation, error), "host controller queues fixed offline analyzer");
+        const auto analysisDeadline = GetTickCount64() + 60000;
+        perf::CaptureSnapshot analyzed;
+        do
+        {
+            analyzed = perf::Snapshot(workload.session);
+            if (analyzed.analysis == "completed" || analyzed.analysis == "failed") break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } while (GetTickCount64() < analysisDeadline);
+        Check(analyzed.analysis == "completed" && analyzed.quality == "valid" && !analyzed.report.empty(), "actual worker process publishes report and independent quality");
+        wchar_t inheritedModulePath[256]{};
+        Check(GetEnvironmentVariableW(L"PSModulePath", inheritedModulePath, 256) > 0 &&
+            std::wstring_view(inheritedModulePath) == L"C:\\SnowDesktopFixture\\PowerShell7Only",
+            "analysis launch must not mutate its parent module environment");
+        const auto analyzedSummary = Read(analyzed.report.parent_path() / L"summary.json");
+        const auto* instanceRows = analyzedSummary.Find("widgets");
+        bool nestedDeduplicated = false;
+        if (instanceRows && instanceRows->IsArray()) for (const auto& row : instanceRows->array)
+            if (Number(row, "recordedCalls") == 2 && Number(row, "rootScopes") == 1) nestedDeduplicated = true;
+        Check(nestedDeduplicated, "production SQL excludes nested same-instance CPU roots rather than summing both");
+    }
     const auto protocol = perf::ProcessControlRequest(R"({"protocolVersion":3,"requestId":"test-status","command":"status","sessionId":"coupled-test"})");
     JsonValue reply; Check(ParseJson(protocol, reply, &error), "control returns JSON");
     Check(String(reply, "requestId") == "test-status" && String(reply, "state") == "completed", "status queries retain per-session result and echo request identity");
@@ -312,6 +333,7 @@ void RunPerformanceCaptureTests()
 // after the measured loop. Preserve each report for counts/bounds auditing.
 int RunPerformanceOverheadBenchmark(const char* directory)
 {
+    CaptureCleanup cleanup;
     const auto root = std::filesystem::absolute(directory);
     if (std::filesystem::exists(root)) return 2;
     std::filesystem::create_directories(root);

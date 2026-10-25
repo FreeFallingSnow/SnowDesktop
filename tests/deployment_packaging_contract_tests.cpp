@@ -482,13 +482,11 @@ void TestReleaseManagerShellReload(const std::string& manager,
             manager.find("SnowDesktop_Release") == std::string::npos &&
             manager.find("sync-release") == std::string::npos,
         "release automation cannot inspect, synchronize, or publish the retired repository");
-    Check(documentation.find(
-              "scripts\\release.bat package -ReloadShell") !=
-            std::string::npos &&
-            documentation.find(
-              "scripts\\release.bat prepare -ReloadShell") !=
-                std::string::npos,
-        "release documentation describes shell reload for package and prepare");
+    Check(documentation.find("scripts\\release.bat package") != std::string::npos &&
+            documentation.find("scripts\\release.bat prepare") != std::string::npos &&
+            documentation.find("-ArtifactRun") != std::string::npos &&
+            documentation.find("-ReloadShell") != std::string::npos,
+        "release documentation keeps package/prepare and immutable artifact inputs with shell reload compatibility");
 }
 
 void TestGitHubReleasePublication(const std::filesystem::path& root)

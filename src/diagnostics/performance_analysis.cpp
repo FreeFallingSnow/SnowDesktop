@@ -2,7 +2,9 @@
 #include "common/json_value.h"
 #include <windows.h>
 #include <array>
+#include <cwchar>
 #include <fstream>
+#include <stdexcept>
 #include <vector>
 
 namespace snowdesktop::performance
@@ -14,6 +16,21 @@ struct Handle
     HANDLE value = nullptr;
     ~Handle() { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
+std::vector<wchar_t> ShellEnvironment()
+{
+    // Native launch does not get PowerShell 7's module-path compatibility filter.
+    // Let system Windows PowerShell construct its own module search path.
+    auto* inherited = GetEnvironmentStringsW();
+    if (!inherited) throw std::runtime_error("analysisEnvironmentUnavailable");
+    struct EnvironmentStrings { wchar_t* value; ~EnvironmentStrings() { FreeEnvironmentStringsW(value); } } cleanup{inherited};
+    std::vector<wchar_t> environment;
+    for (const auto* entry = inherited; *entry; entry += std::wcslen(entry) + 1)
+        if (_wcsnicmp(entry, L"PSModulePath=", 13) != 0)
+            environment.insert(environment.end(), entry, entry + std::wcslen(entry) + 1);
+    if (environment.empty()) environment.push_back(0);
+    environment.push_back(0);
+    return environment;
+}
 std::wstring Argument(std::wstring_view value)
 {
     std::wstring result = L"\"";
@@ -50,6 +67,7 @@ AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::
         Handle output{CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
         Handle input{CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING, 0, nullptr)};
         if (output.value == INVALID_HANDLE_VALUE || input.value == INVALID_HANDLE_VALUE) { result.error = "analysisLogUnavailable"; return result; }
+        auto environment = ShellEnvironment();
         STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup);
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = output.value;
@@ -71,7 +89,8 @@ AnalysisResult AnalyzeCapture(const std::filesystem::path& manifest, const std::
             Argument(script.wstring()) + L" -ManifestPath " + Argument(manifest.wstring());
         PROCESS_INFORMATION process{};
         const auto launched = CreateProcessW(shell.c_str(), command.data(), nullptr, nullptr, TRUE,
-            CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &process);
+            CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            environment.data(), nullptr, &startup.StartupInfo, &process);
         attributeCleanup();
         if (!launched) { result.error = "analysisLaunchFailed"; return result; }
         Handle child{process.hProcess}, thread{process.hThread};

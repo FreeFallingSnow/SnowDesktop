@@ -2648,7 +2648,7 @@
   "performance.idle": "Leerlaufressourcen",
   "performance.interaction": "Interaktionsablauf",
   "performance.widget": "Widget-Details",
-  "performance.instances": "Lua-Instanzen (bis zu 8; keine Auswahl erfasst alle)",
+  "performance.instances": "Lua-Instanzen (bis zu 8; für Komponentendetails erforderlich)",
   "performance.selectHint": "Höchstens 8 Instanzen auswählen. Widget-Details erfordern mindestens eine.",
   "performance.start": "Aufzeichnung starten",
   "performance.stop": "Aufzeichnung stoppen",

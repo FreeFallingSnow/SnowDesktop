@@ -2069,6 +2069,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 Settle(shell.as<x::FrameworkElement>());
             }
         }
+        if (page == SettingsPage::Debug && expanded)
+        {
+            const auto list = PreviewControl<c::ListView>(cards, L"PerformanceCaptureInstances");
+            if (list.SelectedItems().Size() != 1 ||
+                winrt::unbox_value<winrt::hstring>(list.SelectedItems().GetAt(0).as<c::ListViewItem>().Tag()) != L"preview-clock")
+                throw std::runtime_error("recording capture must retain the host-selected instance after layout");
+            std::ofstream(output / L"performance-selection.tsv") << "selected-instance\tcount\npreview-clock\t1\n";
+        }
         if (secretInput && page == SettingsPage::WidgetSettings)
             ExerciseSecretInput(shell.as<x::FrameworkElement>(), widgets, output);
         if (controlsGallery && page == SettingsPage::WidgetSettings)

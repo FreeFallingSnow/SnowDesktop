@@ -50,6 +50,7 @@ struct PerformanceCapturePresenter::Impl
         bufferRow.Initialize(buffer); content.Children().Append(bufferRow.root);
         cpuRow.Initialize(cpu); content.Children().Append(cpuRow.root);
         cpu.IsChecked(false);
+        automation::AutomationProperties::SetAutomationId(instanceList, L"PerformanceCaptureInstances");
         instanceList.SelectionMode(muxc::ListViewSelectionMode::Multiple);
         instanceList.MaxHeight(240);
         instances.Content(instanceList);
@@ -148,11 +149,13 @@ struct PerformanceCapturePresenter::Impl
             applyingStatus = true;
             preset.SelectedIndex(static_cast<int>(status.preset)); seconds.Value(status.requestedSeconds);
             buffer.Value(status.bufferKiB / 1024.0); cpu.IsChecked(status.threadCpu);
+            instanceList.SelectedItems().Clear();
             for (const auto& item : instanceList.Items())
             {
                 const auto row = item.as<muxc::ListViewItem>();
                 const std::wstring id = winrt::unbox_value<winrt::hstring>(row.Tag()).c_str();
-                row.IsSelected(std::find(status.selectedInstances.begin(), status.selectedInstances.end(), id) != status.selectedInstances.end());
+                if (std::find(status.selectedInstances.begin(), status.selectedInstances.end(), id) != status.selectedInstances.end())
+                    instanceList.SelectedItems().Append(row);
             }
             applyingStatus = false;
         }
@@ -160,7 +163,15 @@ struct PerformanceCapturePresenter::Impl
         analyze.IsEnabled(complete && !analyzing); folder.IsEnabled(!status.trace.empty()); report.IsEnabled(!status.report.empty());
         for (auto row : {presetRow, secondsRow, bufferRow, cpuRow}) row.SetEnabled(!busy);
         instances.IsEnabled(!busy);
-        info.Title(L("performance.state." + (analyzing ? std::string("analyzing") : status.phase)));
+        std::wstring stateText = L("performance.state.idle");
+        if (analyzing) stateText = L("performance.state.analyzing");
+        else if (status.phase == "starting") stateText = L("performance.state.starting");
+        else if (status.phase == "recording") stateText = L("performance.state.recording");
+        else if (status.phase == "stopping") stateText = L("performance.state.stopping");
+        else if (status.phase == "finalizing") stateText = L("performance.state.finalizing");
+        else if (status.phase == "completed") stateText = L("performance.state.completed");
+        else if (status.phase == "failed") stateText = L("performance.state.failed");
+        info.Title(stateText);
         info.Severity(status.error.empty() ? muxc::InfoBarSeverity::Informational : muxc::InfoBarSeverity::Error);
         std::wstring detail;
         if (busy) detail = L("performance.remaining") + L" " + std::to_wstring(static_cast<unsigned>(
@@ -169,7 +180,11 @@ struct PerformanceCapturePresenter::Impl
         if (status.analysis == "failed") detail += L"\n" + L("performance.analysisFailed");
         if (status.analysis == "completed")
         {
-            detail += (detail.empty() ? L"" : L"\n") + L("performance.quality." + status.quality);
+            std::wstring qualityText = L("performance.quality.unknown");
+            if (status.quality == "valid") qualityText = L("performance.quality.valid");
+            else if (status.quality == "partial") qualityText = L("performance.quality.partial");
+            else if (status.quality == "invalid") qualityText = L("performance.quality.invalid");
+            detail += (detail.empty() ? L"" : L"\n") + qualityText;
             if (status.quality == "invalid" || status.quality == "partial") info.Severity(muxc::InfoBarSeverity::Warning);
         }
         info.Message(detail); path.Text(status.trace);
@@ -192,7 +207,8 @@ struct PerformanceCapturePresenter::Impl
             {
                 muxc::ListViewItem row; row.Content(winrt::box_value(instance.name)); row.Tag(winrt::box_value(instance.id));
                 instanceList.Items().Append(row);
-                row.IsSelected(std::find(selected.begin(), selected.end(), instance.id) != selected.end());
+                if (std::find(selected.begin(), selected.end(), instance.id) != selected.end())
+                    instanceList.SelectedItems().Append(row);
             }
         }
         status = value; Render();

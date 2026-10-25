@@ -2648,7 +2648,7 @@
   "performance.idle": "Idle resources",
   "performance.interaction": "Interaction trace",
   "performance.widget": "Widget details",
-  "performance.instances": "Lua instances (up to 8; none selects all)",
+  "performance.instances": "Lua instances (up to 8; required for widget detail)",
   "performance.selectHint": "Select up to 8 instances. Widget details requires at least one.",
   "performance.start": "Start capture",
   "performance.stop": "Stop capture",

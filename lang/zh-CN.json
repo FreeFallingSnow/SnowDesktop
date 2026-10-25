@@ -2648,7 +2648,7 @@
   "performance.idle": "空闲资源",
   "performance.interaction": "交互追踪",
   "performance.widget": "组件细节",
-  "performance.instances": "Lua 实例（最多 8 个；不选则采集全部）",
+  "performance.instances": "Lua 实例（最多 8 个；组件细节预设必选）",
   "performance.selectHint": "最多选择 8 个实例；组件细节预设至少需要选择 1 个。",
   "performance.start": "开始采集",
   "performance.stop": "停止采集",
