@@ -171,6 +171,10 @@ inline void RunInsertionZones()
         native_drag_async_reload_cases::Refresh(app);
         const auto original = Access::Widgets(app);
         Require(Access::Save(app), "save cross-group baseline before hovering");
+        for (const auto& widget : original)
+            if (Configuration(native_widget_pair_cases::Widget(app, widget.id)) != Configuration(widget))
+                std::cerr << "baseline save changed " << WideToUtf8(widget.id) << " before=" << Configuration(widget)
+                    << " after=" << Configuration(native_widget_pair_cases::Widget(app, widget.id)) << '\n';
         const auto saved = Read(Access::LayoutPath(app));
         Access::BeginGroupLabels(app, L"source-group", {L"E"});
         auto* target = Access::MemberContainer(app, L"surface-group");
@@ -207,19 +211,25 @@ inline void RunInsertionZones()
             "leaving the insertion strip retires its displaced layout without a model mutation");
         Access::GroupSurfacePointPreview(app, L"surface-group", point);
         Access::DropGroupSurfaceLabels(app, L"surface-group");
+        std::string phase = "drop";
         const auto check = [&] {
             for (auto widget : original)
             {
                 if (widget.id == L"surface-group") widget.childWidgetIds = expected;
                 if (widget.id == L"source-group") { widget.childWidgetIds = {L"F"}; widget.activeCategoryId = L"F"; }
-                Require(Configuration(native_widget_pair_cases::Widget(app, widget.id)) == Configuration(widget),
-                    "cross-group drop changes only expected membership/order and preserves component data and identity");
+                const auto actual = Configuration(native_widget_pair_cases::Widget(app, widget.id));
+                const auto expectedConfiguration = Configuration(widget);
+                if (actual != expectedConfiguration)
+                    std::cerr << "cross-group phase=" << phase << " child=" << WideToUtf8(widget.id)
+                        << " expected=" << expectedConfiguration << " actual=" << actual << '\n';
+                Require(actual == expectedConfiguration,
+                    "cross-group drop changes only expected membership/order and preserves component data and identity: " + phase);
             }
             samples.Check(); CheckRuntime(app);
         };
         check(); Require(Access::Save(app), "save cross-group insertion through host storage");
-        native_drag_async_reload_cases::Refresh(app); check();
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        phase = "refresh"; native_drag_async_reload_cases::Refresh(app); check();
+        phase = "disk reload"; Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " native cross-group insertion zones, live layout and storage scenes passed\n";
