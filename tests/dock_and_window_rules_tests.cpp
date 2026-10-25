@@ -4263,33 +4263,22 @@ int main(int argc, char** argv)
             : dense.geometry.viewport.bottom - icons.back().bottom);
         return gaps;
     };
-    // The user's edge padding contract is half the internal visual gap on
+    // The user's edge padding contract equals the internal visual gap on
     // each axis, allowing one physical pixel for icon/track rounding.
-    const auto hasHalfGapPadding = [&](
+    const auto hasEqualGapPadding = [&](
         const titleless::DenseLayout& dense, bool horizontal) {
         const auto gaps = denseVisualGaps(dense, horizontal);
-        if (gaps.front() < 0 || gaps.back() < 0 ||
-            std::abs(gaps.front() - gaps.back()) > 1)
-            return false;
-        if (gaps.size() == 2) return true;
-        for (auto gap = gaps.begin() + 1; gap != gaps.end() - 1; ++gap)
-        {
-            if (*gap < 0 ||
-                std::abs(*gap - gaps.front() * 2) > 2 ||
-                std::abs(*gap - gaps.back() * 2) > 2)
-                return false;
-        }
         const auto [minimum, maximum] = std::minmax_element(
-            gaps.begin() + 1, gaps.end() - 1);
-        return *maximum - *minimum <= 1;
+            gaps.begin(), gaps.end());
+        return *minimum >= 0 && *maximum - *minimum <= 1;
     };
-    Check(hasHalfGapPadding(denseTwoByTwo, true) &&
-            hasHalfGapPadding(denseTwoByTwo, false) &&
-            hasHalfGapPadding(denseLandscape, true) &&
-            hasHalfGapPadding(denseLandscape, false) &&
-            hasHalfGapPadding(densePortrait, true) &&
-            hasHalfGapPadding(densePortrait, false),
-        "titleless Collection edges must be half the internal gap on each axis, with even pixel distribution");
+    Check(hasEqualGapPadding(denseTwoByTwo, true) &&
+            hasEqualGapPadding(denseTwoByTwo, false) &&
+            hasEqualGapPadding(denseLandscape, true) &&
+            hasEqualGapPadding(denseLandscape, false) &&
+            hasEqualGapPadding(densePortrait, true) &&
+            hasEqualGapPadding(densePortrait, false),
+        "titleless Collection edges must equal the internal gap on each axis, with even pixel distribution");
     // A narrow frame must trade a little icon size for another column instead
     // of exposing an icon-wide gutter (162x112 previously had a 52px gap).
     for (const int percentage : { 100, 125, 150, 200, 300 })
@@ -4313,9 +4302,9 @@ int main(int argc, char** argv)
                     narrow.iconSize >= narrow.minimumIconSize &&
                     *minimum >= 0 &&
                     *maximum - *minimum <= narrow.iconSize / 4 &&
-                    hasHalfGapPadding(narrow, true) &&
-                    hasHalfGapPadding(narrow, false),
-                "narrow titleless Collections must reflow icons with half-gap edge padding at each tested scale");
+                    hasEqualGapPadding(narrow, true) &&
+                    hasEqualGapPadding(narrow, false),
+                "narrow titleless Collections must reflow icons with equal-gap edge padding at each tested scale");
             const auto presentation = localLayout::ResolveCollectionPresentation(
                 15, static_cast<size_t>(narrow.columns * narrow.rows),
                 false, false);
@@ -4337,11 +4326,11 @@ int main(int argc, char** argv)
         50, 2, 2, 1.0f);
     Check(denseSingleColumn.columns == 1 &&
             denseSingleRow.rows == 1 &&
-            hasHalfGapPadding(denseSingleColumn, true) &&
-            hasHalfGapPadding(denseSingleColumn, false) &&
-            hasHalfGapPadding(denseSingleRow, true) &&
-            hasHalfGapPadding(denseSingleRow, false),
-        "single-column and single-row compact Collections must remain centered and preserve half-gap padding on the repeated axis");
+            hasEqualGapPadding(denseSingleColumn, true) &&
+            hasEqualGapPadding(denseSingleColumn, false) &&
+            hasEqualGapPadding(denseSingleRow, true) &&
+            hasEqualGapPadding(denseSingleRow, false),
+        "single-column and single-row compact Collections must remain centered and preserve equal-gap padding on the repeated axis");
     const auto ordinaryGrid = localLayout::ResolveGrid(
         RECT{ 0, 0, 184, 232 }, 2, 2,
         61, 80, 1.0f);

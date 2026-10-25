@@ -47,7 +47,7 @@ inline bool ResolveStoredMode(
     return globalMode.value_or(widgetMode);
 }
 
-inline widget_item_layout::Axis ResolveHalfGapIconAxis(
+inline widget_item_layout::Axis ResolveEqualGapIconAxis(
     int start, int extent, int count, int iconSize, int cellPadding)
 {
     widget_item_layout::Axis result;
@@ -56,35 +56,33 @@ inline widget_item_layout::Axis ResolveHalfGapIconAxis(
     result.count = std::max(1, count);
     const int pitch = std::max(1, result.extent / result.count);
     iconSize = std::clamp(iconSize, 1, pitch);
+    // Divide the space around the visible icons into count + 1 equal gaps,
+    // including both outside edges. Keep hit-cell padding out of this ratio.
+    const int gapCount = result.count + 1;
+    const int visualGap = std::max(0,
+        (result.extent - result.count * iconSize + gapCount / 2) / gapCount);
     const int cellInset = std::min(std::max(0, cellPadding),
-        std::max(0, (pitch - iconSize) / 2));
+        visualGap / 2);
     result.cell = iconSize + cellInset * 2;
-    // Track-center rounding followed by icon-center rounding otherwise shifts
-    // odd-sized hit cells twice at fractional DPI. An even hit cell lets the
-    // existing centered-icon path round only once, without changing icon size.
-    if (result.cell % 2 != 0)
-    {
-        if (result.cell < pitch) ++result.cell;
-        else if (result.cell > iconSize) --result.cell;
-    }
-    result.gap = std::max(0, pitch - result.cell);
-    result.edge = result.gap / 2;
-    // Bounded track centers divide the complete extent into equal pitches.
-    // Centering each icon in its pitch leaves half a visual gap at each edge.
-    // Keep baseMargin zero; a common four-sided padding would break this ratio.
+    result.gap = visualGap - cellInset * 2;
+    result.edge = visualGap - cellInset;
+    // The visual-axis path distributes residual pixels between icons while
+    // keeping both outside gaps equal, including for odd icon sizes and DPI.
+    result.visualItemSize = iconSize;
+    result.visualOuterPadding = visualGap;
     return result;
 }
 
-inline widget_item_layout::Layout ResolveHalfGapIconGrid(
+inline widget_item_layout::Layout ResolveEqualGapIconGrid(
     RECT viewport, int columns, int rows, int iconSize,
     int horizontalInset, int verticalInset)
 {
     widget_item_layout::Layout result;
     result.viewport = viewport;
-    result.horizontal = ResolveHalfGapIconAxis(
+    result.horizontal = ResolveEqualGapIconAxis(
         viewport.left, viewport.right - viewport.left,
         columns, iconSize, horizontalInset);
-    result.vertical = ResolveHalfGapIconAxis(
+    result.vertical = ResolveEqualGapIconAxis(
         viewport.top, viewport.bottom - viewport.top,
         rows, iconSize, verticalInset);
     return result;
@@ -174,7 +172,7 @@ inline DenseLayout ResolveDenseLayout(
             result.iconSize = iconSize;
         }
     }
-    result.geometry = ResolveHalfGapIconGrid(viewport,
+    result.geometry = ResolveEqualGapIconGrid(viewport,
         result.columns, result.rows, result.iconSize,
         horizontalInset, verticalInset);
     return result;
