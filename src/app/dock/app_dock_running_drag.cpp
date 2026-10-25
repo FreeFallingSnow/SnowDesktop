@@ -208,20 +208,7 @@ void DesktopApp::DrawDockRunningDragPreview(ID2D1DeviceContext* context, DockCon
 {
     if (!context || !dock || !dockRunningDrag_ || dragSession_.TargetContainer() != dock) return;
     if (dockRunningDrag_->target.area == drag::Area::None) return;
-    // Re-read animated geometry even when the pointer is stationary.
-    const auto target = dock->GetRunningDragTarget(dragSession_.CurrentPoint());
-    if (target.area == drag::Area::None) return;
-    const RECT bounds = dock->GetBounds();
-    ComPtr<ID2D1SolidColorBrush> brush;
-    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush))) return;
-    const float axis = static_cast<float>(target.axis);
-    const bool vertical = dock->GetInsertionStyle() == BarStyle::HBar;
-    const D2D1_RECT_F line = vertical
-        ? D2D1::RectF(static_cast<float>(bounds.left + 10), axis - 2,
-            static_cast<float>(bounds.right - 10), axis + 2)
-        : D2D1::RectF(axis - 2, static_cast<float>(bounds.top + 10),
-            axis + 2, static_cast<float>(bounds.bottom - 10));
-    context->FillRoundedRectangle(D2D1::RoundedRect(line, 2, 2), brush.Get());
+    dock->DrawInsertionPreview(context, 0);
 }
 
 void DesktopApp::CommitDockRunningDrag(POINT point, int mods)
