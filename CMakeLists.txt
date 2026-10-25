@@ -34,32 +34,7 @@ if(MSVC)
     set_property(TARGET SnowDesktopPuff PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-# Fixed upstream amalgamation: no configure-time network or product tracing
-# build switch. Only processes linking SnowDesktopPerfetto initialize the SDK.
-file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto/perfetto.h" SNOWDESKTOP_PERFETTO_HEADER_SHA256)
-file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto/perfetto.cc" SNOWDESKTOP_PERFETTO_SOURCE_SHA256)
-if(NOT SNOWDESKTOP_PERFETTO_HEADER_SHA256 STREQUAL "df97880d56c765a4c51ffe7fd2c71ce4fbb3164677d81185e8488c1516e87470" OR
-   NOT SNOWDESKTOP_PERFETTO_SOURCE_SHA256 STREQUAL "cfd4d552272f37da310d43c96c418788567d12174017e2fce061797297391e4c")
-    message(FATAL_ERROR "Perfetto v58.2 SDK source integrity check failed")
-endif()
-add_library(SnowDesktopPerfettoSdk STATIC third_party/perfetto/perfetto.cc)
-target_include_directories(SnowDesktopPerfettoSdk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto")
-target_compile_features(SnowDesktopPerfettoSdk PUBLIC cxx_std_17)
-target_compile_definitions(SnowDesktopPerfettoSdk PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(SnowDesktopPerfettoSdk PUBLIC ws2_32)
-add_library(SnowDesktopPerfetto STATIC
-    src/diagnostics/perfetto_categories.cpp
-    src/diagnostics/perfetto_session.cpp)
-target_include_directories(SnowDesktopPerfetto PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_features(SnowDesktopPerfetto PUBLIC cxx_std_20)
-target_link_libraries(SnowDesktopPerfetto PUBLIC SnowDesktopPerfettoSdk)
-if(MSVC)
-    set_property(TARGET SnowDesktopPerfettoSdk SnowDesktopPerfetto PROPERTY
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopPerfettoSdk PRIVATE /bigobj /permissive- /EHsc /utf-8)
-    target_compile_options(SnowDesktopPerfetto PRIVATE /W4 /permissive- /EHsc /utf-8)
-    target_compile_definitions(SnowDesktopPerfetto PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowDesktop.Perfetto.cmake")
 # Decoder-only upstream target exports its root; expose the public API directory.
 target_include_directories(webpdecoder INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/src>")
 

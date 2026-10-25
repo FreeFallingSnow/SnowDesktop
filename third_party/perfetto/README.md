@@ -17,6 +17,14 @@ link dependency. `SnowDesktopPerfetto` owns the finite application categories
 and capture-worker session/file boundary. Neither library initializes at process
 startup. There is no system tracing daemon, injection, or administrator dependency.
 
+`cmake/SnowDesktop.Perfetto.cmake` verifies the upstream bytes and generates the
+compiler input under the build directory. It contains two reviewed MSVC C4267
+adaptations: keep a chunk index as `size_t` to match the producer and consumer
+APIs, and explicitly represent the at-most-five-byte uint32 varint length as
+`uint32_t`. These conversions do not change the trace wire format. The generated
+compiler copy is rewritten only when its contents change. No compiler warning
+is disabled, and the files vendored here retain the official release hashes.
+
 The native regression uses the official Windows x64 trace processor v58.2 to
 parse the SDK output and assert its semantics. Install the official Perfetto Skill
 and invoke its bundled wrapper once (`python <skill>/bin/trace_processor --version`),
