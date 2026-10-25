@@ -65,6 +65,37 @@
     {
         app.ResolveCurrentDragTargetAt({-100, -100});
     }
+    static void BeginGroupComponentMove(DesktopApp& app, const std::wstring& id)
+    {
+        const auto index = app.FindWidgetIndexById(id);
+        if (index >= app.widgets_.size()) throw std::runtime_error("component move requires a real desktop source");
+        app.widgetAction_ = DesktopApp::WidgetAction::Move;
+        app.mouseDownWidgetIndex_ = index; app.mouseDown_ = true; app.mouseDownHit_ = nullptr;
+        app.rightButtonItemDrag_ = app.middleButtonWidgetMove_ = false;
+        app.pendingWidgetButtonAction_ = WidgetHit::None;
+        app.widgetDragOriginalCell_ = app.widgetPreviewCell_ = app.widgets_[index].gridCell;
+        app.widgetDragOriginalSpan_ = app.widgetPreviewSpan_ = app.widgets_[index].gridSpan;
+        app.widgetCollectionGroupTargetIndex_ = app.widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
+        const RECT frame = MemberContainer(app, id)->GetFrameRect();
+        app.mouseDownPoint_ = app.lastMousePoint_ = {(frame.left + frame.right) / 2, frame.top + 2};
+    }
+    static size_t GroupComponentMovePoint(DesktopApp& app, POINT point)
+    {
+        const HWND saved = app.hwnd_; app.hwnd_ = completionWindow;
+        app.OnMouseMoveAt(MK_LBUTTON, point);
+        app.hwnd_ = saved;
+        const auto target = app.widgetCollectionGroupTargetIndex_;
+        if (target >= app.widgets_.size() || app.widgets_[target].id != L"surface-group")
+            throw std::runtime_error("component move must resolve the real destination group");
+        return app.widgetCollectionGroupInsertIndex_;
+    }
+    static void EndGroupComponentMove(DesktopApp& app, POINT point, bool cancel)
+    {
+        const HWND saved = app.hwnd_; app.hwnd_ = completionWindow;
+        if (cancel) app.OnKeyDown(VK_ESCAPE);
+        else app.OnLeftButtonUpAt(0, point, false);
+        app.hwnd_ = saved;
+    }
     static void GroupSurfaceDateHeaders(DesktopApp& app, bool enabled)
     {
         const auto index = app.FindWidgetIndexById(L"ordered-group");

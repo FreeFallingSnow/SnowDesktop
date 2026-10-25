@@ -546,9 +546,65 @@ inline void RunInactiveTab()
     std::cout << scenes << " native inactive-tab preview, activation, tail append and storage scenes passed\n";
     RunExternalInactiveTab();
 }
+inline void RunDesktopComponentTabs()
+{
+    Profile profile;
+    std::size_t scenes = 0;
+    for (const auto sourceType : {collection, files, mapping})
+    for (const bool list : {false, true})
+    for (int zone = 0; zone < 5; ++zone)
+    {
+        context = "desktop component tab insertion type=" + std::to_string(static_cast<int>(sourceType)) +
+            " list=" + std::to_string(list) + " zone=" + std::to_string(zone);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, sourceType != collection, list, false);
+        auto source = Component(L"E", sourceType, 6, 0, false);
+        samples.Add(source, L"desktop-source"); widgets.push_back(std::move(source));
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::Save(app), "save component source before its native handle gesture");
+        const auto saved = Read(Access::LayoutPath(app));
+        const auto a = Access::GroupSurfaceTabRect(app, L"surface-group", L"A");
+        const auto b = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
+        auto* group = Access::MemberContainer(app, L"surface-group");
+        POINT point{b.left + 1, (b.top + b.bottom) / 2};
+        if (zone == 1) point.x = (a.right + b.left) / 2;
+        if (zone == 2) point.y = b.top - group->Cu(3.0f);
+        if (zone == 3) point.y = group->GetFrameRect().bottom - 1;
+        const bool cancel = zone == 4;
+        Access::BeginGroupComponentMove(app, L"E");
+        const auto insertion = Access::GroupComponentMovePoint(app, point);
+        const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+        Require(zone == 3 || insertion == 1, "native component handle move retains the exact tab insertion index");
+        Require(visual.active == (zone != 3),
+            "desktop components use live tab landing in the strip while body drops retain membership feedback");
+        if (zone != 3)
+        {
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs) order.push_back(tab.id);
+            Require(order == std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"} && visual.tabs[1].placeholder,
+                "desktop component landing reserves its label block and displaces later tabs");
+        }
+        Require(Read(Access::LayoutPath(app)) == saved, "component insertion preview cannot persist membership");
+        Access::EndGroupComponentMove(app, point, cancel);
+        const std::vector<std::wstring> expected = cancel ? std::vector<std::wstring>{L"A", L"B", L"C", L"D"}
+            : zone == 3 ? std::vector<std::wstring>{L"A", L"B", L"C", L"D", L"E"}
+            : std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"};
+        CheckSurface(app, original, expected); samples.Check();
+        if (cancel) Require(Read(Access::LayoutPath(app)) == saved, "native Escape cancellation preserves the saved component layout");
+        Require(!Access::GroupSurfaceTabLayout(app, L"surface-group").active, "release or cancel retires the component landing");
+        Require(Access::Save(app), "save component insertion through actual host storage");
+        native_drag_async_reload_cases::Refresh(app); CheckSurface(app, original, expected);
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); CheckSurface(app, original, expected); samples.Check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " native desktop component tab landing, release, cancellation and storage scenes passed\n";
+}
 inline void Run(std::string_view mode)
 {
-    if (mode == "labels") { RunLabels(); RunInsertionZones(); }
+    if (mode == "labels") { RunDesktopComponentTabs(); RunLabels(); RunInsertionZones(); }
     else if (mode == "search") RunSearch();
     else if (mode == "date") RunDateHeaders();
     else if (mode == "inactive") RunInactiveTab();
