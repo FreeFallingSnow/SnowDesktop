@@ -160,13 +160,41 @@ void UpdatePackageInlineMetrics(const muxc::RichTextBlock& row)
                 lineHeight = std::max(lineHeight, descent + row.BaselineOffset() - bounds.Y + 4.0);
         }
     }
-    const auto strategy = height > 0.0 ? mux::LineStackingStrategy::BaselineToBaseline
-                                    : mux::LineStackingStrategy::MaxHeight;
+    // MaxHeight reserves the minimum height on the first line as well.
+    // BaselineToBaseline excludes its first-line leading from the line box.
+    const auto strategy = mux::LineStackingStrategy::MaxHeight;
     if (row.LineStackingStrategy() != strategy) row.LineStackingStrategy(strategy);
     if (std::abs(row.LineHeight() - lineHeight) > 0.05) row.LineHeight(lineHeight);
     if (std::abs(row.Padding().Bottom - descent) > 0.05)
         row.Padding({0.0, 0.0, 0.0, descent});
 }
+
+struct PackageInlineMetricsRefresh : std::enable_shared_from_this<PackageInlineMetricsRefresh>
+{
+    explicit PackageInlineMetricsRefresh(const muxc::RichTextBlock& value)
+        : row(winrt::make_weak(value)) {}
+
+    void Queue()
+    {
+        const auto current = row.get();
+        if (pending || !current) return;
+        pending = true;
+        const auto self = shared_from_this();
+        if (!current.DispatcherQueue().TryEnqueue([self] {
+            self->pending = false;
+            if (const auto text = self->row.get(); text && text.XamlRoot())
+            {
+                // TextPointer bounds are empty during measure/arrange. Finish
+                // that layout before using them to reserve the next line.
+                text.UpdateLayout();
+                UpdatePackageInlineMetrics(text);
+            }
+        })) pending = false;
+    }
+
+    winrt::weak_ref<muxc::RichTextBlock> row;
+    bool pending = false;
+};
 
 void ApplyAccentButtonStyle(const muxc::Button& button) noexcept
 {
@@ -258,6 +286,7 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock name{nullptr};
         muxc::TextBlock metadata{nullptr};
         muxc::RichTextBlock descriptionRow{nullptr};
+        std::shared_ptr<PackageInlineMetricsRefresh> descriptionRefresh;
         muxc::TextBlock version{nullptr};
         muxc::TextBlock author{nullptr};
         muxc::TextBlock sourceId{nullptr};
@@ -1377,14 +1406,14 @@ struct WidgetsPagePresenter::Impl
 
     void PopulatePackageDescription(
         const muxc::RichTextBlock& descriptionRow,
-        const InstalledWidgetPackageSnapshot& package) const
+        const InstalledWidgetPackageSnapshot& package,
+        const std::shared_ptr<PackageInlineMetricsRefresh>& refresh) const
     {
         muxd::Paragraph paragraph;
-        const auto weakRow = winrt::make_weak(descriptionRow);
         const auto appendTag = [&](std::wstring text) {
             const auto tag = MakePackageTag(std::move(text));
-            const auto refreshMetrics = [weakRow](const auto&, const auto&) {
-                if (const auto current = weakRow.get()) UpdatePackageInlineMetrics(current);
+            const auto refreshMetrics = [refresh](const auto&, const auto&) {
+                refresh->Queue();
             };
             tag.Loaded(refreshMetrics);
             tag.SizeChanged(refreshMetrics);
@@ -1417,7 +1446,7 @@ struct WidgetsPagePresenter::Impl
         }
         descriptionRow.Blocks().Clear();
         descriptionRow.Blocks().Append(paragraph);
-        UpdatePackageInlineMetrics(descriptionRow);
+        refresh->Queue();
         descriptionRow.Visibility(paragraph.Inlines().Size() == 0
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
@@ -2567,10 +2596,10 @@ struct WidgetsPagePresenter::Impl
         descriptionRow.TextWrapping(mux::TextWrapping::Wrap);
         descriptionRow.TextTrimming(mux::TextTrimming::CharacterEllipsis);
         descriptionRow.IsTextSelectionEnabled(false);
-        PopulatePackageDescription(descriptionRow, package);
-        const auto weakDescriptionRow = winrt::make_weak(descriptionRow);
-        descriptionRow.SizeChanged([weakDescriptionRow](const auto&, const mux::SizeChangedEventArgs&) {
-            if (const auto current = weakDescriptionRow.get()) UpdatePackageInlineMetrics(current);
+        const auto descriptionRefresh = std::make_shared<PackageInlineMetricsRefresh>(descriptionRow);
+        PopulatePackageDescription(descriptionRow, package, descriptionRefresh);
+        descriptionRow.SizeChanged([descriptionRefresh](const auto&, const mux::SizeChangedEventArgs&) {
+            descriptionRefresh->Queue();
         });
         muxc::Grid identity;
         identity.ColumnSpacing(12);
@@ -2838,7 +2867,7 @@ struct WidgetsPagePresenter::Impl
             firstIncludedPackageTarget = row;
         targetRows.Children().Append(row);
         packageRowBindings.push_back(PackageRowBinding{
-            package.packageId, row, name, metadata, descriptionRow,
+            package.packageId, row, name, metadata, descriptionRow, descriptionRefresh,
             version, author, sourceId, enabledAction, addAction,
             developmentAction,
             std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
@@ -2938,7 +2967,7 @@ struct WidgetsPagePresenter::Impl
         binding.name.Text(displayName);
         binding.metadata.Text(JoinMetadata(
             {package.sourceName, packageState}));
-        PopulatePackageDescription(binding.descriptionRow, package);
+        PopulatePackageDescription(binding.descriptionRow, package, binding.descriptionRefresh);
         binding.version.Text(
             L("app.settings.version", L"Version") + L": " +
             package.version);
