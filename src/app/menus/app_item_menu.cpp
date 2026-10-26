@@ -542,7 +542,16 @@ void DesktopApp::ShowItemContextMenu(
         info.wID = id; info.dwTypeData = const_cast<wchar_t*>(action.label.c_str());
         info.fState = action.enabled ? MFS_ENABLED : MFS_GRAYED;
         InsertMenuItemW(menu, kContextPropertiesCommand, FALSE, &info);
-        SetMenuItemIcon(menu, id, id == kContextNamespaceActionFirst + 1 ? L"\uF2ED" : id == kContextNamespaceActionFirst ? L"\uF085" : L"\uF6FF");
+        // Use the same Fluent size, optical weight and centering as the
+        // surrounding rows; the legacy cogs/network glyphs use a wider solid font.
+        const wchar_t* glyph = snowdesktop::menu_fluent_glyphs::kComputerManage;
+        switch (id - kContextNamespaceActionFirst)
+        {
+        case 1: glyph = L"\uF34C"; break; // empty Recycle Bin
+        case 2: glyph = snowdesktop::menu_fluent_glyphs::kNetworkConnect; break;
+        case 3: glyph = snowdesktop::menu_fluent_glyphs::kNetworkDisconnect; break;
+        }
+        SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
     }
     if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
