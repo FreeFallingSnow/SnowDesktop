@@ -3159,7 +3159,14 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-extension-sessions)
     add_test(NAME shell_context_menu_bootstrap
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-bootstrap)
-    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap PROPERTIES
+    add_test(NAME shell_menu_refresh_control
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-refresh)
+    add_test(NAME shell_registry_catalogue
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-registry-catalogue)
+    add_test(NAME shell_shortcut_query_recovery
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-shortcut-query-recovery)
+    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap
+        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery PROPERTIES
         TIMEOUT 60
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
         LABELS "integration;contract;shell")

@@ -5937,7 +5937,8 @@ int wmain(int argc, wchar_t **argv)
         else
         {
             demand_tests::Run();
-            menu_refresh_tests::Run();
+            // Refresh controls, registry inventory and shortcut recovery have
+            // separate CTest entries with the same resource lock and deadline.
             TestAggregateCataloguePriming();
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();
@@ -5947,7 +5948,6 @@ int wmain(int argc, wchar_t **argv)
             RunTests();
             TestDeferredPopups();
             TestCatalogueCache();
-            TestRegistryCatalogue();
             for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
                 for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
@@ -5975,10 +5975,6 @@ int wmain(int argc, wchar_t **argv)
                 for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
-            TestShortcutQueryRecovery();
-            TestShortcutQueryRecovery(true);
-            TestSourceScheduler(true);
-            TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
