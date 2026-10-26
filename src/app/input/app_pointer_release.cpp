@@ -65,15 +65,32 @@ void DesktopApp::OnMouseLeave()
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
+    POINT hoverScreenPoint = hoverPoint;
+    const HWND hoverWindow = hoverPointAvailable &&
+        ClientToScreen(hwnd_, &hoverScreenPoint)
+        ? WindowFromPoint(hoverScreenPoint) : nullptr;
+    const HWND hoverRoot = hoverWindow
+        ? GetAncestor(hoverWindow, GA_ROOT) : nullptr;
+    // A leave belongs to an HWND, not the logical Dock. Capture release or
+    // insertion can transfer the pointer to its replacement content/backdrop
+    // before that HWND's move arrives. Popups and menus remain separate input
+    // surfaces even when their screen rectangle overlaps the Dock.
+    const bool pointerOnDockSurface = hoverWindow &&
+        (IsBaseDesktopHoverSurfaceWindow(hoverWindow) ||
+         IsPersistentDockHostWindow(hoverWindow) ||
+         IsPersistentDockHostWindow(hoverRoot) ||
+         IsPersistentDockBackdropWindow(hoverWindow) ||
+         IsPersistentDockBackdropWindow(hoverRoot));
+    const bool retainDockHover = pointerOnDockSurface &&
+        GetDockContainerAtPoint(hoverPoint);
     if ((IsDockStartMenuActive() && RetainStartButtonHover(
             persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
-        snowdesktop::desktop_hover_rules::
-            ShouldHoldHoverDuringContextMenu(
-                HasActiveContextMenuSession(),
-                hoverPointAvailable && GetDockContainerAtPoint(hoverPoint)))
+        retainDockHover)
     {
-        // Ignore a capture/restack leave only while the live pointer still
-        // belongs to the Dock. The menu itself must not freeze that frame.
+        if (retainDockHover) lastMousePoint_ = hoverPoint;
+        // Retain the live sample without replaying input or painting. The
+        // rebuilt Dock resolves its current item from that sample, so newly
+        // inserted content can take over the existing magnification progress.
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;

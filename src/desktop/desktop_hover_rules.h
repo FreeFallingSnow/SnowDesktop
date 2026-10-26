@@ -16,14 +16,6 @@ constexpr ReconcileMode ShellPopupCloseReconcileMode()
     return ReconcileMode::DeactivateOnly;
 }
 
-constexpr bool ShouldHoldHoverDuringContextMenu(
-    bool contextMenuActive, bool pointerOnDock)
-{
-    // Menu capture alone cannot retain an old Dock hover. Preserve only a
-    // live pointer still on the Dock; entering the menu ends the old owner.
-    return contextMenuActive && pointerOnDock;
-}
-
 constexpr bool ShouldRetainHoverAcrossMouseLeave(
     bool pointerOnContentWindow,
     bool pointerOnPairedBackdropWindow)
