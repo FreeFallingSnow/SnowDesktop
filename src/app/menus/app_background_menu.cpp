@@ -2042,7 +2042,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             {
                 const bool rename = description.kind == snowdesktop::file_history::Entry::Kind::Rename;
                 std::wstring body = rename ? _LW("app.menu.rename") :
-                    redo ? _LW("app.menu.delete") : _LW("app.settings.restore");
+                    redo ? _LW("app.settings.delete") : _LW("app.settings.restore");
                 if (description.count > 1) body += L" (" + std::to_wstring(description.count) + L")";
                 for (const auto& [from, to] : description.items)
                 {
