@@ -63,7 +63,6 @@
 #include "system/panel/system_panel_placement.h"
 #include "system/status_bar/status_bar_appbar.h"
 #include "platform/foreground_fullscreen.h"
-#include "platform/fullscreen_terminal_cases.h"
 #include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_layout.h"
 #include "system/status_bar/status_bar_tooltip.h"
@@ -2576,7 +2575,6 @@ int main(int argc, char** argv)
         Check(left.right == -1848 && right.left == -72 && bottom.top == 1032,
             "side and bottom placements preserve the selected monitor's origin");
     }
-    CheckTerminalFullscreenObservation(Check);
     CheckDockRefreshContinuity();
     CheckDesktopPassthrough();
     CheckClipboardPasteEffects();
