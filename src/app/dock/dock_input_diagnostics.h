@@ -10,6 +10,9 @@
 // Host-private observations only. The hook publishes atomics; the UI thread
 // logs values already used by dismissal. Never queries additional key state,
 // activates windows, or changes the decision under investigation.
+// A running hook does not prove visibility across integrity levels. Its event
+// stamps can remain unchanged over an elevated window; compare both observations
+// rather than interpreting hook=true as a complete button history.
 namespace snowdesktop::dock_input_diagnostics
 {
 inline std::atomic<std::uint64_t> lastDown{0}, lastUp{0};
