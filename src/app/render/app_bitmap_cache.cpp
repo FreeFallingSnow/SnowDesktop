@@ -1,5 +1,6 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/icon_bitmap_renderer.h"
+#include "icons/icon_glass_color.h"
 #include "app/app.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
@@ -622,6 +623,11 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     if (translucentMaterial)
         RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
 
+    if (translucentMaterial && !desktopWidgetCompositionDrawInProgress_ &&
+        !renderingFloatingPopup_ && !quickNavCompositionPaintInProgress_ &&
+        !renderingPersistentDockHost_ && !renderingFloatingDock_ &&
+        !desktopBackdropCompositor_.HasPanelContaining(plan.bounds) &&
+        snowdesktop::icon_glass_color::TryDrawDesktop(target, bitmap, plan, opacity)) return;
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
 }
 
@@ -678,6 +684,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
 
 void DesktopApp::ClearStyledIconCache()
 {
+    snowdesktop::icon_glass_color::ResetResources();
     preparedIconPixels_.Clear();
     for (const auto& [key, bitmap] : styledIconCache_)
     { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }

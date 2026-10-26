@@ -192,9 +192,11 @@ set(SNOWDESKTOP_SOURCES
     src/platform/application_crash_watchdog.cpp
     src/desktop/desktop_namespace_registry.cpp
     src/desktop/desktop_namespace_registry.h
+    src/desktop/display_color_mode.h
     src/icons/icon_beautify.cpp
     src/icons/icon_backplate_analysis.inc
     src/icons/icon_beautify_preview.h
+    src/icons/icon_glass_color.h
     src/icons/icon_appearance.h
     src/icons/icon_appearance_codec.h
     src/icons/icon_appearance_rules.h
