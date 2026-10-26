@@ -350,7 +350,7 @@ inline void PreparationAfterRegistryNoise()
     {
         HKEY key = nullptr; std::wstring path; bool owned = false;
         ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
-    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopPreparation-" + temp.path.filename().wstring()};
+    } noise{nullptr, L"Software\\Classes\\SnowDesktopPreparation-" + temp.path.filename().wstring()};
     DWORD disposition = 0;
     Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
         nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create private preparation notification fixture");

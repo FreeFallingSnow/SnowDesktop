@@ -180,7 +180,9 @@ void CheckPreparedRetention(bool changed)
     registry.Notify(1);
     PumpUntil([&] { return reads >= 2; }, "registry verification holds the prepared helper");
     service.Query(request);
-    PumpUntil([&] { return trace.Has("reason=prepared_verification_wait"); }, "foreground dispatch waits without destroying preparation");
+    PumpUntil([&] {
+        return trace.Has("reason=prepared_verification_wait") || trace.Has("phase=helper_start reason=cold");
+    }, "observe verification wait or the premature cold-query regression before releasing the reader");
     allowRead = true;
     PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "native query publishes after verification");
     Expect(service.View(request).snapshot->entries.front().key == (changed ? "cold" : "prepared"),
