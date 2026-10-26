@@ -81,3 +81,60 @@
 
 #include "native_icon_cold_pixels_access.inc"
 #include "native_system_icon_refresh_access.inc"
+
+    static void RecordIconResourceSample(const DesktopApp& app) { app.RecordIconTextResources(); }
+    static void SeedIconResourceSample(DesktopApp& app, ID2D1DeviceContext* context)
+    {
+        app.items_.clear();
+        snowdesktop::icon_image::Image image;
+        image.width = 16; image.height = 8; image.pixels.assign(128, 0xffaabbcc);
+        for (int i = 0; i < 2; ++i)
+        {
+            DesktopItem item;
+            item.iconBitmap = snowdesktop::icon_image::CreateBitmap(image);
+            if (!item.iconBitmap) throw std::runtime_error("create resource sample source");
+            item.iconBitmapSize = i == 0 ? SIZE{16, 8} : SIZE{};
+            app.items_.push_back(std::move(item));
+        }
+        auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
+        prepared->source = app.items_.front().iconBitmap;
+        prepared->buffer.pixels.reserve(256);
+        prepared->buffer.pixels.assign(128, 0xffaabbcc);
+        app.preparedIconPixels_.Put(std::move(prepared));
+        ComPtr<ID2D1Bitmap1> bitmap;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (FAILED(context->CreateBitmap(D2D1::SizeU(10, 5), nullptr, 0, &properties, &bitmap)))
+            throw std::runtime_error("create resource sample D2D bitmap");
+        app.d2dIconCache_[1] = bitmap;
+        app.styledIconCache_[{1, 0, false, false}] = bitmap;
+        app.itemTextShadowCache_[L"shadow"] = bitmap;
+        app.iconReflectionCache_.Insert(1, bitmap);
+        const auto request = app.dockFolderBitmapCache_.Read(L"sample-folder");
+        if (!app.dockFolderBitmapCache_.Publish(L"sample-folder", request.ticket, bitmap))
+            throw std::runtime_error("publish actual folder cache sample");
+        ComPtr<IDWriteFactory> fonts;
+        if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                reinterpret_cast<IUnknown**>(fonts.GetAddressOf()))))
+            throw std::runtime_error("create resource sample fonts");
+        ComPtr<IDWriteTextFormat> format;
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(fonts->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12, L"en-US", &format)) ||
+            FAILED(fonts->CreateTextLayout(L"hi", 2, format.Get(), 100, 30, &layout)))
+            throw std::runtime_error("create actual resource sample layout");
+        snowdesktop::ItemTextLayoutCacheEntry entry;
+        entry.layout = layout;
+        app.itemTextLayoutCache_[L"abc"] = std::move(entry);
+        app.componentListTextLayoutCache_[L"xy"] = layout;
+        app.popupFanTextLayouts_[L"z"] = layout;
+    }
+    static bool IconResourceSampleUnchanged(const DesktopApp& app)
+    {
+        return app.items_.size() == 2 && app.items_.front().iconBitmap &&
+            app.preparedIconPixels_.Size() == 1 && app.preparedIconPixels_.Bytes() == 512 &&
+            app.d2dIconCache_.size() == 1 && app.styledIconCache_.size() == 1 &&
+            app.itemTextShadowCache_.size() == 1 && app.iconReflectionCache_.Size() == 1 &&
+            app.itemTextLayoutCache_.size() == 1 && app.componentListTextLayoutCache_.size() == 1 &&
+            app.popupFanTextLayouts_.size() == 1;
+    }

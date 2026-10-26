@@ -15,6 +15,7 @@ namespace snowdesktop
 class ItemTextFullWidthCache
 {
 public:
+    size_t RetainedTextBytes() const noexcept { return text_.size() * sizeof(wchar_t); }
     struct Result
     {
         bool fitsSingleLine = false;

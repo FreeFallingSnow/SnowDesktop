@@ -125,6 +125,14 @@ public:
     void Erase(HBITMAP source) { (void)Take(source); }
     void Clear() { entries_.clear(); pixels_ = 0; }
     size_t Size() const { return entries_.size(); }
+    size_t Bytes() const { return pixels_ * sizeof(std::uint32_t); }
+    size_t CapacityBytes() const
+    {
+        size_t bytes = 0;
+        for (const auto& [source, prepared] : entries_)
+        { (void)source; bytes += prepared->buffer.pixels.capacity() * sizeof(std::uint32_t); }
+        return bytes;
+    }
 private:
     static constexpr size_t kMaximumPixels = 4u * 1024u * 1024u; // 16 MiB of pixel payload.
     std::shared_ptr<PreparationWork> preparation_ = std::make_shared<PreparationWork>();

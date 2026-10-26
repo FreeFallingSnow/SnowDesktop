@@ -366,13 +366,25 @@ struct MaskKeyHash
     }
 };
 
+struct MaskCache
+{
+    std::mutex mutex;
+    std::unordered_map<MaskKey, std::vector<std::uint8_t>, MaskKeyHash> entries;
+};
+
+MaskCache& ShapeMasks()
+{
+    static MaskCache cache;
+    return cache;
+}
+
 const std::vector<std::uint8_t>& CachedMask(IconBeautifyShape shape, int width, int height, float inset)
 {
-    static std::mutex mutex;
-    static std::unordered_map<MaskKey, std::vector<std::uint8_t>, MaskKeyHash> cache;
+    auto& state = ShapeMasks();
+    auto& cache = state.entries;
     const MaskKey key{ static_cast<int>(shape), width, height,
         static_cast<int>(std::round(inset * 100.0f)) };
-    std::scoped_lock lock(mutex);
+    std::scoped_lock lock(state.mutex);
     auto found = cache.find(key);
     if (found != cache.end()) return found->second;
     std::vector<std::uint8_t> mask(static_cast<size_t>(width) * height);
@@ -1269,6 +1281,19 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     std::optional<PlateFill> detectedEdgeFill, SourceKind sourceKind)
 {
     return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind);
+}
+
+MaskCacheStatistics TryGetMaskCacheStatistics()
+{
+    auto& cache = ShapeMasks();
+    std::unique_lock lock(cache.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return {};
+    MaskCacheStatistics result;
+    result.available = true;
+    result.entries = cache.entries.size();
+    for (const auto& [key, pixels] : cache.entries)
+    { (void)key; result.payloadBytes += pixels.size(); result.capacityBytes += pixels.capacity(); }
+    return result;
 }
 
 std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& source,

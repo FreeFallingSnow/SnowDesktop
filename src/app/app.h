@@ -3169,6 +3169,8 @@ private:
     std::map<std::tuple<std::uintptr_t, size_t, bool, bool>, ComPtr<ID2D1Bitmap1>> styledIconCache_;
     std::unordered_map<ID2D1Bitmap*, snowdesktop::IconBeautifySettings> iconBitmapStyles_;
     void ClearStyledIconCache();
+    void RecordIconTextResources() const;
+    void RecordIconLibraryResources() const;
     snowdesktop::icon_image::Image MakeDockControlIconSource(std::wstring_view target, bool light) const;
     std::map<std::wstring, std::shared_ptr<snowdesktop::BackgroundBitmap>> iconControlSources_;
     struct DockAppearanceImage { std::vector<std::uintptr_t> sources; ComPtr<ID2D1Bitmap1> bitmap; };

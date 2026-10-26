@@ -62,6 +62,31 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 
 ## 指标解释与有效性
 
+宿主在现有资源采样回调中补充 `native.icon.memory`、
+`native.bitmap.memory` 和 `native.text.memory` 计数；只在显式采集期间
+遍历当前缓存，不增加定时器、Shell查询、解码、美化或GPU像素读回。
+`profiler/sample.icon_text_resources` 记录这段采样自身的成本。
+
+- `*_source_references/unique_count/unknown_size_count` 区分模型引用、
+  本次采样中的不同HBITMAP和没有尺寸元数据的图源；BGRA字节按已有尺寸估算。
+  菜单图片和部分控制图源没有尺寸元数据时只计数量，不把未知占用当零字节。
+- D2D逐表记录references、unique_count和bgra_bytes_estimate。
+  `observed_unique_*` 仅对本次列出的宿主D2D缓存/固定槽去重，
+  不覆盖命令列表独占引用、驱动分配、合成表面或WidgetEngine的独立缓存。
+  指针集合在每次UI线程采样结束时销毁，不作为跨采样的资源身份。
+- `prepared_payload_bytes` 是UI准备队列的pixel size，capacity另列；
+  不包含worker、ready mailbox或分配器保留页。mask使用非等待锁；
+  `mask_sample_available=0` 时不输出该次mask容量，不能解释成缓存已清空。
+- 布局input_bytes只计宿主拥有的键字符串及网格自然宽度缓存的文本，
+  不含IDWriteTextLayout、字体集合、容器节点和分配器开销。
+  文字阴影位图在native.bitmap.memory中单列。
+- 图标库统计当前解码源和pending数，不初始化尚未使用的图标库。
+  large_runtime只覆盖模型当前持有的资产/预览，不覆盖大图标服务的cache-only资产。
+  各图源组可能引用同一个源，不将分组字节直接相加为全宿主唯一占用。
+
+这些值是缓存存量观测；没有改变缓存容量、LRU、准入、释放、图像尺寸或显示行为。
+逻辑像素载荷与进程私有提交、工作集及GPU实际用量分别比较，不能相互替代。
+
 固定 SQL 位于 tools/performance/sql，直接交给官方 Trace Processor。分析目录保存
 最终 SQL、CSV、summary.json、查询哈希、诊断日志及 perfetto_analysis_report.md。
 查询包 v2 只接受 probeSchemaVersion 2 的原生会话；旧 JSON 继续通过 report 只读分析，
@@ -89,6 +114,45 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
   机器身份、组件内容、布局和负载保留 unknown，不能据数值变化直接判断因果。
 
 采集由 CLI 与 Agent 显式控制，设置页不提供性能采集控件。产物和状态使用统一控制器。
+
+### 宿主维护、任务栏与状态栏计量
+
+以下探针复用现有 Scope 和有限事件目录，默认关闭，不增加业务定时器、轮询或日志。
+`idle` 预设可记录 `timer.callback`、`shared.maintenance`、`shared.taskbar` 和
+`shared.status_bar`；不要用只选 Lua 的过滤会话判断这些工作不存在。
+需要旧 `status_bar.snapshot/content.paint/hover.paint` 细节时使用 `interaction`。
+
+- `timer.callback` 的 `host.*`、`status_bar.*` phase 是已接收的 WM_TIMER 分发；
+  现有 `scheduler` phase 是截止时间队列回调。三者分别统计，不是系统唤醒数。
+- `shared.maintenance` 记录 runtime tick、隐藏表面回收、Steam订阅协调、显示拓扑轮询、
+  回收站实际异步查询、Start菜单、Show Desktop和任务栏诊断子工作。
+  `taskbar.refresh.not_due`只表示本轮外观刷新未到期，不代表其他守护子工作均为空。
+  `dock.discovery.dirty/fallback`记录发现请求原因，实际发现仍看已有
+  `dock.running.discovery` Scope；拖放等延期不算已完成枚举。
+- `shared.taskbar` 的 `refresh/window_state.scan/controller.apply`分别计量协调、
+  窗口扫描和控制器应用。`publish`是完整共享状态发布，`apply.post.*`和
+  `restore.send.*`是每个目标的消息发送结果。成功发送不证明Explorer已应用或绘制；
+  `refresh.disabled/window_state_unchanged`记录已有分支的返回原因。
+- `shared.status_bar.paint.request`覆盖普通Paint请求及准备成本；
+  `paint.deferred/preparing_scroll/unavailable/unchanged/empty_client/empty_damage`
+  是不同跳过原因。旧内容绘制Scope位于部分检查之后，不能直接当请求总数。
+  `input_method.sample`是单一后台读取的工作时间，不包含200 ms等待；
+  `input_method.changed/unchanged`是各栏窗口轮询的比较结果。
+- `draw.full.*`、`draw.partial.*`分别表示一次完整内容绘制操作和一次局部更新操作结果；
+  一次局部操作可能包含多个损伤区。`surface.begin.*`、`surface.end.*`分别统计实际
+  BeginDraw/EndDraw调用结果，包含背景、内容和逐损伤区绘制；不能将操作数再加到API次数。
+  `commit.success/failure`统计状态栏四条直接Commit路径，`shared.status_bar.commit`
+  Scope计量Commit调用。成功不等于DWM呈现一帧。
+
+上述事件均在固定报告的 `events.csv` 按module/metric/匿名owner输出；`events`是事件条数，
+`amount`是事件值之和，不取最后一个样本作为累计次数。栏owner使用会话匿名化的窗口实例序号，
+重建后的实例不复用旧身份；底层逐损伤区渲染器的surface事件owner为0，汇总API次数时包含它，
+不把owner 0理解成另一块屏幕。`volume.completions`是实际取出的任务完成数，
+不等同空队列检查次数。`scopes.csv`提供次数、墙钟和可用线程CPU；包含子工作的CPU不跨行累加。
+
+计时器创建成功、到期消息迟到、Explorer内材质应用、核心idle退出及真实系统唤醒尚不由这些
+应用探针覆盖。真实线程唤醒需另用ETW的ReadyThread/CSwitch和等待原因分析，缺证据保持未知。
+本轮计量不改变周期、订阅、显隐、失败重试或恢复期限。
 
 Lua 配额分配器只在采集代次有效时累计成功的逻辑分配、重分配和释放，低频输出
 字节流量、次数、基线和存量峰值。不逐次发送分配事件；失败分配不计入流量。

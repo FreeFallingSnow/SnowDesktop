@@ -163,9 +163,13 @@ void DesktopApp::CheckRecycleBinStatus()
 {
     const auto pollState = recycleBinPollState_;
     if (pollState->queryInFlight.exchange(true))
+    {
+        snowdesktop::performance::Value("shared.maintenance", "recycle.query.in_flight", {}, 1);
         return;
+    }
     const HWND target = hwnd_;
     std::thread([target, pollState] {
+        snowdesktop::performance::Scope trace("shared.maintenance", "recycle.query");
         const DWORD64 started = GetTickCount64();
         const bool hasItems = RecycleBinContainsItems();
         pollState->lastQueryDurationMs.store(
@@ -400,6 +404,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 auto* app = static_cast<DesktopApp*>(context);
                 snowdesktop::performance::Scope sample("profiler", "sample.widgets");
                 using snowdesktop::performance::Value;
+                app->RecordIconTextResources();
                 if (app->widgetEngine_)
                 {
                     app->widgetEngine_->RecordPerformanceResources();

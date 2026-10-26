@@ -7,6 +7,7 @@
 #include "icons/icon_override_rules.h"
 #include "icons/icon_control_source.h"
 #include "icons/large_icon_edit_rules.h"
+#include "diagnostics/performance_trace.h"
 
 struct IconLibraryHostState
 {
@@ -22,6 +23,27 @@ struct IconLibraryHostState
     std::optional<snowdesktop::LargeIconSettingsRequest> pendingLargeIcon;
     snowdesktop::IconLibraryBitmapCache bitmaps;
 };
+
+void DesktopApp::RecordIconLibraryResources() const
+{
+    using snowdesktop::performance::Value;
+    if (!snowdesktop::performance::Enabled()) return;
+    size_t count = 0, pending = 0, unknown = 0;
+    std::uint64_t bytes = 0;
+    if (iconLibraryState_)
+        iconLibraryState_->bitmaps.VisitBitmaps([&](const auto* source, bool loading) {
+            pending += loading ? 1u : 0u;
+            if (!source || !source->bitmap) return;
+            ++count;
+            if (source->size.cx <= 0 || source->size.cy <= 0) ++unknown;
+            else bytes += static_cast<std::uint64_t>(source->size.cx) * source->size.cy * 4;
+        });
+    Value("native.icon.memory", "library_source_count", {}, static_cast<double>(count));
+    Value("native.icon.memory", "library_entries", {}, static_cast<double>(iconLibraryState_ ? iconLibraryState_->bitmaps.Size() : 0));
+    Value("native.icon.memory", "library_pending_count", {}, static_cast<double>(pending));
+    Value("native.icon.memory", "library_source_unknown_size_count", {}, static_cast<double>(unknown));
+    Value("native.icon.memory", "library_source_bgra_bytes_estimate", {}, static_cast<double>(bytes));
+}
 
 IconLibraryHostState& DesktopApp::EnsureIconLibrary()
 {

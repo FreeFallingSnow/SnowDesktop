@@ -169,6 +169,14 @@ std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
 /** Normalized closed outline shared by vector UI plates and bitmap masks. */
 const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape);
 
+// Optional diagnostic snapshot. A busy renderer is never waited on by sampling.
+struct MaskCacheStatistics
+{
+    bool available = false;
+    size_t entries = 0, payloadBytes = 0, capacityBytes = 0;
+};
+MaskCacheStatistics TryGetMaskCacheStatistics();
+
 // Native controls carry intentional optical margins independently of the
 // user-selected processing mode. This is render metadata, never persisted.
 enum class SourceKind { Image, NativeControl };

@@ -117,6 +117,12 @@ public:
 
     void Invalidate() { ++generation_; }
 
+    template<class Visitor> void VisitValues(Visitor visitor) const
+    {
+        for (const auto& [key, entry] : entries_)
+        { (void)key; if (entry.value) visitor(*entry.value); }
+    }
+
     // Window notifications invalidate only that window. Preserve the visible
     // value and reject any completion belonging to the retired request.
     void Invalidate(const Key& key)
