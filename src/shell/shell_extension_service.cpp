@@ -255,14 +255,7 @@ struct MenuService::Impl
         : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
     {
         if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
-            auto query = request;
-            if (query.visibleMenuProviders)
-            {
-                const auto contexts = Contexts(request);
-                std::lock_guard lock(mutex);
-                query.visibleMenuProviders = ResolveMenuReadProjection(*query.visibleMenuProviders, catalogue, contexts);
-            }
-            auto session = std::make_shared<Session>(query, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
+            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
@@ -280,6 +273,18 @@ struct MenuService::Impl
             if (!verifyBackground) verifyBackground = [](Context context) { return ReadBackgroundCatalogueRevision(context); };
         }
         worker = std::thread([this] { Run(); });
+    }
+    QueryWork DispatchQuery(Request request)
+    {
+        if (request.visibleMenuProviders)
+        {
+            const auto contexts = Contexts(request);
+            std::lock_guard lock(mutex);
+            request.visibleMenuProviders = ResolveMenuReadProjection(*request.visibleMenuProviders, catalogue, contexts);
+        }
+        // Factory adapters may pass the request directly into a real Session.
+        // Internal cache-policy tags must never cross that query boundary.
+        return factory(request);
     }
     ~Impl() { Stop(); if (wake) CloseHandle(wake); }
     // Called with mutex held. A menu can promote an already running refresh;
@@ -425,15 +430,22 @@ struct MenuService::Impl
         auto popup = PopupRequest(request);
         if (popup.omitNvidiaCompatibility || popup.visibleMenuProviders)
         {
-            auto full = popup; full.omitNvidiaCompatibility = false;
+            auto full = popup;
             full.visibleMenuProviders.reset();
-            const auto found = rows.find(SelectionKey(full));
-            if (found != rows.end())
+            // Fresh execution can have complete ordinary details while still
+            // omitting optional compatibility work. Prefer that healthy row
+            // before consulting the independent management query.
+            for (int i = 0; i < (popup.omitNvidiaCompatibility ? 2 : 1); ++i)
             {
-                const auto &row = found->second;
-                if (row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now() &&
-                    (!row.invalid || VerifiedBackgroundSnapshot(row) ||
-                        (retainPublished && row.view.error.empty()))) return found->first;
+                if (i) full.omitNvidiaCompatibility = false;
+                const auto found = rows.find(SelectionKey(full));
+                if (found != rows.end())
+                {
+                    const auto &row = found->second;
+                    if (row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now() &&
+                        (!row.invalid || VerifiedBackgroundSnapshot(row) ||
+                            (retainPublished && row.view.error.empty()))) return found->first;
+                }
             }
         }
         return SelectionKey(popup);
@@ -472,12 +484,19 @@ struct MenuService::Impl
         // popup/click inherit the optional resolver of an in-flight inspection.
         if ((target.omitNvidiaCompatibility || target.visibleMenuProviders) && !force && priority != QueryPriority::Execute)
         {
-            auto full = target; full.omitNvidiaCompatibility = false;
+            auto full = target;
             full.visibleMenuProviders.reset();
-            const auto old = rows.find(SelectionKey(full));
-            if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
-                old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
-                target = std::move(full);
+            for (int i = 0; i < (target.omitNvidiaCompatibility ? 2 : 1); ++i)
+            {
+                if (i) full.omitNvidiaCompatibility = false;
+                const auto old = rows.find(SelectionKey(full));
+                if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
+                    old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
+                {
+                    target = std::move(full);
+                    break;
+                }
+            }
         }
         const auto key = SelectionKey(target);
         auto &row = rows[key];
@@ -1531,7 +1550,7 @@ struct MenuService::Impl
                     if (unverified && preparedSlot) Session::ReleasePreparedMenuWorker();
                 }
                 { std::lock_guard lock(mutex); rows[key].fullMenuRequested = false; }
-                try { job.work = factory(request); running.push_back(std::move(job)); }
+                try { job.work = DispatchQuery(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
             if (!sourceJob && std::count_if(running.begin(), running.end(), [](const auto &job) {
@@ -1541,7 +1560,7 @@ struct MenuService::Impl
                 {
                     job->started = GetTickCount64();
                     usePreparedQuery = false;
-                    try { job->work = factory(job->request); sourceJob = std::move(job); }
+                    try { job->work = DispatchQuery(job->request); sourceJob = std::move(job); }
                     catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
             bool preparing = false;
