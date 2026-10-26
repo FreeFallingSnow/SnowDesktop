@@ -1704,6 +1704,14 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
 {
     MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
+    if (impl_->configured && !impl_->Enabled(request))
+    {
+        // Current all-off rules are authoritative even if an older projected
+        // row is still being verified. An empty menu is ready without a query.
+        MenuView view; view.snapshot = Reply{true, {}, {}};
+        timing.Record("disabled");
+        return view;
+    }
     const auto it = impl_->rows.find(impl_->PopupKey(request, retainPublished));
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
