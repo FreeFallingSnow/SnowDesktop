@@ -5709,6 +5709,7 @@ void BenchmarkMenus()
 
 #include "shell/shell_extension_demand_tests.h"
 #include "shell/shell_menu_refresh_cases.h"
+#include "shell/shell_visible_menu_read_cases.h"
 
 int wmain(int argc, wchar_t **argv)
 {
@@ -5850,7 +5851,9 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh") menu_refresh_tests::Run();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")
+        { menu_refresh_tests::Run(); visible_read_tests::Run(); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-visible-menu-read") visible_read_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);

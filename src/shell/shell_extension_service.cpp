@@ -3,6 +3,7 @@
 #include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
 #include "shell_extension_demand.h"
+#include "shell_menu_read_projection.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_catalogue_workers.h"
@@ -48,6 +49,7 @@ Key SelectionKey(Request request)
 Key SelectionBaseKey(Request request)
 {
     request.omitNvidiaCompatibility = false;
+    request.visibleMenuProviders.reset();
     return SelectionKey(std::move(request));
 }
 bool NetworkSelection(const Request &request)
@@ -221,6 +223,7 @@ struct MenuService::Impl
     size_t nextType = 0;
     bool typesRequested = false, typesPreparing = false, typesForce = false, typeBatchForce = false;
     Preferences preferences;
+    std::array<std::vector<std::string>, 2> readProjection;
     std::array<std::set<std::string>, 4> shown;
     Request management;
     Key inspectedSelection;
@@ -376,6 +379,9 @@ struct MenuService::Impl
     Request PopupRequest(Request request) const
     {
         request.catalogueOnly = false;
+        if (configured && request.sourceClsid.empty() && !request.startPinOnly)
+            request.visibleMenuProviders = readProjection[static_cast<int>(
+                request.background || request.context == Context::Desktop ? Category::Background : Category::Objects)];
         request.omitNvidiaCompatibility = configured && request.background &&
             request.context == Context::Desktop && request.sourceClsid.empty() &&
             !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
@@ -410,9 +416,10 @@ struct MenuService::Impl
     Key PopupKey(const Request &request, bool retainPublished = false) const
     {
         auto popup = PopupRequest(request);
-        if (popup.omitNvidiaCompatibility)
+        if (popup.omitNvidiaCompatibility || popup.visibleMenuProviders)
         {
             auto full = popup; full.omitNvidiaCompatibility = false;
+            full.visibleMenuProviders.reset();
             const auto found = rows.find(SelectionKey(full));
             if (found != rows.end())
             {
@@ -449,13 +456,15 @@ struct MenuService::Impl
             MenuTrace("catalogue", "request.stale_query");
         }
         auto target = priority == QueryPriority::Inspect ? request : PopupRequest(request);
+        if (priority == QueryPriority::Inspect || priority == QueryPriority::Execute) target.visibleMenuProviders.reset();
         target.catalogueOnly = false;
         if (priority == QueryPriority::Inspect) target.omitNvidiaCompatibility = false;
         // Reuse an already complete full snapshot, but never make a fresh
         // popup/click inherit the optional resolver of an in-flight inspection.
-        if (target.omitNvidiaCompatibility && !force && priority != QueryPriority::Execute)
+        if ((target.omitNvidiaCompatibility || target.visibleMenuProviders) && !force && priority != QueryPriority::Execute)
         {
             auto full = target; full.omitNvidiaCompatibility = false;
+            full.visibleMenuProviders.reset();
             const auto old = rows.find(SelectionKey(full));
             if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
                 old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
@@ -962,6 +971,8 @@ struct MenuService::Impl
             else if (schema != 4) return;
             reader.Finish();
             std::lock_guard lock(mutex); catalogue = std::move(value);
+            for (int i = 0; i < 2; ++i)
+                readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
         }
         catch (...) {}
     }
@@ -1007,6 +1018,8 @@ struct MenuService::Impl
                     for (const auto &a : catalogue.associations)
                         if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                     catalogue = std::move(value); scanning = false; catalogueDirty = true;
+                    for (int i = 0; i < 2; ++i)
+                        readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
                     sourcePending |= inspected || AnyEnabled();
                     if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
                     if (!initial && !changed.empty())
@@ -1046,6 +1059,8 @@ struct MenuService::Impl
                 }
                 // Resume learning from exact snapshots only after the live
                 // inventory and target checks restore their original proof.
+                for (int i = 0; i < 2; ++i)
+                    readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
                 if (sourcePending)
                     for (auto &[key, row] : rows)
                         if (row.registryInvalid && row.view.snapshot && !row.view.pending)
@@ -1734,6 +1749,8 @@ void MenuService::Configure(Preferences preferences)
             ++impl_->configurationRevision;
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
+        for (int i = 0; i < 2; ++i)
+            impl_->readProjection[i] = MenuReadProjection(impl_->preferences, impl_->catalogue, static_cast<Category>(i));
         impl_->sourcePending |= impl_->AnyEnabled();
         if (!objectPreparation && impl_->ObjectPreparationEnabled()) impl_->preparationRequested = true;
         if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
