@@ -1,0 +1,196 @@
+    // Real RemoveDockMappingAt -> rebuild -> Dock layout/render/scheduler.
+    // Only the input model, clock samples and WARP device are fixture-owned.
+    static void CheckDockEntryRemoval(DesktopApp& app, bool discardRetention = false)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(std::string("Dock removal: ") + message);
+        };
+        snowdesktop::tests::dock_entry_removal::Run(check);
+        snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+            snowdesktop::animation::Scale, 1, 0, false, false, 0);
+        check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+            &app.d3dDevice_, nullptr, nullptr)), "create isolated WARP device");
+        ComPtr<IDXGIDevice> dxgi;
+        check(SUCCEEDED(app.d3dDevice_.As(&dxgi)) &&
+            SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, IID_PPV_ARGS(&app.d2dFactory_))) &&
+            SUCCEEDED(app.d2dFactory_->CreateDevice(dxgi.Get(), &app.d2dDevice_)) &&
+            SUCCEEDED(app.d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &app.d2dContext_)),
+            "create real renderer resources without a presentation window");
+        app.generalSettings_.dockEnabled = true;
+        app.desktopItemsReady_ = true;
+        app.dockSettings_.hoverEffect = 0;
+        app.dockSettings_.showRunningApps = false;
+        app.dockSettings_.showWindowsButton = app.dockSettings_.showQuickSearchButton = false;
+        app.iconBeautifySettings_.enabled = false;
+        app.lastMousePoint_ = {LONG_MIN, LONG_MIN};
+        app.gridPages_.front().bounds = app.gridPages_.front().workArea =
+            app.gridPages_.front().visualWorkArea = {0, 0, 800, 600};
+        app.dockAreas_ = {{0, 0, 800, 600}};
+        check(app.uiAnimationScheduler_.Initialize(), "initialize production scheduler");
+        ComPtr<ID2D1Bitmap1> target, readback;
+        auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        check(SUCCEEDED(app.d2dContext_->CreateBitmap(D2D1::SizeU(800, 600), nullptr, 0, properties, &target)),
+            "allocate render target");
+        properties.bitmapOptions = D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
+        check(SUCCEEDED(app.d2dContext_->CreateBitmap(D2D1::SizeU(800, 600), nullptr, 0, properties, &readback)),
+            "allocate pixel readback");
+        const auto redPixels = [&](DockContainer& dock) {
+            app.d2dContext_->SetTarget(target.Get());
+            app.d2dContext_->BeginDraw();
+            app.d2dContext_->Clear(D2D1::ColorF(0, 0, 0, 0));
+            dock.DrawContents(app.d2dContext_.Get());
+            check(SUCCEEDED(app.d2dContext_->EndDraw()), "render actual Dock contents");
+            app.d2dContext_->SetTarget(nullptr);
+            check(SUCCEEDED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr)), "copy actual pixels");
+            D2D1_MAPPED_RECT mapped{};
+            check(SUCCEEDED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped)), "read actual pixels");
+            size_t red = 0;
+            for (size_t y = 0; y < 600; ++y)
+                for (size_t x = 0; x < 800; ++x)
+                {
+                    const auto* pixel = mapped.bits + y * mapped.pitch + x * 4;
+                    if (pixel[2] > 40 && pixel[2] > pixel[1] * 2 && pixel[2] > pixel[0] * 2) ++red;
+                }
+            readback->Unmap();
+            return red;
+        };
+        for (const bool edge : {false, true})
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        for (const bool folder : {false, true})
+        for (const bool returnToDesktop : {false, true})
+        {
+            app.dockSettings_.position = position;
+            app.dockSettings_.edgeAttached = edge;
+            app.d2dIconCache_.clear();
+            app.containers_.clear(); app.items_oo_.clear(); app.items_.clear(); app.dockEntries_.clear();
+            for (int i = 0; i < 3; ++i)
+            {
+                const auto path = app.initializationExperimentDirectory_ /
+                    (std::wstring(L"pin-") + std::to_wstring(i) + (folder ? L"-folder" : L".txt"));
+                if (folder) std::filesystem::create_directories(path);
+                else { std::ofstream file(path); file << "retained source"; }
+                auto item = FileItem(path);
+                DeleteObject(item.iconBitmap);
+                const std::vector<std::uint32_t> pixels(64 * 64, i == 1 ? 0xffff0000u : 0xff0000ffu);
+                item.iconBitmap = CreateBitmap(64, 64, 1, 32, pixels.data());
+                item.iconBitmapSize = {64, 64};
+                check(item.iconBitmap != nullptr, "create distinctive source artwork");
+                app.dockEntries_.push_back({DockEntryType::DesktopItem, item.layoutKey, !returnToDesktop});
+                item.gridCell = {returnToDesktop ? std::wstring(kDockPageId) : L"__page:1", i, 0};
+                app.items_.push_back(std::move(item));
+            }
+            app.RefreshDesktopItemIndexCache();
+            for (const auto& entry : app.dockEntries_) (void)app.ResolveDockFolderTarget(entry, nullptr, true);
+            app.RebuildContainersAndItems();
+            auto* dock = app.GetDockContainer();
+            check(dock != nullptr, "create actual Dock model");
+            const RECT original = dock->GetBounds();
+            const auto before = redPixels(*dock);
+            check(before > 100, "source has visible red artwork");
+            const auto source = app.items_[1].parsingName;
+            if (returnToDesktop)
+            {
+                dock->GetSlots()[1]->GetItem()->SetSelected(true);
+                check(app.OnKeyDown(VK_DELETE), "execute actual fixed-pin Delete-key route");
+            }
+            else check(app.RemoveDockMappingAt(1), "execute actual mapping-removal route");
+            dock = app.GetDockContainer();
+            check(dock && app.dockEntries_.size() == 2 && std::filesystem::exists(source) && app.items_.size() == 3,
+                "commit only the Dock reference and preserve its source file/model");
+            if (discardRetention)
+            {
+                // Restore the original missing-retention behavior at the real
+                // rebuild handoff; the same user route and assertions run.
+                auto lost = dock->CapturePresentationState();
+                lost.removals = std::make_shared<DockContainer::EntryRemovalTimeline>();
+                check(dock->RestorePresentationState(lost), "apply missing-retention negative control");
+                dock->InvalidateSlots();
+                std::cout << "Dock removal negative: discard outgoing snapshot at runtime-tree handoff\n";
+            }
+            check(dock->IsEntryRemovalAnimating(), "actual removal route must retain the outgoing presentation");
+            const RECT initial = dock->GetBounds();
+            check(EqualRect(&initial, &original) && redPixels(*dock) > 100,
+                "first removal frame keeps original layout and artwork after runtime-tree replacement");
+            app.EnsureUiAnimationFrame();
+            check(app.dockRunningAnimationFrameToken_ != 0, "pin removal uses the live running-animation scheduler");
+            const auto state = dock->CapturePresentationState();
+            const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+            check(dock->AdvanceEntryRemovalAnimation(now + 100.0), "exit remains active midway");
+            dock->InvalidateSlots();
+            const auto midway = redPixels(*dock);
+            check(midway > 0 && midway < before, "departing snapshot visibly shrinks and fades");
+            check(!dock->AdvanceEntryRemovalAnimation(now + 1000.0), "exit completes on the shared timeline");
+            dock->InvalidateSlots();
+            check(redPixels(*dock) == 0 && state.removals->Entries().empty(),
+                "final frame removes all departed pixels and releases the detached snapshot");
+            const RECT final = dock->GetBounds();
+            if (!edge)
+                check(position == DockPosition::Left || position == DockPosition::Right
+                    ? final.bottom - final.top < original.bottom - original.top
+                    : final.right - final.left < original.right - original.left,
+                    "island panel contracts along its configured axis");
+            app.CancelUiAnimationFrame();
+        }
+        // Keep real Shell queuing/completion and missing-pin confirmation.
+        // An empty item enumeration is supplied only after physical deletion.
+        app.containers_.clear(); app.items_oo_.clear(); app.items_.clear(); app.dockEntries_.clear();
+        app.dockSettings_.position = DockPosition::Bottom;
+        app.dockSettings_.edgeAttached = false;
+        const auto deleted = app.initializationExperimentDirectory_ / L"deleted-fixed.txt";
+        { std::ofstream file(deleted); file << "private deletion fixture"; }
+        app.items_.push_back(FileItem(deleted));
+        app.dockEntries_.push_back({DockEntryType::DesktopItem, app.items_.back().layoutKey, false});
+        app.RefreshDesktopItemIndexCache();
+        (void)app.ResolveDockFolderTarget(app.dockEntries_.front(), nullptr, true);
+        app.RebuildContainersAndItems();
+        const auto deleteFile = [&] {
+            bool done = false, succeeded = false;
+            std::vector<snowdesktop::ShellFileOperationStep> steps{{FO_DELETE, {deleted.wstring()}, {},
+                static_cast<FILEOP_FLAGS>(FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI)}};
+            check(app.QueueShellFileOperation(std::move(steps), [&](bool result) {
+                done = true; succeeded = result;
+            }), "queue the real fixed-file deletion");
+            auto* dock = app.GetDockContainer();
+            check(dock && !dock->IsEntryRemovalAnimating() &&
+                dock->CapturePresentationState().removals->Entries().size() == 1,
+                "queued deletion retains artwork but does not animate before commit");
+            const auto started = GetTickCount64();
+            while (!done)
+            {
+                check(GetTickCount64() - started < 8000, "bounded Shell deletion completion");
+                MSG message{};
+                if (PeekMessageW(&message, completionWindow, kShellFileOperationCompletedMessage,
+                        kShellFileOperationCompletedMessage, PM_REMOVE))
+                    app.OnShellFileOperationCompleted(message.lParam);
+                else MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+            }
+            return succeeded;
+        };
+        HANDLE locked = CreateFileW(deleted.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(locked != INVALID_HANDLE_VALUE, "lock the private file against deletion");
+        const bool lockedDelete = deleteFile();
+        CloseHandle(locked);
+        check(!lockedDelete && std::filesystem::exists(deleted) && app.dockEntries_.size() == 1 &&
+            app.GetDockContainer()->CapturePresentationState().removals->Entries().empty(),
+            "failed deletion keeps its source/pin and cancels its pending snapshot");
+        check(deleteFile() && !std::filesystem::exists(deleted), "actual Shell deletion removes the private source");
+        app.items_.clear(); app.RefreshDesktopItemIndexCache();
+        app.PruneDockShellMetadata();
+        const auto pruneStarted = GetTickCount64();
+        while (!app.dockEntries_.empty())
+        {
+            check(GetTickCount64() - pruneStarted < 8000, "bounded production missing-pin confirmation");
+            app.DrainBackgroundShellWork();
+            if (!app.dockEntries_.empty()) MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+        }
+        check(app.GetDockContainer() && app.GetDockContainer()->IsEntryRemovalAnimating(),
+            "confirmed deleted fixed file retains its outgoing artwork after Shell pruning and rebuild");
+        app.CancelUiAnimationFrame(); app.uiAnimationScheduler_.Shutdown();
+        app.containers_.clear(); app.items_oo_.clear();
+        app.d2dIconCache_.clear(); app.iconGlassBackdrop_.clear(); app.iconBitmapStyles_.clear();
+        app.d2dContext_.Reset(); app.d2dDevice_.Reset(); app.d2dFactory_.Reset(); app.d3dDevice_.Reset();
+        std::cout << "Dock removal: real mapping/Delete-key commit/rebuild, 32 layout/render scenes, Shell failure/success, scheduler and snapshot retirement passed\n";
+    }

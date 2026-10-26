@@ -33,7 +33,7 @@ bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 }
 
 snowdesktop::item_location::FolderTarget
-DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending) const
+DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending, bool resolveNow) const
 {
     using namespace snowdesktop::item_location;
     if (targetPending) *targetPending = false;
@@ -60,6 +60,17 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending)
     if (cached.fresh) return cached.value.value_or(FolderTarget{});
     const bool wasFolder = cached.value && cached.value->kind != FolderTargetKind::None;
     auto* owner = const_cast<DesktopApp*>(this);
+    if (resolveNow)
+    {
+        // Capture a cold drag source once, before its first target sample.
+        // Paint/hit queries keep the ordinary asynchronous cache path below.
+        auto target = ResolveFolderTarget(path);
+        if (mapping && target.kind == FolderTargetKind::None && !path.empty())
+            target = {path, FolderTargetKind::Directory, false};
+        owner->dockFolderTargetCache_.Publish(key, cached.ticket, target);
+        if (targetPending) *targetPending = false;
+        return target;
+    }
     shellVisualWork_.Submit(L"dock-target:" + key + L"\n" + std::to_wstring(cached.ticket), [path, mapping] {
         auto target = ResolveFolderTarget(path);
         if (mapping && target.kind == FolderTargetKind::None && !path.empty())
@@ -397,6 +408,10 @@ bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceItems)
         }
     }
 
+    for (const auto index : mappedEntryIndices)
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                dock->PrepareEntryRemoval(index);
     const bool mappingsChanged = snowdesktop::dock_drop_model::RemoveMappings(
         dockEntries_, std::move(mappedEntryIndices), DockDropServices());
     if (usageChanged) SaveDockUsageStats();
@@ -413,6 +428,11 @@ bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceItems)
 bool DesktopApp::RemoveDockMappingAt(
     size_t entryIndex)
 {
+    if (entryIndex >= dockEntries_.size() || dockEntries_[entryIndex].type != DockEntryType::DesktopItem ||
+        !dockEntries_[entryIndex].keepOnDesktop) return false;
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            dock->PrepareEntryRemoval(entryIndex);
     if (!snowdesktop::
             desktop_item_reference_migration::
                 RemoveDockMappingAt(

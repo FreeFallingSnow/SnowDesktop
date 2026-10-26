@@ -1662,6 +1662,9 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
         }
     bool keep = false;
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            keep |= dock->AdvanceEntryRemovalAnimation(nowMilliseconds);
     for (auto& app : dockUnpinnedRunningApps_)
     {
         if (snowdesktop::animation::RuntimeAnimationsEnabled())

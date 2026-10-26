@@ -1516,6 +1516,12 @@ void DesktopApp::ShowWidgetContextMenu(
             });
         if (!removalIndex) break;
         widgetIndex = *removalIndex;
+        for (size_t i = 0; i < dockEntries_.size(); ++i)
+            if (IsWidgetDockEntryType(dockEntries_[i].type) &&
+                dockEntries_[i].reference == widgets_[widgetIndex].id)
+                for (const auto& container : containers_)
+                    if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                        dock->PrepareEntryRemoval(i);
         // widgets_ 的下标会在删除后整体移动，不能让关闭动画继续引用
         // 即将失效的弹窗数据源。
         if (GetOpenPopupWidget())

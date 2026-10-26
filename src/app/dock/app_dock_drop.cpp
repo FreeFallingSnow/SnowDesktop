@@ -293,6 +293,11 @@ void DesktopApp::MoveDockItemsToDesktop(
     const std::vector<Item*>& sourceItems, GridCell targetCell)
 {
     const auto landings = PlanDockDesktopReturn(sourceItems, std::move(targetCell));
+    for (const auto& landing : landings)
+        if (landing.accepted)
+            for (const auto& container : containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                    dock->PrepareEntryRemoval(landing.entryIndex);
     if (!snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices())) return;
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();

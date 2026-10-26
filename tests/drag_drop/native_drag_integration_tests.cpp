@@ -9,6 +9,7 @@
 #include "widgets/single_cell_widget_rules.h"
 #include "widgets/group_tab_drag_preview.h"
 #include "../test_temporary_directory.h"
+#include "../dock/dock_entry_removal_cases.h"
 #include <fstream>
 
 #include <cstdlib>
@@ -1115,6 +1116,7 @@ struct NativeDragIntegrationAccess
 #include "../render/native_foreground_culling_access.inc"
 #include "native_drag_foreground_damage_access.inc"
 #include "../dock/native_dock_hover_access.inc"
+#include "../dock/native_dock_removal_access.inc"
 #include "../widget/native_widget_surface_handoff_access.inc"
 #include "../system/native_status_selection_access.inc"
 };
@@ -1229,6 +1231,14 @@ int main(int argc, char** argv)
             native_foreground_culling_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover")
             native_dock_hover_cases::Run();
+        else if (argc == 2 && (std::string_view(argv[1]) == "--dock-removal" ||
+            std::string_view(argv[1]) == "--dock-removal-no-retention"))
+        {
+            native_drag_commit_cases::Profile profile;
+            auto& app = profile.Model(false, profile.root / L"dock-removal");
+            NativeDragIntegrationAccess::CheckDockEntryRemoval(app,
+                std::string_view(argv[1]) == "--dock-removal-no-retention");
+        }
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover-legacy")
             native_dock_hover_cases::Run(true);
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-surface-handoff")

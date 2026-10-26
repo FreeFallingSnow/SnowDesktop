@@ -6,6 +6,7 @@
 #include "dock/dock_magnification.h"
 #include "dock/dock_running_drag_rules.h"
 #include "dock/dock_folder_rules.h"
+#include "dock/dock_entry_removal.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 
 #include <memory>
@@ -149,6 +150,11 @@ public:
     bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
+    void PrepareEntryRemoval(size_t entryIndex);
+    void CancelEntryRemoval(const DockEntry& entry);
+    bool IsEntryRemovalAnimating() const;
+    bool AdvanceEntryRemovalAnimation(double nowMilliseconds);
+    using EntryRemovalTimeline = snowdesktop::dock_entry_removal::Timeline<ComPtr<ID2D1Bitmap1>>;
     // Host runtime-tree rebuilds replace item wrappers, but a stationary
     // pointer must keep its presentation timeline. This snapshot owns no
     // Container, Item or Slot pointers.
@@ -159,6 +165,7 @@ public:
         int scrollOffset = 0;
         snowdesktop::dock_magnification::HoverEntryAnimation entry;
         snowdesktop::dock_magnification::SingleFocusAnimation single;
+        std::shared_ptr<EntryRemovalTimeline> removals;
     };
     PresentationState CapturePresentationState() const;
     bool RestorePresentationState(const PresentationState& state);
@@ -204,6 +211,10 @@ private:
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     float RunningSlotUnits() const;
+    std::vector<std::wstring> EntryRemovalKeys() const;
+    void ReconcileEntryRemovals() const;
+    float EntryRemovalUnits(bool folder) const;
+    void DrawEntryRemovals(ID2D1DeviceContext* context, bool fixedFolders) const;
     int EdgeMargin() const;
     std::vector<RECT> GetLeadingMagnificationRects() const;
     std::vector<RECT> GetTrailingMagnificationRects() const;
@@ -247,6 +258,8 @@ private:
     mutable std::vector<std::unique_ptr<DockEntryItem>> entryItems_;
     mutable std::vector<std::unique_ptr<DockRunningItem>> runningItems_;
     mutable std::vector<std::unique_ptr<DockFrequentItem>> frequentItems_;
+    std::shared_ptr<EntryRemovalTimeline> entryRemovals_ = std::make_shared<EntryRemovalTimeline>();
+    std::vector<std::pair<size_t, RECT>> entryRemovalCells_;
     mutable std::uint64_t entryGroupCountGeneration_ = 0;
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;

@@ -49,17 +49,37 @@ bool DesktopApp::QueueShellFileOperation(
     }
 
     std::vector<std::wstring> removedPaths;
+    std::vector<DockEntry> removalPins;
     for (const auto& step : request.steps)
         if (step.function == FO_DELETE || step.function == FO_MOVE)
             removedPaths.insert(removedPaths.end(), step.sources.begin(), step.sources.end());
     if (!removedPaths.empty())
     {
+        for (size_t i = 0; i < dockEntries_.size(); ++i)
+        {
+            const auto& entry = dockEntries_[i];
+            if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
+            const auto itemIndex = FindItemIndexByKey(entry.reference);
+            const auto& path = itemIndex < items_.size() ? items_[itemIndex].parsingName : entry.reference;
+            if (std::none_of(removedPaths.begin(), removedPaths.end(), [&](const auto& removed) {
+                    return _wcsicmp(path.c_str(), removed.c_str()) == 0;
+                })) continue;
+            removalPins.push_back(entry);
+            for (const auto& container : containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                    dock->PrepareEntryRemoval(i);
+        }
         auto callback = std::move(result->callback);
         result->callback = [this, removedPaths = std::move(removedPaths),
+            removalPins,
             callback = std::move(callback)](bool succeeded) {
             // A cancelled/failed operation must retain its original ownership.
             // Successful user deletions/moves must not become recoverable gaps.
             if (succeeded) RemoveDesktopKeysFromWidgets(removedPaths);
+            else
+                for (const auto& container : containers_)
+                    if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                        for (const auto& pin : removalPins) dock->CancelEntryRemoval(pin);
             if (callback) callback(succeeded);
         };
     }
@@ -76,6 +96,9 @@ bool DesktopApp::QueueShellFileOperation(
         });
     if (!queued)
     {
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                for (const auto& pin : removalPins) dock->CancelEntryRemoval(pin);
         delete result;
         snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;

@@ -225,6 +225,7 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
     src/dock/dock_running_animation.h
+    src/dock/dock_entry_removal.h
     src/app/features/app_status_bar.cpp
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_tooltip.h
@@ -437,6 +438,7 @@ set(SNOWDESKTOP_SOURCES
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp
+    src/core/dock_entry_removal.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp
@@ -3005,6 +3007,7 @@ if (BUILD_TESTING)
         "native_ole_target_changes|--ole-target-changes"
         "native_ole_partial_batch|--ole-partial-batch"
         "native_dock_partition_storage|--dock-partitions"
+        "native_dock_removal_animation|--dock-removal"
         "native_dock_running_pin_storage|--dock-running-pin-storage"
         "native_shortcut_final_targets|--shortcut-targets"
         "native_folder_shortcut_handoff|--folder-shortcut-handoff"
