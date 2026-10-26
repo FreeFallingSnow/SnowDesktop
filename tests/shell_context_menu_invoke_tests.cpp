@@ -3080,6 +3080,17 @@ void TestFileSnapshotNotificationReuse()
     };
     saveLink(text);
     std::atomic<unsigned> scans = 0, fullScans = 0, sourceProbes = 0, queries = 0;
+    std::mutex queryMutex;
+    std::vector<ext::Request> queriedSelections;
+    const auto selectionQueries = [&](const ext::Request &selected, std::optional<bool> projected = {}) {
+        std::lock_guard lock(queryMutex);
+        return static_cast<unsigned>(std::count_if(queriedSelections.begin(), queriedSelections.end(), [&](const auto &request) {
+            return request.paths == selected.paths && request.background == selected.background &&
+                request.extended == selected.extended && request.originalShortcutOnly == selected.originalShortcutOnly &&
+                request.startPinOnly == selected.startPinOnly &&
+                (!projected || request.visibleMenuProviders.has_value() == *projected);
+        }));
+    };
     std::atomic<bool> decodedIcon = false;
     const auto cachePath = temp.path / L"cache";
     shell_service_fixture::SeedMetadata(cachePath, ext::ReadCatalogue(registry.key, false));
@@ -3102,6 +3113,7 @@ void TestFileSnapshotNotificationReuse()
         if (target.paths.empty() || !target.sourceClsid.empty() ||
             std::filesystem::path(target.paths.front()).parent_path() != temp.path)
             return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        { std::lock_guard lock(queryMutex); queriedSelections.push_back(target); }
         ++queries;
         ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
         entry.label = L"Cached action"; entry.token = 42;
@@ -3222,20 +3234,24 @@ void TestFileSnapshotNotificationReuse()
         PumpUntil([&] { auto view = service.View(unproven); return queries > before && view.snapshot && !view.pending; },
             "query an unproven shortcut or mixed selection");
         before = queries.load();
+        const auto beforeNoiseSelection = selectionQueries(unproven);
         const auto noiseRevision = service.View(unproven).revision;
         notify();
         PumpUntil([&] { return service.View(unproven).revision > noiseRevision; }, "observe noise for an unproven shortcut root");
         service.Query(unproven);
         PumpUntil([&] { auto view = service.View(unproven); return view.snapshot && !view.pending && queries > before; },
             "an unproven shortcut uses a fresh foreground query after notification");
-        Expect(queries == before + 1 && fullScans == 0 && sourceProbes == 0,
+        Expect(queries == before + 1 && selectionQueries(unproven) == beforeNoiseSelection + 1 &&
+            fullScans == 0 && sourceProbes == 0,
             "ordinary shortcut fallback never borrows full inventory proof or starts full discovery");
         before = queries.load();
+        const auto beforeTargetSelection = selectionQueries(unproven);
         saveLink(paths.size() == 1 ? folder : image);
         service.Query(unproven);
         PumpUntil([&] { auto view = service.View(unproven); return queries > before && view.snapshot && !view.pending; },
             "a real shortcut target mutation refreshes its exact selection");
-        Expect(queries == before + 1, "shortcut target mutation dispatches exactly one fresh foreground query");
+        Expect(queries == before + 1 && selectionQueries(unproven) == beforeTargetSelection + 1,
+            "shortcut target mutation dispatches exactly one fresh foreground query for the actual selection");
     }
     saveLink(text);
     // A newly introduced, unselected target command belongs to the complete
@@ -3244,6 +3260,8 @@ void TestFileSnapshotNotificationReuse()
     PumpUntil([&] { return !service.Inspect(linked).scanning && service.View(linked).snapshot.has_value(); },
         "establish a complete management view for shortcut target registrations");
     const auto shortcutQueries = queries.load();
+    const auto shortcutSelectionQueries = selectionQueries(linked);
+    const auto shortcutProjectedQueries = selectionQueries(linked, true);
     const auto shortcutRevision = service.View(linked).revision;
     HKEY targetAction = nullptr;
     Expect(RegCreateKeyExW(registry.key, L".txt\\shell\\target-proof", 0, nullptr, 0, KEY_ALL_ACCESS,
@@ -3263,11 +3281,24 @@ void TestFileSnapshotNotificationReuse()
     Expect(targetCommandStatus == ERROR_SUCCESS, "write the shortcut target command");
     notify();
     PumpUntil([&] { return service.View(linked).revision > shortcutRevision; }, "observe a registration change outside the .lnk type");
-    service.Inspect(linked, true);
+    // Refresh the complete inventory without simultaneously forcing a query
+    // captured against its previous dependency generation. The actual object
+    // query follows only after its old snapshot has been invalidated.
+    const auto refresh = service.Inspect({}, true);
+    Expect(refresh.selection.paths.empty(), "inventory-only fixture refresh has no selected-object query");
+    PumpUntil([&] { return !service.Inspect().scanning; }, "complete explicit management inventory refresh before querying the shortcut");
+    Expect(!service.View(linked).snapshot && queries == shortcutQueries &&
+        selectionQueries(linked) == shortcutSelectionQueries,
+        "target registration invalidates the old shortcut without background aggregate queries for retained selections");
+    service.Inspect(linked);
     PumpUntil([&] { auto view = service.View(linked); return !service.Inspect(linked).scanning && view.snapshot && !view.pending; },
         "resolve registrations affecting the shortcut target");
-    std::cout << "Shortcut target registration: before=" << shortcutQueries << " after=" << queries.load() << std::endl;
-    Expect(queries == shortcutQueries + 1, "a shortcut cannot reuse a snapshot after its target type gains a command");
+    std::cout << "Shortcut target registration: aggregate=" << shortcutQueries << "->" << queries.load()
+        << " selected=" << shortcutSelectionQueries << "->" << selectionQueries(linked)
+        << " projected=" << shortcutProjectedQueries << "->" << selectionQueries(linked, true) << std::endl;
+    Expect(queries == shortcutQueries + 1 && selectionQueries(linked) == shortcutSelectionQueries + 1 &&
+        selectionQueries(linked, true) == shortcutProjectedQueries,
+        "a shortcut gains exactly one fresh management query, and no unrelated aggregate, after its target type gains a command");
     service.Shutdown();
 }
 
