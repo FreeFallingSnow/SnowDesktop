@@ -299,7 +299,12 @@ void CheckCataloguePauseProgress()
     const bool waiting = work.wait_for(std::chrono::milliseconds(80)) == std::future_status::timeout;
     const bool unchanged = completed.load() == progress;
     fullscreen.store(false);
-    if (work.wait_for(std::chrono::seconds(3)) != std::future_status::ready) demand.Cancel();
+    // Each of the forty 20 ms batches can now incur up to 100 ms of
+    // cooperative background rest. Keep all queue/pause assertions, but allow
+    // that intentional idle time plus two seconds for scheduling and probing.
+    constexpr auto resumeAllowance = 40 * std::chrono::milliseconds(20 + 100) +
+        std::chrono::seconds(2);
+    if (work.wait_for(resumeAllowance) != std::future_status::ready) demand.Cancel();
     const bool successful = work.get();
     Check(stopped && waiting && unchanged && successful && completed.load() == 40,
         "a fullscreen change pauses an active single-worker scan and resumes its existing queue exactly once");
