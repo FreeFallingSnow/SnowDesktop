@@ -829,6 +829,8 @@ private:
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
         bool promoted = false;
+        bool explicitDismissAvailable = false;
+        RECT explicitDismissRect{};
         snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
         // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a

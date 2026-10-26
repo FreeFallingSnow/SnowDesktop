@@ -150,6 +150,29 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
                 host.container->DrawContents(context.Get());
             });
         }
+        if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+        {
+            const auto& appearance = floatingDockPersonalization_;
+            const D2D1_COLOR_F background = D2D1::ColorF(appearance.widgetBgR,
+                appearance.widgetBgG, appearance.widgetBgB, 0.98f);
+            const float contrast = background.r * 0.2126f + background.g * 0.7152f + background.b * 0.0722f;
+            const float ink = contrast > 0.55f ? 0.05f : 1.0f;
+            const D2D1_COLOR_F foreground = D2D1::ColorF(ink, ink, ink, 1.0f);
+            const RECT button = host.explicitDismissRect;
+            const float size = static_cast<float>(button.right - button.left);
+            DrawD2DRoundedRectangle(context.Get(), button, size * 0.25f, background,
+                D2D1::ColorF(foreground.r, foreground.g, foreground.b, 0.35f), 1.0f);
+            ComPtr<ID2D1SolidColorBrush> closeBrush;
+            if (SUCCEEDED(context->CreateSolidColorBrush(foreground, &closeBrush)))
+            {
+                const float left = static_cast<float>(button.left) + size * 0.32f;
+                const float right = static_cast<float>(button.right) - size * 0.32f;
+                const float top = static_cast<float>(button.top) + size * 0.32f;
+                const float bottom = static_cast<float>(button.bottom) - size * 0.32f;
+                context->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, bottom), closeBrush.Get(), size / 16.f);
+                context->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, bottom), closeBrush.Get(), size / 16.f);
+            }
+        }
         DrawDynamicOverlays(context.Get());
     }
     catch (...)
@@ -312,6 +335,25 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
+        (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&
+        (!host.mergedPresentationActive || host.mergedPresentation.inputEnabled))
+    {
+        POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (msg == WM_MOUSEACTIVATE) GetCursorPos(&screen);
+        else if (msg != WM_NCHITTEST) ClientToScreen(hwnd, &screen);
+        POINT point = screen;
+        if (hwnd_) ScreenToClient(hwnd_, &point);
+        else { point.x -= virtualLeft_; point.y -= virtualTop_; }
+        if (PtInRect(&host.explicitDismissRect, point))
+        {
+            if (msg == WM_NCHITTEST) return HTCLIENT;
+            if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+            floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+            CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+            return 0;
+        }
+    }
     if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
             (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
             msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&

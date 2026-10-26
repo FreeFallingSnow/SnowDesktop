@@ -4,10 +4,51 @@
 #include <ctime>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
 #include "dock/dock_process_discovery.h"
 #include "dock/dock_window_source_cloak.h"
+
+namespace snowdesktop::dock_input_privilege
+{
+struct TokenState { DWORD integrity = 0; bool uiAccess = false; };
+
+inline std::optional<TokenState> QueryToken(HANDLE process)
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return std::nullopt;
+    struct TokenHandle { HANDLE value; ~TokenHandle() { CloseHandle(value); } } guard{token};
+    alignas(TOKEN_MANDATORY_LABEL) BYTE buffer[sizeof(TOKEN_MANDATORY_LABEL) + SECURITY_MAX_SID_SIZE]{};
+    DWORD bytes = 0, uiAccess = 0;
+    if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, sizeof(buffer), &bytes) ||
+        !GetTokenInformation(token, TokenUIAccess, &uiAccess, sizeof(uiAccess), &bytes)) return std::nullopt;
+    const auto label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer);
+    if (!IsValidSid(label->Label.Sid)) return std::nullopt;
+    const BYTE count = *GetSidSubAuthorityCount(label->Label.Sid);
+    if (!count) return std::nullopt;
+    return TokenState{*GetSidSubAuthority(label->Label.Sid, count - 1u), uiAccess != 0};
+}
+
+// Only queried at a deliberate reveal, never in the Dock's polling loop.
+// Unknown permission is not permission to take another application's focus.
+inline std::optional<bool> ForegroundHasHigherInputPrivilege(HWND foreground)
+{
+    DWORD processId = 0;
+    if (!foreground || !GetWindowThreadProcessId(foreground, &processId) || !processId)
+        return std::nullopt;
+    if (processId == GetCurrentProcessId()) return false;
+    static const auto own = QueryToken(GetCurrentProcess());
+    if (!own) return std::nullopt;
+    if (own->uiAccess) return false;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return std::nullopt;
+    const auto other = QueryToken(process);
+    CloseHandle(process);
+    if (!other) return std::nullopt;
+    return other->integrity > own->integrity;
+}
+} // namespace snowdesktop::dock_input_privilege
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {

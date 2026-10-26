@@ -33,17 +33,27 @@ private:
     bool temporary_ = false;
 };
 
-// Use the client area, so maximized windows with title bars are not fullscreen.
-inline bool ShouldBlockFullscreenEdgeSwipe(
-    bool enabled, const RECT& client, const RECT& monitor) noexcept
-{
-    return enabled && monitor.right > monitor.left && monitor.bottom > monitor.top &&
-        client.left <= monitor.left && client.top <= monitor.top &&
-        client.right >= monitor.right && client.bottom >= monitor.bottom;
-}
-
 inline constexpr DWORD kWindowExStyle =
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
+
+inline RECT ExplicitDismissBounds(RECT dock, RECT monitor, int size, int gap)
+{
+    if (IsRectEmpty(&dock) || IsRectEmpty(&monitor)) return {};
+    size = std::max(1, std::min({size, static_cast<int>(monitor.right - monitor.left),
+        static_cast<int>(monitor.bottom - monitor.top)}));
+    gap = std::max(0, gap);
+    const RECT candidates[]{
+        {dock.right - size, dock.top - gap - size, dock.right, dock.top - gap},
+        {dock.right + gap, dock.top, dock.right + gap + size, dock.top + size},
+        {dock.left - gap - size, dock.top, dock.left - gap, dock.top + size},
+        {dock.right - size, dock.bottom + gap, dock.right, dock.bottom + gap + size}};
+    for (const RECT candidate : candidates)
+        if (candidate.left >= monitor.left && candidate.top >= monitor.top &&
+            candidate.right <= monitor.right && candidate.bottom <= monitor.bottom) return candidate;
+    const LONG left = std::clamp<LONG>(dock.right - size, monitor.left, monitor.right - size);
+    const LONG top = std::clamp<LONG>(dock.top, monitor.top, monitor.bottom - size);
+    return {left, top, left + size, top + size};
+}
 
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;

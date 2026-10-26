@@ -780,6 +780,20 @@ end})
         const HWND popupWindow = create(&popupContext);
         app->floatingPopupHwnd_ = popupWindow;
         {
+            // A delivered button press is an independent escape path, even
+            // when global button state is unavailable. Run actual host dispatch.
+            auto& dock = *app->persistentDockHosts_.front();
+            dock.promoted = dock.explicitDismissAvailable = true;
+            dock.explicitDismissRect = {10, 10, 34, 34};
+            app->floatingDockVisible_ = true;
+            InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            inputSafetyPhysicalButton = 0;
+            app->HandleFloatingDockMessage(dock, dockWindow, WM_LBUTTONDOWN, 0, MAKELPARAM(20, 20));
+            check(!dock.promoted && !app->floatingDockVisible_ && !dock.explicitDismissAvailable,
+                "native explicit Dock dismiss works without a readable external press");
+            dock.explicitDismissRect = {};
+        }
+        {
             // The original desktop press must close promotion even when the
             // global API reports no button. Only that OS query is replaced;
             // native dispatch and the real close/visibility path still run.

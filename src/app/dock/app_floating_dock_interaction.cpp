@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "dock_platform_helpers.h"
+#include "platform/foreground_fullscreen.h"
 
 namespace
 {
@@ -45,6 +47,12 @@ void DesktopApp::ShowFloatingDock(
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: foreground fullscreen");
         return;
     }
+    const HWND revealForeground = GetForegroundWindow();
+    const auto privilegeGap = snowdesktop::dock_input_privilege::
+        ForegroundHasHigherInputPrivilege(revealForeground);
+    const bool foregroundFullscreen = snowdesktop::fullscreen::ObserveForeground().has_value();
+    const bool requestKeyboardSession = snowdesktop::dock_fullscreen::StartsKeyboardSession(
+        source, privilegeGap.value_or(false), foregroundFullscreen);
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
     // the keyboard proxy can change foreground ownership. The independently
     // revealed bar remains usable until its own outside dismissal.
@@ -66,6 +74,8 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    const bool needsDismissFallback = !privilegeGap.has_value() || privilegeGap.value_or(false) || foregroundFullscreen;
+    floatingDockHost_->explicitDismissAvailable = needsDismissFallback && !requestKeyboardSession;
     floatingDockHost_->windowActionPromotion.Retain();
     floatingDockHost_->mergedCloseAfterInteraction = false;
     floatingDockHost_->passivelyRevealed = false;
@@ -139,10 +149,26 @@ void DesktopApp::ShowFloatingDock(
         InvalidateFloatingDockWindow(
             *floatingDockHost_, true);
     }
-    // Pointer gestures reveal a NOACTIVATE surface, never a keyboard proxy.
-    if (snowdesktop::dock_fullscreen::StartsKeyboardSession(source))
-        BeginFloatingDockKeyboardSession(source == DockRevealSource::Hotkey &&
-            !FullscreenBlocksDockReveal(source, targetMonitor));
+    // Reuse the proven shortcut input proxy only for a real keyboard surface
+    // or a higher-privilege foreground. Never deliberately exit fullscreen.
+    bool keyboardSessionReady = false;
+    if (requestKeyboardSession && GetForegroundWindow() == revealForeground &&
+        !snowdesktop::fullscreen::ObserveForeground())
+    {
+        BeginFloatingDockKeyboardSession(false);
+        DWORD process = 0;
+        if (const HWND foreground = GetForegroundWindow())
+            GetWindowThreadProcessId(foreground, &process);
+        keyboardSessionReady = process == GetCurrentProcessId();
+        if (!keyboardSessionReady)
+            EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+    }
+    const bool explicitDismiss = needsDismissFallback && !keyboardSessionReady;
+    if (floatingDockHost_->explicitDismissAvailable != explicitDismiss)
+    {
+        floatingDockHost_->explicitDismissAvailable = explicitDismiss;
+        UpdateFloatingDockWindowBounds(*floatingDockHost_, true, true);
+    }
 }
 
 bool DesktopApp::
@@ -294,6 +320,8 @@ void DesktopApp::CloseFloatingDock(
     }
 
     host.promoted = false;
+    host.explicitDismissAvailable = false;
+    host.explicitDismissRect = {};
     host.windowActionPromotion.Retain();
     host.passivelyRevealed = false;
     host.passiveRevealTick = 0;
@@ -352,6 +380,8 @@ void DesktopApp::CloseAllFloatingDocks(
         if (host)
         {
             host->promoted = false;
+            host->explicitDismissAvailable = false;
+            host->explicitDismissRect = {};
             host->windowActionPromotion.Retain();
             host->passivelyRevealed = false;
             host->passiveRevealTick = 0;

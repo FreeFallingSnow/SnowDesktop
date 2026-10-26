@@ -140,15 +140,21 @@ inline bool BlocksReveal(DockFullscreenPolicy policy, DockRevealSource source,
 {
     if (!foregroundFullscreen) return false;
     if (policy == DockFullscreenPolicy::FullProtection) return true;
-    // A hotkey takes global keyboard focus even when the cursor is on another
-    // display. Gestures are local and do not create a keyboard session.
+    // Explicit hotkeys are global invocations; gestures are monitor-local.
+    // Keyboard activation is decided separately and never exits fullscreen.
     if (source == DockRevealSource::Gesture)
         return sameMonitor && policy == DockFullscreenPolicy::BlockGestures;
     return false;
 }
 
-inline bool StartsKeyboardSession(DockRevealSource source) noexcept
+inline bool StartsKeyboardSession(DockRevealSource source,
+    bool foregroundHasHigherInputPrivilege = false,
+    bool foregroundFullscreen = false) noexcept
 {
-    return source != DockRevealSource::Gesture;
+    // Summoning alone preserves the user's keyboard target. Associated
+    // editors/popups keep their existing keyboard path; a privilege gap may
+    // borrow that same path for either summon trigger, outside fullscreen.
+    return !foregroundFullscreen && (source == DockRevealSource::AssociatedSurface ||
+        foregroundHasHigherInputPrivilege);
 }
 } // namespace snowdesktop::dock_fullscreen

@@ -193,7 +193,7 @@ bool DesktopApp::IsPointOnPromotedDock(
     {
         if (host &&
             IsPersistentDockHostPromoted(*host) &&
-            PtInRect(&host->dockRect, point))
+            (PtInRect(&host->dockRect, point) || PtInRect(&host->explicitDismissRect, point)))
         {
             return true;
         }
@@ -208,12 +208,12 @@ bool DesktopApp::IsPointInPromotedDockLayer(
     {
         if (host &&
             IsPersistentDockHostPromoted(*host) &&
-            snowdesktop::floating_dock_rules::
+            (PtInRect(&host->explicitDismissRect, point) || snowdesktop::floating_dock_rules::
                 IsPointInVisibleLayer(
                     point,
                     host->dockRect,
                     host->popupRect,
-                    host->tooltipRect))
+                    host->tooltipRect)))
         {
             return true;
         }
@@ -827,7 +827,7 @@ CalculateFloatingDockStableSourceRect(
             }
         }
     }
-    return sourceRect;
+    return snowdesktop::floating_dock_rules::UnionNonEmptyRects(sourceRect, host.explicitDismissRect);
 }
 
 std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
@@ -930,6 +930,18 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             GetHoveredTitleBounds(
                 lastMousePoint_);
     const RECT nextPopupRect{};
+    RECT nextDismissRect{};
+    MONITORINFO dismissMonitor{sizeof(dismissMonitor)};
+    if (host.promoted && host.explicitDismissAvailable && GetMonitorInfoW(host.monitor, &dismissMonitor))
+    {
+        OffsetRect(&dismissMonitor.rcMonitor, -virtualLeft_, -virtualTop_);
+        const float scale = static_cast<float>(GetDpiForWindow(host.hwnd)) / 96.f;
+        nextDismissRect = snowdesktop::floating_dock_rules::ExplicitDismissBounds(
+            nextDockRect, dismissMonitor.rcMonitor, static_cast<int>(std::ceil(24.f * scale)),
+            static_cast<int>(std::ceil(6.f * scale)));
+    }
+    const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
+    host.explicitDismissRect = nextDismissRect;
     // Collection and folder popups live in the shared floating popup host.
     // This window retains only the Dock and its hover-title layer.
     RECT requiredSourceRect =
@@ -983,6 +995,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             host.presentationRevision + 1);
     }
     if (!dockGeometryChanged &&
+        !dismissRegionChanged &&
         !guideRegionChanged &&
         !animationRegionChanged &&
         !popupRegionChanged &&
@@ -1149,6 +1162,15 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
             host.sourceRect.bottom - host.sourceRect.top);
     }
     if (!region) return false;
+    if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+    {
+        RECT button = host.explicitDismissRect;
+        OffsetRect(&button, -host.sourceRect.left, -host.sourceRect.top);
+        HRGN buttonRegion = CreateRoundRectRgn(button.left, button.top, button.right, button.bottom, 8, 8);
+        const bool combined = buttonRegion && CombineRgn(region, region, buttonRegion, RGN_OR) != ERROR;
+        if (buttonRegion) DeleteObject(buttonRegion);
+        if (!combined) { DeleteObject(region); return false; }
+    }
     RECT guide = host.guideOcclusionRect;
     if (!IsRectEmpty(&guide))
     {
