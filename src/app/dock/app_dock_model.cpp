@@ -447,10 +447,10 @@ bool DesktopApp::RemoveDockMappingAt(
     SaveLayoutSlots();
     RebuildContainersAndItems();
     LayoutItems();
-    // Removing a pin changes running-area membership without a window event.
-    // Do not leave the app missing until the periodic discovery fallback.
+    // Let normal maintenance reconcile running membership after this exit.
+    // A synchronous all-window scan can block the first removal paint and
+    // replace the running layout while the pin-removal caller is unwinding.
     dockRunningWindowsRefreshTick_ = 0;
-    RefreshDockRunningWindows(false);
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);

@@ -21,7 +21,7 @@
         app.generalSettings_.dockEnabled = true;
         app.desktopItemsReady_ = true;
         app.dockSettings_.hoverEffect = 0;
-        app.dockSettings_.showRunningApps = false;
+        app.dockSettings_.showFrequentItems = false;
         app.dockSettings_.showWindowsButton = app.dockSettings_.showQuickSearchButton = false;
         app.iconBeautifySettings_.enabled = false;
         app.lastMousePoint_ = {LONG_MIN, LONG_MIN};
@@ -128,6 +128,8 @@
                 check(app.OnKeyDown(VK_DELETE), "execute actual fixed-pin Delete-key route");
             }
             else check(app.RemoveDockMappingAt(1), "execute actual mapping-removal route");
+            check(app.dockUnpinnedRunningApps_.empty(),
+                "reference removal must defer global running-window discovery until normal maintenance");
             dock = app.GetDockContainer();
             check(dock && app.dockEntries_.size() == 2 && std::filesystem::exists(source) && app.items_.size() == 3,
                 "commit only the Dock reference and preserve its source file/model");
