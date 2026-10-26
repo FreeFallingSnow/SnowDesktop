@@ -1,6 +1,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_menu_read_projection.h"
 #include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_extension_attribution.h"
@@ -2833,9 +2834,13 @@ void TestPairedCommandRefresh()
         ordinaryView.snapshot->entries.size() == 1 && ordinaryView.snapshot->entries.front().label == L"Inspect",
         "a Start state change retires the old pin while preserving ordinary rows without an aggregate query");
     ext::MenuSnapshotCache disk(directory.path / L"cache");
-    const auto ordinaryDisk = disk.Find(disk.Capture(request));
+    auto projectedRequest = request;
+    projectedRequest.visibleMenuProviders = ext::MenuReadPolicy(prefs, ext::Category::Objects);
+    const auto ordinaryDisk = disk.Find(disk.Capture(projectedRequest));
     Expect(ordinaryDisk && ordinaryDisk->entries.size() == 1 && ordinaryDisk->entries.front().label == L"Inspect",
         "the disk snapshot preserves ordinary rows and cannot restore the stale pin state");
+    Expect(!disk.Find(disk.Capture(request)),
+        "the projected ordinary snapshot cannot be restored as a complete menu query");
     hold = false;
     PumpUntil([&] { const auto view = service.View(startRequest); return !view.pending && view.snapshot.has_value(); },
         "the post-action native query publishes the new Pin state");
