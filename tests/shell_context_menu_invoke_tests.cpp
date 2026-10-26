@@ -2925,7 +2925,7 @@ void TestInitialSnapshotPersistence(int mode = 0)
     struct Fixture {
         HKEY key = nullptr; std::wstring path; bool owned = false;
         ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
-    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopInitialSnapshot-" + temp.path.filename().wstring()};
+    } noise{nullptr, L"Software\\Classes\\SnowDesktopInitialSnapshot-" + temp.path.filename().wstring()};
     DWORD disposition = 0;
     Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
         nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create first snapshot notification fixture");
@@ -3024,7 +3024,7 @@ void TestFileSnapshotNotificationReuse()
         }
         ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
     } registry(L"Software\\SnowDesktopFileCacheReuse\\" + temp.path.filename().wstring()),
-      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFileCacheReuse-" + temp.path.filename().wstring());
+      noise(L"Software\\Classes\\SnowDesktopFileCacheReuse-" + temp.path.filename().wstring());
     const auto commandAsset = temp.path / L"command.exe";
     std::ofstream(commandAsset) << "private command asset";
     auto caption = [&](const wchar_t *value) {
@@ -3286,7 +3286,7 @@ void TestIdleCatalogueInvalidation()
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory directory;
-    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopCpuTest-" + directory.path.filename().wstring();
+    const auto path = L"Software\\Classes\\SnowDesktopCpuTest-" + directory.path.filename().wstring();
     struct Fixture
     {
         HKEY key = nullptr; std::wstring path; bool owned = false;
@@ -3913,7 +3913,7 @@ void TestLaterRegistryNoiseDoesNotExtendPublication()
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
-    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopBoundaryProbe-" + temp.path.filename().wstring();
+    const auto path = L"Software\\Classes\\SnowDesktopBoundaryProbe-" + temp.path.filename().wstring();
     struct Fixture
     {
         HKEY key = nullptr;
@@ -4073,7 +4073,7 @@ void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool perma
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
-    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopNoiseProbe-" + temp.path.filename().wstring();
+    const auto path = L"Software\\Classes\\SnowDesktopNoiseProbe-" + temp.path.filename().wstring();
     struct Fixture
     {
         HKEY key = nullptr;
@@ -4180,7 +4180,7 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
-    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopVerifyProbe-" + temp.path.filename().wstring();
+    const auto path = L"Software\\Classes\\SnowDesktopVerifyProbe-" + temp.path.filename().wstring();
     struct Fixture
     {
         HKEY key = nullptr;
@@ -4338,7 +4338,7 @@ void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensi
         }
         ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
     } registry(L"Software\\SnowDesktopFolderVerification\\" + temp.path.filename().wstring()),
-      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFolderVerification-" + temp.path.filename().wstring());
+      noise(L"Software\\Classes\\SnowDesktopFolderVerification-" + temp.path.filename().wstring());
     auto put = [&](const wchar_t *key, const wchar_t *name, const wchar_t *value) {
         HKEY created = nullptr;
         Expect(RegCreateKeyExW(registry.key, key, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &created, nullptr)
@@ -4466,7 +4466,7 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
             if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
         }
     } registry(L"Software\\SnowDesktopPendingBackgroundCache\\" + temp.path.filename().wstring()),
-      noise(L"Software\\Classes\\Local Settings\\SnowDesktopPendingBackgroundCache-" + temp.path.filename().wstring());
+      noise(L"Software\\Classes\\SnowDesktopPendingBackgroundCache-" + temp.path.filename().wstring());
     const auto actionPath = context == ext::Context::Desktop ? L"DesktopBackground\\shell\\cache-proof" : L"Directory\\Background\\shell\\cache-proof";
     const auto registration = context == ext::Context::Desktop ? "reg:desktopbackground\\shell\\cache-proof" : "reg:directory\\background\\shell\\cache-proof";
     auto caption = std::wstring(L"Verified cached action");
@@ -4631,7 +4631,7 @@ void TestWarmFailureRecovery(bool permanent)
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
-    auto path = L"Software\\Classes\\Local Settings\\SnowDesktopWarmFailure-" + temp.path.filename().wstring();
+    auto path = L"Software\\Classes\\SnowDesktopWarmFailure-" + temp.path.filename().wstring();
     struct Fixture
     {
         HKEY key = nullptr;
@@ -5708,6 +5708,7 @@ void BenchmarkMenus()
 }
 
 #include "shell/shell_extension_demand_tests.h"
+#include "shell/shell_menu_refresh_cases.h"
 
 int wmain(int argc, wchar_t **argv)
 {
@@ -5753,8 +5754,9 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
-        if (request.paths.front() == L"synthetic-prepared")
-        { entry.key = preparedSample.empty() ? "cold" : "prepared"; entry.label = preparedSample; }
+        if (request.paths.front() == L"synthetic-prepared" ||
+            std::filesystem::path(request.paths.front()).filename() == L"prepared-retention.txt")
+        { entry.key = preparedSample.empty() ? "cold" : "prepared"; entry.label = preparedSample; entry.enabled = true; }
         if (request.paths.front() == L"synthetic-stdio")
         {
             DWORD written = 0;
@@ -5841,6 +5843,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh") menu_refresh_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
@@ -5927,6 +5930,7 @@ int wmain(int argc, wchar_t **argv)
         else
         {
             demand_tests::Run();
+            menu_refresh_tests::Run();
             TestAggregateCataloguePriming();
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();

@@ -167,7 +167,7 @@ struct MenuService::Impl
         Request request;
         MenuView view;
         QueryPriority priority = QueryPriority::Inspect;
-        std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
+        std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0, snapshotRevision = 0;
         unsigned failures = 0;
         Key identity, snapshotIdentity;
         std::uint64_t snapshotSignature = 0, snapshotDependency = 0;
@@ -193,12 +193,15 @@ struct MenuService::Impl
     struct SourceJob
     {
         Key key;
-        Request request;
+        Request request, selection;
         Registration source;
         Reply actual;
         std::vector<Key> attempts;
         QueryWork work;
-        std::uint64_t revision = 0, menuRevision = 0, started = 0;
+        Key identity;
+        std::uint64_t dependency = 0, sequence = 0, snapshotRevision = 0, configuration = 0, started = 0;
+        std::optional<Reply> reply;
+        ULONGLONG replyReadyAt = 0;
     };
     std::unique_ptr<SourceJob> sourceJob;
     std::set<Key> sourceAttempts, sourceSelections;
@@ -223,6 +226,7 @@ struct MenuService::Impl
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     bool foregroundScanRequested = false;
+    std::uint64_t configurationRevision = 0;
     CatalogueForegroundDemand foregroundScanDemand{false, [wasPaused = false]() mutable {
         const bool paused = BackgroundCatalogueFullscreen();
         if (paused != wasPaused) MenuTrace("catalogue", paused ? "paused.fullscreen" : "resumed.fullscreen");
@@ -256,7 +260,11 @@ struct MenuService::Impl
         if (!readCatalogue)
         {
             readCatalogue = [this] {
-                return ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, true, foregroundScanDemand);
+                auto value = ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, true, foregroundScanDemand);
+                const auto waited = foregroundScanDemand.BudgetWaitMilliseconds();
+                snowdesktop::performance::Value("shell.catalogue", "background_budget_wait_ms", {}, static_cast<double>(waited));
+                MenuTrace("catalogue", "budget_wait", static_cast<double>(waited));
+                return value;
             };
             if (!verifyFolder) verifyFolder = [] { return ReadFolderCatalogueRevision(); };
             if (!verifyBackground) verifyBackground = [](Context context) { return ReadBackgroundCatalogueRevision(context); };
@@ -630,6 +638,7 @@ struct MenuService::Impl
         row.snapshotTargetChecked = !row.snapshotIdentity.empty();
         row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
+        ++row.snapshotRevision;
         row.used = ++clock;
         RebuildAvailable();
         sourcePending |= inspected || AnyEnabled();
@@ -649,7 +658,7 @@ struct MenuService::Impl
         {
             if (row.request.startPinOnly || !row.request.sourceClsid.empty()) continue;
             if (!inspected && (row.request.background || row.request.extended || row.request.originalShortcutOnly)) continue;
-            if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
+            if (!row.view.snapshot || row.snapshotIdentity.empty() || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
             const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
             const auto routable = [](const auto &entry) {
                 return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
@@ -684,36 +693,64 @@ struct MenuService::Impl
                 sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
+                job->selection = row.request;
                 job->attempts = std::move(attempts);
                 // Attribution is metadata-only, independent of the original-file
                 // executable recovery lane that produced these observed rows.
                 job->request.originalShortcutOnly = false;
                 job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
                 job->request.sourceKey = std::move(typeKey);
-                job->revision = catalogue.revision; job->menuRevision = row.view.revision;
+                job->identity = row.snapshotIdentity;
+                job->dependency = row.snapshotDependency;
+                job->sequence = row.sequence; job->snapshotRevision = row.snapshotRevision;
+                job->configuration = configurationRevision;
                 return job;
             }
         }
         sourcePending = false;
         return {};
     }
-    void CompleteSource(SourceJob &job, const Reply &reply)
+    bool CompleteSource(SourceJob &job, const Reply &reply, MenuSnapshotCache &cache)
     {
+        // Target I/O remains on the service worker, outside the publication lock.
+        const auto target = cache.Capture(job.selection);
         std::lock_guard lock(mutex);
-        MenuTrace("attribution", reply.ok ? "completed" : "failed", double(GetTickCount64() - job.started),
-            static_cast<unsigned>(reply.entries.size()));
         if (!reply.ok && !reply.error.empty()) failedSources.insert(job.source.id);
         const auto current = rows.find(job.key);
-        if (!reply.ok) return;
-        if (catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
-            current->second.view.revision != job.menuRevision)
-        {
-            // A notification can invalidate a reply without changing its
-            // provider. Do not permanently mark an unaccepted proof as tried.
+        const auto discard = [&] {
             for (const auto &attempt : job.attempts) sourceAttempts.erase(attempt);
             sourcePending |= inspected || AnyEnabled();
-            return;
+            MenuTrace("attribution", "proof_discarded");
+            return true;
+        };
+        if (!reply.ok) { MenuTrace("attribution", "failed"); return true; }
+        if (current != rows.end() && (!target || target.identity != job.identity) &&
+            current->second.snapshotIdentity == job.identity)
+        {
+            current->second.checkRequested = true;
+            current->second.invalid = true; current->second.registryInvalid = false;
         }
+        if (!target || target.identity != job.identity || current == rows.end() ||
+            current->second.sequence != job.sequence || current->second.snapshotRevision != job.snapshotRevision ||
+            current->second.expires <= MenuSnapshotCache::Now() || !current->second.view.snapshot ||
+            configurationRevision != job.configuration) return discard();
+        const auto &row = current->second;
+        // A notification changes display state, not the captured menu content.
+        // Hold a successful reply until live proof settles instead of querying
+        // its extension again for each notification / snapshot restoration.
+        if ((catalogueStale || checkedRegistryRevision < registryRevision) &&
+            !ScopeChecked(row.view.contexts, registryRevision))
+        {
+            if (failedRegistryRevision >= registryRevision ||
+                GetTickCount64() - job.replyReadyAt >= kInventoryWaitMs) return discard();
+            scanRequested |= catalogueStale;
+            return false;
+        }
+        if ((row.invalid && !row.registryInvalid) || !job.dependency ||
+            Dependency(catalogue, row.request, row.view.contexts) != job.dependency ||
+            std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &source) {
+                return source.id == job.source.id && source.systemEnabled && MenuRevision(source) == MenuRevision(job.source);
+            })) return discard();
         for (const auto &provider : MatchSourceCommands(job.actual, reply))
             if (const auto found = observed.find(provider); found != observed.end() && found->second.kind == RegistrationKind::Observed)
             {
@@ -724,6 +761,9 @@ struct MenuService::Impl
                     found->second.sources.push_back(proof);
             }
         RebuildAvailable();
+        MenuTrace("attribution", "completed", double(GetTickCount64() - job.started),
+            static_cast<unsigned>(reply.entries.size()));
+        return true;
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
@@ -1309,10 +1349,14 @@ struct MenuService::Impl
             }
             if (sourceJob)
             {
-                std::optional<Reply> reply;
-                try { reply = sourceJob->work.poll(); } catch (...) { reply = Reply{false, {}, "source query exception"}; }
-                if (!reply && GetTickCount64() - sourceJob->started >= 8000) reply = Reply{false, {}, "source query timeout"};
-                if (reply) { CompleteSource(*sourceJob, *reply); sourceJob.reset(); }
+                if (!sourceJob->reply)
+                {
+                    try { sourceJob->reply = sourceJob->work.poll(); } catch (...) { sourceJob->reply = Reply{false, {}, "source query exception"}; }
+                    if (!sourceJob->reply && GetTickCount64() - sourceJob->started >= 8000)
+                        sourceJob->reply = Reply{false, {}, "source query timeout"};
+                    if (sourceJob->reply) sourceJob->replyReadyAt = GetTickCount64();
+                }
+                if (sourceJob->reply && CompleteSource(*sourceJob, *sourceJob->reply, cache)) sourceJob.reset();
             }
             // Arbitrary extensions retain two supervised slots. Microsoft's
             // Start handler has one reserved slot and never inherits a worker
@@ -1446,14 +1490,26 @@ struct MenuService::Impl
                     row.fullMenuRequested = false;
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
-                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty();
+                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty() &&
+                    !request.background && request.context != Context::Desktop;
                 if (nativeFactory && usePreparedQuery)
                 {
                     bool unverified = false;
                     { std::lock_guard lock(mutex);
                       unverified = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
-                      preparationRequested |= ObjectPreparationEnabled(); }
-                    if (unverified) Session::ReleasePreparedMenuWorker();
+                      preparationRequested |= ObjectPreparationEnabled();
+                      if (unverified && preparedSlot && failedRegistryRevision < registryRevision &&
+                          (!scanning || ActiveScanElapsed() < kInventoryWaitMs))
+                      {
+                          auto &row = rows[key]; row.queued = true; row.due = GetTickCount64() + 20;
+                          scanRequested |= catalogueStale; RequestForegroundScan();
+                          MenuTrace("schedule", "prepared_verification_wait");
+                          continue;
+                      }
+                    }
+                    // Failed verification cannot lend a stale prepared process
+                    // to a fresh query. Successful unchanged proof keeps it.
+                    if (unverified && preparedSlot) Session::ReleasePreparedMenuWorker();
                 }
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
@@ -1672,6 +1728,8 @@ void MenuService::Configure(Preferences preferences)
         const bool enabled = impl_->AnyEnabled();
         const bool desktop = !impl_->shown[static_cast<int>(Context::Desktop)].empty();
         const bool objectPreparation = impl_->ObjectPreparationEnabled();
+        if (!impl_->configured || impl_->preferences != preferences)
+            ++impl_->configurationRevision;
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
         impl_->sourcePending |= impl_->AnyEnabled();

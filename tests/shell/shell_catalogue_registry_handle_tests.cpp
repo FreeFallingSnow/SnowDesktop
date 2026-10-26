@@ -331,6 +331,32 @@ void CheckPausedRegistryCatalogue(const ext::Catalogue& expected)
 
 void TestCatalogueRegistryHandles()
 {
+    // Real subscriptions: nested browse-state writes must not signal menu
+    // invalidation, including when a genuine registration changes concurrently.
+    {
+        PrivateRegistry fixture;
+        {
+            const std::wstring packages = L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
+            Put(fixture.value, L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU", L"state", L"one");
+            Put(fixture.value, packages + L"\\Example", L"PackageRootFolder", L"private");
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"unused.exe");
+            ext::detail::MenuRegistryWatch watch(fixture.value, L"Classes", 0, true);
+            Check(watch.armed, "split Classes notifications are armed");
+            Put(fixture.value, L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU", L"state", L"two");
+            Check(!watch.Changed(), "browse state alone cannot invalidate menu registration");
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"changed.exe");
+            Check(watch.Changed(), "a real registration is retained alongside browse noise");
+            Put(fixture.value, packages + L"\\Example", L"PackageRootFolder", L"changed");
+            Check(watch.Changed(), "package metadata remains watched under Local Settings");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"new");
+            Check(watch.Changed(), "a new class root is detected and subscribed");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"edited");
+            Check(watch.Changed(), "a newly subscribed root retains nested value coverage");
+            Check(RegDeleteTreeW(fixture.value, L"Classes\\New.Type") == ERROR_SUCCESS, "remove owned type");
+            Check(watch.Changed(), "class root removal remains observable");
+        }
+        fixture.Cleanup();
+    }
     // The production watch previously invalidated the complete catalogue for
     // any value under the parent of a missing optional registration.
     {
@@ -365,6 +391,31 @@ void TestCatalogueRegistryHandles()
     CheckCatalogueWorkerBudget(false, false, 1, true);
     for (int action = 0; action < 3; ++action) CheckCataloguePauseWake(action);
     CheckCataloguePauseProgress();
+    for (bool cancel : {false, true})
+    {
+        ext::CatalogueForegroundDemand budget;
+        std::atomic_bool entered = false;
+        auto work = std::async(std::launch::async, [&] {
+            try {
+                budget.WaitUntilAllowed();
+                // Simulate an indivisible system call exceeding one work slice.
+                std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                entered = true; budget.WaitUntilAllowed(); return 1;
+            } catch (const std::runtime_error &) { return 0; }
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while ((!entered || !budget.BudgetWaitMilliseconds()) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        const bool throttled = budget.BudgetWaitMilliseconds() > 0;
+        if (cancel) budget.Cancel(); else budget.Promote();
+        const bool woke = work.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+        if (!woke) budget.Cancel();
+        const int result = work.get();
+        Check(throttled && woke && result == (cancel ? 0 : 1),
+            "background soft budget yields after a long batch and foreground/cancel wakes it");
+        budget.Reset(true); budget.WaitUntilAllowed();
+        Check(budget.BudgetWaitMilliseconds() == 0, "new foreground scan resets the background budget");
+    }
     PrivateRegistry registry;
     {
         OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User");

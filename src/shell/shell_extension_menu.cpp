@@ -48,7 +48,8 @@ struct CacheState
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\nvcplui.exe",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
-                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size())));
+                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size()),
+                    lstrcmpiW(path, L"Software\\Classes") == 0));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 8));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
