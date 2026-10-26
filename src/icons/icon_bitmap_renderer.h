@@ -33,7 +33,7 @@ inline DrawPlan Prepare(int sourceWidth, int sourceHeight, RECT frame,
 }
 
 inline void Draw(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
-    const DrawPlan& plan, float opacity = 1.0f)
+    const DrawPlan& plan, float opacity = 1.0f, bool translucentMaterial = false)
 {
     if (!target || !bitmap || IsRectEmpty(&plan.bounds))
         return;
@@ -44,10 +44,15 @@ inline void Draw(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
 
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
     if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&context))) && context)
+    {
+        // Cubic ringing can leave RGB above alpha on translucent white rims.
+        // Positive linear samples keep those pixels safe for later composition.
+        const auto interpolation = !plan.preserveAspectRatio ? D2D1_INTERPOLATION_MODE_LINEAR
+            : translucentMaterial ? D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR
+                                  : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
         context->DrawBitmap(bitmap, &destination, opacity,
-            plan.preserveAspectRatio ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
-                                     : D2D1_INTERPOLATION_MODE_LINEAR,
-            nullptr, nullptr);
+            interpolation, nullptr, nullptr);
+    }
     else
         target->DrawBitmap(bitmap, destination, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }

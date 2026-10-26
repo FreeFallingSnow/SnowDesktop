@@ -105,7 +105,7 @@ struct Canvas
         return pixels;
     }
     std::vector<unsigned> DrawBitmap(ID2D1Bitmap* bitmap, RECT frame,
-        bool preserveAspectRatio = true)
+        bool preserveAspectRatio = true, bool translucentMaterial = false)
     {
         const auto source = bitmap->GetPixelSize();
         const auto plan = snowdesktop::icon_bitmap_renderer::Prepare(
@@ -113,7 +113,7 @@ struct Canvas
             frame, preserveAspectRatio);
         target->BeginDraw();
         target->Clear(D2D1::ColorF(0, 0.f));
-        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan);
+        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan, 1.0f, translucentMaterial);
         Require(target->EndDraw(), "shared icon bitmap draw");
         return ReadPixels();
     }
@@ -555,6 +555,45 @@ int RunIconBitmapRenderingTests()
             const auto pixels = canvas.DrawBitmap(transparent.Get(), {20, 20, 116, 116});
             Check(Red(Pixel(pixels, 68, 68)) && (Pixel(pixels, 28, 28) >> 24) == 0,
                 "shared bitmap fitting preserves artwork transparency instead of cropping its margins");
+
+            // The reported white rim used a 15% plate and 30% reflection.
+            // Exercise the production bitmap draw on a transparent surface:
+            // cubic negative lobes must not turn its rim into additive color.
+            auto glass = snowdesktop::icon_beautify::MakePreset(snowdesktop::IconBeautifyPreset::FrostedGlassLight);
+            glass.backgroundOpacity = .15f; glass.edgeHighlightWidth = 1.8f; glass.edgeHighlightStrength = .3f;
+            glass.edgeLight.spread = 50; glass.edgeLight.feather = 70; glass.edgeLight.ambient = .1f;
+            glass.edgeLight.primary = .67f; glass.edgeLight.opposite = .63f;
+            glass.edgeLight.innerGlow = 1.6f; glass.edgeLight.outerGlow = .6f;
+            glass.edgeLight.glowStrength = .12f; glass.edgeLight.glowFalloff = 2.5f;
+            glass.edgeLight.shadowStrength = .2f; glass.edgeLight.shadowFalloff = 4.65f;
+            const auto premultiplied = [](const auto& values) {
+                return std::all_of(values.begin(), values.end(), [](unsigned pixel) {
+                    const auto alpha = pixel >> 24;
+                    return (pixel & 255) <= alpha && ((pixel >> 8) & 255) <= alpha &&
+                        ((pixel >> 16) & 255) <= alpha;
+                });
+            };
+            for (const int sourceSize : {64, 128, 256})
+            {
+                std::vector<std::uint32_t> glyph(static_cast<size_t>(sourceSize) * sourceSize);
+                for (int y = sourceSize / 3; y < sourceSize * 2 / 3; ++y)
+                    for (int x = sourceSize / 3; x < sourceSize * 2 / 3; ++x)
+                        glyph[static_cast<size_t>(y) * sourceSize + x] = 0xff24a060;
+                const auto material = snowdesktop::icon_beautify::Render(glyph, sourceSize, sourceSize, glass);
+                Check(premultiplied(material), "the glass fixture starts with bounded premultiplied source pixels");
+                ComPtr<ID2D1Bitmap> bitmap;
+                Require(canvas.target->CreateBitmap(D2D1::SizeU(sourceSize, sourceSize), material.data(), sourceSize * 4,
+                    D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96),
+                    &bitmap), "translucent glass fixture");
+                for (const int targetSize : {39, 47, 78})
+                {
+                    const auto rendered = canvas.DrawBitmap(bitmap.Get(), {20, 20, 20 + targetSize, 20 + targetSize}, true, true);
+                    Check(premultiplied(rendered), "scaled glass rims retain RGB within alpha without a black underlay");
+                    Check((Pixel(rendered, 20 + targetSize / 2, 20 + targetSize / 2) >> 24) == 255 &&
+                        (Pixel(rendered, 24, 20 + targetSize / 2) >> 24) > 0,
+                        "safe glass sampling retains its opaque glyph and translucent plate");
+                }
+            }
         }
     }
     catch (const std::exception& error)

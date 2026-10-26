@@ -617,10 +617,12 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     const auto glass = iconGlassBackdrop_.find(bitmap);
     const auto styled = iconBitmapStyles_.find(bitmap);
     const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
-    if (glass != iconGlassBackdrop_.end() && glass->second && style.enabled && style.glassEnabled)
+    const bool translucentMaterial = glass != iconGlassBackdrop_.end() && glass->second &&
+        style.enabled && style.glassEnabled;
+    if (translucentMaterial)
         RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
 
-    snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity);
+    snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
