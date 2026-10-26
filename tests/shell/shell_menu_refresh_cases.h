@@ -192,13 +192,17 @@ void CheckRegistryFanout()
 {
     TemporaryDirectory temp; Registry registry(temp);
     std::atomic_bool readyA = false, readyB = false, allowA = false, allowB = false;
-    auto first = std::async(std::launch::async, [&] {
+    std::promise<bool> firstResult, laterResult;
+    auto firstValue = firstResult.get_future(), laterValue = laterResult.get_future();
+    // MSVC's async executor can retain TLS on reused pool threads. Explicit
+    // threads make these distinct subscribers and join their TLS teardown.
+    std::jthread first([&] {
         ext::TakeMenuRegistryChanges(); readyA = true;
         const auto until = GetTickCount64() + 5000;
         while (!allowA && GetTickCount64() < until) Sleep(1);
-        return ext::TakeMenuRegistryChanges();
+        firstResult.set_value(ext::TakeMenuRegistryChanges());
     });
-    auto later = std::async(std::launch::async, [&] {
+    std::jthread later([&] {
         ext::TakeMenuRegistryChanges(); readyB = true;
         const auto until = GetTickCount64() + 5000;
         while (!allowB && GetTickCount64() < until) Sleep(1);
@@ -206,20 +210,22 @@ void CheckRegistryFanout()
         const auto handles = ext::MenuRegistryWaitHandles(complete);
         const bool woke = !handles.empty() && WaitForMultipleObjects(static_cast<DWORD>(handles.size()),
             handles.data(), FALSE, 100) < static_cast<DWORD>(handles.size());
-        return complete && woke && ext::TakeMenuRegistryChanges();
+        laterResult.set_value(complete && woke && ext::TakeMenuRegistryChanges());
     });
     ReleaseOnExit releaseA{allowA}, releaseB{allowB};
     PumpUntil([&] { return readyA && readyB; }, "both STAs register independent notification consumers");
     registry.Notify(1); allowA = true;
-    const bool firstChanged = first.get();
+    const bool firstChanged = firstValue.get(); first.join();
     // The first consumer has reset/rearmed the OS subscription before the
     // second even starts waiting. Its own broadcast event must retain the edge.
     allowB = true;
-    const bool laterChanged = later.get();
+    const bool laterChanged = laterValue.get(); later.join();
     Expect(firstChanged && laterChanged, "SHARED_REGISTRY_WAKE_MUST_REACH_EVERY_CONSUMER: late wait cannot lose a sibling's notification");
     registry.Notify(2);
-    auto joining = std::async(std::launch::async, [] { return ext::TakeMenuRegistryChanges(); });
-    const bool replayedOldChange = joining.get();
+    std::promise<bool> joiningResult;
+    auto joiningValue = joiningResult.get_future();
+    std::jthread joining([&] { joiningResult.set_value(ext::TakeMenuRegistryChanges()); });
+    const bool replayedOldChange = joiningValue.get(); joining.join();
     const bool existingChanged = ext::TakeMenuRegistryChanges();
     Expect(!replayedOldChange && existingChanged,
         "NEW_REGISTRY_CONSUMER_STARTS_CURRENT: drain older notifications to existing consumers before subscribing a fresh service");
