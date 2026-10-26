@@ -1,5 +1,4 @@
 #include "app/app.h"
-#include "icons/icon_glass_color.h"
 
 #include <array>
 
@@ -263,7 +262,6 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             ~TooltipDrawScope() { damage.EndDraw(); }
         };
         { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
-          snowdesktop::icon_glass_color::ScopedDesktopPaint iconColorPaint(context.Get(), POINT{virtualLeft_, virtualTop_});
           DrawDesktopForeground(context.Get(), hiddenMode, dcompUpdate); }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();

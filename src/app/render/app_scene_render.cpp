@@ -6,7 +6,6 @@
 #include "drag_drop/drag_visual_rules.h"
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_shape_geometry.h"
-#include "icons/icon_glass_color.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -54,7 +53,6 @@ void DesktopApp::DrawStaticBackground(
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
     {
-        snowdesktop::icon_glass_color::ScopedDesktopPaint iconColorPaint(ctx, POINT{virtualLeft_, virtualTop_});
         struct ForegroundTitle
         {
             DesktopIcon* icon = nullptr;

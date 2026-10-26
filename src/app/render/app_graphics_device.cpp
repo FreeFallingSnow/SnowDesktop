@@ -2,6 +2,8 @@
 #include "app/app.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
+#include "desktop/display_color_mode.h"
+#include "desktop_composition_effect.h"
 
 // Graphics-device and composition-surface lifecycle.
 
@@ -69,7 +71,7 @@ HRESULT DesktopApp::InitGraphicsDevices()
     if (FAILED(hr)) return hr;
 
     // DComp — create from the D2D device for interop
-    hr = DCompositionCreateDevice2(d2dDevice.Get(), __uuidof(IDCompositionDesktopDevice),
+    hr = DCompositionCreateDevice3(d2dDevice.Get(), __uuidof(IDCompositionDesktopDevice),
         reinterpret_cast<void**>(dcompDevice.GetAddressOf()));
     if (FAILED(hr)) return hr;
 
@@ -309,6 +311,16 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
             wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
             return hr;
+        }
+        if (snowdesktop::display_color::AnyWideColorMonitor())
+        {
+            const HRESULT effectResult = snowdesktop::desktop_composition_effect::ApplyIdentity(
+                dcompDevice_.Get(), dcompVisual_.Get());
+            wchar_t message[128]{};
+            swprintf_s(message, L"Desktop WCG intermediate effect hr=0x%08X",
+                static_cast<unsigned>(effectResult));
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message,
+                FAILED(effectResult) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         hr = dcompDevice_->Commit();
         if (FAILED(hr))

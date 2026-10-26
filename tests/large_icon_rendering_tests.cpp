@@ -1,6 +1,5 @@
 #include "icons/large_icon_renderer.h"
 #include "icons/icon_bitmap_renderer.h"
-#include "icons/icon_glass_color.h"
 #include "icons/icon_loading_placeholder.h"
 #include "icons/icon_image_codec.h"
 #include "icons/icon_hbitmap_pixels.h"
@@ -595,66 +594,6 @@ int RunIconBitmapRenderingTests()
                         "safe glass sampling retains its opaque glyph and translucent plate");
                 }
             }
-        }
-        {
-            using namespace snowdesktop;
-            Check(!icon_glass_color::NeedsConversion(display_color::Mode::Sdr) &&
-                icon_glass_color::NeedsConversion(display_color::Mode::WideColor) &&
-                !icon_glass_color::NeedsConversion(display_color::Mode::Hdr),
-                "perceptual glass coverage is limited to wide-color SDR composition");
-            Check(icon_glass_color::LinearCoverage(0.f) == 0.f && icon_glass_color::LinearCoverage(1.f) == 1.f,
-                "coverage conversion retains fully transparent and opaque endpoints");
-            Canvas canvas(true);
-            const auto plan = icon_bitmap_renderer::Prepare(16, 16, RECT{20, 20, 36, 36});
-            const auto converted = [&](unsigned pixel, float opacity) {
-                const std::vector<unsigned> source(16 * 16, pixel);
-                ComPtr<ID2D1Bitmap> bitmap;
-                Require(canvas.target->CreateBitmap(D2D1::SizeU(16, 16), source.data(), 16 * 4,
-                    D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96),
-                    &bitmap), "wide-color material fixture");
-                canvas.target->BeginDraw(); canvas.target->Clear(D2D1::ColorF(0, 0.f));
-                Check(icon_glass_color::DrawConverted(canvas.target.Get(), bitmap.Get(), plan, opacity),
-                    "the production WCG effect accepts a real device-context bitmap");
-                Require(canvas.target->EndDraw(), "wide-color material draw");
-                const auto rendered = canvas.ReadPixels();
-                Check(Pixel(rendered, 19, 28) == 0 && Pixel(rendered, 36, 28) == 0 &&
-                    Pixel(rendered, 28, 19) == 0 && Pixel(rendered, 28, 36) == 0,
-                    "wide-color filtering stays inside the original icon frame");
-                return Pixel(rendered, 28, 28);
-            };
-            const auto white = converted(0x80808080u, 1.f);
-            Check(std::abs(static_cast<int>(white >> 24) - 55) <= 1 &&
-                (white & 255) == (white >> 24) && ((white >> 8) & 255) == (white >> 24) &&
-                ((white >> 16) & 255) == (white >> 24),
-                "50 percent white uses the sRGB linear coverage rather than 50 percent linear light");
-            const auto color = converted(0x80604020u, 1.f);
-            Check(std::abs(static_cast<int>(color >> 24) - 55) <= 1 &&
-                std::abs(static_cast<int>((color >> 16) & 255) - 41) <= 1 &&
-                std::abs(static_cast<int>((color >> 8) & 255) - 28) <= 1 &&
-                std::abs(static_cast<int>(color & 255) - 14) <= 1,
-                "coverage conversion preserves straight color while updating premultiplied channels");
-            Check(converted(0xffff4020u, 1.f) == 0xffff4020u,
-                "opaque glyph colors are unchanged by wide-color glass conversion");
-            const auto faded = converted(0xffffffffu, .5f);
-            Check(std::abs(static_cast<int>(faded >> 24) - 55) <= 1,
-                "draw opacity participates in perceptual coverage conversion");
-            ComPtr<ID2D1Bitmap> red, green;
-            const std::vector<unsigned> redPixels(16 * 16, 0xffff0000u), greenPixels(16 * 16, 0xff00ff00u);
-            const auto properties = D2D1::BitmapProperties(
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
-            Require(canvas.target->CreateBitmap(D2D1::SizeU(16, 16), redPixels.data(), 16 * 4, properties, &red), "first shared-effect input");
-            Require(canvas.target->CreateBitmap(D2D1::SizeU(16, 16), greenPixels.data(), 16 * 4, properties, &green), "second shared-effect input");
-            canvas.target->BeginDraw(); canvas.target->Clear(D2D1::ColorF(0, 0.f));
-            Check(icon_glass_color::DrawConverted(canvas.target.Get(), red.Get(), plan, .5f) &&
-                icon_glass_color::DrawConverted(canvas.target.Get(), green.Get(),
-                    icon_bitmap_renderer::Prepare(16, 16, RECT{52, 20, 68, 36}), .5f),
-                "two icons can reuse the color effects within one paint");
-            Require(canvas.target->EndDraw(), "shared color-effect paint");
-            const auto shared = canvas.ReadPixels();
-            Check(((Pixel(shared, 28, 28) >> 16) & 255) > 40 && ((Pixel(shared, 28, 28) >> 8) & 255) == 0 &&
-                ((Pixel(shared, 60, 28) >> 8) & 255) > 40 && ((Pixel(shared, 60, 28) >> 16) & 255) == 0,
-                "queued draws retain their own input instead of adopting the last cached icon");
-            icon_glass_color::ResetResources();
         }
     }
     catch (const std::exception& error)

@@ -58,4 +58,16 @@ inline Mode ModeForMonitor(HMONITOR monitor)
         if (_wcsicmp(entry.name.c_str(), info.szDevice) == 0) return entry.mode;
     return Mode::Sdr;
 }
+
+inline bool AnyWideColorMonitor()
+{
+    bool found = false;
+    EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR monitor, HDC, LPRECT, LPARAM context) -> BOOL {
+            if (ModeForMonitor(monitor) != Mode::WideColor) return TRUE;
+            *reinterpret_cast<bool*>(context) = true;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&found));
+    return found;
+}
 }

@@ -196,13 +196,13 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_beautify.cpp
     src/icons/icon_backplate_analysis.inc
     src/icons/icon_beautify_preview.h
-    src/icons/icon_glass_color.h
     src/icons/icon_appearance.h
     src/icons/icon_appearance_codec.h
     src/icons/icon_appearance_rules.h
     src/icons/icon_customization_lifecycle.h
     src/icons/icon_control_source.h
     src/app/render/app_bitmap_cache.cpp
+    src/app/render/desktop_composition_effect.h
     src/app/menus/app_background_menu.cpp
     src/app/render/app_animation_scheduler.cpp
     src/app/input/app_clipboard_interaction.cpp
