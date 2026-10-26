@@ -23,8 +23,14 @@ std::vector<std::wstring> DockContainer::EntryRemovalKeys() const
 
 void DockContainer::PrepareEntryRemoval(size_t entryIndex)
 {
-    if (!app_ || !entries_ || entryIndex >= entries_->size() ||
-        app_->IsRecycleBinDockEntry((*entries_)[entryIndex]) ||
+    if (!app_ || !entries_ || entryIndex >= entries_->size()) return;
+    if (app_->dragSession_.HasContext() || app_->dragDropController_.IsTransportActive() ||
+        app_->widgetAction_ == DesktopApp::WidgetAction::Move)
+    {
+        entryRemovals_->Cancel(RemovalKey((*entries_)[entryIndex]));
+        return;
+    }
+    if (app_->IsRecycleBinDockEntry((*entries_)[entryIndex]) ||
         !snowdesktop::animation::RuntimeAnimationsEnabled() || !app_->d2dContext_) return;
     // Capture final artwork before its item/widget/resources are destroyed.
     // The snapshot shares the renderer's device, never a model or Item pointer.

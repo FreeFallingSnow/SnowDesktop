@@ -792,6 +792,10 @@ void DesktopApp::EndDragSession()
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
     RestoreDesktopAfterDockDrag();
+    // Publish the committed Dock geometry/pixels after all source wrappers
+    // have been released, including drops outside every Dock host window.
+    if (generalSettings_.dockEnabled)
+        UpdateFloatingDockWindowBounds(true);
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }

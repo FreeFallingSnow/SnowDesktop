@@ -293,6 +293,8 @@ void DesktopApp::MoveDockItemsToDesktop(
     const std::vector<Item*>& sourceItems, GridCell targetCell)
 {
     const auto landings = PlanDockDesktopReturn(sourceItems, std::move(targetCell));
+    // Delete-key/menu returns may animate. A drag already supplies its own
+    // visual handoff and must release the source slot immediately.
     for (const auto& landing : landings)
         if (landing.accepted)
             for (const auto& container : containers_)

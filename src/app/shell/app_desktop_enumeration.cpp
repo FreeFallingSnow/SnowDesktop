@@ -357,6 +357,26 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         desktopPidl_.reset(raw);
     }
     if (!snapshot) { RequestShellRefresh(); return; }
+    if (snapshot->desktopComplete && !snapshot->desktopIncremental)
+    {
+        std::unordered_set<std::wstring> observed;
+        for (const auto& item : snapshot->desktopItems) observed.insert(ToUpperInvariant(item.layoutKey));
+        // Explorer or the original desktop entrance can delete a mapped
+        // source without using our file-operation queue. Capture its artwork
+        // before replacing the old item model. Only confirmed pin pruning
+        // commits the exit; an enumeration gap alone never starts animation.
+        for (size_t i = 0; i < dockEntries_.size(); ++i)
+        {
+            const auto& entry = dockEntries_[i];
+            if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
+            for (const auto& container : containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                {
+                    if (observed.contains(ToUpperInvariant(entry.reference))) dock->CancelEntryRemoval(entry);
+                    else if (FindItemIndexByKey(entry.reference) < items_.size()) dock->PrepareEntryRemoval(i);
+                }
+        }
+    }
     auto fresh = std::move(snapshot->desktopItems);
     auto previous = std::exchange(items_, std::move(fresh));
     std::unordered_map<std::wstring, size_t> previousByKey;

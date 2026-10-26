@@ -411,7 +411,7 @@ bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceItems)
     for (const auto index : mappedEntryIndices)
         for (const auto& container : containers_)
             if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
-                dock->PrepareEntryRemoval(index);
+                dock->CancelEntryRemoval(dockEntries_[index]);
     const bool mappingsChanged = snowdesktop::dock_drop_model::RemoveMappings(
         dockEntries_, std::move(mappedEntryIndices), DockDropServices());
     if (usageChanged) SaveDockUsageStats();
