@@ -18,7 +18,7 @@
 namespace snowdesktop
 {
 namespace external_drop_content { struct ShellFileSource; }
-namespace file_history { class History; struct Result; struct Entry; }
+namespace file_history { class History; struct Result; struct Entry; struct Description; }
 
 /** @brief One path-based Shell operation executed by the worker. */
 struct ShellFileOperationStep
@@ -165,6 +165,7 @@ public:
     bool Enqueue(ShellReadRequest request, Completion completion);
     bool CanUndo() const;
     bool CanRedo() const;
+    file_history::Description DescribeHistory(bool redo) const;
     bool EnqueueHistory(bool redo, std::shared_ptr<file_history::Result> result, Completion completion);
     void Stop();
 

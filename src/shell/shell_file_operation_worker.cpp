@@ -491,6 +491,7 @@ ShellFileOperationWorker::ShellFileOperationWorker()
 
 bool ShellFileOperationWorker::CanUndo() const { return history_->CanUndo(); }
 bool ShellFileOperationWorker::CanRedo() const { return history_->CanRedo(); }
+file_history::Description ShellFileOperationWorker::DescribeHistory(bool redo) const { return history_->Describe(redo); }
 
 bool ShellFileOperationWorker::EnqueueHistory(bool redo,
     std::shared_ptr<file_history::Result> result, Completion completion)

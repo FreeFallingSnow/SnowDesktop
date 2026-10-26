@@ -7,6 +7,7 @@
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "widget/runtime/widget_menu_catalogue.h"
+#include "shell/shell_file_history.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -2030,7 +2031,36 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
                 luaPage, luaSearch, luaFilter, workshopAvailable));
     };
+    snowdesktop::NativeTooltip historyTooltip;
+    historyTooltip.SetMenuFeedback(true);
     auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (hover.command == kFileUndoCommand || hover.command == kFileRedoCommand)
+        {
+            const bool redo = hover.command == kFileRedoCommand;
+            const auto description = shellFileOperationWorker_.DescribeHistory(redo);
+            if (CanApplyFileHistory(redo) && !description.items.empty())
+            {
+                const bool rename = description.kind == snowdesktop::file_history::Entry::Kind::Rename;
+                std::wstring body = rename ? _LW("app.menu.rename") :
+                    redo ? _LW("app.menu.delete") : _LW("app.settings.restore");
+                if (description.count > 1) body += L" (" + std::to_wstring(description.count) + L")";
+                for (const auto& [from, to] : description.items)
+                {
+                    body += L"\n";
+                    body += rename ? std::filesystem::path(from).filename().wstring() : from;
+                    if (rename) body += L" → " + std::filesystem::path(to).filename().wstring();
+                }
+                if (description.count > description.items.size()) body += L"\n…";
+                historyTooltip.Configure(snowdesktop::modern_menu::ActiveRootWindow(), dcompDevice_.Get(),
+                    dwriteFactory_.Get(), snowdesktop::NativeTooltipAppearance());
+                historyTooltip.SetTarget(redo ? "file_history.redo" : "file_history.undo", std::move(body),
+                    hover.itemScreenRect, snowdesktop::NativeTooltipPlacement::Below, false,
+                    std::wstring(redo ? _LW("app.menu.redo") : _LW("app.menu.undo")) +
+                        (redo ? L" (Ctrl+Y)" : L" (Ctrl+Z)"));
+            }
+            else historyTooltip.Hide();
+        }
+        else historyTooltip.Hide();
         if (!wallpaperPrefetchStarted &&
             IsAddWidgetMenuCommand(hover.command))
         {
@@ -2143,9 +2173,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
-        [&]() { return previewWindow.Handle(); }, false,
+        [&]() { return historyTooltip.Visible() ? historyTooltip.Window() : previewWindow.Handle(); }, false,
         kContextPageRename, kContextPageRenameCancel,
         prepareWidgetSubmenu);
+    historyTooltip.Close();
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);

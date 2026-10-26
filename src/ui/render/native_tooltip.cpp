@@ -124,7 +124,7 @@ struct NativeTooltip::Impl
     UINT width = 0, height = 0;
     float measuredWidth = 0, measuredHeight = 0;
     bool contentDirty = true, paintDirty = true, highContrast = false, visible = false;
-    bool dragFeedback = false, hidingWindow = false;
+    bool dragFeedback = false, menuFeedback = false, hidingWindow = false;
     HRESULT lastError = S_OK;
     std::shared_ptr<AccessibleState> accessible = std::make_shared<AccessibleState>();
     ComPtr<IRawElementProviderSimple> provider;
@@ -294,7 +294,7 @@ struct NativeTooltip::Impl
             (input.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE));
         if (state.key.empty() || state.text.empty() || !owner || !IsWindowVisible(owner) || !composition || !text)
         { Hide(); return; }
-        if ((!dragFeedback && GetCapture()) || inMenu) { Hide(); return; }
+        if ((!dragFeedback && !menuFeedback && GetCapture()) || (!menuFeedback && inMenu)) { Hide(); return; }
         if (!EnsureWindow()) return;
         MONITORINFO monitor{sizeof(monitor)};
         const auto handle = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
@@ -478,6 +478,7 @@ void NativeTooltip::Close() { impl_->Close(); }
 bool NativeTooltip::Visible() const { return impl_->visible; }
 HWND NativeTooltip::Window() const { return impl_->window; }
 void NativeTooltip::SetDragFeedback(bool enabled) { impl_->dragFeedback = enabled; }
+void NativeTooltip::SetMenuFeedback(bool enabled) { impl_->menuFeedback = enabled; }
 void NativeTooltip::Invalidate()
 {
     impl_->format.Reset(); impl_->measured = {};

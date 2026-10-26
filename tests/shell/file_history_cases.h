@@ -67,8 +67,17 @@ inline void Run(const std::filesystem::path& parent)
     std::ofstream(original) << "unchanged file contents";
     Rename(worker, original, L"renamed.txt");
     Require(worker.CanUndo() && !worker.CanRedo(), "successful queued rename publishes undo availability");
+    const auto undoName = worker.DescribeHistory(false);
+    Require(undoName.count == 1 && undoName.items.size() == 1 && undoName.kind == snowdesktop::file_history::Entry::Kind::Rename &&
+        std::filesystem::path(undoName.items.front().first).filename() == L"renamed.txt" &&
+        std::filesystem::path(undoName.items.front().second).filename() == L"original.txt",
+        "undo hint describes the actual reverse rename rather than the original action");
     Require(Apply(worker, false) && std::filesystem::exists(original) && !std::filesystem::exists(renamed),
         "Issue 32: production worker undo restores the original filename");
+    const auto redoName = worker.DescribeHistory(true);
+    Require(redoName.count == 1 && redoName.items.size() == 1 && std::filesystem::path(redoName.items.front().first).filename() == L"original.txt" &&
+        std::filesystem::path(redoName.items.front().second).filename() == L"renamed.txt",
+        "redo hint describes the forward rename after undo");
     Require(worker.CanRedo() && Apply(worker, true) && Contents(renamed) == "unchanged file contents",
         "redo reapplies the exact rename without changing contents");
     std::ofstream(original) << "new unrelated file";
@@ -92,6 +101,8 @@ inline void Run(const std::filesystem::path& parent)
     Require(worker.Enqueue(std::move(copy), [copied](bool ok) { copied->set_value(ok); }), "untracked copy is queued");
     Require(copyDone.wait_for(std::chrono::seconds(20)) == std::future_status::ready && copyDone.get() &&
         !worker.CanUndo() && !worker.CanRedo(), "untracked mutation is a barrier rather than undoing an older unrelated rename");
+    Require(worker.DescribeHistory(false).count == 0 && worker.DescribeHistory(true).items.empty(),
+        "history barrier removes old hint content as well as availability");
     const auto unicode = Rename(worker, original, L"文档-测试.txt");
     Require(Apply(worker, false) && Apply(worker, true) && Contents(unicode.path) == "replacement must survive",
         "Unicode names survive undo and redo");
@@ -108,6 +119,9 @@ inline void Run(const std::filesystem::path& parent)
         Require(Delete(deletion, {one.wstring(), two.wstring()}), "file and nonempty folder enter the Recycle Bin");
         Require(!std::filesystem::exists(one) && !std::filesystem::exists(two) && deletion.CanUndo(),
             "recycle completion records an undoable group");
+        Require(deletion.DescribeHistory(false).count == 2 &&
+            deletion.DescribeHistory(false).kind == snowdesktop::file_history::Entry::Kind::Delete,
+            "group recovery hint reports the next operation and both members");
         Require(Apply(deletion, false) && Contents(one) == "recover exactly this file" &&
             Contents(two / L"child.txt") == "nested contents", "whole-group undo restores files and nonempty directories");
         Require(Apply(deletion, true) && !std::filesystem::exists(one) && !std::filesystem::exists(two),
@@ -115,6 +129,9 @@ inline void Run(const std::filesystem::path& parent)
         std::ofstream(one) << "occupied restore destination";
         Require(!Apply(deletion, false) && Contents(one) == "occupied restore destination" &&
             Contents(two / L"child.txt") == "nested contents", "partial undo restores only unblocked members");
+        const auto remaining = deletion.DescribeHistory(false);
+        Require(remaining.count == 1 && remaining.items.size() == 1 && remaining.items.front().first == one.wstring(),
+            "partial-retry hint names only the still-pending restore member");
         std::filesystem::remove(one);
         Require(Apply(deletion, false) && Contents(one) == "recover exactly this file", "retry restores only the remaining exact recycle item");
         Require(Apply(deletion, true) && !std::filesystem::exists(one), "redo recycles the successfully restored file again");

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,6 +66,13 @@ struct Entry
     std::vector<BYTE> recycledId;
 };
 using Group = std::vector<Entry>;
+struct Description
+{
+    Entry::Kind kind = Entry::Kind::Rename;
+    size_t count = 0;
+    // Up to three actual paths, in the order the next command will apply.
+    std::vector<std::pair<std::wstring, std::wstring>> items;
+};
 struct Result
 {
     bool succeeded = false;
@@ -263,6 +271,11 @@ class History
 public:
     bool CanUndo() const noexcept { return canUndo_.load(); }
     bool CanRedo() const noexcept { return canRedo_.load(); }
+    Description Describe(bool redo) const
+    {
+        std::lock_guard guard(descriptionMutex_);
+        return redo ? redoDescription_ : undoDescription_;
+    }
     void Clear() { undo_.clear(); redo_.clear(); Publish(); }
     void Record(Group group)
     {
@@ -318,8 +331,29 @@ public:
         return result;
     }
 private:
-    void Publish() { canUndo_ = !undo_.empty(); canRedo_ = !redo_.empty(); }
+    static Description Describe(const std::vector<Group>& groups, bool redo)
+    {
+        Description result;
+        if (groups.empty() || groups.back().empty()) return result;
+        const auto& group = groups.back();
+        result.kind = group.front().kind;
+        result.count = group.size();
+        for (auto item = group.rbegin(); item != group.rend() && result.items.size() < 3; ++item)
+            if (result.kind == Entry::Kind::Rename)
+                result.items.emplace_back(redo ? item->original : item->current, redo ? item->current : item->original);
+            else result.items.emplace_back(item->original, L"");
+        return result;
+    }
+    void Publish()
+    {
+        std::lock_guard guard(descriptionMutex_);
+        undoDescription_ = Describe(undo_, false);
+        redoDescription_ = Describe(redo_, true);
+        canUndo_ = !undo_.empty(); canRedo_ = !redo_.empty();
+    }
     std::vector<Group> undo_, redo_; // Used only by the serial STA.
     std::atomic<bool> canUndo_{false}, canRedo_{false};
+    mutable std::mutex descriptionMutex_;
+    Description undoDescription_, redoDescription_;
 };
 }
