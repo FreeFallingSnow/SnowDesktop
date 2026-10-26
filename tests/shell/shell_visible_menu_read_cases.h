@@ -15,6 +15,7 @@ void CheckProjectionAndCache()
     ext::SetCommon(prefs, "menu:private cascade:14695981039346656037", ext::Category::Objects, true);
     ext::Request request;
     request.visibleMenuProviders = ext::MenuReadProjection(prefs, catalogue, ext::Category::Objects);
+    const auto policy = ext::MenuReadPolicy(prefs, ext::Category::Objects);
     Expect(ext::ReadMenuRootDetails(request, "verb:inspect", "menu:other:") &&
         ext::ReadMenuRootDetails(request, "", "menu:private cascade:") &&
         !ext::ReadMenuRootDetails(request, "verb:hidden", "menu:hidden:"),
@@ -23,6 +24,17 @@ void CheckProjectionAndCache()
     request.visibleMenuProviders = ext::MenuReadProjection(prefs, catalogue, ext::Category::Objects);
     Expect(ext::ReadMenuRootDetails(request, "verb:unidentified", "menu:unidentified:"),
         "unknown registration ownership conservatively retains complete menu details");
+    const auto before = ext::ResolveMenuReadProjection(policy, {}, 1);
+    const auto after = ext::ResolveMenuReadProjection(policy, catalogue, 1);
+    Expect(std::find(before.begin(), before.end(), "*") != before.end() &&
+        std::find(after.begin(), after.end(), "*") == after.end(),
+        "unknown registration retains full details until live metadata resolves the configured command");
+    ext::Preferences scoped;
+    ext::SetOverride(scoped, "verb:folder-only", ext::Context::Folder, ext::Visibility::Show);
+    const auto scopedPolicy = ext::MenuReadPolicy(scoped, ext::Category::Objects);
+    Expect(ext::ResolveMenuReadProjection(scopedPolicy, catalogue, 1).empty() &&
+        ext::ResolveMenuReadProjection(scopedPolicy, catalogue, 2) == std::vector<std::string>{"verb:folder-only"},
+        "worker-resolved file scope does not read details enabled only for folders");
 
     TemporaryDirectory directory; const auto path = directory.path / L"cache-target.txt";
     std::ofstream(path) << "private"; request = {}; request.paths = {path.wstring()};
@@ -81,7 +93,7 @@ void CheckNativeProjection()
     auto query = [&](ext::Request request) {
         ext::Session session(request); const auto pid = session.ProcessId();
         std::optional<ext::Reply> reply;
-        PumpUntil([&] { reply = session.Poll(); return reply.has_value(); }, "native projected query completes");
+        PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "native projected query completes");
         Expect(reply->ok, "native projected query succeeds");
         const auto logPath = std::filesystem::path((directory.path / L"read-trace").wstring() +
             L"." + std::to_wstring(pid) + L".log");

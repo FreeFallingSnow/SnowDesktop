@@ -6,13 +6,30 @@ namespace snowdesktop::shell_extensions
 {
 // Build only from persisted command IDs and registration evidence. Unknown
 // registration ownership retains the complete read rather than guessing by app.
-inline std::vector<std::string> MenuReadProjection(const Preferences &prefs,
-                                                  const Catalogue &catalogue, Category category)
+inline std::vector<std::string> MenuReadPolicy(const Preferences &prefs, Category category)
 {
-    std::set<std::string> ids;
+    std::vector<std::string> result;
     for (int i = 0; i < 4; ++i)
         if (CategoryOf(static_cast<Context>(i)) == category)
             for (const auto &id : EffectiveShownIds(prefs, static_cast<Context>(i)))
+                result.push_back(std::to_string(i) + "|" + id);
+    return result;
+}
+
+// Cache identity contains only the configured policy above. Resolve aliases
+// against the live inventory on dispatch; learning an association must not
+// change the key of a query that is already waiting for that inventory.
+inline std::vector<std::string> ResolveMenuReadProjection(const std::vector<std::string> &policy,
+                                                        const Catalogue &catalogue, unsigned contexts)
+{
+    std::set<std::string> ids;
+    for (auto id : policy)
+    {
+        if (id.size() > 2 && id[0] >= '0' && id[0] <= '3' && id[1] == '|')
+        {
+            if (contexts && !(contexts & (1u << (id[0] - '0')))) continue;
+            id.erase(0, 2);
+        }
             {
                 const auto *pair = StatePairForId(id);
                 if (pair)
@@ -33,7 +50,14 @@ inline std::vector<std::string> MenuReadProjection(const Preferences &prefs,
                         if (a.registration == id) ids.insert(a.provider);
                 }
             }
+    }
     return {ids.begin(), ids.end()};
+}
+
+inline std::vector<std::string> MenuReadProjection(const Preferences &prefs,
+                                                  const Catalogue &catalogue, Category category)
+{
+    return ResolveMenuReadProjection(MenuReadPolicy(prefs, category), catalogue, 0);
 }
 
 inline bool ReadMenuRootDetails(const Request &request, const std::string &canonicalProvider,

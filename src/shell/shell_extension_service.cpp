@@ -255,7 +255,14 @@ struct MenuService::Impl
         : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
     {
         if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
-            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
+            auto query = request;
+            if (query.visibleMenuProviders)
+            {
+                const auto contexts = Contexts(request);
+                std::lock_guard lock(mutex);
+                query.visibleMenuProviders = ResolveMenuReadProjection(*query.visibleMenuProviders, catalogue, contexts);
+            }
+            auto session = std::make_shared<Session>(query, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
@@ -441,6 +448,8 @@ struct MenuService::Impl
     {
         const auto found = requestedViews.find(SelectionBaseKey(request));
         if (found != requestedViews.end() && rows.contains(found->second)) return found->second;
+        const auto direct = SelectionKey(request);
+        if (rows.contains(direct)) return direct;
         return PopupKey(request);
     }
     Key Queue(const Request &request, QueryPriority priority, bool force, unsigned delay = 0)
@@ -971,8 +980,6 @@ struct MenuService::Impl
             else if (schema != 4) return;
             reader.Finish();
             std::lock_guard lock(mutex); catalogue = std::move(value);
-            for (int i = 0; i < 2; ++i)
-                readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
         }
         catch (...) {}
     }
@@ -1018,8 +1025,6 @@ struct MenuService::Impl
                     for (const auto &a : catalogue.associations)
                         if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                     catalogue = std::move(value); scanning = false; catalogueDirty = true;
-                    for (int i = 0; i < 2; ++i)
-                        readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
                     sourcePending |= inspected || AnyEnabled();
                     if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
                     if (!initial && !changed.empty())
@@ -1059,8 +1064,6 @@ struct MenuService::Impl
                 }
                 // Resume learning from exact snapshots only after the live
                 // inventory and target checks restore their original proof.
-                for (int i = 0; i < 2; ++i)
-                    readProjection[i] = MenuReadProjection(preferences, catalogue, static_cast<Category>(i));
                 if (sourcePending)
                     for (auto &[key, row] : rows)
                         if (row.registryInvalid && row.view.snapshot && !row.view.pending)
@@ -1750,7 +1753,7 @@ void MenuService::Configure(Preferences preferences)
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
         for (int i = 0; i < 2; ++i)
-            impl_->readProjection[i] = MenuReadProjection(impl_->preferences, impl_->catalogue, static_cast<Category>(i));
+            impl_->readProjection[i] = MenuReadPolicy(impl_->preferences, static_cast<Category>(i));
         impl_->sourcePending |= impl_->AnyEnabled();
         if (!objectPreparation && impl_->ObjectPreparationEnabled()) impl_->preparationRequested = true;
         if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
