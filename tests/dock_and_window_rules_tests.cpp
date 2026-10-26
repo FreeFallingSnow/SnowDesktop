@@ -736,6 +736,7 @@ void CheckTaskbarMinimizeProtection()
     Check(ShouldProtectAutoHideTaskbar(settings, true, false) &&
         !ShouldProtectAutoHideTaskbar(settings, false, false),
         "permanent hiding protects only its active auto-hide override");
+    for (const bool allMonitors : {false, true})
     for (const bool dockOnPrimary : {false, true})
     {
         SharedState shared;
@@ -744,7 +745,8 @@ void CheckTaskbarMinimizeProtection()
         for (LONG i = 0; i < 2; ++i)
         {
             SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
-            ConfigureSystemTaskbarTargetProtection(target, true, true, (i == 0) == dockOnPrimary);
+            ConfigureSystemTaskbarTargetProtection(target, true, true,
+                (i == 0) == dockOnPrimary, allMonitors);
             shared.targets[i].taskbar = static_cast<std::uintptr_t>(i + 1);
             shared.targets[i].suppressTaskbar = target.suppressTaskbar;
             shared.targets[i].protectAutoHideActivation = target.protectAutoHideActivation;
@@ -758,8 +760,8 @@ void CheckTaskbarMinimizeProtection()
             const auto taskbar = static_cast<std::uintptr_t>(i + 1);
             Check(ProtectsTaskbarMinimize(snapshot, taskbar),
                 "temporary protection covers both Dock and non-Dock screens");
-            Check(ShouldSuppressTaskbar(snapshot, taskbar) == ((i == 0) == dockOnPrimary),
-                "permanent hiding retains its original monitor scope");
+            Check(ShouldSuppressTaskbar(snapshot, taskbar) == (allMonitors || (i == 0) == dockOnPrimary),
+                "permanent hiding follows the selected Dock-only or all-monitor scope");
             snapshot.targets[i].shellPanelVisible = TRUE;
             Check(!ProtectsTaskbarMinimize(snapshot, taskbar) && !ShouldSuppressTaskbar(snapshot, taskbar),
                 "an explicitly open shell panel retains its taskbar access");
@@ -2258,8 +2260,32 @@ int main(int argc, char** argv)
         snowdesktop::SetTaskbarDisplayMode(dock, 2);
         Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide,
             "always hidden taskbar also releases Windows work area");
+        Check(!dock.suppressSystemTaskbarAllMonitors && snowdesktop::TaskbarDisplayMode(dock) == 2 &&
+            ShouldSuppressSystemTaskbar(dock, true) && !ShouldSuppressSystemTaskbar(dock, false),
+            "legacy hidden settings keep their Dock-only scope and require an enabled Dock");
+        snowdesktop::SetTaskbarDisplayMode(dock, 3);
+        Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide &&
+            dock.suppressSystemTaskbarAllMonitors && snowdesktop::TaskbarDisplayMode(dock) == 3 &&
+            ShouldSuppressSystemTaskbar(dock, false),
+            "hiding every screen releases the work area and works independently of Dock enablement");
+        SystemTaskbarTargetAppearance target;
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, false),
+            false, false, dock.suppressSystemTaskbarAllMonitors);
+        Check(target.suppressTaskbar, "all-monitor hiding targets a screen with no Dock");
+        snowdesktop::SetTaskbarDisplayMode(dock, 2);
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, true),
+            false, false, dock.suppressSystemTaskbarAllMonitors);
+        Check(!target.suppressTaskbar && !dock.suppressSystemTaskbarAllMonitors,
+            "switching to Dock-only hiding releases taskbars on other screens");
+        snowdesktop::SetTaskbarDisplayMode(dock, 1);
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, true), false, true, true);
+        Check(!target.suppressTaskbar && !dock.suppressSystemTaskbar &&
+            !dock.suppressSystemTaskbarAllMonitors && dock.systemTaskbarAutoHide &&
+            snowdesktop::TaskbarDisplayMode(dock) == 1,
+            "native auto-hide clears permanent suppression even if a target retains the old scope");
         snowdesktop::SetTaskbarDisplayMode(dock, 0);
-        Check(!dock.suppressSystemTaskbar && !dock.systemTaskbarAutoHide,
+        Check(!dock.suppressSystemTaskbar && !dock.suppressSystemTaskbarAllMonitors &&
+            !dock.systemTaskbarAutoHide && snowdesktop::TaskbarDisplayMode(dock) == 0,
             "always visible mode clears both forms of hiding");
     }
     CheckStatusBarInteraction();

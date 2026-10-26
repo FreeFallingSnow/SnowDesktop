@@ -232,7 +232,7 @@ bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
     namespace modules = snowdesktop::runtime_modules;
     return modules::Allowed(modules::Module::Taskbar) &&
-        ((generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
+        (ShouldSuppressSystemTaskbar(settings, generalSettings_.dockEnabled) ||
          AppearanceRequiresTaskbarHook(settings) ||
          (modules::Allowed(modules::Module::StartMenu) &&
           snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
@@ -492,7 +492,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu) &&
          snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
             dockSettings_.startMenuKeepTaskbarHidden, autoHide || dockSettings_.suppressSystemTaskbar)));
-    const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
+    const bool suppressionRequested = ShouldSuppressSystemTaskbar(dockSettings_, generalSettings_.dockEnabled);
     const bool hookRequired = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && (appearanceRequired || protectActivation || suppressionRequested);
     if (!hookRequired)
     {
@@ -563,7 +563,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if (suppressionRequested && hwnd_)
+    if (suppressionRequested && !dockSettings_.suppressSystemTaskbarAllMonitors && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -609,7 +609,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         // Panel access remains available even with all appearance rules off.
         target.shellPanelVisible = shellPanelVisible;
         ConfigureSystemTaskbarTargetProtection(
-            target, suppressionRequested, protectActivation, hasDock);
+            target, suppressionRequested, protectActivation, hasDock,
+            dockSettings_.suppressSystemTaskbarAllMonitors);
         if (selectedRule)
         {
             target.enabled =

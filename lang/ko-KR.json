@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30분 전",
     "settings.calendar.reminder.60": "1시간 전",
     "settings.calendar.reminder.1440": "1일 전",
-    "settings.dock.suppressTaskbar": "시스템 작업 표시줄 항상 숨기기",
+    "settings.dock.suppressTaskbar": "Dock이 있는 화면의 작업 표시줄 항상 숨기기",
     "settings.dock.suppressTaskbar.description": "Dock이 있는 화면의 작업 표시줄을 숨기고 시스템 패널을 열면 잠시 표시합니다.",
     "settings.dock.suppressTaskbar.failed": "작업 표시줄을 숨길 수 없습니다. 이 옵션을 꺼서 작업 표시줄을 복원한 후 다시 시도하세요.",
     "settings.taskbar.classic.description": "시스템 패널과 밝은 테마 또는 어두운 테마를 공유합니다. 흐림 정도는 Windows에서 결정합니다.",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "이름 변경을 실행 취소하여 “{0}”을(를) “{1}”(으)로 되돌립니다",
   "app.fileHistory.redoRename": "이름 변경을 다시 실행하여 “{0}”을(를) “{1}”(으)로 변경합니다",
   "app.fileHistory.undoDelete": "삭제를 실행 취소하고 복원합니다: {0}",
-  "app.fileHistory.redoDelete": "삭제를 다시 실행합니다: {0}"
+  "app.fileHistory.redoDelete": "삭제를 다시 실행합니다: {0}",
+  "settings.taskbar.suppressAllTaskbars": "모든 화면의 작업 표시줄 항상 숨기기"
 }

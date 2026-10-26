@@ -64,12 +64,13 @@ struct SystemTaskbarTargetAppearance
 
 inline void ConfigureSystemTaskbarTargetProtection(
     SystemTaskbarTargetAppearance& target,
-    bool suppressionRequested, bool protectActivation, bool hasDock) noexcept
+    bool suppressionRequested, bool protectActivation, bool hasDock,
+    bool allMonitors = false) noexcept
 {
-    // Permanent hiding follows Dock placement. Passive activation from a
-    // minimized application can reach any taskbar, including screens without
-    // a Dock; intentional shell-panel access still releases that protection.
-    target.suppressTaskbar = suppressionRequested && hasDock;
+    // Permanent hiding follows the selected monitor scope. Passive activation
+    // from a minimized application can reach taskbars on screens without a
+    // Dock; intentional shell-panel access still releases that protection.
+    target.suppressTaskbar = suppressionRequested && (allMonitors || hasDock);
     // Keep the controller attached while a shell panel is open. Its per-window
     // decision releases the current request without disabling future requests.
     target.protectAutoHideActivation = protectActivation;
@@ -110,6 +111,7 @@ struct DockSettings : DockLayoutSettings
     int windowEffect = 1;
     bool systemTaskbarAutoHide = false;
     bool suppressSystemTaskbar = false;
+    bool suppressSystemTaskbarAllMonitors = false;
     int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
@@ -122,6 +124,13 @@ struct DockSettings : DockLayoutSettings
     SystemTaskbarDynamicRule systemTaskbarMaximizedWindow;
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
+
+inline bool ShouldSuppressSystemTaskbar(const DockSettings& settings,
+    bool dockEnabled) noexcept
+{
+    return settings.suppressSystemTaskbar &&
+        (settings.suppressSystemTaskbarAllMonitors || dockEnabled);
+}
 
 inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 {

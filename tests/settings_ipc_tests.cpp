@@ -10,6 +10,7 @@
 #include "settings/settings_process.h"
 #include "shell/shell_extension_service.h"
 #include "app/lifecycle/settings_external_state_refresh.h"
+#include "settings/bar_settings_rules.h"
 
 #include <atomic>
 #include <future>
@@ -205,6 +206,14 @@ void TestCodec()
         companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        snowdesktop::SetTaskbarDisplayMode(dockSpace, mode);
+        const auto restoredDock = Unpack<DockSettings>(Pack(dockSpace));
+        Check(restoredDock == dockSpace && snowdesktop::TaskbarDisplayMode(restoredDock) == mode,
+            "all taskbar visibility modes retain their monitor scope across settings IPC");
+    }
+    snowdesktop::SetTaskbarDisplayMode(dockSpace, 0);
     Check(!dockSpace.startMenuKeepTaskbarHidden, "native Start behavior remains the default");
     for (const bool enabled : {false, true})
     {

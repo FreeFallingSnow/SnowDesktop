@@ -538,7 +538,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.trayApplications",
         "settings.dock.trayApplications", "settings.dock.trayApplications.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",
-        "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description"},
+        "settings.bars.taskbarMode", "settings.taskbar.suppressAllTaskbars"},
     {SettingsPage::Dock, "dock.startIcon", "iconLibrary.startIcon", "iconLibrary.title"},
     {SettingsPage::Dock, "dock.searchIcon", "iconLibrary.searchIcon", "iconLibrary.title"},
     {SettingsPage::Dock, "dock.showWindowsButton",

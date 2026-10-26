@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30 Minuten vorher",
     "settings.calendar.reminder.60": "1 Stunde vorher",
     "settings.calendar.reminder.1440": "1 Tag vorher",
-    "settings.dock.suppressTaskbar": "Systemtaskleiste immer ausblenden",
+    "settings.dock.suppressTaskbar": "Taskleisten auf Dock-Bildschirmen immer ausblenden",
     "settings.dock.suppressTaskbar.description": "Taskleiste auf Bildschirmen mit Dock ausblenden; bei Systembereichen kurz einblenden.",
     "settings.dock.suppressTaskbar.failed": "Die Taskleiste konnte nicht ausgeblendet werden. Deaktivieren Sie diese Option zur Wiederherstellung und versuchen Sie es erneut.",
     "settings.taskbar.classic.description": "Verwendet das helle oder dunkle Design der Systempanels. Windows steuert die Unschärfe.",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "Die Umbenennung wird rückgängig gemacht: „{0}“ wird wieder zu „{1}“",
   "app.fileHistory.redoRename": "Die Umbenennung wird wiederholt: „{0}“ wird in „{1}“ umbenannt",
   "app.fileHistory.undoDelete": "Die Löschung wird rückgängig gemacht, um Folgendes wiederherzustellen: {0}",
-  "app.fileHistory.redoDelete": "Die Löschung wird wiederholt: {0}"
+  "app.fileHistory.redoDelete": "Die Löschung wird wiederholt: {0}",
+  "settings.taskbar.suppressAllTaskbars": "Taskleisten auf allen Bildschirmen immer ausblenden"
 }

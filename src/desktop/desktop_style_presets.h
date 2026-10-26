@@ -16,6 +16,7 @@ inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& gene
         companionPosition != DockPosition::Top && companionPosition != DockPosition::Left &&
         companionPosition != DockPosition::Right) return false;
     dock.reserveScreenSpace = key == L"side";
+    dock.suppressSystemTaskbarAllMonitors = false;
     if (key == L"native")
     {
         general.dockEnabled = false;

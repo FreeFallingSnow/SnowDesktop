@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30 minutes avant",
     "settings.calendar.reminder.60": "1 heure avant",
     "settings.calendar.reminder.1440": "1 jour avant",
-    "settings.dock.suppressTaskbar": "Toujours masquer la barre des tâches du système",
+    "settings.dock.suppressTaskbar": "Toujours masquer les barres des tâches sur les écrans avec Dock",
     "settings.dock.suppressTaskbar.description": "Masque la barre des tâches sur les écrans avec le Dock ; l'affiche pour les panneaux système.",
     "settings.dock.suppressTaskbar.failed": "Impossible de masquer la barre des tâches. Désactivez cette option pour la restaurer, puis réessayez.",
     "settings.taskbar.classic.description": "Partage le thème clair ou sombre des panneaux système. Windows contrôle le flou.",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "L’action de renommage sera annulée : « {0} » reprendra le nom « {1} »",
   "app.fileHistory.redoRename": "Le renommage sera rétabli : « {0} » sera renommé « {1} »",
   "app.fileHistory.undoDelete": "La suppression sera annulée pour restaurer : {0}",
-  "app.fileHistory.redoDelete": "La suppression sera répétée : {0}"
+  "app.fileHistory.redoDelete": "La suppression sera répétée : {0}",
+  "settings.taskbar.suppressAllTaskbars": "Toujours masquer les barres des tâches sur tous les écrans"
 }

@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30 minutes before",
     "settings.calendar.reminder.60": "1 hour before",
     "settings.calendar.reminder.1440": "1 day before",
-    "settings.dock.suppressTaskbar": "Always hide the system taskbar",
+    "settings.dock.suppressTaskbar": "Always hide taskbars on Dock displays",
     "settings.dock.suppressTaskbar.description": "Hide the taskbar on Dock displays; show it for system panels.",
     "settings.dock.suppressTaskbar.failed": "The taskbar could not be hidden. Turn this option off to restore it, then try again.",
     "settings.taskbar.classic.description": "Shares the light or dark theme with system panels. Windows controls the blur.",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "Will undo rename: change “{0}” back to “{1}”",
   "app.fileHistory.redoRename": "Will redo rename: change “{0}” to “{1}”",
   "app.fileHistory.undoDelete": "Will undo deletion and restore: {0}",
-  "app.fileHistory.redoDelete": "Will redo deletion: {0}"
+  "app.fileHistory.redoDelete": "Will redo deletion: {0}",
+  "settings.taskbar.suppressAllTaskbars": "Always hide taskbars on all displays"
 }

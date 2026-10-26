@@ -1346,6 +1346,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     ReadBoolField(text, "suppressSystemTaskbar", settings.suppressSystemTaskbar);
+    // A legacy hidden preference always retains its Dock-display scope.
+    settings.suppressSystemTaskbarAllMonitors = false;
+    ReadBoolField(text, "suppressSystemTaskbarAllMonitors", settings.suppressSystemTaskbarAllMonitors);
     if (ReadDoubleField(text, "systemTaskbarAlignment", value))
         settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
     ReadBoolField(text, "systemTaskbarBackdropEnabled",
@@ -1507,6 +1510,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"windowEffect\": " << snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect) << ",\n";
     file << "  \"suppressSystemTaskbar\": "
          << (settings.suppressSystemTaskbar ? "true" : "false") << ",\n";
+    file << "  \"suppressSystemTaskbarAllMonitors\": "
+         << (settings.suppressSystemTaskbarAllMonitors ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";

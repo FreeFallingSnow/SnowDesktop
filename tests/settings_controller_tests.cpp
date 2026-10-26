@@ -650,6 +650,7 @@ void TestDesktopStylePresetScope()
         originalDock.monitorScope = DockMonitorScope::All;
         originalDock.allowDesktopContentOverlap = originalDock.reserveScreenSpace = true;
         originalDock.suppressSystemTaskbar = true;
+        originalDock.suppressSystemTaskbarAllMonitors = true;
         originalDock.floatingEdgeSwipeEnabled = false;
         originalDock.hoverEffect = originalDock.launchEffect = originalDock.windowEffect = 0;
         originalDock.hoverScale = 1.75f;
@@ -662,6 +663,7 @@ void TestDesktopStylePresetScope()
             wantedGeneral.statusBar.position = expected.barPosition;
             if (expected.bar) wantedGeneral.statusBar.monitorScope = DockMonitorScope::All;
             wantedDock.suppressSystemTaskbar = expected.suppress;
+            wantedDock.suppressSystemTaskbarAllMonitors = false;
             wantedDock.systemTaskbarAutoHide = expected.autoHide;
             wantedDock.systemTaskbarBackdropEnabled = expected.backdrop;
             wantedDock.showOnlyWhenSummoned = expected.summoned;

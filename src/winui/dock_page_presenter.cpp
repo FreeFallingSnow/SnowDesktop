@@ -888,7 +888,8 @@ struct DockPagePresenter::Impl
         taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
             if (updatingControls) return;
             const int mode = taskbarMode.SelectedIndex();
-            if (mode < 0 || (mode == 2 && (!dockEnabledToggle.IsOn() || !modulePolicy.Allows(runtime_modules::Module::Taskbar)))) return;
+            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn()) ||
+                (mode >= 2 && !modulePolicy.Allows(runtime_modules::Module::Taskbar))) return;
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -2196,8 +2197,11 @@ struct DockPagePresenter::Impl
         mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
         suppressTaskbarRow.SetEnabled(dockEnabled && taskbarAllowed);
         taskbarSuppressRow.SetEnabled(true);
-        if (taskbarMode.Items().Size() == 3)
+        if (taskbarMode.Items().Size() == 4)
+        {
             taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(taskbarAllowed && (dockEnabled || taskbarSuppressToggle.IsOn()));
+            taskbarMode.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(taskbarAllowed);
+        }
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
@@ -2321,7 +2325,9 @@ struct DockPagePresenter::Impl
             suppressionStatus.Message(L(failed ? "settings.dock.suppressTaskbar.failed" : "app.settings.taskbar_connecting",
                 failed ? L"The taskbar could not be hidden. Turn this option off to restore it, then try again." : L"Connecting to the Explorer taskbar..."));
             suppressionStatus.Severity(failed ? muxc::InfoBarSeverity::Error : muxc::InfoBarSeverity::Informational);
-            suppressionStatus.IsOpen(modulePolicy.Allows(runtime_modules::Module::Taskbar) && dockEnabledToggle.IsOn() && suppressTaskbarToggle.IsOn() && (failed || pending));
+            const int mode = taskbarMode.SelectedIndex();
+            suppressionStatus.IsOpen(modulePolicy.Allows(runtime_modules::Module::Taskbar) &&
+                (mode == 3 || (mode == 2 && dockEnabledToggle.IsOn())) && (failed || pending));
         }
         if (!taskbarRuntimeStatus) return;
         std::wstring text;
@@ -2973,15 +2979,20 @@ struct DockPagePresenter::Impl
             L("settings.dock.summonOnAppMinimize.description",
                 L"When off, custom animations reveal the Dock only until they finish; system animations do not reveal it."));
         muxa::AutomationProperties::SetName(summonOnAppMinimizeToggle, summonOnAppMinimizeRow.label.Text());
-        suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
+        suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide taskbars on Dock displays"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
         taskbarSuppressRow.SetText(L("settings.bars.taskbarMode", L"Taskbar visibility"));
         const int displayMode = taskbarMode.SelectedIndex();
         taskbarMode.Items().Clear();
-        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"})
+        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar", "settings.taskbar.suppressAllTaskbars"})
         {
-            muxc::ComboBoxItem item; item.Content(winrt::box_value(L(key, L"")));
+            muxc::ComboBoxItem item;
+            const wchar_t* fallback = std::string_view(key) == "settings.dock.suppressTaskbar"
+                ? L"Always hide taskbars on Dock displays"
+                : std::string_view(key) == "settings.taskbar.suppressAllTaskbars"
+                ? L"Always hide taskbars on all displays" : L"";
+            item.Content(winrt::box_value(L(key, fallback)));
             taskbarMode.Items().Append(item);
         }
         taskbarMode.SelectedIndex(displayMode);

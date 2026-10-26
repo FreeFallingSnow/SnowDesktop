@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30 minutos antes",
     "settings.calendar.reminder.60": "1 hora antes",
     "settings.calendar.reminder.1440": "1 dia antes",
-    "settings.dock.suppressTaskbar": "Sempre ocultar a barra de tarefas do sistema",
+    "settings.dock.suppressTaskbar": "Sempre ocultar as barras de tarefas nas telas com Dock",
     "settings.dock.suppressTaskbar.description": "Oculta a barra de tarefas nas telas com Dock e a exibe ao abrir painéis do sistema.",
     "settings.dock.suppressTaskbar.failed": "Não foi possível ocultar a barra de tarefas. Desative esta opção para restaurá-la e tente novamente.",
     "settings.taskbar.classic.description": "Compartilha o tema claro ou escuro com os painéis do sistema. O Windows controla o desfoque.",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "A renomeação será desfeita: “{0}” voltará a se chamar “{1}”",
   "app.fileHistory.redoRename": "A renomeação será refeita: “{0}” passará a se chamar “{1}”",
   "app.fileHistory.undoDelete": "A exclusão será desfeita para restaurar: {0}",
-  "app.fileHistory.redoDelete": "A exclusão será refeita: {0}"
+  "app.fileHistory.redoDelete": "A exclusão será refeita: {0}",
+  "settings.taskbar.suppressAllTaskbars": "Sempre ocultar as barras de tarefas em todas as telas"
 }

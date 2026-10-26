@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "提前 30 分钟",
     "settings.calendar.reminder.60": "提前 1 小时",
     "settings.calendar.reminder.1440": "提前 1 天",
-    "settings.dock.suppressTaskbar": "始终隐藏系统任务栏",
+    "settings.dock.suppressTaskbar": "始终隐藏 Dock 所在屏幕的任务栏",
     "settings.dock.suppressTaskbar.description": "仅隐藏 Dock 所在屏幕的任务栏；系统面板打开时临时显示。",
     "settings.dock.suppressTaskbar.failed": "无法隐藏任务栏。请关闭此开关恢复任务栏，然后重试。",
     "settings.taskbar.classic.description": "与系统面板共用明暗主题，模糊程度由 Windows 决定。",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "将撤销重命名：将“{0}”改回“{1}”",
   "app.fileHistory.redoRename": "将重做重命名：将“{0}”改为“{1}”",
   "app.fileHistory.undoDelete": "将撤销删除并恢复：{0}",
-  "app.fileHistory.redoDelete": "将重做删除：{0}"
+  "app.fileHistory.redoDelete": "将重做删除：{0}",
+  "settings.taskbar.suppressAllTaskbars": "始终隐藏所有屏幕的任务栏"
 }

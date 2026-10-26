@@ -37,11 +37,14 @@ inline BarSettingsAvailability ResolveBarSettingsAvailability(bool dockEnabled,
 }
 inline int TaskbarDisplayMode(const DockSettings& dock)
 {
-    return dock.suppressSystemTaskbar ? 2 : dock.systemTaskbarAutoHide ? 1 : 0;
+    return dock.suppressSystemTaskbar ? (dock.suppressSystemTaskbarAllMonitors ? 3 : 2) :
+        dock.systemTaskbarAutoHide ? 1 : 0;
 }
 inline void SetTaskbarDisplayMode(DockSettings& dock, int mode)
 {
-    dock.suppressSystemTaskbar = mode == 2;
+    mode = std::clamp(mode, 0, 3);
+    dock.suppressSystemTaskbar = mode >= 2;
+    dock.suppressSystemTaskbarAllMonitors = mode == 3;
     dock.systemTaskbarAutoHide = mode != 0;
 }
 }

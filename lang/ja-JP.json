@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "30 分前",
     "settings.calendar.reminder.60": "1 時間前",
     "settings.calendar.reminder.1440": "1 日前",
-    "settings.dock.suppressTaskbar": "システムのタスクバーを常に非表示にする",
+    "settings.dock.suppressTaskbar": "Dock がある画面のタスクバーを常に非表示",
     "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーを隠し、システムパネル表示時は一時的に表示します。",
     "settings.dock.suppressTaskbar.failed": "タスクバーを非表示にできませんでした。この設定をオフにしてタスクバーを元に戻し、もう一度お試しください。",
     "settings.taskbar.classic.description": "システムパネルとライト・ダークテーマを共有します。ぼかしの強さは Windows が決めます。",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "名前の変更を元に戻し、「{0}」を「{1}」に戻します",
   "app.fileHistory.redoRename": "名前の変更をやり直し、「{0}」を「{1}」に変更します",
   "app.fileHistory.undoDelete": "削除を元に戻して復元します：{0}",
-  "app.fileHistory.redoDelete": "削除をやり直します：{0}"
+  "app.fileHistory.redoDelete": "削除をやり直します：{0}",
+  "settings.taskbar.suppressAllTaskbars": "すべての画面のタスクバーを常に非表示"
 }

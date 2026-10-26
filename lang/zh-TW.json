@@ -1751,7 +1751,7 @@
     "settings.calendar.reminder.30": "提前 30 分鐘",
     "settings.calendar.reminder.60": "提前 1 小時",
     "settings.calendar.reminder.1440": "提前 1 天",
-    "settings.dock.suppressTaskbar": "一律隱藏系統工作列",
+    "settings.dock.suppressTaskbar": "一律隱藏 Dock 所在螢幕的工作列",
     "settings.dock.suppressTaskbar.description": "僅隱藏 Dock 所在螢幕的工作列；系統面板開啟時暫時顯示。",
     "settings.dock.suppressTaskbar.failed": "無法隱藏工作列。請關閉此開關恢復工作列，然後重試。",
     "settings.taskbar.classic.description": "與系統面板共用明暗主題，模糊程度由 Windows 決定。",
@@ -2641,5 +2641,6 @@
   "app.fileHistory.undoRename": "將撤銷重新命名：將「{0}」改回「{1}」",
   "app.fileHistory.redoRename": "將重做重新命名：將「{0}」改為「{1}」",
   "app.fileHistory.undoDelete": "將撤銷刪除並還原：{0}",
-  "app.fileHistory.redoDelete": "將重做刪除：{0}"
+  "app.fileHistory.redoDelete": "將重做刪除：{0}",
+  "settings.taskbar.suppressAllTaskbars": "一律隱藏所有螢幕的工作列"
 }
