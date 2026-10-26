@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::file_history
@@ -40,7 +41,7 @@ inline Identity Identify(const std::wstring& path)
     BY_HANDLE_FILE_INFORMATION info{};
     if (GetFileInformationByHandle(file, &info))
         result = {info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow,
-            info.ftCreationTime, true};
+            info.ftCreationTime, info.nFileIndexHigh != 0 || info.nFileIndexLow != 0};
     CloseHandle(file);
     return result;
 }
@@ -235,7 +236,9 @@ inline HRESULT Rename(const std::wstring& from, const std::wstring& to, const Id
         const Identity actual{info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow, info.ftCreationTime, true};
         if (actual == expected)
         {
-            const size_t bytes = offsetof(FILE_RENAME_INFO, FileName) + to.size() * sizeof(wchar_t);
+            // The Win32 API consumes a NUL-terminated path even though the
+            // counted name excludes that terminator. Reserve and zero it.
+            const size_t bytes = offsetof(FILE_RENAME_INFO, FileName) + (to.size() + 1) * sizeof(wchar_t);
             if (bytes <= MAXDWORD)
             {
                 std::vector<BYTE> storage(bytes);

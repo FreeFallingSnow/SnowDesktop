@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iostream>
 #include <stdexcept>
 
 namespace file_history_cases
@@ -18,10 +19,14 @@ inline bool Apply(snowdesktop::ShellFileOperationWorker& worker, bool redo)
 {
     auto done = std::make_shared<std::promise<bool>>();
     auto future = done->get_future();
-    Require(worker.EnqueueHistory(redo, std::make_shared<snowdesktop::file_history::Result>(),
+    auto result = std::make_shared<snowdesktop::file_history::Result>();
+    Require(worker.EnqueueHistory(redo, result,
         [done](bool succeeded) { done->set_value(succeeded); }), "file history request is queued");
     Require(future.wait_for(std::chrono::seconds(20)) == std::future_status::ready, "file history has bounded completion");
-    return future.get();
+    const bool succeeded = future.get();
+    if (!succeeded) std::wcerr << L"history " << (redo ? L"redo" : L"undo") << L" status=0x"
+        << std::hex << static_cast<unsigned long>(result->status) << std::dec << L" path=" << result->failedPath << L'\n';
+    return succeeded;
 }
 inline snowdesktop::ShellRenameResult Rename(snowdesktop::ShellFileOperationWorker& worker,
     const std::filesystem::path& source, const wchar_t* name)
@@ -103,6 +108,10 @@ inline void Run(const std::filesystem::path& parent)
         Require(Delete(deletion, {one.wstring(), two.wstring()}), "file and nonempty folder enter the Recycle Bin");
         Require(!std::filesystem::exists(one) && !std::filesystem::exists(two) && deletion.CanUndo(),
             "recycle completion records an undoable group");
+        Require(Apply(deletion, false) && Contents(one) == "recover exactly this file" &&
+            Contents(two / L"child.txt") == "nested contents", "whole-group undo restores files and nonempty directories");
+        Require(Apply(deletion, true) && !std::filesystem::exists(one) && !std::filesystem::exists(two),
+            "whole-group redo recycles the same files and nonempty directories");
         std::ofstream(one) << "occupied restore destination";
         Require(!Apply(deletion, false) && Contents(one) == "occupied restore destination" &&
             Contents(two / L"child.txt") == "nested contents", "partial undo restores only unblocked members");

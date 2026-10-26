@@ -1,5 +1,6 @@
 #include "shell_file_operation_worker_boundary.h"
 #include "shell/shell_file_operation_worker.h"
+#include "shell/shell_file_history.h"
 #include "drag_drop/clipboard_file_operation.h"
 #include <shobjidl.h>
 #include <sherrors.h>

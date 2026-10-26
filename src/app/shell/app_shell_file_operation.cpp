@@ -24,12 +24,15 @@ bool DesktopApp::CanApplyFileHistory(bool redo) const
 
 void DesktopApp::AppendFileHistoryMenu(HMENU menu)
 {
-    const std::wstring undo = std::wstring(_LW("app.menu.undo")) + L"\tCtrl+Z";
-    const std::wstring redo = std::wstring(_LW("app.menu.redo")) + L"\tCtrl+Y";
-    AppendMenuW(menu, MF_STRING | (CanApplyFileHistory(false) ? 0 : MF_GRAYED), kFileUndoCommand, undo.c_str());
-    AppendMenuW(menu, MF_STRING | (CanApplyFileHistory(true) ? 0 : MF_GRAYED), kFileRedoCommand, redo.c_str());
-    SetMenuItemIcon(menu, kFileUndoCommand, L"\uF199", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kFileRedoCommand, L"\uF16E", MenuIconFont::FluentRegular);
+    const auto append = [&](bool redo, UINT command, const char* key, const wchar_t* shortcut, const wchar_t* glyph) {
+        if (!CanApplyFileHistory(redo)) return;
+        const std::wstring label = std::wstring(_LW(key)) + L"\t" + shortcut;
+        AppendMenuW(menu, MF_STRING, command, label.c_str());
+        SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
+        SetMenuItemQuickAction(menu, command);
+    };
+    append(false, kFileUndoCommand, "app.menu.undo", L"Ctrl+Z", L"\uF199");
+    append(true, kFileRedoCommand, "app.menu.redo", L"Ctrl+Y", L"\uF16E");
 }
 
 bool DesktopApp::QueueFileHistory(bool redo)
