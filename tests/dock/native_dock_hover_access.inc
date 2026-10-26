@@ -1,6 +1,18 @@
     // Include after native_foreground_culling_access.inc.
     // The DComp allocation boundary uses R06's retained WARP surface; input,
     // DrawDesktopForeground, tooltip repair and commit routing remain real.
+    static inline POINT dockHoverHandoffScreenPoint{};
+    static inline HWND dockHoverHandoffWindow = nullptr;
+    static BOOL WINAPI DockHoverHandoffCursor(POINT* point)
+    {
+        if (!point) return FALSE;
+        *point = dockHoverHandoffScreenPoint;
+        return TRUE;
+    }
+    static HWND WINAPI DockHoverHandoffHit(POINT)
+    {
+        return dockHoverHandoffWindow;
+    }
     static void CheckDockHoverFrameRouting(DesktopApp& app, bool legacy)
     {
         const auto check = [](bool ok, const std::string& message) {
@@ -546,14 +558,14 @@
                 app.EnsureUiAnimationFrame();
                 check(effect == 0 || (docks[0]->IsMagnificationAnimating() && app.dockMagnificationAnimationFrameToken_),
                     "component entry must start the configured Dock animation and its frame scheduler");
-                const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-                docks[0]->AdvanceMagnificationAnimation(now + 1000);
+                const double componentNow = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                docks[0]->AdvanceMagnificationAnimation(componentNow + 1000);
                 const RECT base = docks[0]->GetSlots().front()->GetBounds();
                 const RECT expanded = docks[0]->GetElementVisualRect(base, first);
-                const RECT title = docks[0]->GetHoveredTitleBounds(first);
+                const RECT componentTitle = docks[0]->GetHoveredTitleBounds(first);
                 check((effect == 0 ? EqualRect(&expanded, &base) != FALSE :
                     docks[0]->GetElementIconSize(base, expanded) > docks[0]->GetElementIconSize(base, base)) &&
-                    IsRectEmpty(&title), "component drag must grow Dock icons while keeping insertion feedback free of titles");
+                    IsRectEmpty(&componentTitle), "component drag must grow Dock icons while keeping insertion feedback free of titles");
                 if (effect != 0)
                 {
                     POINT tip = first;
@@ -577,7 +589,7 @@
                 check(!IsRectEmpty(&line), "component Dock landing must expose a visible insertion line");
                 input(outside);
                 (void)docks[0]->GetElementVisualRect(base, outside);
-                docks[0]->AdvanceMagnificationAnimation(now + 2000);
+                docks[0]->AdvanceMagnificationAnimation(componentNow + 2000);
                 const RECT exited = docks[0]->GetElementVisualRect(base, outside);
                 check(!app.widgetDockTarget_ && EqualRect(&exited, &base),
                     "leaving the Dock during a component move must complete its hover exit");
@@ -665,12 +677,16 @@
             rebuild(); reset();
             const RECT base = docks[0]->GetSlots().front()->GetBounds();
             POINT pointer = point(0, 0);
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            // Insert before the old first item. The stationary pointer then
+            // belongs to the NEW item, not the old semantic hover owner.
+            if (vertical) pointer.y -= 10;
+            else pointer.x -= 10;
             app.lastMousePoint_ = pointer;
             (void)docks[0]->GetElementVisualRect(base, pointer);
             auto state = docks[0]->CapturePresentationState();
             state.focusRect = base; state.entry = {}; state.single = {};
             const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
             if (effect == 1)
             {
                 state.single.SetTarget(base, now - (settled ? 200 : 40), 1.0, vertical ? pointer.y : pointer.x);
@@ -701,23 +717,43 @@
             if (component)
             {
                 Widget source(&app.widgets_.front(), &app);
-                app.CommitDockDrop({&source}, nullptr, docks[0], 1, 0);
+                app.CommitDockDrop({&source}, nullptr, docks[0], 0, 0);
             }
             else
             {
                 DesktopIcon source(&app.items_.back(), nullptr, &app);
-                app.CommitDockDrop({&source}, nullptr, docks[0], 1, 0);
+                app.CommitDockDrop({&source}, nullptr, docks[0], 0, 0);
             }
             check(app.dockEntries_.size() == baselineEntries.size() + static_cast<size_t>(component),
                 "the production commit actually inserts the item or component");
             auto sample = [&] {
                 const RECT next = docks[0]->GetSlots().front()->GetBounds();
                 (void)docks[0]->GetElementVisualRect(next, pointer);
+                const auto presentation = docks[0]->CapturePresentationState();
+                check(EqualRect(&presentation.focusRect, &next) &&
+                    app.dockEntries_.front().reference == (component ? app.widgets_.front().id : app.items_.back().layoutKey),
+                    "newly inserted content under the stationary pointer must become the live hover target");
                 check(amplitude() + 0.0001f >= before && (!settled || !docks[0]->IsMagnificationAnimating()),
                     "committed insertion must retain hover amplitude instead of starting a new entry animation");
             };
             sample(); // Invalidated slots before the runtime-tree handoff.
             rebuild(); sample();
+            {
+                // Replace only OS cursor sampling with this process's own
+                // never-shown HWND. The production leave route must retain
+                // the logical Dock after capture/Host handoff, without moving
+                // the user's cursor or operating any desktop host window.
+                dockHoverHandoffScreenPoint = pointer;
+                check(ClientToScreen(geometry, &dockHoverHandoffScreenPoint) != FALSE,
+                    "convert test-owned Dock pointer to screen coordinates");
+                dockHoverHandoffWindow = geometry;
+                InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&DockHoverHandoffCursor));
+                InputSafetyImport hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&DockHoverHandoffHit));
+                app.OnMouseLeave();
+                check(app.lastMousePoint_.x == pointer.x && app.lastMousePoint_.y == pointer.y,
+                    "a post-insertion HWND leave must retain the live pointer on the newly hovered Dock item");
+                sample();
+            }
             docks[0]->AdvanceMagnificationAnimation(now + (effect == 1 ? 42 : 82));
             check(!docks[0]->IsMagnificationAnimating() && std::abs(amplitude() - maximum) < 0.0001f,
                 "an in-progress entry finishes at its original deadline across insertion and rebuild");

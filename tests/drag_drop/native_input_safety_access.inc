@@ -716,15 +716,22 @@ end})
         const auto check = [&](bool value, const char* message) {
             if (!value) { failures.emplace_back(message); std::cerr << "FAIL: " << message << '\n'; }
         };
+        std::cerr << "Input safety: volume gestures\n";
         RunWidgetVolumeGestures();
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        std::cerr << "Input safety: queued item release\n";
         RunQueuedDragReleaseSafety(cls.lpszClassName);
+        std::cerr << "Input safety: widget release\n";
         RunWidgetReleaseSafety(cls.lpszClassName);
+        std::cerr << "Input safety: queued widget release\n";
         RunQueuedWidgetReleaseSafety(cls.lpszClassName);
+        std::cerr << "Input safety: widget Dock edge reveal\n";
         RunWidgetDockEdgeRevealSafety();
+        std::cerr << "Input safety: mapped Dock context\n";
         RunDockMappingContextSafety(cls.lpszClassName);
+        std::cerr << "Input safety: remaining capture and activation scenes\n";
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
         app->instance_ = cls.hInstance;
         std::vector<HWND> windows;
