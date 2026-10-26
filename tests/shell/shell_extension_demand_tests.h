@@ -136,7 +136,7 @@ inline void Streams(int mode)
             auto compatibility = Entry(2, 79); compatibility.key = "compatibility"; compatibility.provider = "verb:compatibility";
             return ext::Reply{true, {Entry(0, 77), Entry(1, 78), compatibility}, {}};
         }, [&](UINT token, POINT) { invoked = token; }};
-    }, [catalogue] { return catalogue; });
+    }, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
     service.Configure(prefs);
     ext::Presentation popup(request, prefs, L"", L"", service, [&](bool ok) { succeeded = ok; completed = true; });
     menu::Item more; more.command = 7; more.label = L"More";
@@ -220,7 +220,7 @@ inline void CancelQueued()
             if (!release) return {};
             return ext::Reply{true, {Entry(0)}, {}};
         }, {}};
-    }, [catalogue] { return catalogue; });
+    }, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
     service.Configure(prefs); service.Query(request);
     PumpUntil([&] { return started == 2; }, "two source sessions occupy the bounded worker pool");
     Expect(disabledCalls == 0 && service.View(plan.sources.back()).pending,
@@ -268,7 +268,91 @@ inline void LiveSourceRegistration()
     RegCloseKey(key);
     Expect(ext::SourceRegistered(clsid, L"*", registry.key), "CLSID-named registrations follow the catalogue rules");
 }
-inline void LearnFromOrdinaryMenus()
+inline void OrdinaryMenusDoNotProbe(bool previouslyInspected)
+{
+    TemporaryDirectory temp;
+    const auto cache = temp.path / L"cache";
+    ext::Request managed; managed.paths = {(temp.path / L"managed.txt").wstring()};
+    std::ofstream(managed.paths.front()) << "private management target";
+    auto catalogue = Inventory();
+    for (auto &source : catalogue.rows) source.application = {"test-app", L"Test application"};
+    auto canonical = Entry(0); canonical.key = "unmapped"; canonical.provider = "verb:unmapped";
+    auto legacy = Entry(1); legacy.key.clear(); legacy.provider = "menu:unmapped-legacy";
+    legacy.width = legacy.height = 1; legacy.pixels = {7, 8, 9, 255};
+    auto management = Entry(2);
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, canonical.provider, ext::Category::Objects, true);
+    ext::SetCommon(prefs, legacy.provider, ext::Category::Objects, true);
+    std::atomic_uint probes = 0, aggregates = 0, invokes = 0;
+    auto observe = [&](unsigned expected) {
+        // Observe absence across several real scheduler passes, rather than
+        // racing the source dispatch immediately after snapshot publication.
+        const auto until = GetTickCount64() + 150;
+        do
+        {
+            Expect(probes == expected, "ORDINARY_UNKNOWN_MUST_NOT_PROBE: ordinary display/refresh/execution cannot activate unrelated handlers");
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+            MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        } while (GetTickCount64() < until);
+    };
+    for (int round = 0; round < 2; ++round)
+    {
+        std::vector<ext::Request> ordinary;
+        for (int i = 0; i < 3; ++i)
+        {
+            ext::Request request;
+            request.paths = {(temp.path / (L"ordinary-" + std::to_wstring(round) + L"-" + std::to_wstring(i) + L".txt")).wstring()};
+            std::ofstream(request.paths.front()) << "private ordinary target";
+            ordinary.push_back(std::move(request));
+        }
+        ext::MenuService service(cache, [&](const ext::Request &request) {
+            ext::Reply reply{true, {}, {}};
+            if (!request.sourceClsid.empty()) { ++probes; reply.entries = {management}; }
+            else if (request.paths == managed.paths) reply.entries = {management};
+            else if (std::any_of(ordinary.begin(), ordinary.end(), [&](const auto &target) { return target.paths == request.paths; }))
+            { ++aggregates; reply.entries = {canonical, legacy}; }
+            return ext::QueryWork{[reply] { return std::optional{reply}; },
+                [&](UINT token, POINT) { Expect(token == canonical.token, "ordinary execution resolves its fresh visible token"); ++invokes; }};
+        }, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
+        service.Configure(prefs);
+        if (previouslyInspected && round == 0)
+        {
+            service.Inspect(managed);
+            PumpUntil([&] { return !service.Inspect(managed).scanning && service.View(managed).snapshot.has_value(); },
+                "explicit management attribution finishes before ordinary work");
+            Expect(probes > 0, "explicit Inspect retains handler attribution work");
+            service.EndInspection();
+        }
+        const auto before = probes.load(), beforeAggregates = aggregates.load();
+        service.Query(ordinary[0]);
+        PumpUntil([&] { const auto view = service.MenuDisplay(ordinary[0], prefs);
+            return view.snapshot && !view.pending && view.snapshot->entries.size() == 2; },
+            "unmapped canonical and legacy opt-ins retain their ordinary aggregate entries");
+        observe(before);
+        service.Prewarm(ordinary[1]);
+        PumpUntil([&] { return !service.View(ordinary[1]).pending; }, "unknown prewarm finishes without querying an aggregate");
+        Expect(!service.View(ordinary[1]).snapshot && aggregates == beforeAggregates + 1,
+            "UNKNOWN_PREWARM_ZERO_ROOT: background work cannot read hidden full roots");
+        observe(before);
+        service.Query(ordinary[1]);
+        PumpUntil([&] { auto view = service.View(ordinary[1]); return view.snapshot && !view.pending; },
+            "a real Menu immediately promotes a previously skipped unknown prewarm");
+        const auto beforeInvokes = invokes.load();
+        service.Execute(ordinary[2], ext::AppendReference({}, canonical), {}, {});
+        PumpUntil([&] { return invokes > beforeInvokes; }, "ordinary command execution completes without metadata learning");
+        observe(before);
+        service.Invalidate(ordinary[0]);
+        PumpUntil([&] { const auto view = service.View(ordinary[0]);
+            return aggregates == beforeAggregates + 4 && view.snapshot && !view.pending; },
+            "ordinary forced refresh preserves selected commands without handler attribution");
+        observe(before);
+        Expect(aggregates == beforeAggregates + 4, "unknown opt-ins use their exact aggregate fallback without extra catalogue queries");
+        service.Shutdown();
+    }
+}
+inline void LearnFromManagement()
 {
     TemporaryDirectory temp;
     struct Fixture {
@@ -298,7 +382,11 @@ inline void LearnFromOrdinaryMenus()
     ext::SetCommon(prefs, legacy.provider, ext::Category::Objects, true);
     auto factory = [&](const ext::Request &request) -> ext::QueryWork {
         ext::Reply reply{true, {}, {}};
-        if (request.sourceClsid.empty()) { ++aggregate; reply.entries = {canonical, legacy}; }
+        if (request.sourceClsid.empty())
+        {
+            if (request.paths == first.paths || request.paths == second.paths)
+            { ++aggregate; reply.entries = {canonical, legacy}; }
+        }
         else {
             ++probes; reply.entries = {request.sourceClsid == clsid0 ? canonical : legacy};
             if (!notified.exchange(true)) {
@@ -310,8 +398,8 @@ inline void LearnFromOrdinaryMenus()
         return {[reply] { return reply; }, {}};
     };
     {
-        ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
-        service.Configure(prefs); service.Query(first);
+        ext::MenuService service(cache, factory, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
+        service.Configure(prefs); service.Inspect(first);
         PumpUntil([&] {
             if (probes < 2) return false;
             try {
@@ -324,13 +412,13 @@ inline void LearnFromOrdinaryMenus()
                 const auto plan = ext::PlanDemandQueries(catalogue, observed, prefs, second, 1);
                 return schema == 3 && !plan.full && plan.sources.size() == 2;
             } catch (...) { return false; }
-        }, "ordinary use learns and persists canonical and legacy sources without opening settings");
-        Expect(aggregate == 1, "source learning does not repeat the aggregate query");
+        }, "explicit management learns and persists canonical and legacy source proof");
+        Expect(aggregate == 1, "management source learning does not repeat the selected aggregate query");
         service.Shutdown();
     }
     // A new service and a different uncached selection must consume the real
     // learned evidence. No test-only catalogue/observed seed is supplied.
-    ext::MenuService reopened(cache, factory, [catalogue] { return catalogue; });
+    ext::MenuService reopened(cache, factory, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
     reopened.Configure(prefs);
     ext::Presentation popup(second, prefs, L"", L"", reopened);
     std::vector<snowdesktop::modern_menu::Item> items;
@@ -340,112 +428,249 @@ inline void LearnFromOrdinaryMenus()
         return std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }) == 2;
     }, "new cold selection publishes both learned sources after service reconstruction");
     Expect(aggregate == 1 && reopened.View(second).sourcesOnly,
-        "persisted ordinary-use evidence enables demand querying without an aggregate fallback");
+        "persisted management evidence enables ordinary demand querying without an aggregate fallback");
     reopened.Shutdown();
 }
-inline void PreparationAfterRegistryNoise()
+// With no selected provider there is no reason to inventory or prepare any
+// extension. Explicit management is the sole full-reader demand and its late
+// result must not revive work after the page closes.
+inline void InspectionLifecycle()
 {
     TemporaryDirectory temp;
-    struct Fixture
+    ext::Request target; target.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(target.paths.front()) << "private";
+    std::atomic_uint fullReads = 0, sourceReads = 0, factories = 0, scopes = 0, callbacks = 0;
+    std::atomic_bool hold = true, entered = false, readerExited = false;
+    struct Trace
     {
-        HKEY key = nullptr; std::wstring path; bool owned = false;
-        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
-    } noise{nullptr, L"Software\\Classes\\SnowDesktopPreparation-" + temp.path.filename().wstring()};
-    DWORD disposition = 0;
-    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
-        nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create private preparation notification fixture");
-    noise.owned = disposition == REG_CREATED_NEW_KEY;
-    Expect(noise.owned, "preparation notification fixture has a unique owner");
-    struct TraceEnvironment
-    {
-        std::wstring previous, base;
-        TraceEnvironment(const std::wstring &path)
-            : base(path)
+        std::wstring previous; std::filesystem::path file;
+        explicit Trace(const std::filesystem::path &temp)
         {
-            wchar_t value[32768]{};
-            GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", value, static_cast<DWORD>(std::size(value)));
-            previous = value;
-            SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", path.c_str());
+            wchar_t value[32768]{}; GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", value, 32768); previous = value;
+            const auto base = temp / L"closed-inspection";
+            file = base.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L".log";
+            SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", base.c_str());
         }
-        ~TraceEnvironment()
+        bool Discarded() const
         {
-            if (std::uncaught_exceptions())
-            {
-                try
-                {
-                    // The service has already joined. Retain its evidence in
-                    // CTest output before TemporaryDirectory removes the file.
-                    std::ifstream input(base + L"." + std::to_wstring(GetCurrentProcessId()) + L".log", std::ios::binary);
-                    std::cerr << "Preparation trace before fixture cleanup:\n" << input.rdbuf();
-                }
-                catch (...) {}
-            }
-            SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str());
+            std::ifstream input(file, std::ios::binary);
+            const std::string value{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            return value.find("reason=closed_generation_discarded") != std::string::npos;
         }
-    } environment((temp.path / L"preparation").wstring());
-    const auto trace = temp.path / (L"preparation." + std::to_wstring(GetCurrentProcessId()) + L".log");
-    auto logged = [&](const char *message) {
-        std::ifstream input(trace, std::ios::binary);
-        const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        return text.find(message) != std::string::npos;
-    };
-    ext::MenuTrace("fixture", "reader_baseline");
+        ~Trace() { SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str()); }
+    } trace(temp.path);
+    struct Notification
     {
-        std::ifstream reader(trace, std::ios::binary);
-        Expect(static_cast<bool>(reader), "open a real concurrent diagnostic reader");
-        std::thread writer([] { ext::MenuTrace("fixture", "reader_held"); });
-        writer.join();
-    }
-    Expect(logged("phase=fixture reason=reader_held"),
-        "a concurrent diagnostic reader cannot suppress a real preparation trace record");
-    std::atomic<unsigned> scans = 0;
-    std::atomic<bool> release = false, holdRefresh = false, releaseRefresh = false;
-    const auto cache = temp.path / L"cache";
-    std::filesystem::create_directory(cache);
-    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), Observed(Inventory()).rows));
-    // Release the held reader before service destruction, including assertion
-    // failures. The real STA/process preparation remains under test.
-    ext::MenuService service(cache, {}, [&] {
-        if (++scans == 1) while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        if (holdRefresh) while (!releaseRefresh) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        return Inventory();
-    });
-    struct Release { std::atomic<bool> &value, &refresh; ~Release() { value = true; refresh = true; } } cleanup{release, releaseRefresh};
-    ext::Preferences prefs;
-    ext::SetCommon(prefs, "verb:unmapped-enabled-command", ext::Category::Objects, true);
-    for (int i = 0; i < 2; ++i) ext::SetCommon(prefs, Entry(i).provider, ext::Category::Objects, true);
-    service.Configure(prefs);
-    PumpUntil([&] { return scans == 1; }, "initial preparation inventory starts without an open menu");
-    const DWORD value = 1;
-    Expect(RegSetValueExW(noise.key, L"Noise", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) == ERROR_SUCCESS,
-        "emit an unrelated Classes notification during the held inventory scan");
-    PumpUntil([&] { return logged("reason=stale.registry"); }, "the preparation service observes the registry notification");
-    release = true;
-    PumpUntil([&] { return scans >= 2 && logged("phase=preparation reason=ready"); },
-        "pending preparation verifies registry noise and becomes ready without a foreground query");
-    Expect(!logged("phase=helper_start"), "background preparation does not need a user query to unblock itself");
-    ext::Request request; request.paths = {(temp.path / L"routing-slots.txt").wstring()};
-    std::ofstream(request.paths.front()) << "private native scheduler fixture";
-    const auto plan = ext::PlanDemandQueries(Inventory(), Observed(Inventory()), prefs, request, 1);
-    Expect(plan.full && plan.sources.size() == 2, "mixed native scheduling fixture has two sources and a fallback");
-    const auto previousScans = scans.load();
-    holdRefresh = true;
-    const DWORD laterNoise = 2;
-    Expect(RegSetValueExW(noise.key, L"Noise", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&laterNoise), sizeof(laterNoise)) == ERROR_SUCCESS,
-        "start unrelated global verification before the cold object query");
-    PumpUntil([&] { return scans > previousScans; }, "global verification remains held during the source queries");
-    service.Query(request);
-    PumpUntil([&] {
-        return std::all_of(plan.sources.begin(), plan.sources.end(), [&](const auto &source) {
-            const auto view = service.View(source);
-            Expect(view.error.empty(), "a reserved prepared worker cannot cause metadata helper startup failure");
-            return !view.pending && view.snapshot.has_value();
+        HKEY key = nullptr; std::wstring path;
+        explicit Notification(const std::filesystem::path &temp)
+        {
+            path = L"Software\\Classes\\SnowDesktopClosedInspect-" + temp.filename().wstring();
+            DWORD created = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &key, &created) == ERROR_SUCCESS && created == REG_CREATED_NEW_KEY, "own closed-inspection notification key");
+        }
+        void Signal()
+        {
+            const DWORD value = 1;
+            Expect(RegSetValueExW(key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) == ERROR_SUCCESS,
+                "notify registry after settings close with all switches off");
+        }
+        ~Notification() { if (key) { RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); } }
+    } notification(temp.path);
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
+        ++factories; return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+    }, [&] {
+        ++fullReads; entered = true;
+        const auto deadline = GetTickCount64() + 5000;
+        while (hold && GetTickCount64() < deadline) Sleep(1);
+        readerExited = true; return Inventory();
+    }, [&] { ++scopes; return std::uint64_t(57); },
+       [&](ext::Context) { ++scopes; return std::uint64_t(57); },
+       [&](const auto &seeds) { ++sourceReads; return shell_service_fixture::Sources(Inventory(), seeds); });
+    struct Release { std::atomic_bool &gate; ~Release() { gate = false; } } cleanup{hold};
+    service.Configure({}); service.Query(target); service.Prewarm(target);
+    service.Execute(target, {}, {}, [&](bool ok) { Expect(!ok, "all-off execution rejects before querying"); ++callbacks; });
+    Expect(callbacks == 1 && !fullReads && !sourceReads && !factories && !scopes,
+        "ALL_OFF_ZERO_EXTENSION_WORK: no reader, factory, scope verification or execution dispatch");
+    service.Inspect(target);
+    PumpUntil([&] { return entered.load(); }, "explicit all-off management starts its full reader");
+    service.EndInspection(); hold = false;
+    PumpUntil([&] { return readerExited && trace.Discarded(); },
+        "worker consumes the closed custom reader result without publishing its generation");
+    const auto stoppedFactories = factories.load(), stoppedReads = fullReads.load();
+    notification.Signal();
+    service.Query(target); service.Prewarm(target);
+    service.Execute(target, {}, {}, [&](bool ok) { Expect(!ok, "closed all-off execution stays rejected"); ++callbacks; });
+    const auto quietUntil = GetTickCount64() + 150;
+    do
+    {
+        Expect(factories == stoppedFactories && fullReads == stoppedReads && sourceReads == 0 && scopes == 0,
+            "CLOSED_ALL_OFF_STAYS_QUIET: late results, registry notifications and ordinary calls cannot rearm work");
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    } while (GetTickCount64() < quietUntil);
+    // Reopening starts a fresh generation after the canceled scan drains.
+    service.Inspect(target);
+    PumpUntil([&] { return fullReads >= 2 && !service.Inspect(target).scanning; },
+        "reopening explicit management drains old generation and runs a fresh full reader");
+    service.EndInspection();
+    Expect(callbacks == 2 && sourceReads == 0 && scopes == 0 && factories >= stoppedFactories,
+        "late full-reader result cannot start ordinary source work or steal rejected callbacks");
+    service.Shutdown();
+}
+// A held old management reply crosses EndInspection before a new same-key
+// Execute. This preserves the production queue/sequence/callback boundaries.
+inline void ClosedInspectionCompletion(int mode)
+{
+    TemporaryDirectory temp;
+    ext::Request request; request.paths = {(temp.path / L"held.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    auto action = Entry(0, 71);
+    std::atomic_uint factories = 0, callbacks = 0, invoked = 0;
+    std::atomic_bool oldPollEntered = false, release = false, oldRetired = false, succeeded = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
+        const auto number = ++factories;
+        auto lease = std::shared_ptr<int>(new int, [&, number](int *value) {
+            delete value; if (number == 1) oldRetired = true;
         });
-    }, "fresh verified sources publish independently of the held global inventory and reserved worker");
-    Expect(!service.View(request).snapshot, "the aggregate still waits for its own complete registration proof");
-    releaseRefresh = true;
-    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
-        "aggregate fallback completes after global verification without losing the early source results");
+        return ext::QueryWork{[&, number, lease]() -> std::optional<ext::Reply> {
+            if (number == 1)
+            {
+                oldPollEntered = true;
+                const auto deadline = GetTickCount64() + 5000;
+                while (!release && GetTickCount64() < deadline) Sleep(1);
+            }
+            auto item = action; item.token = number == 1 ? 71 : 72;
+            return ext::Reply{true, {item}, {}};
+        }, [&](UINT token, POINT) { invoked = token; }};
+    }, [] { ext::Catalogue value; value.revision = 1; return value; });
+    struct Release { std::atomic_bool &gate; ~Release() { gate = true; } } cleanup{release};
+    ext::Preferences prefs; ext::SetCommon(prefs, action.provider, ext::Category::Objects, true);
+    service.Configure(prefs); service.Query(request, ext::QueryPriority::Inspect);
+    PumpUntil([&] { return oldPollEntered.load(); }, "old management poll is held after dispatch");
+    if (mode == 2)
+        service.Execute(request, ext::AppendReference({}, action), {}, [&](bool ok) { succeeded = ok; ++callbacks; });
+    service.EndInspection();
+    if (mode == 0)
+        service.Execute(request, ext::AppendReference({}, action), {}, [&](bool ok) { succeeded = ok; ++callbacks; });
+    else if (mode == 1)
+        std::ofstream(request.paths.front(), std::ios::app) << " change target before old reply";
+    else
+        service.Configure({});
+    release = true;
+    PumpUntil([&] { return oldRetired && (mode == 1 || callbacks == 1); }, "closed old work retires without stranding accepted execution");
+    if (mode == 0)
+        Expect(callbacks == 1 && succeeded && invoked == 72 && factories == 2,
+            "CLOSED_OLD_SEQUENCE_CANNOT_STEAL_NEW_CLICK: fresh Execute owns its token and single callback");
+    else if (mode == 1)
+        Expect(callbacks == 0 && factories == 1 && !service.View(request).pending,
+            "CLOSED_MANAGEMENT_CANNOT_REQUEUE: changed old target cannot create an ordinary query after End");
+    else
+        Expect(callbacks == 1 && !succeeded && !invoked && factories == 1,
+            "accepted same-sequence execution completes once after close and rechecks current visibility");
+    service.Shutdown();
+}
+inline void UnprovenSourceFallback(int mode)
+{
+    TemporaryDirectory temp;
+    auto truth = Inventory(); truth.rows.resize(1);
+    auto &source = truth.rows.front();
+    if (mode == 0) { source.kind = ext::RegistrationKind::Packaged; source.id = "package:unverified"; }
+    else { source.kind = ext::RegistrationKind::Verb; source.id = "reg:*\\shell\\unverified"; source.verbs = {"unverified"}; }
+    const auto cache = temp.path / L"cache";
+    shell_service_fixture::SeedMetadata(cache, truth);
+    ext::Request request; request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    std::atomic_uint fullReads = 0, sourceReads = 0, aggregates = 0;
+    auto action = Entry(0); action.provider = source.id; action.registration = source.id;
+    ext::MenuService service(cache, [&](const ext::Request &) {
+        ++aggregates; return ext::QueryWork{[action] { return ext::Reply{true, {action}, {}}; }, {}};
+    }, [&] { ++fullReads; return truth; }, {}, {}, [&](const auto &seeds) {
+        ++sourceReads;
+        Expect(mode != 0, "unsupported packaged registration cannot enter exact-path inventory");
+        if (mode == 2) throw std::runtime_error("controlled exact reader failure");
+        if (mode == 3) { auto disabled = shell_service_fixture::Sources(truth, seeds); disabled.rows.front().systemEnabled = false; return disabled; }
+        ext::Catalogue missing; missing.revision = 1; return missing;
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, source.id, ext::Category::Objects, true);
+    service.Configure(prefs); service.Prewarm(request);
+    PumpUntil([&] { return !service.View(request).pending; }, "unproven background selection finishes without a root query");
+    Expect(aggregates == 0 && fullReads == 0, "unproven source cannot trigger hidden root prewarming or a complete inventory");
+    service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return !view.pending && (mode == 3 || view.snapshot.has_value()); },
+        "actual menu retains compatibility unless current exact policy proves disabled");
+    Expect(aggregates == (mode == 3 ? 0u : 1u) && fullReads == 0 && sourceReads == (mode == 0 ? 0u : 1u),
+        "UNPROVEN_IS_NOT_DISABLED: unsupported, missing and failed exact reads preserve the selected root fallback");
+    service.Shutdown();
+}
+inline void KnownSourcePrewarm()
+{
+    TemporaryDirectory temp;
+    auto catalogue = Inventory(); const auto observed = Observed(catalogue);
+    const auto cache = temp.path / L"cache";
+    shell_service_fixture::SeedMetadata(cache, catalogue);
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    ext::Request request; request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    std::atomic_uint fullReads = 0, sourceReads = 0, aggregates = 0, sources = 0;
+    ext::MenuService service(cache, [&](const ext::Request &target) {
+        if (target.sourceClsid.empty()) ++aggregates; else ++sources;
+        return ext::QueryWork{[] { return ext::Reply{true, {Entry(0)}, {}}; }, {}};
+    }, [&] { ++fullReads; return catalogue; }, {}, {}, [&](const auto &seeds) {
+        ++sourceReads; return shell_service_fixture::Sources(catalogue, seeds);
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, Entry(0).provider, ext::Category::Objects, true);
+    service.Configure(prefs); service.Prewarm(request);
+    PumpUntil([&] { const auto view = service.View(request); return !view.pending && view.sourcesOnly &&
+        view.sources.size() == 1 && service.View(view.sources.front()).snapshot.has_value(); },
+        "proven enabled source may prewarm independently of the aggregate");
+    Expect(fullReads == 0 && sourceReads == 1 && aggregates == 0 && sources == 1,
+        "KNOWN_PREWARM_IS_SOURCE_ONLY: no unrelated inventory, handler or root is read");
+    service.Query(request);
+    PumpUntil([&] { return !service.View(request).pending; }, "foreground menu reuses ready source-only selection");
+    Expect(aggregates == 0 && sources == 1, "foreground publication reuses the exact proven source result");
+    service.Shutdown();
+}
+inline void LimitedReaderClosedGeneration()
+{
+    TemporaryDirectory temp;
+    auto catalogue = Inventory(); const auto observed = Observed(catalogue);
+    const auto cache = temp.path / L"cache";
+    shell_service_fixture::SeedMetadata(cache, catalogue);
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    ext::Request request; request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    std::atomic_uint sourceReads = 0, fullReads = 0, factories = 0;
+    std::atomic_bool release = false, firstExited = false;
+    ext::MenuService service(cache, [&](const ext::Request &target) {
+        ++factories;
+        Expect(!target.sourceClsid.empty(), "reopened known selection uses its independently proven source");
+        return ext::QueryWork{[] { return ext::Reply{true, {Entry(0)}, {}}; }, {}};
+    }, [&] { ++fullReads; return catalogue; }, {}, {}, [&](const auto &seeds) {
+        const auto n = ++sourceReads;
+        if (n == 1)
+        {
+            const auto until = GetTickCount64() + 5000;
+            while (!release && GetTickCount64() < until) Sleep(1);
+            firstExited = true;
+        }
+        return shell_service_fixture::Sources(catalogue, seeds);
+    });
+    struct Release { std::atomic_bool &gate; ~Release() { gate = true; } } cleanup{release};
+    ext::Preferences prefs; ext::SetCommon(prefs, Entry(0).provider, ext::Category::Objects, true);
+    service.Configure(prefs);
+    PumpUntil([&] { return sourceReads == 1; }, "ordinary selected-source reader is held in flight");
+    service.Configure({}); service.EndInspection(); release = true;
+    PumpUntil([&] { return firstExited.load(); }, "custom limited reader returns after its demand closes");
+    service.Query(request); service.Prewarm(request);
+    Expect(!factories && !fullReads, "closed limited result cannot create menu, discovery or full inventory work");
+    service.Configure(prefs); service.Prewarm(request);
+    PumpUntil([&] { auto view = service.View(request); return sourceReads == 2 && !view.pending && view.sourcesOnly &&
+        view.sources.size() == 1 && service.View(view.sources.front()).snapshot.has_value(); },
+        "reenabling drains the old limited future and establishes a fresh cancellable generation");
+    Expect(factories == 1 && fullReads == 0 && sourceReads == 2,
+        "LATE_LIMITED_RESULT_CANNOT_REARM: one new exact check and selected-source prewarm resume without a full root");
     service.Shutdown();
 }
 inline void Run()
@@ -454,7 +679,13 @@ inline void Run()
     LiveSourceRegistration();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
     CancelQueued();
-    LearnFromOrdinaryMenus();
-    PreparationAfterRegistryNoise();
+    OrdinaryMenusDoNotProbe(false);
+    OrdinaryMenusDoNotProbe(true);
+    LearnFromManagement();
+    InspectionLifecycle();
+    for (int mode = 0; mode < 4; ++mode) UnprovenSourceFallback(mode);
+    KnownSourcePrewarm();
+    LimitedReaderClosedGeneration();
+    for (int mode = 0; mode < 3; ++mode) ClosedInspectionCompletion(mode);
 }
 }

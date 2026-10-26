@@ -107,7 +107,7 @@ void CheckSourceProof(int mode)
     });
     ReleaseOnExit release{allowRead};
     ext::Preferences prefs; ext::SetHidden(prefs, action.provider, ext::Context::File, false);
-    service.Configure(prefs); service.Query(request);
+    service.Configure(prefs); service.Query(request, ext::QueryPriority::Inspect);
     PumpUntil([&] { return starts == 1; }, "source query starts against the published selection");
     if (mode <= 1)
     {
@@ -126,7 +126,7 @@ void CheckSourceProof(int mode)
     else if (mode == 2)
     {
         const auto before = service.View(request).revision;
-        service.Query(request, ext::QueryPriority::Menu, true);
+        service.Query(request, ext::QueryPriority::Inspect, true);
         PumpUntil([&] { return aggregates >= 2 && service.View(request).revision > before; }, "new aggregate replaces the source's original snapshot");
         allowReply = true;
     }
@@ -153,39 +153,29 @@ void CheckSourceProof(int mode)
     Expect(schema == 3 && attributed == (mode == 0), "only current target, snapshot, configuration and registration may acquire source proof");
 }
 
-void CheckPreparedRetention(bool changed)
+// Ordinary unknown opt-ins must not allocate a general prepared root. A
+// registry notification cannot turn the skipped prewarm into a hidden query.
+void CheckDemandOnlyPreparation(bool changed)
 {
-    TemporaryDirectory temp;
-    Registry registry(temp); Trace trace(temp);
-    const auto file = temp.path / L"prepared-retention.txt"; std::ofstream(file) << "private";
+    TemporaryDirectory temp; Registry registry(temp); Trace trace(temp);
+    const auto file = temp.path / L"demand-only.txt"; std::ofstream(file) << "private";
     ext::Request request; request.paths = {file.wstring()};
-    std::atomic_uint reads = 0;
-    std::atomic_bool allowRead = false;
-    ext::MenuService service(temp.path / L"cache", {}, [&] {
-        const auto n = ++reads;
-        const auto deadline = GetTickCount64() + 5000;
-        while (n > 1 && !allowRead && GetTickCount64() < deadline) Sleep(1);
-        auto catalogue = Inventory(changed && n > 1 ? 102 : 101);
-        catalogue.rows.front().kind = ext::RegistrationKind::Verb;
-        catalogue.rows.front().verbs = {"unrelated"};
-        return catalogue;
-    });
-    ReleaseOnExit release{allowRead};
-    ext::Preferences prefs;
-    ext::SetHidden(prefs, "verb:prepared", ext::Context::File, false);
-    ext::SetHidden(prefs, "verb:cold", ext::Context::File, false);
-    service.Configure(prefs);
-    PumpUntil([&] { return trace.Has("phase=preparation reason=ready"); }, "native prepared helper is ready on the service STA");
-    registry.Notify(1);
-    PumpUntil([&] { return reads >= 2; }, "registry verification holds the prepared helper");
+    std::atomic_uint fullReads = 0, sourceReads = 0, factories = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
+        ++factories; ext::Entry action; action.provider = "verb:cold"; action.key = "cold"; action.label = L"Cold";
+        return ext::QueryWork{[action] { return ext::Reply{true, {action}, {}}; }, {}};
+    }, [&] { ++fullReads; return Inventory(changed ? 102 : 101); }, {}, {},
+       [&](const auto &) { ++sourceReads; return ext::Catalogue{}; });
+    ext::Preferences prefs; ext::SetHidden(prefs, "verb:cold", ext::Context::File, false);
+    service.Configure(prefs); service.Prewarm(request);
+    PumpUntil([&] { return !service.View(request).pending; }, "unknown selection prewarm skips its full root");
+    registry.Notify(changed ? 2 : 1);
+    PumpUntil([&] { return trace.Has("reason=stale.registry"); }, "ordinary service observes a real notification");
     service.Query(request);
-    PumpUntil([&] {
-        return trace.Has("reason=prepared_verification_wait") || trace.Has("phase=helper_start reason=cold");
-    }, "observe verification wait or the premature cold-query regression before releasing the reader");
-    allowRead = true;
-    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "native query publishes after verification");
-    Expect(service.View(request).snapshot->entries.front().key == (changed ? "cold" : "prepared"),
-        "PREPARED_UNCHANGED_MUST_SURVIVE: unchanged verification reuses the real helper; changed registration retires it");
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "real Menu directly queries unknown compatibility root");
+    Expect(factories == 1 && fullReads == 0 && sourceReads == 0 &&
+        !trace.Has("phase=preparation reason=ready"),
+        "ORDINARY_NO_INVENTORY_OR_GENERIC_PREPARATION: only the actual selected menu reaches the factory");
     service.Shutdown();
 }
 void CheckRegistryFanout()
@@ -242,25 +232,25 @@ void CheckBackgroundProcessSlot()
     ext::SetHidden(prefs, "verb:first", ext::Context::File, false);
     ext::SetHidden(prefs, "verb:first", ext::Context::FolderBackground, false);
     service.Configure(prefs);
-    PumpUntil([&] { return trace.Has("phase=preparation reason=ready"); }, "reserve one ordinary preparation slot");
+    Expect(!trace.Has("phase=preparation reason=ready"), "ordinary configuration does not reserve a generic prepared worker");
     ext::Request file; file.paths = {held.wstring()};
     service.Query(file, ext::QueryPriority::Inspect, true);
-    PumpUntil([&] { return std::filesystem::exists(temp.path / L"slot-entered"); }, "a real inspected query holds the other ordinary slot");
+    PumpUntil([&] { return std::filesystem::exists(temp.path / L"slot-entered"); }, "a real inspected query holds one ordinary slot");
     ext::Request background; background.paths = {temp.path.wstring()};
     background.background = true; background.context = ext::Context::FolderBackground;
     service.Query(background);
     PumpUntil([&] {
         const auto view = service.View(background);
-        Expect(view.error.empty(), "BACKGROUND_DEMAND_MUST_TAKE_RESERVED_SLOT: background demand cannot fail because preparation occupies the remaining process slot");
+        Expect(view.error.empty(), "BACKGROUND_DEMAND_MUST_TAKE_FREE_SLOT: an explicit menu shares the bounded pool with management");
         return view.snapshot.has_value();
-    }, "explicit background demand replaces incompatible preparation without exceeding two processes");
+    }, "explicit background demand uses the free slot without exceeding two processes");
     std::ofstream(temp.path / L"release-slot") << "release private query";
     service.Shutdown();
 }
 void Run()
 {
     for (int mode = 0; mode < 5; ++mode) CheckSourceProof(mode);
-    CheckPreparedRetention(false); CheckPreparedRetention(true);
+    CheckDemandOnlyPreparation(false); CheckDemandOnlyPreparation(true);
     CheckRegistryFanout();
     CheckBackgroundProcessSlot();
 }
