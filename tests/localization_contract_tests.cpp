@@ -466,43 +466,54 @@ std::string DecodeEscapedKey(
     return encoded;
 }
 
+References CollectReferencesInText(
+    std::string_view text, const std::string& location, bool lua)
+{
+    using namespace snowdesktop::localization_audit;
+    static const std::set<std::string> luaCalls{"tr"};
+    static const std::set<std::string> cppCalls{"_L", "_LW", "_LF", "_LFW", "L10N_KEY", "L", "Tr", "TrW", "Localize"};
+    const auto& calls = lua ? luaCalls : cppCalls;
+    References references;
+    const auto tokens = Lex(text, lua);
+    for (size_t index = 0; index + 2 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind != TokenKind::Identifier || !calls.contains(tokens[index].value) ||
+            tokens[index + 1].kind != TokenKind::Punctuation || tokens[index + 1].value != "(") continue;
+        if (lua && (index < 2 || tokens[index - 1].value != "." || tokens[index - 2].value != "l10n")) continue;
+        int depth = 0;
+        for (size_t argument = index + 2; argument < tokens.size(); ++argument)
+        {
+            const auto& token = tokens[argument];
+            if (token.kind == TokenKind::Punctuation)
+            {
+                if ((token.value == ")" || token.value == ",") && depth == 0) break;
+                if (token.value == "(") ++depth;
+                if (token.value == ")") --depth;
+            }
+            if (token.kind != TokenKind::String) continue;
+            // Comparison values and nested function arguments are not
+            // translation keys. Literal branches of a key expression are.
+            if (!IsDirectKey(tokens, index, argument, lua)) continue;
+            const auto key = DecodeEscapedKey(token.value);
+            references[key].push_back(location + ":" + std::to_string(token.line));
+        }
+    }
+    return references;
+}
+
 References CollectReferences(
     const std::vector<fs::path>& files,
     const fs::path& root,
     bool lua)
 {
-    using namespace snowdesktop::localization_audit;
-    const std::set<std::string> calls = lua ? std::set<std::string>{"tr"} :
-        std::set<std::string>{"_L", "_LW", "_LF", "_LFW", "L10N_KEY", "L", "Tr", "TrW", "Localize"};
     References references;
     for (const fs::path& path : files)
     {
         const std::string text = ReadFile(path);
-        Check(IsValidUtf8(text),
-            PathLabel(path, root) +
-                ": source file must be valid UTF-8");
+        Check(IsValidUtf8(text), PathLabel(path, root) + ": source file must be valid UTF-8");
         if (!IsValidUtf8(text)) continue;
-        const auto tokens = Lex(text, lua);
-        for (size_t index = 0; index + 2 < tokens.size(); ++index)
-        {
-            if (tokens[index].kind != TokenKind::Identifier || !calls.contains(tokens[index].value) ||
-                tokens[index + 1].value != "(") continue;
-            if (lua && (index < 2 || tokens[index - 1].value != "." || tokens[index - 2].value != "l10n")) continue;
-            int depth = 0;
-            for (size_t argument = index + 2; argument < tokens.size(); ++argument)
-            {
-                const auto& token = tokens[argument];
-                if ((token.value == ")" || token.value == ",") && depth == 0) break;
-                if (token.value == "(") ++depth;
-                if (token.value == ")") --depth;
-                if (token.kind != TokenKind::String) continue;
-                // Comparison values and nested function arguments are not
-                // translation keys. Literal branches of a key expression are.
-                if (!IsDirectKey(tokens, index, argument, lua)) continue;
-                const auto key = DecodeEscapedKey(token.value);
-                references[key].push_back(PathLabel(path, root) + ":" + std::to_string(token.line));
-            }
-        }
+        for (const auto& [key, locations] : CollectReferencesInText(text, PathLabel(path, root), lua))
+            references[key].insert(references[key].end(), locations.begin(), locations.end());
     }
     return references;
 }
@@ -520,6 +531,22 @@ void MergeReferences(
 void TestReferenceAuditContracts()
 {
     namespace audit = snowdesktop::localization_audit;
+    // A wide string containing '(' is data, not the translation alias L(...).
+    // Exercise the same collector that audits production source files.
+    const auto wideDelimiter = CollectReferencesInText(R"CPP(
+        auto paths = L"(" + std::to_wstring(count) + L") ";
+        tooltip.SetTarget(redo ? "file_history.redo" : "file_history.undo", text, rect, Below);
+        _LW("ui.direct");
+        L("ui.table");
+        _LW(state == ")" ? "ui.direct" : "ui.table");
+    )CPP", "wide-delimiter.cpp", false);
+    Check(wideDelimiter.size() == 2 && wideDelimiter.contains("ui.direct") &&
+        wideDelimiter.at("ui.direct").size() == 2 && wideDelimiter.contains("ui.table") &&
+        wideDelimiter.at("ui.table").size() == 2,
+        "wide literals and string-valued delimiters cannot consume later tooltip identities or translation calls");
+    const auto literalDelimiter = CollectReferencesInText(R"CPP(L("(");)CPP", "literal-key.cpp", false);
+    Check(literalDelimiter.size() == 1 && literalDelimiter.contains("("),
+        "a real translation alias still accepts a string containing a delimiter");
     const std::set<std::string> keys{"ui.direct", "ui.table", "ui.dead", "ui.comment", "ui.added"};
     const std::vector<audit::Source> sources{{"fixture.cpp", audit::Lex(R"CPP(
         // _LW("ui.comment");
