@@ -137,7 +137,8 @@ local function background(_context,m)
         -- Drawing requests only this scene's decode. Keep the previous scene
         -- while the host prepares its replacement on the background worker.
         draw.imageFit(bitmap,0,0,w,h,"cover","center",1)
-        if lazyImages and resource.status(bitmap).state~="ready" then
+        local imageStatus=lazyImages and resource.status(bitmap) or nil
+        if imageStatus and (imageStatus.state~="ready" or imageStatus.resident==false) then
             if previousSky and previousSky~=bitmap then
                 draw.imageFit(previousSky,0,0,w,h,"cover","center",1)
             end

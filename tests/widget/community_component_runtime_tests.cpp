@@ -110,6 +110,7 @@ struct Host
     std::vector<std::string> drawnImages;
     std::map<std::string,bool> lazyImages;
     std::set<std::string> pendingImages;
+    std::set<std::string> nonResidentImages;
     std::vector<std::pair<std::string,long long>> scheduled;
     std::string date="2026-10-16",error,failSchedule;
     long long now=1000;
@@ -228,7 +229,9 @@ struct Host
     {
         const std::string name=luaL_checkstring(state,1);lua_newtable(state);
         lua_pushstring(state,Get(state).pendingImages.contains(name)?"pending":"ready");
-        lua_setfield(state,-2,"state");return 1;
+        lua_setfield(state,-2,"state");
+        lua_pushboolean(state,!Get(state).nonResidentImages.contains(name));
+        lua_setfield(state,-2,"resident");return 1;
     }
     static int DrawImage(lua_State* state)
     { Get(state).drawnImages.emplace_back(luaL_checkstring(state,1));return 0; }
@@ -509,6 +512,12 @@ void TestWeather(const std::filesystem::path& packages,const std::filesystem::pa
         "a pending replacement keeps the last ready scene visible");
     host.pendingImages.clear();host.Background();
     Check(host.drawnImages==std::vector<std::string>{"rain"},"ready rain retires the sunny scene demand");
+    host.nonResidentImages.insert("sky");host.Forecast(sunny);host.Background();
+    Check(host.drawnImages==std::vector<std::string>({"sky","rain"}),
+        "returning to an evicted ready scene keeps rain visible while its pixels recover");
+    host.nonResidentImages.clear();host.Background();
+    Check(host.drawnImages==std::vector<std::string>{"sky"},
+        "restored scene residency retires the previous background again");
     Host legacy(packages/L"sky-weather",Storage(root/L"legacy-images"),nullptr,true,true,false);
     Check(legacy.lazyImages.size()==6 && std::none_of(legacy.lazyImages.begin(),legacy.lazyImages.end(),
         [](const auto& image){return image.second;}),"old hosts retain the original image API without new options");

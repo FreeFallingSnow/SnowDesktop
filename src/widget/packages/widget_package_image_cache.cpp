@@ -371,6 +371,7 @@ const PackageImageSource* WidgetPackageImageCache::Acquire(
     entry.identity = ++nextIdentity_;
     entry.encoded = std::move(encoded);
     entry.ready = !lazy;
+    entry.fullyValidated = !lazy;
     if (lazy) std::vector<std::uint8_t>{}.swap(source->pixels);
     entry.revision = source->pixels.empty() ? 0 : 1;
     entry.source = std::move(*source);
@@ -471,20 +472,23 @@ bool WidgetPackageImageCache::Validate(const std::string& key,
     const auto found = sources_.find(key);
     if (found == sources_.end()) return false;
     auto& entry = found->second;
-    if (entry.ready && !entry.source.pixels.empty()) return true;
+    if (entry.fullyValidated && !entry.source.pixels.empty()) return true;
     auto opened = OpenSnapshot(*entry.encoded);
     PackageImageAcquireError decodeError = PackageImageAcquireError::DecodeFailed;
     auto decoded = opened ? DecodePackageImage(opened->factory.Get(),
         opened->decoder.Get(), maximumSingleBytes_,
-        maximumTotalBytes_ - bytes_, decodeError) : std::nullopt;
+        maximumTotalBytes_ - (bytes_ - entry.source.pixels.size()),
+        decodeError) : std::nullopt;
     if (!decoded)
     {
         if (error) *error = decodeError;
         return false;
     }
+    bytes_ -= entry.source.pixels.size();
     bytes_ += decoded->pixels.size();
     entry.source = std::move(*decoded);
     entry.ready = true;
+    entry.fullyValidated = true;
     entry.decodeFailed = false;
     ++entry.revision;
     changed_.push_back(key);
@@ -615,6 +619,8 @@ void WidgetPackageImageCache::Schedule(const std::string& key, Entry& entry,
         bytes_ += decoded->pixels.size();
         current.source = std::move(*decoded);
         current.ready = true;
+        if (edge == std::max(current.original.width, current.original.height))
+            current.fullyValidated = true;
         ++current.revision;
         changed_.push_back(key);
     };

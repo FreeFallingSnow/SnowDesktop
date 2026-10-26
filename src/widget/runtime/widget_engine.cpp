@@ -10245,7 +10245,8 @@ static ID2D1Bitmap1* LoadImageBitmap(
         const double scale = snowdesktop::widget_runtime::RequiredImageRasterScale(
             static_cast<float>(original.width), static_cast<float>(original.height),
             width, height, fit, {transform._11, transform._12, transform._21,
-                transform._22, dpiX, dpiY}, originalPixels);
+                transform._22, dpiX, dpiY,
+                s->ctx->GetUnitMode() == D2D1_UNIT_MODE_PIXELS}, originalPixels);
         source = s->packageImageCache.Request(contentKey, ImageUseOwner(s),
             scale, snowdesktop::widget_runtime::WidgetPackageImageCache::Clock::now(),
             s->engine && s->engine->IsPreviewOnly());
@@ -11966,11 +11967,13 @@ static int lua_ResourceStatus(lua_State* L)
         : ResolveResourceHandleImageContentKey(L, 1);
     bool ready = false;
     bool pending = false;
+    bool resident = false;
     if (runtimeImage && state)
     {
         const auto resource = state->runtimeImages.find(handle->name);
         ready = resource != state->runtimeImages.end() &&
             resource->second.ownerWidgetId == BoundWidgetId(L);
+        resident = ready;
     }
     else if (path && state)
     {
@@ -11979,6 +11982,7 @@ static int lua_ResourceStatus(lua_State* L)
         {
             ready = state->packageImageCache.Ready(*imageContentKey);
             pending = !ready && !state->packageImageCache.DecodeFailed(*imageContentKey);
+            resident = !state->packageImageCache.Find(*imageContentKey)->pixels.empty();
         }
         else
             ready = handle->type == LuaResourceType::Audio ||
@@ -11991,6 +11995,11 @@ static int lua_ResourceStatus(lua_State* L)
     lua_setfield(L, -2, "type");
     lua_pushstring(L, handle->name);
     lua_setfield(L, -2, "name");
+    if (handle->type == LuaResourceType::Image)
+    {
+        lua_pushboolean(L, resident);
+        lua_setfield(L, -2, "resident");
+    }
     if (!ready && !pending)
     {
         lua_pushliteral(L, "unavailable");
@@ -20760,7 +20769,6 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!state) return;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
-    BeginImageFrame(d2dState_);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
@@ -20798,6 +20806,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (transitionFrameRequested && transitionGeometryUnchanged &&
         found->viewTree)
     {
+        BeginImageFrame(d2dState_);
         d2dState_->widgetClipDepth = 0;
         const bool transitionActive = DrawWidgetViewTree(
             d2dState_, *found->viewTree, found->interactionRegions,
@@ -20844,6 +20853,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         found->desktopMarquee.requiresLuaRender = true;
     }
+    // A replayed command list still consumes its images. Replace demands only
+    // when drawing the tree or recording a fresh Lua frame.
+    BeginImageFrame(d2dState_);
     snowdesktop::widget_runtime::HostControlFrame<LuaWidget::HostControl>
         hostControlFrame([this, ownerId = widgetId]() -> std::vector<LuaWidget::HostControl>* {
             const int currentIndex = FindWidget(ownerId);

@@ -454,8 +454,8 @@ end})
         const auto definition = script.find("return widget.define");
         Check(definition != std::string::npos, "image fixture has a real widget definition");
         script.insert(definition, lazy ?
-            "assert(resource.status(stripes).state==\"pending\")\n" :
-            "assert(resource.status(stripes).state==\"ready\")\n");
+              "assert(resource.status(stripes).state==\"pending\" and resource.status(stripes).resident==false)\n" :
+              "assert(resource.status(stripes).state==\"ready\" and resource.status(stripes).resident==true)\n");
         Write(source / L"main.lua", script);
         const auto output = root / (std::wstring(declarative ? L"sampling-view" : L"sampling-draw") +
             (lazy ? L"-lazy" : L"") + L".png");

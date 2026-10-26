@@ -74,6 +74,9 @@ void RunImageDemandCases(const fs::path& root)
     Check(cache.Request("shared", "b|panel", 0.9, now)->width == 512,
         "an upgrade keeps the previous usable pixels while preparing the larger bucket");
     AwaitImage(cache, now, [&] { return cache.Find("shared")->width == 1024; });
+    const auto fullRevision = cache.Revision("shared");
+    Check(cache.Validate("shared") && cache.Revision("shared") == fullRevision,
+        "a full-resolution lazy decode already satisfies strict validation without decoding twice");
     cache.BeginFrame("a|desktop");
     cache.Request("shared", "a|desktop", 0.2, now);
     cache.Pump(now + 3s);
@@ -105,6 +108,17 @@ void RunImageDemandCases(const fs::path& root)
         "the last handle releases both expanded pixels and the compressed snapshot");
 
     WriteDemandBitmap(file, 1024, 512, 0xffaabbccu);
+    Cache strictAfterLazy(1024u * 512u * 4u, 1024u * 512u * 4u);
+    Check(strictAfterLazy.Acquire("strict-after-lazy", file.wstring(), nullptr, true) != nullptr,
+        "register the mixed lazy/strict resource");
+    strictAfterLazy.BeginFrame("lazy|desktop");
+    const auto* partial = strictAfterLazy.Request("strict-after-lazy", "lazy|desktop", 0.2, now, true);
+    Check(partial && partial->width == 256 &&
+        strictAfterLazy.Ready("strict-after-lazy"), "a scaled lazy resource can already be ready");
+    Check(strictAfterLazy.Acquire("strict-after-lazy", file.wstring()) &&
+        strictAfterLazy.Find("strict-after-lazy")->width == 1024 &&
+        strictAfterLazy.Bytes() == 1024u * 512u * 4u,
+        "a strict caller validates full resolution after lazy scaling without double-counting quota");
     Cache full(1024u * 512u * 4u, 1024u * 512u * 4u);
     Check(full.Acquire("full", file.wstring()) != nullptr,
         "the fixture fills its entire decoded quota");

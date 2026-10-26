@@ -3336,6 +3336,10 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 完整解码验证。第二参数仅接受可选布尔字段 `lazy`，无效选项报 `resource.image: invalidOptions`。
 默认调用的加载阶段报错语义保持不变。
 
+支持 `resource.image.lazy` 的宿主还会在图片状态中返回布尔字段 `resident`，表示当前有可用的
+解码像素。已验证图片的像素被回收后仍为 `ready`，但 `resident=false`；再次绘制会请求恢复。
+需要保留上一张背景的组件应同时检查 `state=="ready"` 和 `resident~=false`，直到新图像素就绪。
+
 此能力是 API v2 的可选扩展，不提高 `apiVersion`。旧宿主（包括同版本号的早期构建）不支持
 该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
 交付对应宿主，再发布组件，或像上例保留可运行的降级路径。

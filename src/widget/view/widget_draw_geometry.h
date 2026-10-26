@@ -50,6 +50,7 @@ struct ImageRasterTransform
 {
     double m11 = 1.0, m12 = 0.0, m21 = 0.0, m22 = 1.0;
     double dpiX = 96.0, dpiY = 96.0;
+    bool pixelUnits = false;
 };
 
 double RequiredImageRasterScale(float sourceWidth, float sourceHeight,

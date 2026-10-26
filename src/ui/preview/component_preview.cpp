@@ -3,9 +3,9 @@
 #include "ui/menu/menu_icon_render.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "widget/preview/widget_preview_stage.h"
+#include "platform/runtime_module_policy.h"
 #if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
 #include "app/features/wallpaper_engine_capture.h"
-#include "platform/runtime_module_policy.h"
 #endif
 
 #include <dwmapi.h>

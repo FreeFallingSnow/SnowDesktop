@@ -59,7 +59,9 @@ double RequiredImageRasterScale(float sourceWidth, float sourceHeight,
     const double c = transform.m11 * transform.m21 + transform.m12 * transform.m22;
     const double stretch = std::sqrt(std::max(0.0,
         (a + b + std::hypot(a - b, 2.0 * c)) * 0.5));
-    return logical * stretch * std::max(transform.dpiX, transform.dpiY) / 96.0;
+    const double density = transform.pixelUnits ? 1.0 :
+        std::max(transform.dpiX, transform.dpiY) / 96.0;
+    return logical * stretch * density;
 }
 
 DrawImagePlacement ResolveDrawImagePlacement(float sourceWidth,

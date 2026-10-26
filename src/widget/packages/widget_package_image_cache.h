@@ -108,6 +108,7 @@ private:
         std::uint64_t identity = 0;
         std::uint64_t revision = 0;
         bool ready = false;
+        bool fullyValidated = false;
         bool decodeFailed = false;
         bool pending = false;
         std::uint32_t wantedEdge = 0;
