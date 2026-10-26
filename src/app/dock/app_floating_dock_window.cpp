@@ -3,6 +3,18 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
 #include "platform/window_peek_policy.h"
+#include "theme/flat_glass_rim.h"
+
+namespace
+{
+RECT ExpandFloatingDockPaintBounds(RECT bounds, float borderWidth, bool highlight)
+{
+    const int padding = std::max(snowdesktop::floating_dock_rules::ResolveBorderOverdraw(borderWidth),
+        highlight ? snowdesktop::flat_glass_rim::kPanelOverdraw : 0);
+    if (!IsRectEmpty(&bounds)) InflateRect(&bounds, padding, padding);
+    return bounds;
+}
+}
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -811,8 +823,7 @@ CalculateFloatingDockStableSourceRect(
         (dockRect.top + dockRect.bottom) / 2});
     const float tooltipScale = tooltipPage ? static_cast<float>(tooltipPage->dpiX) / 96.f : 1.f;
     RECT sourceRect =
-        snowdesktop::floating_dock_rules::
-            ExpandForBorderOverdraw(
+        ExpandFloatingDockPaintBounds(
                 snowdesktop::
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
@@ -820,7 +831,7 @@ CalculateFloatingDockStableSourceRect(
                             dockSettings_.position,
                             static_cast<int>(std::ceil(300.f * tooltipScale)),
                             static_cast<int>(std::ceil(96.f * tooltipScale))),
-                visualEdgeWidth);
+                visualEdgeWidth, appearance.widgetEdgeHighlightEnabled);
 
     if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
     {
@@ -1177,6 +1188,16 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
             host.sourceRect.bottom - host.sourceRect.top);
     }
     if (!region) return false;
+    if (!IsRectEmpty(&host.visualPanelRect))
+    {
+        RECT painted = ExpandFloatingDockPaintBounds(host.visualPanelRect, borderWidth,
+            appearance.widgetEdgeHighlightEnabled);
+        OffsetRect(&painted, -host.sourceRect.left, -host.sourceRect.top);
+        HRGN paintedRegion = CreateRectRgnIndirect(&painted);
+        const bool combined = paintedRegion && CombineRgn(region, region, paintedRegion, RGN_OR) != ERROR;
+        if (paintedRegion) DeleteObject(paintedRegion);
+        if (!combined) { DeleteObject(region); return false; }
+    }
     if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
     {
         RECT button = host.explicitDismissRect;

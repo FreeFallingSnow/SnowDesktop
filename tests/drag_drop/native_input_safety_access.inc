@@ -76,12 +76,13 @@
     static inline HWND inputSafetyForeground = nullptr;
     static inline HWND inputSafetyOwnedWindow = nullptr;
     static inline unsigned inputSafetyAttachCalls = 0;
+    static inline unsigned inputSafetyLocalFocusCalls = 0;
     static inline bool inputSafetyAllowForeground = false;
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
     static HWND WINAPI InputSafetyForeground() { return inputSafetyForeground; }
     static BOOL WINAPI InputSafetyDenyForeground(HWND window)
     { if (!inputSafetyAllowForeground) return FALSE; inputSafetyForeground = window; return TRUE; }
-    static HWND WINAPI InputSafetyDenyFocus(HWND) { return nullptr; }
+    static HWND WINAPI InputSafetyDenyFocus(HWND) { ++inputSafetyLocalFocusCalls; return nullptr; }
     static BOOL WINAPI InputSafetyAttach(DWORD, DWORD, BOOL) { ++inputSafetyAttachCalls; return FALSE; }
     static DWORD WINAPI InputSafetyThread(HWND window, LPDWORD process)
     {
@@ -760,6 +761,7 @@ end})
             }
         } cleanup{app, windows};
         app.hwnd_ = create();
+        ShowWindow(app.hwnd_, SW_SHOWNOACTIVATE);
         app.inputHwnd_ = create();
         app.controlHwnd_ = create();
         app.floatingPopupHwnd_ = create();
@@ -899,6 +901,29 @@ end})
         const HWND popupWindow = create(&popupContext);
         app->floatingPopupHwnd_ = popupWindow;
         {
+            auto& dock = *app->persistentDockHosts_.front();
+            const auto savedAppearance = app->floatingDockPersonalization_;
+            app->floatingDockPersonalization_.widgetEdgeHighlightEnabled = true;
+            app->floatingDockPersonalization_.widgetBorderWidth = 1.0f;
+            app->floatingDockPersonalization_.widgetEdgeHighlightWidth = 1.0f;
+            dock.promoted = true;
+            dock.dockRect = dock.animationVisualRect = dock.visualPanelRect = {40, 40, 200, 100};
+            dock.sourceRect = {0, 0, 400, 300};
+            dock.windowRegionPending = true;
+            HRGN observed = CreateRectRgn(0, 0, 0, 0);
+            const bool applied = app->ApplyFloatingDockWindowRegion(dock);
+            const int regionKind = observed ? GetWindowRgn(dockWindow, observed) : ERROR;
+            const int halo = snowdesktop::flat_glass_rim::kPanelOverdraw;
+            check(applied && regionKind != ERROR && PtInRegion(observed, 200 + halo - 1, 70) &&
+                PtInRegion(observed, 40 - halo, 70) && !PtInRegion(observed, 200 + halo + 1, 70),
+                "actual native Dock region preserves the renderer's full outer rim on both extended edges");
+            if (observed) DeleteObject(observed);
+            SetWindowRgn(dockWindow, nullptr, FALSE);
+            dock.promoted = false;
+            dock.dockRect = dock.animationVisualRect = dock.visualPanelRect = dock.sourceRect = {};
+            app->floatingDockPersonalization_ = savedAppearance;
+        }
+        {
             // All HWNDs live on this fixture's inactive desktop. Keep a Dock
             // already raised while its foreground changes after the summon.
             auto& dock = *app->persistentDockHosts_.front();
@@ -961,17 +986,29 @@ end})
             // native deactivation must dismiss even with identical baselines
             // and all global mouse buttons unreadable.
             const ULONGLONG savedMinimizeTick = app->dockSystemMinimizeStartedTick_.load();
+            WNDCLASSW inputClass{};
+            if (!GetClassInfoW(app->instance_, kInputWindowClassName, &inputClass))
+            {
+                inputClass.hInstance = app->instance_;
+                inputClass.lpfnWndProc = &DesktopApp::InputWndProc;
+                inputClass.lpszClassName = kInputWindowClassName;
+                if (!RegisterClassW(&inputClass)) throw std::runtime_error("register private proxy fixture class");
+            }
             for (int repeat = 0; repeat < 4; ++repeat)
             {
+                check(app->EnsureFloatingDockInputWindow(), "each repeated Dock session creates an input proxy");
+                const HWND sessionProxy = app->floatingDockInputHwnd_;
                 dock.promoted = true;
                 dock.desktopLayerForegroundWindow = control;
                 app->floatingDockVisible_ = app->floatingDockKeyboardSessionActive_ = true;
                 app->dockSystemMinimizeStartedTick_.store(GetTickCount64());
-                app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
+                app->HandleInputMessage(sessionProxy, WM_ACTIVATEAPP, FALSE, 0);
                 app->UpdateFloatingDockEdgeSwipe();
                 check(!dock.promoted && !app->floatingDockVisible_ && !app->floatingDockKeyboardSessionActive_ &&
                     !app->floatingDockInputDeactivated_ && inputSafetyForeground == control,
                     "native proxy loss repeatedly dismisses Dock without a poll observing the proxy or physical press");
+                check(!app->floatingDockInputHwnd_ && !IsWindow(sessionProxy),
+                    "every ended session destroys its native proxy instead of retaining hidden activation state");
             }
             app->dockSystemMinimizeStartedTick_.store(savedMinimizeTick);
             app->RefreshFloatingDockPromotionInputs();
@@ -1211,8 +1248,11 @@ end})
             InputSafetyImport gui("GetGUIThreadInfo", reinterpret_cast<ULONG_PTR>(&InputSafetyGui));
             InputSafetyImport attach("AttachThreadInput", reinterpret_cast<ULONG_PTR>(&InputSafetyAttach), true);
             inputSafetyAttachCalls = 0;
+            inputSafetyLocalFocusCalls = 0;
             const bool focused = app->FocusKeyboardWindow(dockWindow, true, L"Input safety denied activation");
             check(!focused && inputSafetyAttachCalls == 0, "denied host activation must return without attaching a foreign input queue");
+            check(inputSafetyLocalFocusCalls == 0,
+                "denied foreground activation must not leave the proxy active or focused in the local input queue");
             (void)app->FocusKeyboardWindow(popupWindow, true, L"Unavailable popup activation");
             check(!IsWindowVisible(popupWindow), "activation must not revive a popup whose presentation is unavailable");
             inputSafetyAllowForeground = true;
