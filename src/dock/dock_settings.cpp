@@ -18,6 +18,7 @@
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/operation_feedback.h"
+#include "diagnostics/performance_trace.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -489,6 +490,7 @@ public:
         const PersonalizationSettings& appearance,
         const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
     {
+        snowdesktop::performance::Scope trace("shared.taskbar", "controller.apply");
         hookEnabled = hookEnabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar);
         if (!hookEnabled) snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 0);
         // Reap a completed worker before reusing its std::thread object. The
@@ -623,6 +625,7 @@ public:
         }
         MemoryBarrier();
         InterlockedIncrement(&state_->generation); // even: snapshot complete
+        snowdesktop::performance::Value("shared.taskbar", "publish", {}, 1);
 
         const bool watchMinimizeInput = hookEnabled && std::any_of(targets.begin(), targets.end(), [](const auto& target) {
             return target.protectAutoHideActivation;
@@ -660,7 +663,9 @@ public:
         {
             if (hookEnabled)
             {
-                PostMessageW(taskbar, applyMessage, 0, 0);
+                const BOOL posted = PostMessageW(taskbar, applyMessage, 0, 0);
+                snowdesktop::performance::Value("shared.taskbar", posted
+                    ? "apply.post.success" : "apply.post.failure", {}, 1);
                 continue;
             }
 
@@ -668,8 +673,10 @@ public:
             // still alive. The Explorer-side owner watcher remains a crash
             // fallback, but graceful exit must not race an asynchronous post.
             DWORD_PTR ignored = 0;
-            SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
+            const auto sent = SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
+            snowdesktop::performance::Value("shared.taskbar", sent
+                ? "restore.send.success" : "restore.send.failure", {}, 1);
         }
 
         if (!hookEnabled)

@@ -2,6 +2,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
+#include "diagnostics/performance_trace.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -320,6 +321,7 @@ bool IsSystemTaskbarShellUiWindow(HWND window)
 
 bool DesktopApp::RefreshSystemTaskbarWindowState()
 {
+    snowdesktop::performance::Scope trace("shared.taskbar", "window_state.scan");
     const auto previousStates = systemTaskbarMonitorWindowStates_;
     const bool previousShellUiActive =
         systemTaskbarShellUiActive_;
@@ -463,6 +465,7 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
+    snowdesktop::performance::Scope trace("shared.taskbar", "refresh");
     const auto applyClassicSystemTheme = [this](bool enabled,
         const PersonalizationSettings& appearance) {
         if (!IsClassicSystemTaskbar()) return;
@@ -484,6 +487,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const bool hookRequired = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && (appearanceRequired || protectActivation || suppressionRequested);
     if (!hookRequired)
     {
+        snowdesktop::performance::Value("shared.taskbar", "refresh.disabled", {}, 1);
         applyClassicSystemTheme(false, dockSettings_.systemTaskbarAppearance);
         ApplySystemTaskbarBackdrop(false, false,
             ResolveSystemTaskbarAppearance(dockSettings_));
@@ -499,7 +503,10 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         systemTaskbarWindowScanTick_ = GetTickCount();
         if (skipUnchangedWindowState &&
             !windowStateChanged)
+        {
+            snowdesktop::performance::Value("shared.taskbar", "refresh.window_state_unchanged", {}, 1);
             return false;
+        }
     }
 
     struct TaskbarEnumerationContext

@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "status_bar_view.h"
+#include "diagnostics/performance_trace.h"
 #include "status_bar_glyphs.h"
 #include "status_bar_battery.h"
 #include "status_bar_layout.h"
@@ -1123,6 +1124,8 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     if (IsRectEmpty(&region)) return S_OK;
     POINT offset{}; ComPtr<ID2D1DeviceContext> context;
     const auto begin = surface->BeginDraw(&region, IID_PPV_ARGS(&context), &offset);
+    performance::Value("shared.status_bar", SUCCEEDED(begin)
+        ? "surface.begin.success" : "surface.begin.failure", {}, 1);
     if (FAILED(begin)) return begin;
     context->SetDpi(96, 96);
     context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -1137,6 +1140,8 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     DrawStatusBarDropIndicator(context.Get(), indicator, appearance, palette, dpi);
     context->PopAxisAlignedClip(); context.Reset();
     const auto ended = surface->EndDraw();
+    performance::Value("shared.status_bar", SUCCEEDED(ended)
+        ? "surface.end.success" : "surface.end.failure", {}, 1);
     return FAILED(result) ? result : ended;
 }
 

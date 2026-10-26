@@ -301,6 +301,46 @@ void RunPerformanceCaptureTests()
     { perf::Scope event("widget.event", "next"); }
     Check(WaitFor(next.session, true).phase == perf::CapturePhase::Completed, "duration stops without a UI timer");
     AssertNativeTraceSql(next.output, "SELECT ((SELECT COUNT(*) FROM slice WHERE name='next')=1 AND (SELECT COUNT(*) FROM slice WHERE thread_dur IS NOT NULL)=0) AS passed;");
+    // Exercise native idle categories and event semantics, independently of
+    // desktop UI. These observations must not become gauges or OS wakeups.
+    auto maintenance = Options(root, "maintenance-metering");
+    maintenance.preset = perf::CapturePreset::Resource;
+    maintenance.scopeCpu = true;
+    Check(perf::Start(maintenance, error) &&
+        WaitFor(maintenance.session, false).phase == perf::CapturePhase::Recording,
+        "maintenance metering records in the idle preset");
+    for (int callback = 0; callback < 2; ++callback)
+    {
+        perf::Scope timer("timer.callback", "host.taskbar_guard");
+        perf::Scope work("shared.taskbar", "controller.apply");
+        perf::Value("shared.taskbar", "publish", {}, 1);
+        perf::Value("shared.taskbar", "apply.post.success", {}, 1);
+    }
+    for (const auto owner : {L"bar-one", L"bar-two"})
+    {
+        {
+            perf::Scope prepare("shared.status_bar", "paint.request", owner);
+            perf::Value("shared.status_bar", "paint.unchanged", owner, 1);
+        }
+        {
+            perf::Scope prepare("shared.status_bar", "paint.request", owner);
+            perf::Value("shared.status_bar", "surface.begin.success", owner, 1);
+            perf::Value("shared.status_bar", "surface.end.success", owner, 1);
+            perf::Value("shared.status_bar", "commit.success", owner, 1);
+        }
+    }
+    Check(perf::RequestStop(maintenance.session), "stop isolated maintenance fixture");
+    Check(WaitFor(maintenance.session, true).phase == perf::CapturePhase::Completed,
+        "maintenance fixture exports a complete trace");
+    AssertNativeTraceSql(maintenance.output,
+        "SELECT ((SELECT COUNT(*) FROM slice WHERE name='host.taskbar_guard')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='controller.apply')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='paint.request' AND thread_dur IS NOT NULL)=4"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.module')='shared.taskbar' AND EXTRACT_ARG(arg_set_id,'debug.metric')='publish')=2"
+        " AND (SELECT SUM(EXTRACT_ARG(arg_set_id,'debug.value')) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='paint.unchanged')=2"
+        " AND (SELECT COUNT(DISTINCT EXTRACT_ARG(arg_set_id,'debug.owner')) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='commit.success')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='surface.begin.success')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='surface.end.success')=2) AS passed;");
     auto failed = Options(root, "export-limit"); failed.maximumFileBytes = 1024;
     Check(perf::Start(failed, error), "accept size-bound session");
     Check(WaitFor(failed.session, false).phase == perf::CapturePhase::Recording, "size-bound session recording");

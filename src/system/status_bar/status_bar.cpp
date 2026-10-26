@@ -49,6 +49,19 @@ constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP
     kActivate = WM_APP + 45;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
     kRevealTimer = 6;
+const char* StatusBarTimerPhase(WPARAM timer) noexcept
+{
+    switch (timer)
+    {
+    case kClockTimer: return "status_bar.clock";
+    case kTrayMenuTimer: return "status_bar.tray_menu";
+    case kPlacementTimer: return "status_bar.placement";
+    case kInputMethodTimer: return "status_bar.input_method";
+    case kTrayScrollTimer: return "status_bar.tray_scroll";
+    case kRevealTimer: return "status_bar.reveal";
+    default: return "status_bar.other";
+    }
+}
 std::map<HWND, StatusBarFullscreenRequest*> liveBars; // All access, including hooks, on the UI thread.
 bool PostFullscreen(HWND receiver) { return PostMessageW(receiver, kFullscreen, 0, 0) != FALSE; }
 void QueueFullscreen(HWND window)
@@ -298,6 +311,20 @@ struct StatusBar::Impl
             if (std::exchange(trayPreview, false) && owner.dragFeedback.end) owner.dragFeedback.end();
         }
         explicit Window(Impl& value) : owner(value), identity(++value.nextWindowIdentity) {}
+        void TraceValue(std::string_view name, double amount = 1) const noexcept
+        {
+            if (!performance::Enabled()) return;
+            wchar_t traceOwner[32]{};
+            swprintf_s(traceOwner, L"%llu", static_cast<unsigned long long>(identity));
+            performance::Value("shared.status_bar", name, traceOwner, amount);
+        }
+        HRESULT CommitWithTrace()
+        {
+            performance::Scope trace("shared.status_bar", "commit");
+            const auto result = owner.composition->Commit();
+            TraceValue(SUCCEEDED(result) ? "commit.success" : "commit.failure");
+            return result;
+        }
         ~Window()
         {
             closing = true;
@@ -515,7 +542,7 @@ struct StatusBar::Impl
             if (windowHidden)
             {
                 ApplyDockPose(frame);
-                const auto result = owner.composition->Commit();
+                const auto result = CommitWithTrace();
                 if (FAILED(result)) { PaintError(result); return false; }
             }
             return true;
@@ -815,10 +842,14 @@ struct StatusBar::Impl
         void Paint(bool prepareHidden = false, bool trayOnly = false, TrayScrollFrame* scrollFrame = nullptr,
             PreparedFocusFrame* focusFrame = nullptr)
         {
-            if (presentationPreparation.Defer()) return;
-            if (preparingTrayScroll) { paintDirty = true; deferredTrayPaint = true; return; }
+            wchar_t traceOwner[32]{};
+            if (performance::Enabled()) swprintf_s(traceOwner, L"%llu", static_cast<unsigned long long>(identity));
+            performance::Scope requestTrace("shared.status_bar", "paint.request", traceOwner);
+            if (presentationPreparation.Defer()) { TraceValue("paint.deferred"); return; }
+            if (preparingTrayScroll) { TraceValue("paint.preparing_scroll"); paintDirty = true; deferredTrayPaint = true; return; }
             if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
-                !owner.composition || !owner.text || (focusFrame && !focusFrame->ready)) return;
+                !owner.composition || !owner.text || (focusFrame && !focusFrame->ready))
+            { TraceValue("paint.unavailable"); return; }
             presentationPreparation.Consume();
             TrayScrollPaintScope presentation(preparingTrayScroll, scrollFrame != nullptr);
             if (scrollFrame) deferredTrayPaint = false;
@@ -833,11 +864,11 @@ struct StatusBar::Impl
                 width, height);
             if (same && !paintDirty && !scrollFrame && !focusFrame && IsRectEmpty(&interactionDamage) &&
                 drawResources.TextMatches(owner.text.Get(), TrayScale()))
-            { SyncTooltip(); return; }
+            { TraceValue("paint.unchanged"); SyncTooltip(); return; }
             performance::Scope paintScope("status_bar", "content.paint");
             RECT client{};
             GetClientRect(hwnd, &client);
-            if (IsRectEmpty(&client)) return;
+            if (IsRectEmpty(&client)) { TraceValue("paint.empty_client"); return; }
             const UINT w = static_cast<UINT>(client.right), h = static_cast<UINT>(client.bottom);
             const bool samePreparedFont = !focusFrame || (focusFrame->surfaceReusable &&
                 focusFrame->factory == drawResources.factory && focusFrame->fontSelection == drawResources.fontSelection &&
@@ -868,7 +899,7 @@ struct StatusBar::Impl
                         AddStatusBarInteractionDamage(damage, feedback);
                     if (focusFrame && focusFrame->scroll.offset != trayScroll.offset)
                         AddStatusBarInteractionDamage(damage, trayScroll.viewport);
-                    if (damage.empty()) { SyncTooltip(); return; }
+                    if (damage.empty()) { TraceValue("paint.empty_damage"); SyncTooltip(); return; }
                 }
                 paintDirty = true;
                 PublishTrayGeometry();
@@ -889,12 +920,13 @@ struct StatusBar::Impl
                     TrayScale(), appearance, *updatePalette, drawnInteraction.hovered,
                     drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
                     mergedDockHeight > 0, trayScroll, drawnInteraction.indicator, dpi, &drawResources, &retainedFrameValid);
+                TraceValue(SUCCEEDED(result) ? "draw.partial.success" : "draw.partial.failure");
                 painting = false;
                 if (SUCCEEDED(result) && ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                 if (result == E_INVALIDARG)
                 { partialHoverUpdates = false; presentation.Release(); Paint(prepareHidden, trayOnly, scrollFrame, focusFrame); return; }
                 if (FAILED(result)) { paintError(result); return; }
-                const auto commit = owner.composition->Commit();
+                const auto commit = CommitWithTrace();
                 if (FAILED(commit)) paintError(commit);
                 else
                 {
@@ -933,6 +965,7 @@ struct StatusBar::Impl
                 POINT origin{};
                 ComPtr<ID2D1DeviceContext> background;
                 const auto beginBackground = backgroundSurface->BeginDraw(nullptr, IID_PPV_ARGS(&background), &origin);
+                TraceValue(SUCCEEDED(beginBackground) ? "surface.begin.success" : "surface.begin.failure");
                 if (FAILED(beginBackground)) { paintError(beginBackground); return; }
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
@@ -949,6 +982,7 @@ struct StatusBar::Impl
                 }
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
+                TraceValue(SUCCEEDED(drawn) ? "surface.end.success" : "surface.end.failure");
                 if (FAILED(drawn)) { paintError(drawn); return; }
                 visual->SetContent(backgroundSurface.Get());
                 backgroundDirty = false;
@@ -969,6 +1003,7 @@ struct StatusBar::Impl
             POINT offset{};
             ComPtr<ID2D1DeviceContext> context;
             const auto begin = surface->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset);
+            TraceValue(SUCCEEDED(begin) ? "surface.begin.success" : "surface.begin.failure");
             if (FAILED(begin)) { paintError(begin); return; }
             painting = true;
             context->SetDpi(96, 96);
@@ -990,14 +1025,16 @@ struct StatusBar::Impl
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
             context.Reset();
             const auto surfaceResult = surface->EndDraw();
+            TraceValue(SUCCEEDED(surfaceResult) ? "surface.end.success" : "surface.end.failure");
             const auto result = FAILED(contentResult) ? contentResult : surfaceResult;
+            TraceValue(SUCCEEDED(result) ? "draw.full.success" : "draw.full.failure");
             painting = false;
             if (SUCCEEDED(result))
             {
                 if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                 contentVisual->SetContent(surface.Get());
                 ApplyDockPose(mergedPresentation);
-                const auto commit = owner.composition->Commit();
+                const auto commit = CommitWithTrace();
                 if (FAILED(commit)) paintError(commit);
                 else
                 {
@@ -1042,13 +1079,14 @@ struct StatusBar::Impl
                 width, height, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), appearance, palette,
                 drawnInteraction.hovered, drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
                 mergedDockHeight > 0, trayScroll, drawnInteraction.indicator, dpi, &drawResources, &retainedFrameValid);
+            TraceValue(SUCCEEDED(result) ? "draw.partial.success" : "draw.partial.failure");
             painting = false;
             // A backend rejecting incremental draws retains the existing full
             // frame path. Do not retry an unsupported update on every move.
             if (result == E_INVALIDARG)
             { partialHoverUpdates = false; paintDirty = true; Paint(); return; }
             if (FAILED(result)) { PaintError(result); return; }
-            const auto commit = owner.composition->Commit();
+            const auto commit = CommitWithTrace();
             if (FAILED(commit)) PaintError(commit);
             else { paintedInteraction = drawnInteraction; SyncTooltip(); }
         }
@@ -1311,12 +1349,19 @@ struct StatusBar::Impl
                 else if (wp == ABN_FULLSCREENAPP) QueueFullscreen(window);
                 return 0;
             case WM_TIMER:
+            {
+                wchar_t traceOwner[32]{};
+                if (performance::Enabled()) swprintf_s(traceOwner, L"%llu", static_cast<unsigned long long>(self->identity));
+                performance::Scope timerTrace("timer.callback", StatusBarTimerPhase(wp), traceOwner);
                 if (wp == kClockTimer)
                 {
                     // One service consumer and one pending audio target across
                     // all bars: the first monitor must not drain another's result.
                     for (const auto& completion : self->owner.data->Controls()->DrainCompletions("statusBarVolume"))
+                    {
+                        self->TraceValue("volume.completions");
                         self->owner.volumeWheel.Complete(completion.id);
+                    }
                     if (self->owner.IsFullscreenClock(window)) self->owner.CheckFullscreenWindows();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
@@ -1327,15 +1372,18 @@ struct StatusBar::Impl
                     const auto input = self->owner.inputMethod->Current();
                     if (input != self->lastInputMethod)
                     {
+                        self->TraceValue("input_method.changed");
                         self->lastInputMethod = input;
                         self->Paint();
                     }
+                    else self->TraceValue("input_method.unchanged");
                 }
                 else if (wp == kTrayScrollTimer) self->TickTrayScroll();
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 else if (wp == kPlacementTimer) self->Place();
                 else if (wp == kRevealTimer) self->PollReveal();
                 return 0;
+            }
             case WM_DPICHANGED:
             case WM_DISPLAYCHANGE:
                 // A display handoff can discard compositor contents even when

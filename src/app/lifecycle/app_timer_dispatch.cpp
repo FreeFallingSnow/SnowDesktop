@@ -11,11 +11,47 @@
 #include "layout/collection_titleless_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "platform/user_object_recovery.h"
+#include "diagnostics/performance_trace.h"
+
+namespace
+{
+// A finite catalog: callback counts are received messages, not OS wakeups.
+const char* HostTimerPhase(WPARAM timerId) noexcept
+{
+    switch (timerId)
+    {
+    case kRecycleBinPollTimerId: return "host.recycle_bin";
+    case kDesktopHostWatchTimerId: return "host.desktop_watch";
+    case kWidgetRefreshTimerId: return "host.maintenance";
+    case kTaskbarRevealGuardTimerId: return "host.taskbar_guard";
+    case kFloatingDockEdgeSwipeTimerId: return "host.dock_pointer";
+    case kDisplayTopologyRefreshTimerId: return "host.display_refresh";
+    case kShellChangeTimerId: return "host.shell_change";
+    case kOleDragUiPumpTimerId: return "host.ole_pump";
+    case kNativeDragHoverRecoveryTimerId: return "host.drag_recovery";
+    case kCollectionPopupDwellTimerId: return "host.collection_dwell";
+    case kCollectionGroupTabDwellTimerId: return "host.group_tab_dwell";
+    case kDockHandoffDwellTimerId: return "host.dock_handoff";
+    case kCompactCollectionHandoffDwellTimerId: return "host.compact_handoff";
+    case kDockWindowPreviewHoverTimerId: return "host.preview_hover";
+    case kPopupHoverTimerId: return "host.popup_hover";
+    case kLayoutScrollSaveTimerId: return "host.layout_save";
+    case kSettingsWindowRetryTimerId: return "host.settings_retry";
+    case kLargeIconRetryTimerId: return "host.large_icon_retry";
+    case kRenameClickTimerId: return "host.rename_click";
+    case kExternalOleDragLeaveGraceTimerId: return "host.ole_leave_grace";
+    case kHiddenHintTimerId: return "host.hidden_hint";
+    case kWidgetAddedHintTimerId: return "host.widget_added_hint";
+    default: return "host.other";
+    }
+}
+}
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
 void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
+    snowdesktop::performance::Scope trace("shared.maintenance", "steam.subscriptions");
     if(GetTickCount64()-iconWorkshopLastPoll_>=60000)
     {
         iconWorkshopLastPoll_=GetTickCount64();snowdesktop::IconLibraryRequest request;request.action="autoSyncSubscriptions";(void)EditIconLibrary(request);
@@ -380,6 +416,7 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    snowdesktop::performance::Scope timerTrace("timer.callback", HostTimerPhase(timerId));
     if (timerId == kLayoutScrollSaveTimerId)
     {
         if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
@@ -659,8 +696,14 @@ void DesktopApp::OnTimer(WPARAM timerId)
             else { if (quickNavigationCollapsed_) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
         }
         if (widgetEngine_)
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "runtime.tick");
             widgetEngine_->TickRuntime();
-        TrimHiddenDesktopWidgetSurfaces();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "hidden_surfaces.trim");
+            TrimHiddenDesktopWidgetSurfaces();
+        }
         if (uiAnimationScheduler_.DiagnosticsEnabled())
             PublishHomeAboutStatus();
         PollSteamWorkshopSubscriptions();
@@ -677,7 +720,11 @@ void DesktopApp::OnTimer(WPARAM timerId)
             now - dockRunningWindowsRefreshTick_ >= 10000;
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
+        {
+            snowdesktop::performance::Value("shared.maintenance", dockStateChanged
+                ? "dock.discovery.dirty" : "dock.discovery.fallback", {}, 1);
             RefreshDockRunningWindows();
+        }
         UpdateDockExternalMinimizeTargets();
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
@@ -690,10 +737,22 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
-        UpdateDockStartMenu();
-        snowdesktop::dock_taskbar_diagnostics::Poll();
-        UpdateSystemShowDesktopDockLayerGuard();
-        snowdesktop::dock_taskbar_diagnostics::PollNativeAutoHideTrace();
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "dock.start_menu");
+            UpdateDockStartMenu();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "taskbar.diagnostics.poll");
+            snowdesktop::dock_taskbar_diagnostics::Poll();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "show_desktop.guard");
+            UpdateSystemShowDesktopDockLayerGuard();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "taskbar.diagnostics.drain");
+            snowdesktop::dock_taskbar_diagnostics::PollNativeAutoHideTrace();
+        }
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
         const DWORD windowStateTick =
@@ -719,6 +778,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
         }
+        else snowdesktop::performance::Value("shared.maintenance", "taskbar.refresh.not_due", {}, 1);
     }
     else if (timerId == kPopupHoverTimerId)
     {

@@ -2,6 +2,7 @@
 #include "shell_icon_request.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "shell/shell_call_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 
 #include "desktop/desktop_namespace_registry.h"
 
@@ -550,6 +551,7 @@ bool DesktopApp::DesktopWindowNeedsDisplaySynchronization() const
  */
 void DesktopApp::PollDisplayTopology()
 {
+    snowdesktop::performance::Scope trace("shared.maintenance", "display.poll");
     if (exitRequested_)
         return;
 

@@ -63,11 +63,13 @@ endif()
 # Actual translation units that emit probes. Only targets consuming these
 # sources link the SDK; unrelated unit tests keep their existing dependencies.
 set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
+    src/app/features/app_taskbar_integration.cpp
     src/app/dock/app_dock_window_tracking.cpp
     src/app/dock/app_floating_dock_render.cpp
     src/app/dock/app_floating_dock_window.cpp
     src/app/lifecycle/app_message_dispatch.cpp
     src/app/lifecycle/app_run.cpp
+    src/app/lifecycle/app_timer_dispatch.cpp
     src/app/popup/app_floating_popup_window.cpp
     src/app/popup/app_popup_geometry.cpp
     src/app/popup/app_popup_lifecycle.cpp
@@ -77,14 +79,18 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/app/render/app_scene_render.cpp
     src/app/render/desktop_backdrop_compositor.cpp
     src/app/shell/app_desktop_reload.cpp
+    src/app/shell/app_desktop_enumeration.cpp
     src/app/shell/app_shell_file_operation.cpp
     src/app/widgets/app_widget_composition.cpp
     src/diagnostics/performance_capture.cpp
     src/diagnostics/performance_control_pipe.cpp
     src/dock/dock_window_transition.cpp
+    src/dock/dock_settings.cpp
     src/shell/shell_extension_catalogue.cpp
     src/shell/shell_extension_service.cpp
     src/system/status_bar/status_bar.cpp
+    src/system/status_bar/status_bar_input_method.cpp
+    src/system/status_bar/status_bar_view.cpp
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/data/widget_gpu_sampler.cpp
     src/widget/data/widget_system_data_provider.cpp

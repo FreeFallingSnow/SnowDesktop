@@ -2,6 +2,7 @@
 #include "ui/menu/modern_menu.h"
 #include "status_bar_input_method_native.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include <cstring>
 #include "system/tray/tray_icon_pixels.h"
 #include <shellapi.h>
@@ -429,7 +430,10 @@ struct Service::Impl
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(hr) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
             }
             Snapshot next;
-            try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }
+            {
+                performance::Scope trace("shared.status_bar", "input_method.sample");
+                try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }
+            }
             std::unique_lock lock(mutex);
             snapshot = std::move(next);
             wake.wait_for(lock, stop, std::chrono::milliseconds(200), [this] { return contextRequest.has_value(); });
