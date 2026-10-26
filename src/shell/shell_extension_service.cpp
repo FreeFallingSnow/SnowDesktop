@@ -1487,7 +1487,6 @@ struct MenuService::Impl
                         }
                     }
                     else row.view.sourcesOnly = false;
-                    row.fullMenuRequested = false;
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
                 usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty() &&
@@ -1511,6 +1510,7 @@ struct MenuService::Impl
                     // to a fresh query. Successful unchanged proof keeps it.
                     if (unverified && preparedSlot) Session::ReleasePreparedMenuWorker();
                 }
+                { std::lock_guard lock(mutex); rows[key].fullMenuRequested = false; }
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }

@@ -4,23 +4,23 @@ namespace menu_refresh_tests
 {
 namespace ext = snowdesktop::shell_extensions;
 
-// Replace only the registry hive boundary in this process. The service uses
-// its real subscriptions, scheduler, target checks and publication logic.
+// Own only a GUID registration root; never overwrite an existing association.
+// Subscriptions, scheduling, target checks and publication remain real.
 struct Registry
 {
     std::wstring path;
     HKEY root = nullptr, signal = nullptr;
-    bool overridden = false;
     explicit Registry(const TemporaryDirectory &temp)
     {
-        path = L"Software\\SnowDesktopTests\\MenuRefresh-" + temp.path.filename().wstring();
+        path = L"Software\\Classes\\SnowDesktop.MenuRefresh-" + temp.path.filename().wstring();
         DWORD created = 0;
         Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
             nullptr, &root, &created) == ERROR_SUCCESS && created == REG_CREATED_NEW_KEY, "own refresh registry fixture");
-        Expect(RegCreateKeyExW(root, L"Software\\Classes\\Refresh.Type\\shell\\probe", 0, nullptr, 0,
+        Expect(RegCreateKeyExW(root, L"shell\\probe", 0, nullptr, 0,
             KEY_ALL_ACCESS, nullptr, &signal, nullptr) == ERROR_SUCCESS, "create real notification input");
-        Expect(RegOverridePredefKey(HKEY_CURRENT_USER, root) == ERROR_SUCCESS, "isolate refresh hive");
-        overridden = true;
+        // Drain creation / previous fixture teardown before a fresh service
+        // takes its baseline from the process-shared notification source.
+        ext::TakeMenuRegistryChanges();
     }
     void Notify(unsigned value)
     {
@@ -29,7 +29,6 @@ struct Registry
     }
     ~Registry()
     {
-        if (overridden) RegOverridePredefKey(HKEY_CURRENT_USER, nullptr);
         if (signal) RegCloseKey(signal);
         if (root) RegCloseKey(root);
         if (root && RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()) != ERROR_SUCCESS)
@@ -189,9 +188,40 @@ void CheckPreparedRetention(bool changed)
         "PREPARED_UNCHANGED_MUST_SURVIVE: unchanged verification reuses the real helper; changed registration retires it");
     service.Shutdown();
 }
+void CheckRegistryFanout()
+{
+    TemporaryDirectory temp; Registry registry(temp);
+    std::atomic_bool readyA = false, readyB = false, allowA = false, allowB = false;
+    auto first = std::async(std::launch::async, [&] {
+        ext::TakeMenuRegistryChanges(); readyA = true;
+        const auto until = GetTickCount64() + 5000;
+        while (!allowA && GetTickCount64() < until) Sleep(1);
+        return ext::TakeMenuRegistryChanges();
+    });
+    auto later = std::async(std::launch::async, [&] {
+        ext::TakeMenuRegistryChanges(); readyB = true;
+        const auto until = GetTickCount64() + 5000;
+        while (!allowB && GetTickCount64() < until) Sleep(1);
+        bool complete = false;
+        const auto handles = ext::MenuRegistryWaitHandles(complete);
+        const bool woke = !handles.empty() && WaitForMultipleObjects(static_cast<DWORD>(handles.size()),
+            handles.data(), FALSE, 100) < static_cast<DWORD>(handles.size());
+        return complete && woke && ext::TakeMenuRegistryChanges();
+    });
+    ReleaseOnExit releaseA{allowA}, releaseB{allowB};
+    PumpUntil([&] { return readyA && readyB; }, "both STAs register independent notification consumers");
+    registry.Notify(1); allowA = true;
+    const bool firstChanged = first.get();
+    // The first consumer has reset/rearmed the OS subscription before the
+    // second even starts waiting. Its own broadcast event must retain the edge.
+    allowB = true;
+    const bool laterChanged = later.get();
+    Expect(firstChanged && laterChanged, "SHARED_REGISTRY_WAKE_MUST_REACH_EVERY_CONSUMER: late wait cannot lose a sibling's notification");
+}
 void Run()
 {
     for (int mode = 0; mode < 5; ++mode) CheckSourceProof(mode);
     CheckPreparedRetention(false); CheckPreparedRetention(true);
+    CheckRegistryFanout();
 }
 }

@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <shlwapi.h>
 #include <shobjidl.h>
@@ -35,13 +36,13 @@ std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 using RegistryWatch = detail::MenuRegistryWatch;
-struct CacheState
+struct RegistryNotifications
 {
-    std::uint64_t generation = 1;
-    bool dirty = false;
-    std::wstring epoch = SharedMenuCache().Epoch();
+    std::mutex mutex;
+    std::uint64_t revision = 1;
     std::vector<std::unique_ptr<RegistryWatch>> watches;
-    CacheState()
+    std::vector<HANDLE> subscribers;
+    RegistryNotifications()
     {
         for (auto root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
             for (auto path : {L"Software\\Classes",
@@ -55,11 +56,48 @@ struct CacheState
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", 9));
     }
+};
+std::shared_ptr<RegistryNotifications> SharedRegistryNotifications()
+{
+    // Subscribe once per process, rather than opening every class root for
+    // each STA/service. TLS caches retain independent invalidation generations.
+    static auto notifications = std::make_shared<RegistryNotifications>();
+    return notifications;
+}
+struct CacheState
+{
+    std::uint64_t generation = 1, seen = 0;
+    bool dirty = false;
+    std::wstring epoch = SharedMenuCache().Epoch();
+    std::shared_ptr<RegistryNotifications> notifications = SharedRegistryNotifications();
+    HANDLE changed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CacheState()
+    {
+        std::lock_guard lock(notifications->mutex);
+        seen = notifications->revision;
+        if (changed) notifications->subscribers.push_back(changed);
+    }
+    ~CacheState()
+    {
+        std::lock_guard lock(notifications->mutex);
+        std::erase(notifications->subscribers, changed);
+        if (changed) CloseHandle(changed);
+    }
     std::uint64_t Poll()
     {
-        bool changed = false;
-        for (auto &watch : watches) changed |= watch->Changed();
-        dirty |= changed;
+        std::lock_guard lock(notifications->mutex);
+        bool signalled = false;
+        for (auto &watch : notifications->watches) signalled |= watch->Changed();
+        if (signalled)
+        {
+            ++notifications->revision;
+            // A sibling can consume/rearm the native event between our Poll
+            // and wait. A per-subscriber event closes that lost-wakeup window.
+            for (auto subscriber : notifications->subscribers) SetEvent(subscriber);
+        }
+        dirty |= seen != notifications->revision;
+        seen = notifications->revision;
+        if (changed) ResetEvent(changed);
         return generation;
     }
 };
@@ -1110,8 +1148,11 @@ bool TakeMenuRegistryChanges() { auto &state = Caches(); state.Poll(); return st
 std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete)
 {
     std::vector<HANDLE> handles;
-    complete = true;
-    for (const auto &watch : Caches().watches)
+    auto &cache = Caches();
+    std::lock_guard lock(cache.notifications->mutex);
+    complete = cache.changed != nullptr;
+    if (cache.changed) handles.push_back(cache.changed);
+    for (const auto &watch : cache.notifications->watches)
         if (watch->armed && watch->event) handles.push_back(watch->event);
         else complete = false;
     return handles;
