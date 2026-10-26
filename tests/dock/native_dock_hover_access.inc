@@ -668,6 +668,7 @@
         for (const int effect : {1, 2})
         for (const bool component : {false, true})
         for (const bool settled : {false, true})
+        for (const bool newTarget : {false, true})
         {
             app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
             app.dockSettings_.edgeAttached = false;
@@ -678,10 +679,11 @@
             const RECT base = docks[0]->GetSlots().front()->GetBounds();
             POINT pointer = point(0, 0);
             const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
-            // Insert before the old first item. The stationary pointer then
-            // belongs to the NEW item, not the old semantic hover owner.
-            if (vertical) pointer.y -= 10;
-            else pointer.x -= 10;
+            // Growing the island shifts its first cell toward this original
+            // leading edge. That cell can retain the old item or hold the
+            // newly inserted item; both must inherit the live entry progress.
+            if (vertical) pointer.y = base.top;
+            else pointer.x = base.left;
             app.lastMousePoint_ = pointer;
             (void)docks[0]->GetElementVisualRect(base, pointer);
             auto state = docks[0]->CapturePresentationState();
@@ -714,15 +716,19 @@
             };
             const float before = amplitude();
             check(before > 1.0f, "commit begins with actual visible hover growth");
+            const size_t insertIndex = newTarget ? 0 : app.dockEntries_.size();
+            const std::wstring expectedFocus = newTarget
+                ? (component ? app.widgets_.front().id : app.items_.back().layoutKey)
+                : app.dockEntries_.front().reference;
             if (component)
             {
                 Widget source(&app.widgets_.front(), &app);
-                app.CommitDockDrop({&source}, nullptr, docks[0], 0, 0);
+                app.CommitDockDrop({&source}, nullptr, docks[0], insertIndex, 0);
             }
             else
             {
                 DesktopIcon source(&app.items_.back(), nullptr, &app);
-                app.CommitDockDrop({&source}, nullptr, docks[0], 0, 0);
+                app.CommitDockDrop({&source}, nullptr, docks[0], insertIndex, 0);
             }
             check(app.dockEntries_.size() == baselineEntries.size() + static_cast<size_t>(component),
                 "the production commit actually inserts the item or component");
@@ -730,9 +736,10 @@
                 const RECT next = docks[0]->GetSlots().front()->GetBounds();
                 (void)docks[0]->GetElementVisualRect(next, pointer);
                 const auto presentation = docks[0]->CapturePresentationState();
+                const auto* focusedEntry = dynamic_cast<DockEntryItem*>(docks[0]->GetSlots().front()->GetItem());
                 check(EqualRect(&presentation.focusRect, &next) &&
-                    app.dockEntries_.front().reference == (component ? app.widgets_.front().id : app.items_.back().layoutKey),
-                    "newly inserted content under the stationary pointer must become the live hover target");
+                    focusedEntry && focusedEntry->GetReference() == expectedFocus,
+                    "the real hovered entry must follow the pointer after insertion, including newly inserted content");
                 check(amplitude() + 0.0001f >= before && (!settled || !docks[0]->IsMagnificationAnimating()),
                     "committed insertion must retain hover amplitude instead of starting a new entry animation");
             };

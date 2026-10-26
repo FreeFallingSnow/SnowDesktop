@@ -1,4 +1,5 @@
 #pragma once
+#include <imm.h>
 
 namespace native_input_safety_cases
 {
@@ -12,6 +13,11 @@ inline void Run()
         try
         {
             if (!SetThreadDesktop(desktop)) throw std::runtime_error("select private input-safety thread desktop");
+            // This pointer/activation fixture never composes text. As in R13,
+            // keep its inactive desktop independent of the input-desktop IME
+            // monitor, whose thread teardown otherwise masks test failures.
+            if (!ImmDisableIME(GetCurrentThreadId()))
+                throw std::runtime_error("disable IME on the isolated input-safety thread");
             native_drag_commit_cases::Profile profile;
             NativeDragIntegrationAccess::RunInputSafety();
         }

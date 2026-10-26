@@ -660,7 +660,21 @@ end})
             throw std::runtime_error("create application shortcut for mapped Dock context input");
         auto& app = Scene(false);
         ConfigureModel(app, temporary.path / L"layout");
-        PopulateModel(app, {folder, shortcut, file, application}, 0); SeedDock(app);
+        PopulateModel(app, {folder, shortcut, file, application}, 0);
+        DesktopItem systemItem;
+        systemItem.name = L"Mapped namespace icon";
+        systemItem.desktopIconClsid = kDesktopIconClsidThisPC;
+        systemItem.parsingName = L"::" + systemItem.desktopIconClsid;
+        systemItem.layoutKey = ToUpperInvariant(systemItem.parsingName);
+        systemItem.gridCell = {app.gridPages_.front().id, 4, 0};
+        PIDLIST_ABSOLUTE systemPidl = nullptr;
+        if (FAILED(SHParseDisplayName(systemItem.parsingName.c_str(), nullptr, &systemPidl, 0, nullptr)))
+            throw std::runtime_error("create actual non-file namespace identity for mapped Dock context input");
+        systemItem.absolutePidl.reset(systemPidl);
+        systemItem.childPidl.reset(ILCloneFull(systemPidl));
+        app.items_.push_back(std::move(systemItem));
+        app.RefreshDesktopItemIndexCache();
+        SeedDock(app);
         for (const auto& item : app.items_)
         {
             app.dockEntries_.push_back({DockEntryType::DesktopItem, item.layoutKey, true});
@@ -707,7 +721,7 @@ end})
                 !app.dockEntries_[dockIndex].keepOnDesktop || app.items_[index].gridCell.pageId == kDockPageId)
                 throw std::runtime_error("Dock mapping context input must preserve the original folder/shortcut desktop geometry before and after menu dispatch");
         }
-        std::cout << "Mapped Dock folders, files and application shortcuts preserve source geometry at menu boundary and return\n";
+        std::cout << "Mapped Dock folders, files, application shortcuts and non-file namespace icons preserve source geometry at menu boundary and return\n";
     }
 
     static void RunInputSafety()
@@ -854,6 +868,7 @@ end})
         // Real background worker + real control dispatcher on the private
         // desktop. Withhold dispatch to produce a late asynchronous probe;
         // then resume it and observe recovery, without synthesizing input.
+        std::cerr << "Input safety: asynchronous probe and recovery\n";
         {
             std::lock_guard<std::mutex> lock(inputSafetyLogMutex);
             inputSafetyLogs.clear();
@@ -898,10 +913,12 @@ end})
         }
         // A posted probe carries no object pointer and remains harmless after
         // monitor destruction. Drain it before the rest of the input fixture.
+        std::cerr << "Input safety: drain retired diagnostic probes\n";
         {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
         }
+        std::cerr << "Input safety: unavailable modal first frame\n";
         app->luaWidgetPanelRequest_.widgetId = L"input-safety-dialog";
         app->luaWidgetPanelRequest_.surface = "dialog";
         app->luaWidgetPanelRequest_.modal = true;
@@ -913,7 +930,9 @@ end})
             SendMessageW(popupWindow, WM_TIMER, 2, 0);
         check(app->floatingPopupPresentationRetryCount_ == 5 && !IsWindowVisible(popupWindow),
             "unavailable presentation must stop after five retries without reviving its input window");
+        std::cerr << "Input safety: initialize popup recovery graphics\n";
         if (!app->InitGraphics()) throw std::runtime_error("initialize real graphics for popup recovery control");
+        std::cerr << "Input safety: present recovered popup\n";
         app->UpdateFloatingPopupWindowBounds(true);
         check(app->floatingPopupDcompSurface_ && IsWindowVisible(popupWindow) && app->floatingPopupPresentationRetryCount_ == 0,
             "a real successful composition frame must restore the hidden popup and clear retry state");
@@ -944,6 +963,7 @@ end})
         app->StopFloatingPopupOutsideClickMonitor();
         app->luaWidgetPanelRequest_ = {};
 
+        std::cerr << "Input safety: denied and permitted activation\n";
         inputSafetyForeground = control;
         inputSafetyOriginalThread = &GetWindowThreadProcessId;
         {
