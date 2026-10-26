@@ -668,7 +668,7 @@
         for (const int effect : {1, 2})
         for (const bool component : {false, true})
         for (const bool settled : {false, true})
-        for (const bool newTarget : {false, true})
+        for (const bool newTarget : {true, false})
         {
             app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
             app.dockSettings_.edgeAttached = false;
@@ -679,11 +679,11 @@
             const RECT base = docks[0]->GetSlots().front()->GetBounds();
             POINT pointer = point(0, 0);
             const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
-            // Growing the island shifts its first cell toward this original
-            // leading edge. That cell can retain the old item or hold the
-            // newly inserted item; both must inherit the live entry progress.
-            if (vertical) pointer.y = base.top;
-            else pointer.x = base.left;
+            // Preserve the exact center-minus-10 sample that failed on the
+            // original implementation, and run it before other commit scenes.
+            // The retained-old-item case also covers the original leading edge.
+            if (vertical) pointer.y = newTarget ? pointer.y - 10 : base.top;
+            else pointer.x = newTarget ? pointer.x - 10 : base.left;
             app.lastMousePoint_ = pointer;
             (void)docks[0]->GetElementVisualRect(base, pointer);
             auto state = docks[0]->CapturePresentationState();
