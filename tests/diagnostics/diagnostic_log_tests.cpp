@@ -1,6 +1,7 @@
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/input_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
+#include "app/dock/dock_input_diagnostics.h"
 #include "icons/icon_load_diagnostics.h"
 #include "steam/steam_workshop_diagnostics.h"
 
@@ -89,6 +90,59 @@ int main()
         Check(value == 37 && callbacks == 1, "disabled startup probes preserve operations and return values");
     }
     Check(!std::filesystem::exists(path), "disabled nested startup probes do not emit records");
+    // Exercise the production observer and real sink, not Dock dismissal.
+    // It must preserve decisions, retain skipped gates and bound log growth.
+    namespace dockInput = snowdesktop::dock_input_diagnostics;
+    {
+        dockInput::Scope trace(true, true);
+        Check(trace.Observe(dockInput::Gate::Press, true) &&
+                !trace.Observe(dockInput::Gate::Menu, false),
+            "disabled Dock observations preserve condition return values");
+    }
+    Check(!std::filesystem::exists(path), "Dock input diagnostics default off");
+    SetLogModules(ModuleBit(DiagnosticLogModule::Dock));
+    {
+        dockInput::Scope trace(true, true);
+        trace.sample.sampled = true;
+        trace.sample.left = -32768;
+        trace.sample.buttons = 1;
+        Check(!(trace.Observe(dockInput::Gate::Press, false) &&
+                trace.Observe(dockInput::Gate::Menu, (++callbacks, true))),
+            "an observed false press keeps the original short circuit");
+    }
+    Check(callbacks == 1, "a skipped Dock gate does not invoke its operand");
+    auto dockLog = ReadLog();
+    Check(dockLog.find(L"DockInputTrace pid=") != std::wstring::npos &&
+            dockLog.find(L"sampled=1 raw=-32768,0,0 buttons=1") != std::wstring::npos &&
+            dockLog.find(L"press=0") != std::wstring::npos && dockLog.find(L"menu=-1") != std::wstring::npos,
+        "Dock trace retains raw state and distinguishes false from unevaluated gates on early exit");
+    {
+        dockInput::Scope hidden(false, false);
+    }
+    std::filesystem::remove(path);
+    for (unsigned i = 0; i < 700; ++i)
+    {
+        dockInput::Scope trace(true, true);
+        trace.Observe(dockInput::Gate::Press, (i & 1u) != 0);
+    }
+    dockLog = ReadLog();
+    unsigned dockRecords = 0;
+    for (std::size_t offset = 0; (offset = dockLog.find(L"DockInputTrace pid=", offset)) != std::wstring::npos; ++offset)
+        ++dockRecords;
+    Check(dockRecords == 512 && dockLog.find(L"DockInputTrace limit reached") != std::wstring::npos,
+        "a continuous Dock session stops after 512 input records");
+    const auto boundedSize = std::filesystem::file_size(path);
+    {
+        dockInput::Scope trace(true, true);
+        trace.Observe(dockInput::Gate::Menu, true);
+    }
+    Check(std::filesystem::file_size(path) == boundedSize, "an exhausted Dock session cannot keep growing its log");
+    SetLogModules(0);
+    {
+        dockInput::Scope trace(true, true);
+    }
+    Check(std::filesystem::file_size(path) == boundedSize, "disabling Dock input logs takes effect immediately");
+    std::filesystem::remove(path);
     // Replay the observed startup sample at the logger used by QueueIconTask:
     // 625 ms queued, 0 ms bitmap read, successful bitmap. Only the output path
     // is isolated; formatting, severity, filtering and file I/O are production.

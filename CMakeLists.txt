@@ -214,6 +214,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_drop.cpp
     src/app/dock/app_dock_running_drag.cpp
     src/app/dock/dock_running_drag_state.h
+    src/app/dock/dock_input_diagnostics.h
     src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_tray.cpp

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock_input_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
 #include <algorithm>
 
@@ -40,6 +41,7 @@ LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
          message == WM_XBUTTONDOWN ||
          message == WM_XBUTTONUP))
     {
+        snowdesktop::dock_input_diagnostics::ObserveMouse(message, data);
         floatingDockEdgeSwipeMouseActivity_.store(
             true, std::memory_order_relaxed);
     }
@@ -429,8 +431,13 @@ bool DesktopApp::DismissMergedDockBackground(PersistentDockHost& host, POINT des
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
-    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr))
+    namespace inputTrace = snowdesktop::dock_input_diagnostics;
+    inputTrace::Scope trace(floatingDockVisible_ || floatingDockKeyboardSessionActive_,
+        static_cast<bool>(floatingDockEdgeSwipeMouseHook_));
+    if (trace.Observe(inputTrace::Gate::Fullscreen,
+            FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)))
     {
+        trace.sample.outcome = L"fullscreen-policy";
         // Also applies with both invocation triggers disabled. Relinquish an
         // existing session without restoring its previous foreground window.
         if (floatingDockVisible_ || floatingDockKeyboardSessionActive_)
@@ -478,8 +485,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             UpdatePersistentDockHostVisibility(host);
         }
     }
-    if (desktopPassthroughActive_)
+    if (trace.Observe(inputTrace::Gate::Passthrough, desktopPassthroughActive_))
     {
+        trace.sample.outcome = L"desktop-passthrough";
         floatingDockEdgeSwipeDetector_.Reset();
         floatingDockPointerButtonsDown_ = 0;
         floatingDockExternalPointerDrag_.Reset();
@@ -504,6 +512,13 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         ((middleState & 1) ? middleButtonBit : 0);
     const UINT previousButtonsDown =
         floatingDockPointerButtonsDown_;
+    trace.sample.sampled = true;
+    trace.sample.left = leftState;
+    trace.sample.right = rightState;
+    trace.sample.middle = middleState;
+    trace.sample.buttons = buttonsDown;
+    trace.sample.previous = previousButtonsDown;
+    trace.sample.recent = pressedSinceLastSample;
     const bool pointerPressed =
         snowdesktop::floating_dock_rules::
             HasNewPointerButtonPress(
@@ -530,9 +545,13 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     POINT cursor{};
     if (!GetCursorPos(&cursor))
     {
+        trace.sample.outcome = L"cursor-unavailable";
         floatingDockEdgeSwipeDetector_.Reset();
         return;
     }
+    trace.sample.cursorKnown = true;
+    trace.sample.x = cursor.x;
+    trace.sample.y = cursor.y;
 
     POINT desktopPoint = cursor;
     if (hwnd_ && IsWindow(hwnd_))
@@ -578,15 +597,18 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
         dockExternalMinimize_->IsMinimizeButtonPress(
             GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor);
-    if ((floatingDockVisible_ || statusBar_) && pointerPressed &&
-        !passiveDragRevealedThisSample && !minimizeButtonPress)
+    if (trace.Observe(inputTrace::Gate::VisibleOrBar, floatingDockVisible_ || statusBar_) &&
+        trace.Observe(inputTrace::Gate::Press, pointerPressed) &&
+        !trace.Observe(inputTrace::Gate::PassiveReveal, passiveDragRevealedThisSample) &&
+        !trace.Observe(inputTrace::Gate::Minimize, minimizeButtonPress))
     {
         if (floatingDockVisible_ && leftButtonPressed &&
-            TryActivateDockPopupFromMenuPointerPress(
+            trace.Observe(inputTrace::Gate::PopupActivation, TryActivateDockPopupFromMenuPointerPress(
                 desktopPoint,
                 cursor,
-                (buttonsDown & leftButtonBit) != 0))
+                (buttonsDown & leftButtonBit) != 0)))
         {
+            trace.sample.outcome = L"popup-activation";
             floatingDockEdgeSwipeDetector_.
                 SuppressUntilEdgeLeave();
             return;
@@ -668,24 +690,28 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // The bar and its owned surface are one interaction session with the
         // merged Dock. Its own dismissal logic releases this hold; the global
         // pointer sampler must not tear the owner down between down and up.
-        if (floatingDockVisible_ && !(dockStartMenu_ && dockStartMenu_->ContainsPoint(cursor)) &&
-            !barSession && !onBar && !onRevealedDockSurface &&
-            !IsPointOnPromotedDock(desktopPoint) &&
-            snowdesktop::floating_dock_rules::
+        if (trace.Observe(inputTrace::Gate::Visible, floatingDockVisible_) &&
+            !trace.Observe(inputTrace::Gate::StartMenu, dockStartMenu_ && dockStartMenu_->ContainsPoint(cursor)) &&
+            !trace.Observe(inputTrace::Gate::BarSession, barSession) &&
+            !trace.Observe(inputTrace::Gate::Bar, onBar) &&
+            !trace.Observe(inputTrace::Gate::RevealedDock, onRevealedDockSurface) &&
+            !trace.Observe(inputTrace::Gate::PromotedDock, IsPointOnPromotedDock(desktopPoint)) &&
+            trace.Observe(inputTrace::Gate::DismissRule, snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
-                    dragSession_.IsActive() ||
-                        dragDropController_.IsExternalDragActive(),
-                    HasActiveContextMenuSession(),
+                    trace.Observe(inputTrace::Gate::Drag, dragSession_.IsActive() ||
+                        dragDropController_.IsExternalDragActive()),
+                    trace.Observe(inputTrace::Gate::Menu, HasActiveContextMenuSession()),
                     desktopPoint,
                     RECT{},
                     dockPopupInteractionRect,
                     previewDesktopRect,
-                    quickNavigationInteractionRect))
+                    quickNavigationInteractionRect)))
         {
             // A physical outside click owns the foreground transition. Do not
             // restore the window that preceded the floating Dock: doing so can
             // race the clicked window's activation and force two DWM/backdrop
             // source changes through the shared close handoff.
+            trace.sample.outcome = L"dismissed";
             CloseAllFloatingDocks(
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.
