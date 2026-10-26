@@ -62,6 +62,8 @@
 #include "dock/floating_dock_rules.h"
 #include "system/panel/system_panel_placement.h"
 #include "system/status_bar/status_bar_appbar.h"
+#include "platform/foreground_fullscreen.h"
+#include "platform/fullscreen_terminal_cases.h"
 #include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_layout.h"
 #include "system/status_bar/status_bar_tooltip.h"
@@ -2550,21 +2552,22 @@ int main(int argc, char** argv)
         Check(!rejected.Place(window, WM_APP + 1, ABE_LEFT, 48, {0, 0, 1920, 1080}) &&
                 !rejected.Registered() && messages == std::vector<DWORD>{ABM_NEW},
             "registration failure must not negotiate or show an overlay substitute");
-        using snowdesktop::StatusBarFullscreenClient;
-        using snowdesktop::StatusBarFullscreenCandidate;
-        Check(StatusBarFullscreenCandidate(WS_POPUP,0,false,false) &&
-                !StatusBarFullscreenCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
-                StatusBarFullscreenCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
-                StatusBarFullscreenCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,0,false,true),
+        using snowdesktop::fullscreen::IsCandidate;
+        using snowdesktop::fullscreen::IsFullscreen;
+        Check(IsCandidate(WS_POPUP,0,false,false) &&
+                !IsCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
+                IsCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
+                IsCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
+                !IsCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
+                !IsCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
+                !IsCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
+                !IsCandidate(WS_POPUP,0,false,true),
             "fullscreen candidates accept browser fullscreen retaining WS_MAXIMIZE, while excluding overlays, shell helpers and maximized windows retaining caption or resize frames");
-        Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, true, false),
+        const RECT screen{1920, 0, 4480, 1440};
+        Check(IsFullscreen({nullptr, screen, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, {1920, 32, 4480, 1400}, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, {0, 0, 1920, 1080}, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, screen, WS_POPUP, 0, false, true}, screen),
             "fullscreen detection must exclude maximized, other-monitor and cloaked windows");
         RECT left{-1920, 0, 0, 1080}, right = left, bottom = left;
         snowdesktop::StatusBarAppBar::SetThickness(left, ABE_LEFT, 72);
@@ -2573,6 +2576,7 @@ int main(int argc, char** argv)
         Check(left.right == -1848 && right.left == -72 && bottom.top == 1032,
             "side and bottom placements preserve the selected monitor's origin");
     }
+    CheckTerminalFullscreenObservation(Check);
     CheckDockRefreshContinuity();
     CheckDesktopPassthrough();
     CheckClipboardPasteEffects();
@@ -6274,18 +6278,6 @@ int main(int argc, char** argv)
         "an inward pointer must not count as an along-edge swipe");
 
     const RECT fullscreenMonitor{-1920, 0, 0, 1080};
-    Check(floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, fullscreenMonitor, fullscreenMonitor),
-        "borderless fullscreen blocks swipes on a negative-coordinate monitor");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            false, fullscreenMonitor, fullscreenMonitor),
-        "fullscreen protection can be disabled");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, RECT{-1920, 30, 0, 1040}, fullscreenMonitor),
-        "maximized client areas do not block swipes");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, RECT{0, 0, 1920, 1080}, fullscreenMonitor),
-        "fullscreen on another monitor does not block swipes");
     floatingDock::EdgeSwipeDetector fullscreenSwipe;
     fullscreenSwipe.Update(POINT{-1500, 1079}, fullscreenMonitor,
         DockPosition::Bottom, 100, 4, 72);

@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "platform/foreground_fullscreen.h"
 #include "platform/window_peek_policy.h"
 #include "status_bar_activation.h"
 #include "status_bar_appearance.h"
@@ -91,42 +92,14 @@ D2D1_COLOR_F SystemColor(int color)
     return D2D1::ColorF(GetRValue(value) / 255.f, GetGValue(value) / 255.f,
         GetBValue(value) / 255.f);
 }
-bool WindowClientScreenRect(HWND window, RECT& client)
-{
-    if (!GetClientRect(window, &client)) return false;
-    POINT origin{client.left, client.top}, end{client.right, client.bottom};
-    if (!ClientToScreen(window, &origin) || !ClientToScreen(window, &end)) return false;
-    client = {origin.x, origin.y, end.x, end.y};
-    return true;
-}
 std::vector<std::optional<HWND>> MonitorFullscreenSources(std::span<const HMONITOR> monitors)
 {
-    std::vector<std::optional<RECT>> bounds;
-    bounds.reserve(monitors.size());
-    for (const auto monitor : monitors)
-    {
-        MONITORINFO info{sizeof(info)};
-        bounds.push_back(GetMonitorInfoW(monitor, &info) ? std::optional{info.rcMonitor} : std::nullopt);
-    }
-    return ObserveStatusBarFullscreen(bounds, [](const auto& visit) {
-        return EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
-            const auto& observe = *reinterpret_cast<const std::function<bool(const StatusBarFullscreenWindow&)>*>(parameter);
-            DWORD pid = 0;
-            GetWindowThreadProcessId(window, &pid);
-            if (pid == GetCurrentProcessId() || !IsWindowVisible(window) || IsIconic(window)) return TRUE;
-            DWORD cloaked = 0;
-            (void)DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-            wchar_t name[128]{};
-            GetClassNameW(window, name, static_cast<int>(std::size(name)));
-            const bool shell = wcscmp(name, L"Progman") == 0 || wcscmp(name, L"WorkerW") == 0 ||
-                wcscmp(name, L"Shell_TrayWnd") == 0 || wcscmp(name, L"Shell_SecondaryTrayWnd") == 0;
-            const auto style = GetWindowLongPtrW(window, GWL_STYLE), extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
-            const bool maximized = IsZoomed(window) != FALSE;
-            RECT client{};
-            if (!WindowClientScreenRect(window, client)) return TRUE;
-            return observe({window, client, style, extended, maximized, cloaked != 0, shell}) ? TRUE : FALSE;
-        }, reinterpret_cast<LPARAM>(&visit)) != FALSE;
-    });
+    const auto observations = fullscreen::ObserveMonitors(monitors);
+    std::vector<std::optional<HWND>> sources;
+    sources.reserve(observations.size());
+    for (const auto& observed : observations)
+        sources.push_back(observed ? std::optional{observed->window} : std::nullopt);
+    return sources;
 }
 std::optional<HWND> MonitorFullscreenSource(HMONITOR monitor)
 {
@@ -141,15 +114,7 @@ bool DockFullscreenSourceEligible(HWND source, DWORD expectedProcess, HMONITOR m
         MonitorFromWindow(source, MONITOR_DEFAULTTONULL) != monitor) return false;
     // Exclusive fullscreen often minimizes when our input proxy becomes active.
     if (IsIconic(source)) return true;
-    DWORD cloaked = 0;
-    (void)DwmGetWindowAttribute(source, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
-    MONITORINFO info{sizeof(info)};
-    RECT client{};
-    return GetMonitorInfoW(monitor, &info) && WindowClientScreenRect(source, client) &&
-        StatusBarFullscreenCandidate(GetWindowLongPtrW(source, GWL_STYLE),
-            GetWindowLongPtrW(source, GWL_EXSTYLE), IsZoomed(source) != FALSE, false) &&
-        StatusBarFullscreenClient(client, info.rcMonitor, IsWindowVisible(source) != FALSE,
-            false, cloaked != 0, false);
+    return fullscreen::ObserveWindow(source).has_value();
 }
 UINT Edge(DockPosition position)
 {

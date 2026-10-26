@@ -2,6 +2,7 @@
 #include "system/status_bar/status_bar_glyphs.h"
 #include "system/status_bar/status_bar_interaction.h"
 #include "system/status_bar/status_bar_fullscreen.h"
+#include "platform/foreground_fullscreen.h"
 #include "system/status_bar/status_bar_reveal.h"
 #include "common/l10n.h"
 #include "ui/render/app_font.h"
@@ -108,12 +109,12 @@ void CheckFullscreenRounds()
     const std::array<std::optional<RECT>, 3> monitors{left, right, std::nullopt};
     const auto window = [&](UINT_PTR id, RECT client, LONG_PTR style = WS_POPUP,
         LONG_PTR extended = 0, bool maximized = false, bool cloaked = false, bool shell = false) {
-        return StatusBarFullscreenWindow{hwnd(id), client, style, extended, maximized, cloaked, shell};
+        return fullscreen::WindowSample{hwnd(id), client, style, extended, maximized, cloaked, shell};
     };
     unsigned enumerations = 0, samples = 0;
-    const auto scan = [&](const auto& targets, std::initializer_list<StatusBarFullscreenWindow> windows,
+    const auto scan = [&](const auto& targets, std::initializer_list<fullscreen::WindowSample> windows,
         bool success = true) {
-        return ObserveStatusBarFullscreen(targets, [&](const auto& visit) {
+        const auto observations = fullscreen::ScanMonitors(targets, [&](const auto& visit) {
             ++enumerations;
             for (const auto& sample : windows)
             {
@@ -122,6 +123,10 @@ void CheckFullscreenRounds()
             }
             return success;
         });
+        std::vector<std::optional<HWND>> sources;
+        for (const auto& observed : observations)
+            sources.push_back(observed ? std::optional{observed->window} : std::nullopt);
+        return sources;
     };
     auto observed = scan(monitors, {
         window(1, {-1100, 450, -800, 650}, WS_POPUP, WS_EX_TOOLWINDOW),
@@ -144,6 +149,33 @@ void CheckFullscreenRounds()
     observed = scan(monitors, {window(14, left, WS_POPUP | WS_MAXIMIZE, 0, true), window(15, right)});
     Check(observed[0] == hwnd(14) && observed[1] == hwnd(15),
         "browser fullscreen retaining maximized style remains independently detected");
+    auto terminal = window(22, {0, 0, 2560, 1438});
+    terminal.frame = right;
+    observed = scan(monitors, {terminal, window(23, left)});
+    Check(observed[0] == hwnd(23) && observed[1] == hwnd(22),
+        "shared Z-order scan recognizes the original terminal client inset without hiding another monitor");
+    for (int edge = 0; edge < 4; ++edge)
+    {
+        auto inset = window(24, left);
+        inset.frame = left;
+        if (edge == 0) inset.client.left += 2;
+        if (edge == 1) inset.client.top += 2;
+        if (edge == 2) inset.client.right -= 2;
+        if (edge == 3) inset.client.bottom -= 2;
+        Check(fullscreen::IsFullscreen(inset, left), "two physical taskbar pixels are accepted on each negative-coordinate monitor edge");
+        inset.frame = inset.client;
+        Check(!fullscreen::IsFullscreen(inset, left), "a short outer window cannot use client-inset compatibility");
+        inset.frame = left;
+        if (edge == 0) ++inset.client.left;
+        if (edge == 1) ++inset.client.top;
+        if (edge == 2) --inset.client.right;
+        if (edge == 3) --inset.client.bottom;
+        Check(!fullscreen::IsFullscreen(inset, left), "insets exceeding the terminal sample remain windowed");
+    }
+    terminal.nonRude = true;
+    observed = scan(monitors, {terminal, window(25, right), window(26, left)});
+    Check(observed[0] == hwnd(26) && observed[1] == hwnd(25),
+        "Shell-excluded desktop overlays cannot become fullscreen sources or center blockers");
     observed = scan(monitors, {window(16, right)}, false);
     Check(!observed[0] && observed[1] == hwnd(16) && !observed[2],
         "partial enumeration failure preserves a settled monitor and leaves unresolved/removed monitors unknown");

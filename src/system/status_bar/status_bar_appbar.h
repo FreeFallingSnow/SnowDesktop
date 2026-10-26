@@ -83,22 +83,18 @@ private:
     bool registered_ = false, positioned_ = false;
 };
 
-inline bool StatusBarFullscreenClient(RECT client, RECT monitor, bool visible,
-    bool minimized, bool cloaked, bool shellWindow)
+// Existing geometry callers forward to the platform rules. Native observation
+// uses the complete WindowSample so it can also validate the outer frame.
+inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extended,
+    bool maximized, bool shell)
 {
-    return visible && !minimized && !cloaked && !shellWindow &&
-        !IsRectEmpty(&client) && !IsRectEmpty(&monitor) &&
-        client.left <= monitor.left && client.top <= monitor.top &&
-        client.right >= monitor.right && client.bottom >= monitor.bottom;
+    return fullscreen::IsCandidate(style, extended, maximized, shell);
 }
-
-inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
-    bool maximized, bool shellWindow)
+inline bool StatusBarFullscreenClient(RECT client, RECT monitor, bool visible,
+    bool minimized, bool cloaked, bool shell)
 {
-    // Use the same frame distinction as the foreground focus guard: browser
-    // fullscreen can retain WS_MAXIMIZE after removing its native frame.
-    return !shellWindow && !(extendedStyle & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) &&
-        !fullscreen::IsWindowedMaximization(style, maximized);
+    return visible && !minimized && fullscreen::IsFullscreen(
+        {nullptr, client, 0, 0, false, cloaked, shell}, monitor);
 }
 
 // Shared by the production fullscreen observer and its lifecycle regression.
