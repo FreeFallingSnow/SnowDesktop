@@ -4,6 +4,7 @@
 #include "system/status_bar/status_bar_notification.h"
 #include "system/status_bar/status_bar_input_method.h"
 #include "system/status_bar/status_bar_input_method_identity.h"
+#include "system/status_bar_input_method_profiles_cases.h"
 #include "dock/dock_tray_targets.h"
 #include "dock/dock_tray_storage.h"
 #include "dock/dock_tray_popup_layout.h"
@@ -20,6 +21,7 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    input_profile_cases::Run(check);
     {
         // Only this fixture HWND receives requests. Its real process identity
         // represents each recipient role; unrelated applications see no test.

@@ -1,6 +1,7 @@
 #include "status_bar_input_method.h"
 #include "ui/menu/modern_menu.h"
 #include "status_bar_input_method_native.h"
+#include "status_bar_input_method_profiles.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
 #include <cstring>
@@ -40,9 +41,10 @@ constexpr WPARAM kGetConversionMode = 0x0001, kGetOpenStatus = 0x0005;
 
 struct Apartment
 {
-    const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT result;
+    explicit Apartment(DWORD flags = COINIT_APARTMENTTHREADED)
+        : result(CoInitializeEx(nullptr, flags)) {}
     ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
-    Apartment() = default;
     Apartment(const Apartment&) = delete;
     Apartment& operator=(const Apartment&) = delete;
 };
@@ -146,7 +148,7 @@ std::optional<ProfileIcon> ProfileImage(const TF_INPUTPROCESSORPROFILE& profile)
     }
     return image;
 }
-Snapshot Read()
+Snapshot Read(detail::ProfileReader& profiles)
 {
     Snapshot result = Target();
     if (!result.layout || result.menuActive) return {};
@@ -164,20 +166,15 @@ Snapshot Read()
         result.description = imeName;
     // TSF input programs may share a language/HKL. Prefer the active profile's
     // own name so the layout button is distinct from the IME conversion mode.
-    Microsoft::WRL::ComPtr<ITfInputProcessorProfiles> profiles;
-    Microsoft::WRL::ComPtr<ITfInputProcessorProfileMgr> manager;
     TF_INPUTPROCESSORPROFILE active{};
-    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&profiles))) && SUCCEEDED(profiles.As(&manager)) &&
-        manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active) == S_OK &&
+    if (profiles.Active(active) == S_OK &&
         active.langid == language)
     {
         result.profileKnown = true;
         if (active.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
         {
             BSTR description = nullptr;
-            if (SUCCEEDED(profiles->GetLanguageProfileDescription(active.clsid, active.langid,
-                    active.guidProfile, &description)) && description)
+            if (SUCCEEDED(profiles.Description(active, &description)) && description)
                 result.description.assign(description, SysStringLen(description));
             SysFreeString(description);
             result.layoutIcon = ProfileImage(active);
@@ -406,7 +403,9 @@ struct Service::Impl
     std::optional<ContextRequest> contextRequest;
     // Declared last so shutdown joins before its state/mutex are destroyed.
     std::jthread worker{[this](std::stop_token stop) {
-        const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        Apartment apartment{COINIT_MULTITHREADED};
+        // Destruction releases the interfaces before this thread uninitializes COM.
+        detail::ProfileReader profiles;
         while (!stop.stop_requested())
         {
             std::optional<ContextRequest> request;
@@ -416,7 +415,7 @@ struct Service::Impl
             }
             if (request && !stop.stop_requested())
             {
-                HRESULT hr = apartment;
+                HRESULT hr = apartment.result;
                 if (SUCCEEDED(hr))
                 {
                     try { hr = native_menu::ShowInputButton(request->layoutPanel ? nativeLayoutName : nativeModeName,
@@ -432,13 +431,12 @@ struct Service::Impl
             Snapshot next;
             {
                 performance::Scope trace("shared.status_bar", "input_method.sample");
-                try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }
+                try { next = Read(profiles); } catch (...) { /* Unavailable, never stale. */ }
             }
             std::unique_lock lock(mutex);
             snapshot = std::move(next);
             wake.wait_for(lock, stop, std::chrono::milliseconds(200), [this] { return contextRequest.has_value(); });
         }
-        if (SUCCEEDED(apartment)) CoUninitialize();
     }};
 };
 Service::Service() : impl_(std::make_unique<Impl>()) {}

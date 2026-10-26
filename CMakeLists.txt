@@ -237,6 +237,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar.cpp
     src/system/status_bar/status_bar_input_method.cpp
     src/system/status_bar/status_bar_input_method.h
+    src/system/status_bar/status_bar_input_method_profiles.h
     src/system/status_bar/status_bar_notification.cpp
     src/system/status_bar/status_bar_notification.h
     src/system/tray/tray_service.cpp
@@ -3294,6 +3295,7 @@ if (BUILD_TESTING)
             src/ui/render/native_tooltip.cpp
             src/theme/personalization.cpp
             tests/tray_model_tests.cpp
+            tests/system/status_bar_input_method_profiles_cases.h
             tests/tray_live_tests.cpp
             src/system/tray/tray_model.cpp
             src/system/tray/tray_service.cpp
@@ -3306,7 +3308,7 @@ if (BUILD_TESTING)
             src/dock/dock_window_transition.cpp
             src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 windowsapp winhttp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 uuid windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
