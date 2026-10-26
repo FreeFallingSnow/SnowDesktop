@@ -888,8 +888,8 @@ struct DockPagePresenter::Impl
         taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
             if (updatingControls) return;
             const int mode = taskbarMode.SelectedIndex();
-            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn()) ||
-                (mode >= 2 && !modulePolicy.Allows(runtime_modules::Module::Taskbar))) return;
+            if (!CanSelectTaskbarDisplayMode(mode, dockEnabledToggle.IsOn(),
+                modulePolicy.Allows(runtime_modules::Module::Taskbar))) return;
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -2199,8 +2199,8 @@ struct DockPagePresenter::Impl
         taskbarSuppressRow.SetEnabled(true);
         if (taskbarMode.Items().Size() == 4)
         {
-            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(taskbarAllowed && (dockEnabled || taskbarSuppressToggle.IsOn()));
-            taskbarMode.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(taskbarAllowed);
+            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(2, dockEnabled, taskbarAllowed));
+            taskbarMode.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(3, dockEnabled, taskbarAllowed));
         }
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&

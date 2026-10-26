@@ -2258,6 +2258,19 @@ int main(int argc, char** argv)
         Check(!snowdesktop::ResolveBarSettingsAvailability(false, dock, bar, 2).anyMerged,
             "disabled Dock cannot keep independent settings disabled");
         snowdesktop::SetTaskbarDisplayMode(dock, 2);
+        Check(!snowdesktop::CanSelectTaskbarDisplayMode(2, false, true) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(3, false, true),
+            "without a Dock only all-display permanent hiding remains selectable");
+        Check(snowdesktop::CanSelectTaskbarDisplayMode(2, true, true) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(3, true, true) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(2, true, false) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(3, false, false),
+            "both permanent modes require the taskbar module while Dock-only also requires a Dock");
+        Check(snowdesktop::CanSelectTaskbarDisplayMode(0, false, false) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(1, false, false) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(-1, true, true) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(4, true, true),
+            "native visibility modes stay available and invalid selections are rejected");
         Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide,
             "always hidden taskbar also releases Windows work area");
         Check(!dock.suppressSystemTaskbarAllMonitors && snowdesktop::TaskbarDisplayMode(dock) == 2 &&

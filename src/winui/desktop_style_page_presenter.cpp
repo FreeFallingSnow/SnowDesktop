@@ -463,8 +463,8 @@ struct DesktopStylePagePresenter::Impl
             {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar", "settings.taskbar.suppressAllTaskbars"},
             [](const auto&, const auto& value) { return TaskbarDisplayMode(value); },
             [this](int index) {
-                if ((index == 2 && !general.dockEnabled) ||
-                    (index >= 2 && !general.runtimeModules.Allows(runtime_modules::Module::Taskbar)))
+                if (!CanSelectTaskbarDisplayMode(index, general.dockEnabled,
+                    general.runtimeModules.Allows(runtime_modules::Module::Taskbar)))
                 { Sync(); return; }
                 EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
             });
@@ -926,9 +926,9 @@ struct DesktopStylePagePresenter::Impl
             choice->control.SelectedIndex(choice->read(general, dock));
             if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 4)
             {
-                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(general.runtimeModules.Allows(runtime_modules::Module::Taskbar) &&
-                    (general.dockEnabled || dock.suppressSystemTaskbar));
-                choice->control.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(general.runtimeModules.Allows(runtime_modules::Module::Taskbar));
+                const bool taskbarAllowed = general.runtimeModules.Allows(runtime_modules::Module::Taskbar);
+                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(2, general.dockEnabled, taskbarAllowed));
+                choice->control.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(3, general.dockEnabled, taskbarAllowed));
             }
             choice->row.SetEnabled(hasSnapshot && (!choice->enabled || choice->enabled(general, dock)));
         }
