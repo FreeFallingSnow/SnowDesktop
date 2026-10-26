@@ -317,10 +317,32 @@ Container* DockEntryItem::GetContainer() const { return container_; }
 
 void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
+    if (!context) return;
     const DockEntry* entry = Entry();
     if (entry && app_)
     {
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
+        if (dock && entry->type == DockEntryType::DesktopItem &&
+            app_->FindItemIndexByKey(entry->reference) >= app_->items_.size())
+        {
+            const auto presentation = dock->CapturePresentationState();
+            const auto key = std::to_wstring(static_cast<int>(entry->type)) + L":" + ToUpperInvariant(entry->reference);
+            const auto& pending = presentation.removals->Entries();
+            const auto retained = std::find_if(pending.begin(), pending.end(), [&](const auto& removal) {
+                return !removal.removed && removal.key == key;
+            });
+            if (retained != pending.end() && retained->snapshot)
+            {
+                // A complete Shell read can precede independent deletion
+                // confirmation. Keep its last artwork until pruning commits.
+                const int size = dock->GetElementIconSize(bounds_, rect);
+                const float left = (rect.left + rect.right - size) * 0.5f;
+                const float top = (rect.top + rect.bottom - size) * 0.5f;
+                context->DrawBitmap(retained->snapshot.Get(), D2D1::RectF(left, top, left + size, top + size),
+                    1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                return;
+            }
+        }
         app_->DrawDockEntry(context, *entry, rect, state,
             dock ? dock->GetElementIconSize(bounds_, rect) : 0);
     }
@@ -938,8 +960,9 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                 &candidate,
                 &magnificationFocusRect_) != FALSE;
         });
-    const bool magnificationActive =
-        previous != candidates.end();
+    // A pin/reorder can move every cell before this sample. Its old focus
+    // still owns hover retention even though no new cell has that rectangle.
+    const bool magnificationActive = !IsRectEmpty(&magnificationFocusRect_);
 
     auto centerDistanceSquared = [&](const RECT& rect) {
         const long long dx = static_cast<long long>(pointer.x) -
@@ -1097,9 +1120,11 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
             snowdesktop::animation::RuntimeDurationScale());
         if (app_->dockSettings_.hoverEffect == 1 && GetMaximumMagnificationScale() > 1.0f)
         {
-            // A removed/relaid-out item must not leave a visual owner behind.
+            // Retarget a relaid-out live hover through SetTarget, preserving
+            // its amplitude/deadline. Only an absent replacement drops an
+            // owner whose geometry no longer exists.
             const RECT visualOwner = singleMagnification_.CurrentRect();
-            if (!IsRectEmpty(&visualOwner) && std::none_of(candidates.begin(), candidates.end(),
+            if (IsRectEmpty(&nextFocus) && !IsRectEmpty(&visualOwner) && std::none_of(candidates.begin(), candidates.end(),
                 [&](const RECT& candidate) { return EqualRect(&candidate, &visualOwner) != FALSE; }))
                 singleMagnification_ = {};
             singleMagnification_.SetTarget(nextFocus,
