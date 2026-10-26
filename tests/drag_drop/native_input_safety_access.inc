@@ -725,6 +725,123 @@ end})
         std::cout << "Mapped Dock folders, files, application shortcuts and non-file namespace icons preserve source geometry at menu boundary and return\n";
     }
 
+    static void RunExternalWindowSelectionSafety(const wchar_t* windowClass)
+    {
+        // User contract: a click into an ordinary window clears the selection,
+        // while transfers to our surfaces and live menu/drag owners retain it.
+        // Use the real native dispatchers on this fixture's inactive desktop;
+        // only the OS foreground sample is supplied by the test.
+        auto& app = Scene(false);
+        app.generalSettings_.dockEnabled = false;
+        std::vector<HWND> windows;
+        const auto create = [&] {
+            const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                windowClass, L"External selection fixture", WS_POPUP,
+                0, 0, 400, 300, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            if (!window) throw std::runtime_error("create isolated selection window");
+            windows.push_back(window);
+            return window;
+        };
+        struct Cleanup
+        {
+            DesktopApp& app; std::vector<HWND>& windows;
+            ~Cleanup()
+            {
+                app.EndDragSession();
+                for (const HWND window : windows)
+                {
+                    SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+                    SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&DefWindowProcW));
+                    DestroyWindow(window);
+                }
+                app.hwnd_ = app.inputHwnd_ = app.controlHwnd_ = app.floatingPopupHwnd_ = nullptr;
+                app.floatingDockInputHwnd_ = app.renameInputWindow_ = nullptr;
+                inputSafetyForeground = nullptr;
+            }
+        } cleanup{app, windows};
+        app.hwnd_ = create();
+        app.inputHwnd_ = create();
+        app.controlHwnd_ = create();
+        app.floatingPopupHwnd_ = create();
+        app.floatingDockInputHwnd_ = create();
+        app.renameInputWindow_ = create();
+        const HWND external = create(); // An ordinary window, even in our process.
+        const auto dispatch = [&](HWND window, WNDPROC procedure) {
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
+            SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(procedure));
+        };
+        dispatch(app.inputHwnd_, &DesktopApp::InputWndProc);
+        dispatch(app.controlHwnd_, &DesktopApp::ControlWndProc);
+        app.dockEntries_.resize(1);
+        app.dockUnpinnedRunningApps_.resize(1);
+        app.widgets_.resize(1);
+        app.widgets_[0].folderEntries.resize(1);
+        app.dockFolderPopupWidget_.folderEntries.resize(1);
+        const auto seed = [&] {
+            for (auto& item : app.items_) item.selected = true;
+            app.dockEntries_[0].selected = app.dockUnpinnedRunningApps_[0].selected = true;
+            app.widgets_[0].selected = app.widgets_[0].folderEntries[0].selected = true;
+            app.dockFolderPopupWidget_.folderEntries[0].selected = true;
+            app.keyboardNavVisualFocus_ = app.keyboardNavInsideWidget_ = true;
+            app.keyboardNavWidgetIndex_ = 0;
+            ValidateRect(app.hwnd_, nullptr);
+        };
+        const auto requireCleared = [&] {
+            if (std::any_of(app.items_.begin(), app.items_.end(), [](const auto& item) { return item.selected; }) ||
+                app.dockEntries_[0].selected || app.dockUnpinnedRunningApps_[0].selected ||
+                app.widgets_[0].selected || app.widgets_[0].folderEntries[0].selected ||
+                app.dockFolderPopupWidget_.folderEntries[0].selected ||
+                app.keyboardNavVisualFocus_ || app.keyboardNavInsideWidget_)
+                throw std::runtime_error("leaving desktop must clear every selected model and keyboard focus");
+            if (!GetUpdateRect(app.hwnd_, nullptr, FALSE))
+                throw std::runtime_error("external selection clear must invalidate the old selected pixels");
+        };
+        InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+        inputSafetyForeground = external;
+        seed();
+        SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
+        requireCleared();
+        seed();
+        app.HandleMessage(app.hwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
+        requireCleared();
+        seed();
+        SendMessageW(app.inputHwnd_, WM_KILLFOCUS, 0, 0);
+        requireCleared();
+        seed();
+        SendMessageW(app.controlHwnd_, kForegroundInteractionChangedMessage, 0, 0);
+        requireCleared();
+        ValidateRect(app.hwnd_, nullptr);
+        SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
+        if (GetUpdateRect(app.hwnd_, nullptr, FALSE))
+            throw std::runtime_error("repeated external notifications must not repaint unchanged selection");
+        for (const HWND owned : {app.hwnd_, app.inputHwnd_, app.floatingPopupHwnd_,
+                app.floatingDockInputHwnd_, app.renameInputWindow_})
+        {
+            seed();
+            inputSafetyForeground = owned;
+            SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(owned), 0);
+            SendMessageW(app.controlHwnd_, kForegroundInteractionChangedMessage, 0, 0);
+            if (!app.items_[0].selected || !app.widgets_[0].folderEntries[0].selected)
+                throw std::runtime_error("internal surface transfers must retain the selection");
+        }
+        inputSafetyForeground = external;
+        for (int owner = 0; owner < 3; ++owner)
+        {
+            seed();
+            if (owner == 0) app.shellPopupMenuLayerDepth_ = 1;
+            if (owner == 1) Begin(app, false, 1);
+            if (owner == 2) app.mouseDown_ = true;
+            SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
+            SendMessageW(app.controlHwnd_, kForegroundInteractionChangedMessage, 0, 0);
+            if (!app.items_[0].selected)
+                throw std::runtime_error("menu and drag ownership must preserve command source selection");
+            app.shellPopupMenuLayerDepth_ = 0;
+            app.mouseDown_ = false;
+            app.EndDragSession();
+        }
+        std::cout << "External window selection: native focus and foreground routes, owned surfaces and menu/drag retention passed\n";
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
@@ -736,6 +853,7 @@ end})
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        RunExternalWindowSelectionSafety(cls.lpszClassName);
         std::cerr << "Input safety: queued item release\n";
         RunQueuedDragReleaseSafety(cls.lpszClassName);
         std::cerr << "Input safety: widget release\n";
@@ -810,10 +928,26 @@ end})
                 "already-visible Dock gains its escape path when elevated foreground persists without a focus request");
             check(app->floatingDockPromotionInputToken_ != 0,
                 "raised Dock maintains an independent foreground watch throughout its visible lifetime");
+            app->floatingDockKeyboardSessionActive_ = true;
+            dock.promotionInputFocusPendingUntil = GetTickCount64() + 10000;
+            app->RefreshFloatingDockPromotionInputs();
+            check(!dock.explicitDismissAvailable && dock.promotionInputFocusPendingUntil &&
+                app->floatingDockKeyboardSessionActive_,
+                "queued proxy activation retains its session without flashing the fallback before a result");
             inputSafetyForeground = app->hwnd_;
             app->RefreshFloatingDockPromotionInputs();
-            check(!dock.explicitDismissAvailable,
+            check(!dock.explicitDismissAvailable && !dock.promotionInputFocusPendingUntil,
                 "live foreground recheck hides the escape path after confirmed loss of higher-privilege foreground");
+
+            inputSafetyForeground = control;
+            dock.promotionInputForeground = control;
+            dock.promotionInputProcess = GetCurrentProcessId() + 1000;
+            dock.promotionInputPrivilegeGap = true;
+            dock.promotionInputFocusPendingUntil = GetTickCount64() - 1;
+            app->RefreshFloatingDockPromotionInputs();
+            check(dock.explicitDismissAvailable && !dock.promotionInputFocusPendingUntil &&
+                !app->floatingDockKeyboardSessionActive_ && inputSafetyForeground == control,
+                "uncompleted activation publishes fallback only after bounded observation and retires the proxy session");
 
             inputSafetyForeground = control;
             app->dockWindowActivationObservations_[control].Begin(false, GetTickCount64(),

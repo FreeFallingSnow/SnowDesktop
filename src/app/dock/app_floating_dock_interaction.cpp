@@ -26,6 +26,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     host.promotionInputVisible = visible;
     if (!visible)
     {
+        host.promotionInputFocusPendingUntil = 0;
         host.promotionInputForeground = nullptr;
         host.promotionInputProcess = 0;
         host.promotionInputPrivilegeGap.reset();
@@ -63,21 +64,13 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     host.promotionInputForeground = foreground;
     host.promotionInputProcess = process;
     host.promotionInputBlocked = blocked;
-    const bool fallback = !host.promotionInputPrivilegeGap.has_value() ||
-        host.promotionInputPrivilegeGap.value_or(false) || fullscreen;
-    const bool borrowForeground = request && host.promotionInputPrivilegeGap.value_or(false) && !blocked;
+    const bool borrowForeground = request && host.promotionInputPrivilegeGap.value_or(false) &&
+        !blocked && !host.promotionInputFocusPendingUntil;
 
     floatingDockPromotionInputUpdateActive_ = true;
     struct InputUpdateScope { bool& active; ~InputUpdateScope() { active = false; } }
         updateScope{floatingDockPromotionInputUpdateActive_};
     const HWND hostWindow = host.hwnd;
-    if (host.explicitDismissAvailable != fallback)
-    {
-        // Make the escape path visible before trying activation. A rejected
-        // request, including a caller that never requests focus, stays usable.
-        host.explicitDismissAvailable = fallback;
-        UpdateFloatingDockWindowBounds(host, true, true);
-    }
     auto* visibleHost = FindPersistentDockHost(hostWindow);
     if (borrowForeground && visibleHost && visibleHost->active && visibleHost->frameReady &&
         IsWindowVisible(hostWindow) && snowdesktop::popup_window_pair_z_order::IsTopmost(hostWindow) &&
@@ -89,8 +82,6 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         const HWND observed = GetForegroundWindow();
         DWORD observedProcess = 0;
         if (observed) GetWindowThreadProcessId(observed, &observedProcess);
-        if (observedProcess != GetCurrentProcessId())
-            EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
         if (auto* current = FindPersistentDockHost(hostWindow))
         {
             current->promotionInputForeground = observed;
@@ -100,14 +91,36 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
             // Publish the owned foreground immediately; a quick return click
             // must not depend on a timer first sampling the proxy's activation.
             current->desktopLayerForegroundWindow = observed;
-            const bool keepFallback = !current->promotionInputPrivilegeGap.has_value() ||
-                current->promotionInputPrivilegeGap.value_or(false) ||
-                snowdesktop::fullscreen::ObserveForeground().has_value();
-            if (current->explicitDismissAvailable != keepFallback)
+            // User32 can finish cross-input-queue activation after the API
+            // returns. Keep the proxy alive while observing that result;
+            // hiding it immediately can cancel an otherwise accepted request.
+            current->promotionInputFocusPendingUntil =
+                observedProcess != GetCurrentProcessId() && floatingDockKeyboardSessionActive_
+                ? GetTickCount64() + 150 : 0;
+        }
+    }
+    if (auto* current = FindPersistentDockHost(hostWindow))
+    {
+        if (current->promotionInputFocusPendingUntil)
+        {
+            if (current->promotionInputProcess == GetCurrentProcessId())
+                current->promotionInputFocusPendingUntil = 0;
+            else if (blocked || !floatingDockKeyboardSessionActive_ ||
+                current->promotionInputPrivilegeGap == false ||
+                GetTickCount64() >= current->promotionInputFocusPendingUntil)
             {
-                current->explicitDismissAvailable = keepFallback;
-                UpdateFloatingDockWindowBounds(*current, true, true);
+                current->promotionInputFocusPendingUntil = 0;
+                EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
             }
+        }
+        const bool keepFallback = !current->promotionInputFocusPendingUntil &&
+            (!current->promotionInputPrivilegeGap.has_value() ||
+                current->promotionInputPrivilegeGap.value_or(false) ||
+                snowdesktop::fullscreen::ObserveForeground().has_value());
+        if (current->explicitDismissAvailable != keepFallback)
+        {
+            current->explicitDismissAvailable = keepFallback;
+            UpdateFloatingDockWindowBounds(*current, true, true);
         }
     }
 }
@@ -418,6 +431,7 @@ void DesktopApp::CloseFloatingDock(
     }
 
     host.promoted = false;
+    host.promotionInputFocusPendingUntil = 0;
     host.promotionInputVisible = false;
     host.explicitDismissAvailable = false;
     host.explicitDismissRect = {};
@@ -479,6 +493,7 @@ void DesktopApp::CloseAllFloatingDocks(
         if (host)
         {
             host->promoted = false;
+            host->promotionInputFocusPendingUntil = 0;
             host->promotionInputVisible = false;
             host->explicitDismissAvailable = false;
             host->explicitDismissRect = {};

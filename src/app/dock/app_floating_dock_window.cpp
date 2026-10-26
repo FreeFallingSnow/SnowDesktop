@@ -796,8 +796,9 @@ CalculateFloatingDockStableSourceRect(
     // Reserve before the first launch and after layout rebuilds. The active
     // animation region still uses the unreserved bounds below, so idle
     // reserve pixels never become visible or interactive.
-    const RECT dockRect =
-        host.container->GetAnimationVisualBounds(true);
+    const RECT dockRect = snowdesktop::floating_dock_rules::UnionNonEmptyRects(
+        host.container->GetAnimationVisualBounds(true),
+        host.container->GetVisualPanelBounds(lastMousePoint_));
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
@@ -933,8 +934,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
     const RECT nextDockRect =
         host.container->GetInteractiveBounds();
-    const RECT nextAnimationVisualRect =
-        host.container->GetAnimationVisualBounds();
+    const RECT nextVisualPanelRect = host.container->GetVisualPanelBounds(lastMousePoint_);
+    const RECT nextAnimationVisualRect = snowdesktop::floating_dock_rules::UnionNonEmptyRects(
+        host.container->GetAnimationVisualBounds(), nextVisualPanelRect);
     const RECT nextTooltipRect =
         host.container->
             GetHoveredTitleBounds(
@@ -947,7 +949,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         OffsetRect(&dismissMonitor.rcMonitor, -virtualLeft_, -virtualTop_);
         const float scale = static_cast<float>(GetDpiForWindow(host.hwnd)) / 96.f;
         nextDismissRect = snowdesktop::floating_dock_rules::ExplicitDismissBounds(
-            host.container->GetVisualPanelBounds(lastMousePoint_), dismissMonitor.rcMonitor,
+            nextVisualPanelRect, dismissMonitor.rcMonitor,
             static_cast<int>(std::ceil(24.f * scale)));
     }
     const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
@@ -988,6 +990,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             &floatingDockPopupRect_);
     const bool animationRegionChanged =
         !EqualRect(&nextAnimationVisualRect, &host.animationVisualRect);
+    const bool panelRegionChanged = !EqualRect(&nextVisualPanelRect, &host.visualPanelRect);
     const bool titleRegionChanged =
         !EqualRect(&nextTooltipRect,
             &floatingDockTooltipRect_);
@@ -1008,6 +1011,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !dismissRegionChanged &&
         !guideRegionChanged &&
         !animationRegionChanged &&
+        !panelRegionChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
         !sourceRectChanged &&
@@ -1021,6 +1025,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     host.guideOcclusionRect = guideOcclusion;
     floatingDockRect_ = nextDockRect;
     host.animationVisualRect = nextAnimationVisualRect;
+    host.visualPanelRect = nextVisualPanelRect;
     floatingDockPopupRect_ = nextPopupRect;
     floatingDockTooltipRect_ = nextTooltipRect;
 
@@ -1164,7 +1169,7 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
     const int radius = std::max(1, static_cast<int>(std::round(appearance.cornerRadius)));
     HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
         host.dockRect, host.animationVisualRect, host.popupRect, host.tooltipRect,
-        host.sourceRect, radius, borderWidth);
+        host.sourceRect, radius, borderWidth, host.visualPanelRect);
     if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
     {
         if (region) DeleteObject(region);

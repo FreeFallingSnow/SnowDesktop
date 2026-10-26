@@ -820,6 +820,7 @@ private:
         RECT sourceRect{};
         RECT dockRect{};
         RECT animationVisualRect{};
+        RECT visualPanelRect{};
         RECT popupRect{};
         RECT tooltipRect{};
         snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
@@ -836,6 +837,7 @@ private:
         HWND promotionInputForeground = nullptr;
         DWORD promotionInputProcess = 0;
         std::optional<bool> promotionInputPrivilegeGap;
+        ULONGLONG promotionInputFocusPendingUntil = 0;
         snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
         // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a
@@ -2132,6 +2134,7 @@ private:
     bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
     /** @brief 清除所有选中项。 */
     void ClearSelection();
+    void ClearSelectionForExternalWindow(HWND window);
     /**
      * @brief 判断指定的桌面项是否存在于任一部件中。
      * @param item 桌面项
