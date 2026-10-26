@@ -558,15 +558,15 @@ struct Scanner
         {
             if (control) control->WaitUntilAllowed();
             Unique(row.sources); Unique(row.types); Unique(row.verbs);
-            std::vector<std::wstring> associations;
+            std::vector<std::wstring> associationValues;
             for (const auto &type : row.types)
                 if (!type.empty() && type.front() == L'.')
                 {
                     const auto &values = Associations(type);
-                    associations.insert(associations.end(), values.begin(), values.end());
+                    associationValues.insert(associationValues.end(), values.begin(), values.end());
                 }
-            row.revision = Hash(settings_ipc::Pack(row.revision, associations));
-            row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associations,
+            row.revision = Hash(settings_ipc::Pack(row.revision, associationValues));
+            row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associationValues,
                 row.sources, row.types, row.verbs, row.contexts, row.systemEnabled,
                 row.display.label, row.commandIdentity, row.application));
             row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
