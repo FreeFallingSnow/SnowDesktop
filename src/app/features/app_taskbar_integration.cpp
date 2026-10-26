@@ -142,6 +142,7 @@ bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
 
 void DesktopApp::HandleDockForegroundInteractionChanged()
 {
+    ClearSelectionForExternalWindow(GetForegroundWindow());
     ReconcileDesktopHoverState();
     UpdateSystemShowDesktopDockLayerGuard();
     RefreshDockForegroundState();

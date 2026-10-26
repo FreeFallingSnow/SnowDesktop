@@ -1232,6 +1232,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        ClearSelectionForExternalWindow(
+            wp ? reinterpret_cast<HWND>(wp) : GetForegroundWindow());
         typeToSelectSession_.Reset();
         typeToSelectImeComposing_ = false;
         typeToSelectSuppressChar_ = false;
