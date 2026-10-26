@@ -18,7 +18,8 @@ enum class DockRevealSource
 {
     AssociatedSurface,
     Gesture,
-    Hotkey
+    Hotkey,
+    WindowAction
 };
 
 struct DockFullscreenException

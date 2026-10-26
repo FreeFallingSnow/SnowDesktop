@@ -38,6 +38,8 @@ DesktopApp::~DesktopApp()
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
+    floatingDockPromotionInputToken_ = 0;
+    floatingDockInputDeactivated_ = false;
     dockWindowActivationObservationToken_ = 0;
     dockWindowActivationObservations_.clear();
     popupAnimationFrameToken_ = 0;
@@ -540,6 +542,7 @@ bool DesktopApp::EnsureFloatingDockInputWindow()
 
 void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
+    floatingDockInputDeactivated_ = false;
     if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
     if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
         return;
@@ -626,6 +629,7 @@ void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExi
 void DesktopApp::EndFloatingDockKeyboardSession(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    floatingDockInputDeactivated_ = false;
     if (!floatingDockKeyboardSessionActive_)
     {
         floatingDockLogicalForegroundWindow_ = nullptr;

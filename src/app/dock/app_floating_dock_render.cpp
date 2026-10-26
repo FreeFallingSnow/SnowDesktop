@@ -150,7 +150,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
                 host.container->DrawContents(context.Get());
             });
         }
-        if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+        if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
         {
             const auto& appearance = floatingDockPersonalization_;
             const D2D1_COLOR_F background = D2D1::ColorF(appearance.widgetBgR,
@@ -160,11 +160,18 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             const D2D1_COLOR_F foreground = D2D1::ColorF(ink, ink, ink, 1.0f);
             const RECT button = host.explicitDismissRect;
             const float size = static_cast<float>(button.right - button.left);
-            DrawD2DRoundedRectangle(context.Get(), button, size * 0.25f, background,
-                D2D1::ColorF(foreground.r, foreground.g, foreground.b, 0.35f), 1.0f);
             ComPtr<ID2D1SolidColorBrush> closeBrush;
             if (SUCCEEDED(context->CreateSolidColorBrush(foreground, &closeBrush)))
             {
+                const auto circle = D2D1::Ellipse(D2D1::Point2F(
+                    (static_cast<float>(button.left) + static_cast<float>(button.right)) * 0.5f,
+                    (static_cast<float>(button.top) + static_cast<float>(button.bottom)) * 0.5f),
+                    size * 0.5f - 0.5f, size * 0.5f - 0.5f);
+                closeBrush->SetColor(background);
+                context->FillEllipse(circle, closeBrush.Get());
+                closeBrush->SetColor(D2D1::ColorF(foreground.r, foreground.g, foreground.b, 0.35f));
+                context->DrawEllipse(circle, closeBrush.Get(), 1.0f);
+                closeBrush->SetColor(foreground);
                 const float left = static_cast<float>(button.left) + size * 0.32f;
                 const float right = static_cast<float>(button.right) - size * 0.32f;
                 const float top = static_cast<float>(button.top) + size * 0.32f;
@@ -335,7 +342,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
-    if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
+    if (host.active && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
         (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&
         (!host.mergedPresentationActive || host.mergedPresentation.inputEnabled))
     {
@@ -345,7 +352,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         POINT point = screen;
         if (hwnd_) ScreenToClient(hwnd_, &point);
         else { point.x -= virtualLeft_; point.y -= virtualTop_; }
-        if (PtInRect(&host.explicitDismissRect, point))
+        if (snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(host.explicitDismissRect, point))
         {
             if (msg == WM_NCHITTEST) return HTCLIENT;
             if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;

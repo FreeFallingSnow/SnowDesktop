@@ -74,6 +74,7 @@
         InputSafetyImport& operator=(const InputSafetyImport&) = delete;
     };
     static inline HWND inputSafetyForeground = nullptr;
+    static inline HWND inputSafetyOwnedWindow = nullptr;
     static inline unsigned inputSafetyAttachCalls = 0;
     static inline bool inputSafetyAllowForeground = false;
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
@@ -84,7 +85,7 @@
     static BOOL WINAPI InputSafetyAttach(DWORD, DWORD, BOOL) { ++inputSafetyAttachCalls; return FALSE; }
     static DWORD WINAPI InputSafetyThread(HWND window, LPDWORD process)
     {
-        if (window == inputSafetyForeground)
+        if (window == inputSafetyForeground && window != inputSafetyOwnedWindow)
         { if (process) *process = GetCurrentProcessId() + 1000; return GetCurrentThreadId() + 1000; }
         return inputSafetyOriginalThread(window, process);
     }
@@ -779,6 +780,76 @@ end})
         app->persistentDockHosts_.push_back(std::move(host));
         const HWND popupWindow = create(&popupContext);
         app->floatingPopupHwnd_ = popupWindow;
+        {
+            // All HWNDs live on this fixture's inactive desktop. Keep a Dock
+            // already raised while its foreground changes after the summon.
+            auto& dock = *app->persistentDockHosts_.front();
+            const HWND proxy = create(nullptr);
+            app->floatingDockInputHwnd_ = proxy;
+            app->SelectPersistentDockHost(&dock);
+            dock.frameReady = dock.promoted = dock.promotionInputVisible = true;
+            app->floatingDockVisible_ = true;
+            ShowWindow(control, SW_SHOWNOACTIVATE);
+            SetWindowPos(dockWindow, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            inputSafetyForeground = control;
+            inputSafetyOwnedWindow = app->hwnd_;
+            inputSafetyOriginalThread = &GetWindowThreadProcessId;
+            InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+            InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
+            InputSafetyImport denyForeground("SetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyForeground));
+            InputSafetyImport denyActive("SetActiveWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
+            InputSafetyImport denyFocus("SetFocus", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
+            InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            inputSafetyPhysicalButton = 0;
+            dock.promotionInputForeground = control;
+            dock.promotionInputProcess = GetCurrentProcessId() + 1000;
+            dock.promotionInputPrivilegeGap = true;
+            app->RefreshFloatingDockPromotionInputs();
+            check(dock.explicitDismissAvailable && inputSafetyForeground == control,
+                "already-visible Dock gains its escape path when elevated foreground persists without a focus request");
+            check(app->floatingDockPromotionInputToken_ != 0,
+                "raised Dock maintains an independent foreground watch throughout its visible lifetime");
+            inputSafetyForeground = app->hwnd_;
+            app->RefreshFloatingDockPromotionInputs();
+            check(!dock.explicitDismissAvailable,
+                "live foreground recheck hides the escape path after confirmed loss of higher-privilege foreground");
+
+            inputSafetyForeground = control;
+            app->dockWindowActivationObservations_[control].Begin(false, GetTickCount64(),
+                GetCurrentProcessId() + 1000, GetCurrentThreadId() + 1000);
+            app->floatingDockInputDeactivated_ = true;
+            check(app->ObserveDockPromotionActivation(control) &&
+                app->dockWindowActivationObservations_.empty() && !app->floatingDockInputDeactivated_,
+                "restored app activation retires its retry before the raised Dock rechecks foreground and fallback");
+
+            // The proxy was foreground only between timer samples. Repeated
+            // native deactivation must dismiss even with identical baselines
+            // and all global mouse buttons unreadable.
+            const ULONGLONG savedMinimizeTick = app->dockSystemMinimizeStartedTick_.load();
+            for (int repeat = 0; repeat < 4; ++repeat)
+            {
+                dock.promoted = true;
+                dock.desktopLayerForegroundWindow = control;
+                app->floatingDockVisible_ = app->floatingDockKeyboardSessionActive_ = true;
+                app->dockSystemMinimizeStartedTick_.store(GetTickCount64());
+                app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
+                app->UpdateFloatingDockEdgeSwipe();
+                check(!dock.promoted && !app->floatingDockVisible_ && !app->floatingDockKeyboardSessionActive_ &&
+                    !app->floatingDockInputDeactivated_ && inputSafetyForeground == control,
+                    "native proxy loss repeatedly dismisses Dock without a poll observing the proxy or physical press");
+            }
+            app->dockSystemMinimizeStartedTick_.store(savedMinimizeTick);
+            app->RefreshFloatingDockPromotionInputs();
+            check(!app->floatingDockPromotionInputToken_, "closed Dock retires its foreground watch");
+            app->floatingDockInputHwnd_ = nullptr;
+            app->SelectPersistentDockHost(nullptr);
+            dock.frameReady = false;
+            inputSafetyOwnedWindow = inputSafetyForeground = nullptr;
+            ShowWindow(control, SW_HIDE);
+            SetWindowPos(dockWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+        }
         {
             // A delivered button press is an independent escape path, even
             // when global button state is unavailable. Run actual host dispatch.

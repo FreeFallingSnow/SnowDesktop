@@ -36,23 +36,25 @@ private:
 inline constexpr DWORD kWindowExStyle =
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
 
-inline RECT ExplicitDismissBounds(RECT dock, RECT monitor, int size, int gap)
+inline RECT ExplicitDismissBounds(RECT panel, RECT monitor, int size)
 {
-    if (IsRectEmpty(&dock) || IsRectEmpty(&monitor)) return {};
+    if (IsRectEmpty(&panel) || IsRectEmpty(&monitor)) return {};
     size = std::max(1, std::min({size, static_cast<int>(monitor.right - monitor.left),
         static_cast<int>(monitor.bottom - monitor.top)}));
-    gap = std::max(0, gap);
-    const RECT candidates[]{
-        {dock.right - size, dock.top - gap - size, dock.right, dock.top - gap},
-        {dock.right + gap, dock.top, dock.right + gap + size, dock.top + size},
-        {dock.left - gap - size, dock.top, dock.left - gap, dock.top + size},
-        {dock.right - size, dock.bottom + gap, dock.right, dock.bottom + gap + size}};
-    for (const RECT candidate : candidates)
-        if (candidate.left >= monitor.left && candidate.top >= monitor.top &&
-            candidate.right <= monitor.right && candidate.bottom <= monitor.bottom) return candidate;
-    const LONG left = std::clamp<LONG>(dock.right - size, monitor.left, monitor.right - size);
-    const LONG top = std::clamp<LONG>(dock.top, monitor.top, monitor.bottom - size);
+    // Attach the circular badge to the actual painted corner, never the
+    // maximum magnification/input reserve or an independent screen anchor.
+    const LONG left = std::clamp<LONG>(panel.right - size / 2, monitor.left, monitor.right - size);
+    const LONG top = std::clamp<LONG>(panel.top - size / 2, monitor.top, monitor.bottom - size);
     return {left, top, left + size, top + size};
+}
+
+inline bool IsPointOnExplicitDismiss(RECT bounds, POINT point)
+{
+    if (IsRectEmpty(&bounds)) return false;
+    const double radius = static_cast<double>(bounds.right - bounds.left) / 2.0;
+    const double dx = point.x - (static_cast<double>(bounds.left) + bounds.right) / 2.0;
+    const double dy = point.y - (static_cast<double>(bounds.top) + bounds.bottom) / 2.0;
+    return dx * dx + dy * dy < radius * radius;
 }
 
 inline constexpr int kEdgeSwipeBandDip = 4;

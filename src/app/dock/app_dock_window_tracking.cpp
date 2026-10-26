@@ -248,6 +248,25 @@ void DesktopApp::BeginDockWindowActivationObservation(
         dockWindowActivationObservations_.clear();
 }
 
+bool DesktopApp::ObserveDockPromotionActivation(HWND foreground)
+{
+    if (!foreground || foreground != GetForegroundWindow()) return false;
+    for (const auto& [target, observation] : dockWindowActivationObservations_)
+    {
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(target, &process);
+        if (!observation.Matches(process, thread) || IsIconic(target) ||
+            !IsDockWindowActivationForeground(target, target)) continue;
+        // Stop the activation retry before borrowing foreground back. A live
+        // retry otherwise reactivates the app and undoes the successful loss.
+        CancelDockWindowActivationObservation(target);
+        floatingDockInputDeactivated_ = false;
+        RefreshFloatingDockPromotionInputs(true);
+        return true;
+    }
+    return false;
+}
+
 void DesktopApp::UpdateDockWindowActivationObservation(
     HWND target,
     const DockWindowActivationOutcome& outcome)
@@ -264,6 +283,8 @@ void DesktopApp::UpdateDockWindowActivationObservation(
     {
         LogDockWindowActivation(target,
             outcome.foreground ? L"foreground-observed" : L"unresponsive");
+        if (outcome.foreground)
+            (void)ObserveDockPromotionActivation(GetForegroundWindow());
         CancelDockWindowActivationObservation(target);
         return;
     }
@@ -352,6 +373,7 @@ void DesktopApp::OnDockWindowActivationObservationTimer(
             LogDockWindowActivation(target, retryExpired ? L"observation-timeout" :
                 foreground ? L"foreground-observed" :
                 !valid ? L"target-changed" : L"observation-cancelled");
+            if (foreground) (void)ObserveDockPromotionActivation(GetForegroundWindow());
             CancelDockWindowActivationObservation(target);
             continue;
         }

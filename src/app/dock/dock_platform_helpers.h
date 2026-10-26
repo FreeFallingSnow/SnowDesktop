@@ -30,7 +30,7 @@ inline std::optional<TokenState> QueryToken(HANDLE process)
     return TokenState{*GetSidSubAuthority(label->Label.Sid, count - 1u), uiAccess != 0};
 }
 
-// Only queried at a deliberate reveal, never in the Dock's polling loop.
+// The promotion watcher caches this result until foreground identity changes.
 // Unknown permission is not permission to take another application's focus.
 inline std::optional<bool> ForegroundHasHigherInputPrivilege(HWND foreground)
 {

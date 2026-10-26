@@ -333,9 +333,15 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     dockWindowTransitionLayerUpdateActive_ = true;
     struct LayerUpdateScope final
     {
-        bool& active;
-        ~LayerUpdateScope() { active = false; }
-    } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+        DesktopApp& app; HWND window; bool wasTopmost;
+        ~LayerUpdateScope()
+        {
+            app.dockWindowTransitionLayerUpdateActive_ = false;
+            if (!wasTopmost && snowdesktop::popup_window_pair_z_order::IsTopmost(window))
+                if (auto* current = app.FindPersistentDockHost(window))
+                    app.RefreshFloatingDockPromotionInput(*current, true);
+        }
+    } layerUpdateScope{*this, host.hwnd, wasTopmost};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +

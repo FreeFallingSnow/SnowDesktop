@@ -450,6 +450,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
     const ULONGLONG layerNow = GetTickCount64();
+    (void)ObserveDockPromotionActivation(GetForegroundWindow());
     const HWND layerForeground = GetForegroundWindow();
     bool foregroundChangedWhilePromoted = false;
     for (const auto& host : persistentDockHosts_)
@@ -464,6 +465,22 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
     DWORD foregroundProcess = 0;
     if (layerForeground) GetWindowThreadProcessId(layerForeground, &foregroundProcess);
+    const bool inputHeld = dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 || shellFileOperationInFlight_ > 0 ||
+        (dockStartMenu_ && dockStartMenu_->Active()) ||
+        (dockWindowTransition_ && dockWindowTransition_->IsActive());
+    if (floatingDockInputDeactivated_ && (!floatingDockKeyboardSessionActive_ || inputHeld))
+        floatingDockInputDeactivated_ = false;
+    if (floatingDockInputDeactivated_ && floatingDockVisible_ && foregroundProcess &&
+        foregroundProcess != GetCurrentProcessId() && IsWindowVisible(layerForeground))
+    {
+        // An owned native deactivation survives a fast click that skipped the
+        // poll's proxy sample, and does not depend on cursor/button queries.
+        floatingDockInputDeactivated_ = false;
+        CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        return;
+    }
     const ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
     const bool externalActivation = snowdesktop::floating_dock_rules::
         ShouldDismissForForegroundActivation(
@@ -743,6 +760,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         }
     }
 
+    RefreshFloatingDockPromotionInputs();
     if (!generalSettings_.dockEnabled ||
         !snowdesktop::dock_settings_rules::
             IsFloatingEdgeSwipeEnabled(

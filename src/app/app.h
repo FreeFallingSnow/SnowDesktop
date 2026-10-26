@@ -831,6 +831,11 @@ private:
         bool promoted = false;
         bool explicitDismissAvailable = false;
         RECT explicitDismissRect{};
+        bool promotionInputVisible = false;
+        bool promotionInputBlocked = false;
+        HWND promotionInputForeground = nullptr;
+        DWORD promotionInputProcess = 0;
+        std::optional<bool> promotionInputPrivilegeGap;
         snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
         // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a
@@ -1310,6 +1315,9 @@ private:
         POINT anchorScreen);
     HWND KeepDockTopmostForAction(const RECT& anchorScreen, bool retainPromotion = true);
     void ReleaseTemporaryDockActionPromotion();
+    void RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus = false);
+    void RefreshFloatingDockPromotionInputs(bool requestFocus = false);
+    bool ObserveDockPromotionActivation(HWND foreground);
     void CloseFloatingDock(
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
@@ -4270,6 +4278,9 @@ private:
     // 单一 Host 所有权，也不等同于 HWND/合成资源的生命周期。
     bool floatingDockHostActive_ = false;
     bool floatingDockKeyboardSessionActive_ = false;
+    bool floatingDockInputDeactivated_ = false;
+    bool floatingDockPromotionInputUpdateActive_ = false;
+    snowdesktop::UiScheduleToken floatingDockPromotionInputToken_ = 0;
     HWND floatingDockLogicalForegroundWindow_ = nullptr;
     int shellPopupMenuLayerDepth_ = 0;
     std::atomic<HWND> shellPopupTrackerOwnerHwnd_{ nullptr };

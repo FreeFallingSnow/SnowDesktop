@@ -220,9 +220,11 @@ int RunFullscreenFocusTests()
     check(!policy::BlocksReveal(P::Allow, S::Gesture, true, true) &&
         !policy::BlocksReveal(P::FullProtection, S::Hotkey, false, true),
         "opt-outs and ordinary windows preserve invocation");
-    check(!policy::StartsKeyboardSession(S::Gesture) && !policy::StartsKeyboardSession(S::Hotkey),
+    check(!policy::StartsKeyboardSession(S::Gesture) && !policy::StartsKeyboardSession(S::Hotkey) &&
+        !policy::StartsKeyboardSession(S::WindowAction),
         "ordinary foreground windows retain activation after either Dock summon trigger");
-    check(policy::StartsKeyboardSession(S::Gesture, true) && policy::StartsKeyboardSession(S::Hotkey, true),
+    check(policy::StartsKeyboardSession(S::Gesture, true) && policy::StartsKeyboardSession(S::Hotkey, true) &&
+        policy::StartsKeyboardSession(S::WindowAction, true),
         "both summon triggers reuse the keyboard path for a higher-privilege foreground");
     check(!policy::StartsKeyboardSession(S::Gesture, true, true) &&
         !policy::StartsKeyboardSession(S::Hotkey, true, true) &&
@@ -234,13 +236,25 @@ int RunFullscreenFocusTests()
     for (const RECT dock : {RECT{-1500, 1000, -400, 1080}, RECT{-1500, 0, -400, 80},
             RECT{-1920, 200, -1840, 900}, RECT{-80, 200, 0, 900}})
     {
-        const RECT button = snowdesktop::floating_dock_rules::ExplicitDismissBounds(dock, dismissMonitorBounds, 48, 12);
+        const RECT button = snowdesktop::floating_dock_rules::ExplicitDismissBounds(dock, dismissMonitorBounds, 48);
         RECT intersection{};
         check(button.right - button.left == 48 && button.bottom - button.top == 48 &&
             button.left >= dismissMonitorBounds.left && button.top >= dismissMonitorBounds.top && button.right <= dismissMonitorBounds.right &&
-            button.bottom <= dismissMonitorBounds.bottom && !IntersectRect(&intersection, &dock, &button),
-            "explicit dismiss stays visible beside each Dock edge at high DPI on negative-coordinate monitors");
+            button.bottom <= dismissMonitorBounds.bottom && IntersectRect(&intersection, &dock, &button),
+            "explicit dismiss overlaps the visible Dock corner and stays on each monitor edge at high DPI");
+        check(snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(button,
+                {(button.left + button.right) / 2, (button.top + button.bottom) / 2}) &&
+            !snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(button, {button.left, button.top}),
+            "the circular dismiss accepts its center but does not claim transparent square corners");
     }
+    const RECT panel{-1500, 500, -400, 580};
+    const RECT movedPanel{-1450, 540, -250, 620};
+    const RECT initialButton = snowdesktop::floating_dock_rules::ExplicitDismissBounds(panel, dismissMonitorBounds, 48);
+    const RECT movedButton = snowdesktop::floating_dock_rules::ExplicitDismissBounds(movedPanel, dismissMonitorBounds, 48);
+    check(initialButton.left + 24 == panel.right && initialButton.top + 24 == panel.top &&
+        movedButton.left - initialButton.left == movedPanel.right - panel.right &&
+        movedButton.top - initialButton.top == movedPanel.top - panel.top,
+        "dismiss follows the painted Dock corner as the panel moves and changes width");
 
     std::vector<DockFullscreenException> exceptions{
         {L"C:\\Apps\\Player.exe", P::Allow}, {L"C:/Apps/PLAYER.exe", P::BlockGestures},

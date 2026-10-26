@@ -192,8 +192,9 @@ bool DesktopApp::IsPointOnPromotedDock(
     for (const auto& host : persistentDockHosts_)
     {
         if (host &&
-            IsPersistentDockHostPromoted(*host) &&
-            (PtInRect(&host->dockRect, point) || PtInRect(&host->explicitDismissRect, point)))
+            (IsPersistentDockHostPromoted(*host) || (host->active && host->passivelyRevealed)) &&
+            (PtInRect(&host->dockRect, point) || snowdesktop::floating_dock_rules::
+                IsPointOnExplicitDismiss(host->explicitDismissRect, point)))
         {
             return true;
         }
@@ -207,8 +208,8 @@ bool DesktopApp::IsPointInPromotedDockLayer(
     for (const auto& host : persistentDockHosts_)
     {
         if (host &&
-            IsPersistentDockHostPromoted(*host) &&
-            (PtInRect(&host->explicitDismissRect, point) || snowdesktop::floating_dock_rules::
+            (IsPersistentDockHostPromoted(*host) || (host->active && host->passivelyRevealed)) &&
+            (snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(host->explicitDismissRect, point) || snowdesktop::floating_dock_rules::
                 IsPointInVisibleLayer(
                     point,
                     host->dockRect,
@@ -490,6 +491,15 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
     if (host.updatingMergedPresentation) return;
+    struct PromotionInputScope
+    {
+        DesktopApp& app; HWND window;
+        ~PromotionInputScope()
+        {
+            if (auto* current = app.FindPersistentDockHost(window))
+                app.RefreshFloatingDockPromotionInput(*current);
+        }
+    } promotionInput{*this, host.hwnd};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
     if (host.mergedPresentationActive && host.presentationMerged != merged)
         ResetMergedDockPresentation(host);
@@ -932,13 +942,13 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const RECT nextPopupRect{};
     RECT nextDismissRect{};
     MONITORINFO dismissMonitor{sizeof(dismissMonitor)};
-    if (host.promoted && host.explicitDismissAvailable && GetMonitorInfoW(host.monitor, &dismissMonitor))
+    if (host.explicitDismissAvailable && GetMonitorInfoW(host.monitor, &dismissMonitor))
     {
         OffsetRect(&dismissMonitor.rcMonitor, -virtualLeft_, -virtualTop_);
         const float scale = static_cast<float>(GetDpiForWindow(host.hwnd)) / 96.f;
         nextDismissRect = snowdesktop::floating_dock_rules::ExplicitDismissBounds(
-            nextDockRect, dismissMonitor.rcMonitor, static_cast<int>(std::ceil(24.f * scale)),
-            static_cast<int>(std::ceil(6.f * scale)));
+            host.container->GetVisualPanelBounds(lastMousePoint_), dismissMonitor.rcMonitor,
+            static_cast<int>(std::ceil(24.f * scale)));
     }
     const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
     host.explicitDismissRect = nextDismissRect;
@@ -1162,11 +1172,11 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
             host.sourceRect.bottom - host.sourceRect.top);
     }
     if (!region) return false;
-    if (host.promoted && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+    if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
     {
         RECT button = host.explicitDismissRect;
         OffsetRect(&button, -host.sourceRect.left, -host.sourceRect.top);
-        HRGN buttonRegion = CreateRoundRectRgn(button.left, button.top, button.right, button.bottom, 8, 8);
+        HRGN buttonRegion = CreateEllipticRgn(button.left, button.top, button.right, button.bottom);
         const bool combined = buttonRegion && CombineRgn(region, region, buttonRegion, RGN_OR) != ERROR;
         if (buttonRegion) DeleteObject(buttonRegion);
         if (!combined) { DeleteObject(region); return false; }

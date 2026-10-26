@@ -298,6 +298,15 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 
     switch (msg)
     {
+    case WM_ACTIVATEAPP:
+        if (hwnd == floatingDockInputHwnd_ && !wp && floatingDockKeyboardSessionActive_)
+        {
+            floatingDockInputDeactivated_ = true;
+            uiAnimationScheduler_.RequestFramePresentation(&floatingDockInputDeactivated_, [this] {
+                if (floatingDockInputDeactivated_) UpdateFloatingDockEdgeSwipe();
+            });
+        }
+        break;
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_NCHITTEST:
