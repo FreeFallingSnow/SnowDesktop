@@ -669,6 +669,9 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
     src/diagnostics/performance_capture.cpp
+    src/diagnostics/performance_process_resources.cpp
+    src/diagnostics/performance_process_resources.h
+    src/app/render/app_resource_statistics.h
     src/diagnostics/performance_analysis.cpp
     src/diagnostics/performance_environment.cpp
     src/diagnostics/performance_control_pipe.cpp
@@ -1647,8 +1650,10 @@ if (BUILD_TESTING)
             tests/performance_capture_tests.cpp
             tests/diagnostics/perfetto_session_tests.cpp
             tests/diagnostics/performance_workload_tests.cpp
+            tests/diagnostics/process_resource_statistics_tests.cpp
             src/widget/runtime/widget_runtime_diagnostics.cpp
             src/diagnostics/performance_capture.cpp
+            src/diagnostics/performance_process_resources.cpp
             src/diagnostics/performance_analysis.cpp
             src/diagnostics/performance_environment.cpp
             src/diagnostics/performance_control_pipe.cpp

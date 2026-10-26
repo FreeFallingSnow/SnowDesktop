@@ -6,6 +6,8 @@
 #include <string>
 
 void RunPerformanceCaptureTests();
+void RunProcessResourceStatisticsTests();
+int RunProcessResourceChild();
 void RunPerfettoSessionTests();
 int RunPerformanceControlFixture();
 int RunPerformanceOverheadBenchmark(const char* directory);
@@ -74,9 +76,12 @@ int main(int argc, char** argv)
             return RunPerformanceOverheadBenchmark(argv[2]);
         if (argc == 2 && std::string(argv[1]) == "--performance-control-fixture")
             return RunPerformanceControlFixture();
+        if (argc == 2 && std::string(argv[1]) == "--resource-statistics-child")
+            return RunProcessResourceChild();
         TestLevelNormalizationAndFiltering();
         TestBoundedHistory();
         RunPerfettoSessionTests();
+        RunProcessResourceStatisticsTests();
         RunPerformanceCaptureTests();
         std::cout << "widget runtime diagnostics tests passed\n";
         return 0;

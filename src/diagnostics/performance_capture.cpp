@@ -8,6 +8,7 @@
 #include "performance_analysis.h"
 #include "performance_compositor_clock.h"
 #include "performance_environment.h"
+#include "performance_process_resources.h"
 #include "common/json_value.h"
 
 #include <bcrypt.h>
@@ -39,8 +40,6 @@ namespace snowdesktop::performance
 namespace
 {
 using Clock = std::chrono::steady_clock;
-std::uint64_t FileTimeValue(FILETIME value) noexcept
-{ return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32) | value.dwLowDateTime; }
 std::string Utf8(std::wstring_view value)
 {
     if (value.empty()) return {};
@@ -282,22 +281,7 @@ void SetPhase(const std::shared_ptr<Record>& record, CapturePhase phase)
 void SampleProcess()
 {
     Scope scope("profiler", "sample.process");
-    FILETIME created{}, exited{}, kernel{}, user{};
-    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
-        Value("process", "cpu_total_ms", {},
-            static_cast<double>(FileTimeValue(kernel) + FileTimeValue(user)) / 10000.0);
-    PROCESS_MEMORY_COUNTERS_EX memory{};
-    memory.cb = sizeof(memory);
-    if (K32GetProcessMemoryInfo(GetCurrentProcess(),
-            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory)))
-    {
-        Value("process", "private_commit_bytes", {}, static_cast<double>(memory.PrivateUsage));
-        Value("process", "working_set_bytes", {}, static_cast<double>(memory.WorkingSetSize));
-        Value("process", "page_fault_count", {}, memory.PageFaultCount);
-    }
-    DWORD handles = 0;
-    if (GetProcessHandleCount(GetCurrentProcess(), &handles))
-        Value("process", "handle_count", {}, handles);
+    process_resources::RecordHostCounters();
 }
 
 
@@ -352,6 +336,10 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"requestedSeconds\":" << record.options.seconds << ",\"bufferKiB\":" << record.options.bufferKiB
         << ",\"firstTraceNs\":" << Quote(std::to_string(record.firstTraceNs)) << ",\"lastTraceNs\":" << Quote(std::to_string(record.lastTraceNs))
         << ",\"durationMs\":" << record.snapshot.elapsedMs << ",\"traceFile\":" << Quote(Utf8(record.snapshot.trace.filename().wstring()))
+        << ",\"processResourceStatistics\":{\"version\":1,\"basicIntervalMs\":1000,\"addressSpaceIntervalMs\":10000,"
+           "\"familyScope\":\"validated-installed-program-descendants-os-counters\",\"familyEnabled\":"
+        << (record.options.processRole == CaptureProcessRole::Host ? "true" : "false")
+        << ",\"childExecutionCaptured\":false,\"heapAttribution\":false}"
         << ",\"coverage\":\"pending-analysis\",\"participants\":[{\"role\":" << Quote(ProcessRole(record.options.processRole)) << ",\"pid\":" << GetCurrentProcessId()
         << ",\"included\":true},{\"role\":\"settings\",\"included\":false}],\"probeQuality\":{\"droppedOwners\":" << record.quality.droppedOwners
         << ",\"droppedCounters\":" << record.quality.droppedCounters << ",\"droppedLinks\":" << record.quality.droppedLinks
@@ -434,7 +422,9 @@ void Worker(std::shared_ptr<Record> record) noexcept
         NotifyState();
         { Scope marker("profiler", "capture.start"); }
         if (record->gpuDemand) { gpuDemandStarted = true; record->gpuDemand(true); }
+        process_resources::Sampler processResources;
         SampleProcess(); SampleIo(); RequestWidgetSample(record->snapshot.generation);
+        processResources.Sample(record->options.processRole == CaptureProcessRole::Host);
         const auto deadline = record->started + std::chrono::seconds(record->options.seconds);
         {
             std::unique_ptr<CompositorClock> compositor;
@@ -445,6 +435,7 @@ void Worker(std::shared_ptr<Record> record) noexcept
                 state.wake.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::seconds(1)), [] { return state.stopRequested.load(); });
                 lock.unlock();
                 SampleProcess(); SampleIo();
+                processResources.Sample(record->options.processRole == CaptureProcessRole::Host);
                 if (compositor) compositor->Sample();
                 RequestWidgetSample(record->snapshot.generation);
             }

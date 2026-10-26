@@ -4,6 +4,7 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_capture.h"
 #include "diagnostics/performance_trace.h"
+#include "app/render/app_resource_statistics.h"
 #include "diagnostics/input_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
@@ -405,6 +406,11 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 snowdesktop::performance::Scope sample("profiler", "sample.widgets");
                 using snowdesktop::performance::Value;
                 app->RecordIconTextResources();
+                snowdesktop::app_resource_statistics::Record(app->items_, app->widgets_,
+                    app->dockFolderPopupWidget_, app->gridPages_, app->dockEntries_,
+                    app->quickNavigationAppEntries_, app->quickNavigationEverythingResults_,
+                    app->quickNavigationAppResultIndices_, app->layoutRecords_, app->itemIndexByKeyCache_);
+                Value("host.model.memory", "desktop_app_inline_bytes", {}, static_cast<double>(sizeof(DesktopApp)));
                 if (app->widgetEngine_)
                 {
                     app->widgetEngine_->RecordPerformanceResources();
