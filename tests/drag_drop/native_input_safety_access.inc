@@ -627,6 +627,89 @@ end})
         app->persistentDockHosts_.clear();
     }
 
+    static inline const DesktopItem* inputSafetyMenuItem = nullptr;
+    static inline RECT inputSafetyMenuBounds{};
+    static inline bool inputSafetyMenuBoundsStable = false;
+    static inline unsigned inputSafetyMenuBoundaryCalls = 0;
+    static HMENU WINAPI InputSafetyNoMenuAllocation()
+    {
+        ++inputSafetyMenuBoundaryCalls;
+        inputSafetyMenuBoundsStable = inputSafetyMenuBoundsStable && inputSafetyMenuItem &&
+            EqualRect(&inputSafetyMenuItem->bounds, &inputSafetyMenuBounds);
+        return nullptr;
+    }
+    static void RunDockMappingContextSafety(const wchar_t* windowClass)
+    {
+        // This runs on the inactive private desktop. Deny only native menu
+        // allocation; the real right-release, selection and menu route runs.
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto folder = temporary.path / L"folder";
+        const auto shortcut = temporary.path / L"folder.lnk";
+        const auto file = temporary.path / L"ordinary.txt";
+        const auto executable = temporary.path / L"application.exe";
+        const auto application = temporary.path / L"application.lnk";
+        std::filesystem::create_directory(folder);
+        { std::ofstream stream(file); stream << "ordinary mapped icon"; }
+        { std::ofstream stream(executable); stream << "never executed"; }
+        ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persisted;
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) ||
+            FAILED(link->SetPath(folder.c_str())) || FAILED(link.As(&persisted)) ||
+            FAILED(persisted->Save(shortcut.c_str(), TRUE)))
+            throw std::runtime_error("create actual folder shortcut for mapped Dock context input");
+        if (FAILED(link->SetPath(executable.c_str())) || FAILED(persisted->Save(application.c_str(), TRUE)))
+            throw std::runtime_error("create application shortcut for mapped Dock context input");
+        auto& app = Scene(false);
+        ConfigureModel(app, temporary.path / L"layout");
+        PopulateModel(app, {folder, shortcut, file, application}, 0); SeedDock(app);
+        for (const auto& item : app.items_)
+        {
+            app.dockEntries_.push_back({DockEntryType::DesktopItem, item.layoutKey, true});
+            (void)app.ResolveDockFolderTarget(app.dockEntries_.back(), nullptr, true);
+        }
+        app.LayoutItems();
+        InputSafetyWindowContext context{&app};
+        HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, windowClass,
+            L"Mapped Dock context fixture", WS_POPUP, 0, 0, 1200, 800,
+            nullptr, nullptr, GetModuleHandleW(nullptr), &context);
+        if (!window) throw std::runtime_error("create private mapped Dock context owner");
+        struct Cleanup
+        {
+            DesktopApp& app; HWND window;
+            ~Cleanup()
+            {
+                app.hwnd_ = completionWindow;
+                DestroyWindow(window);
+                NativeDragIntegrationAccess::StopModel(app);
+                inputSafetyMenuItem = nullptr;
+            }
+        } cleanup{app, window};
+        app.hwnd_ = window;
+        InputSafetyImport allocation("CreatePopupMenu", reinterpret_cast<ULONG_PTR>(&InputSafetyNoMenuAllocation));
+        for (std::size_t index = 0; index < app.items_.size(); ++index)
+        {
+            auto* dock = Dock(app);
+            const auto entryIndex = std::find_if(app.dockEntries_.begin(), app.dockEntries_.end(), [&](const auto& entry) {
+                return PathsEqualInsensitive(entry.reference, app.items_[index].layoutKey);
+            });
+            if (entryIndex == app.dockEntries_.end()) throw std::runtime_error("mapped source must retain its own Dock reference");
+            const auto dockIndex = static_cast<std::size_t>(std::distance(app.dockEntries_.begin(), entryIndex));
+            const RECT slot = dock->GetSlots()[dockIndex]->GetBounds();
+            const POINT point{(slot.left + slot.right) / 2, (slot.top + slot.bottom) / 2};
+            const RECT original = app.items_[index].bounds;
+            if (IsRectEmpty(&original) || EqualRect(&original, &slot))
+                throw std::runtime_error("mapped source requires its own visible desktop geometry");
+            inputSafetyMenuItem = &app.items_[index]; inputSafetyMenuBounds = original;
+            inputSafetyMenuBoundsStable = true;
+            const unsigned before = inputSafetyMenuBoundaryCalls;
+            app.OnRightButtonUp(MAKELPARAM(point.x, point.y));
+            if (inputSafetyMenuBoundaryCalls == before || !inputSafetyMenuBoundsStable ||
+                !EqualRect(&app.items_[index].bounds, &original) ||
+                !app.dockEntries_[dockIndex].keepOnDesktop || app.items_[index].gridCell.pageId == kDockPageId)
+                throw std::runtime_error("Dock mapping context input must preserve the original folder/shortcut desktop geometry before and after menu dispatch");
+        }
+        std::cout << "Mapped Dock folders, files and application shortcuts preserve source geometry at menu boundary and return\n";
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
@@ -641,6 +724,7 @@ end})
         RunWidgetReleaseSafety(cls.lpszClassName);
         RunQueuedWidgetReleaseSafety(cls.lpszClassName);
         RunWidgetDockEdgeRevealSafety();
+        RunDockMappingContextSafety(cls.lpszClassName);
         auto* app = new DesktopApp; // Same process-lifetime model policy as the native integration fixture.
         app->instance_ = cls.hInstance;
         std::vector<HWND> windows;

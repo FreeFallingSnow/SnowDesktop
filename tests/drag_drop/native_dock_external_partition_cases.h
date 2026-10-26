@@ -2,8 +2,78 @@
 namespace native_dock_external_partition_cases
 {
 using namespace native_ole_file_cases;
+inline void RunFolderPreviews()
+{
+    native_drag_commit_cases::Profile profile;
+    const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop;
+    fs::create_directories(desktop);
+    std::size_t scenes = 0;
+    for (const bool shortcut : {false, true})
+    for (const bool external : {false, true})
+    for (const bool asynchronous : {false, true})
+    {
+        if (!external && asynchronous) continue;
+        native_drag_commit_cases::context = "cold folder preview shortcut=" + std::to_string(shortcut) +
+            " external=" + std::to_string(external) + " async=" + std::to_string(asynchronous);
+        const auto prefix = L"folder-preview-" + std::to_wstring(scenes++);
+        const auto directory = profile.root / prefix; fs::create_directory(directory);
+        const auto target = directory / L"target"; fs::create_directory(target);
+        const auto sourcePath = desktop / (prefix + (shortcut ? L".lnk" : L"-folder"));
+        if (shortcut)
+        {
+            ComPtr<IShellLinkW> link; ComPtr<IPersistFile> persisted;
+            Require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+                SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link.As(&persisted)) &&
+                SUCCEEDED(persisted->Save(sourcePath.c_str(), TRUE)), "create the real folder-shortcut preview source");
+        }
+        else fs::create_directory(sourcePath);
+        const auto fixed = desktop / (prefix + L"-fixed.txt");
+        { std::ofstream stream(fixed); stream << "fixed source"; }
+        const auto folder = desktop / (prefix + L"-existing"); fs::create_directory(folder);
+        const std::vector<fs::path> files{sourcePath, fixed, folder};
+        auto& app = profile.Model(false, directory / L"layout");
+        Access::SeedColdFolderPreview(app, files); Access::BindAsync(app);
+        Require(Access::ColdSourceStillUnknown(app, sourcePath),
+            "first preview must start without a completed folder source cache or warm-up drag");
+        const RECT fixedSlot = Access::Dock(app)->GetSlots().front()->GetBounds();
+        const POINT point{fixedSlot.left + 2, fixedSlot.top + 2};
+        auto source = external ? ole_file_source_fixture::Make({sourcePath}, asynchronous) : ComPtr<ole_file_source_fixture::Source>{};
+        auto adapter = external ? Access::ExternalAdapter(app) : ComPtr<OleDragDropAdapter>{};
+        for (int attempt = 0; attempt != 2; ++attempt)
+        {
+            if (external)
+            {
+                DWORD effect = 7;
+                Require(SUCCEEDED(adapter->DragEnter(source.Get(), MK_LBUTTON | MK_ALT, Access::ExternalPoint(point), &effect)),
+                    "real OLE folder/shortcut Enter must admit the preview");
+                effect = 7;
+                Require(SUCCEEDED(adapter->DragOver(MK_LBUTTON | MK_ALT, Access::ExternalPoint(point), &effect)) && effect == 4 &&
+                    Access::ExternalSummary(app).foldersOnly,
+                    "external folders and shortcuts must identify the file partition before Drop");
+                Require(!asynchronous || (source->identityReads > 0 && source->fileReads == 0 &&
+                    source->dataReads == 0 && source->starts == 0),
+                    "async folder preview may read selection identity but cannot render or start delayed content");
+            }
+            else
+            {
+                Access::BeginModel(app, 0, 1); Access::Resolve(app, point);
+            }
+            const auto range = Access::DockPartitionPreviewRange(app);
+            Require(Access::Target(app) == Access::Dock(app) && range.begin == 1 && range.end == 2 &&
+                Access::DockPartitionPreviewIndex(app) == 1,
+                "first and repeated folder/shortcut landings over a fixed icon must preview the file section's leading boundary");
+            Access::EndPartitionPreview(app);
+        }
+        Require(Access::NoDockWindows(app) && (!external || !source->wrongApartment),
+            "folder preview must retain native source ownership without presentation windows");
+        Access::StopModel(app); source.Reset(); adapter.Reset();
+        for (const auto& file : files) native_dock_return_cases::RemoveOwnedEntry(desktop, file);
+    }
+    std::cout << scenes << " cold internal/external directory and folder-shortcut preview scenes passed twice\n";
+}
 inline void Run(bool asynchronousFirst = false)
 {
+    RunFolderPreviews();
     native_drag_commit_cases::Profile profile;
     const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop; fs::create_directories(desktop);
     std::size_t scenes = 0;

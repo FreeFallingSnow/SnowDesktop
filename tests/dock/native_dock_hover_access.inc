@@ -517,6 +517,80 @@
                 app.dragSession_.End();
             }
 
+            // Component handles use WidgetAction, with no DragSession items.
+            // Route real input and scene rendering through that second owner.
+            for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FolderMapping})
+            {
+                reset();
+                DesktopWidget widget;
+                widget.id = L"r08-moving-component"; widget.type = type;
+                widget.gridCell = {app.gridPages_.front().id, 5, 1}; widget.gridSpan = {1, 1};
+                widget.bounds = {1020, 80, 1100, 160};
+                app.widgets_.push_back(std::move(widget));
+                app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true;
+                app.mouseDownPoint_ = outside;
+                app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
+                app.widgetDragOriginalSpan_ = app.widgets_.front().gridSpan;
+                app.widgetAction_ = DesktopApp::WidgetAction::Move;
+                const auto input = [&](POINT sample) {
+                    // Suppress only the optional native tooltip allocation.
+                    // The actual target/gesture route and D2D scene stay real.
+                    auto factory = std::move(app.dwriteFactory_);
+                    app.OnMouseMoveAt(MK_LBUTTON, sample);
+                    app.dwriteFactory_ = std::move(factory);
+                };
+                input(first);
+                check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == docks[0] &&
+                    !app.dragSession_.HasContext(), "component input must reach Dock insertion without an item drag");
+                check(app.RenderDesktopForegroundComposition(nullptr, false), "render actual component-to-Dock scene");
+                app.EnsureUiAnimationFrame();
+                check(effect == 0 || (docks[0]->IsMagnificationAnimating() && app.dockMagnificationAnimationFrameToken_),
+                    "component entry must start the configured Dock animation and its frame scheduler");
+                const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                docks[0]->AdvanceMagnificationAnimation(now + 1000);
+                const RECT base = docks[0]->GetSlots().front()->GetBounds();
+                const RECT expanded = docks[0]->GetElementVisualRect(base, first);
+                const RECT title = docks[0]->GetHoveredTitleBounds(first);
+                check((effect == 0 ? EqualRect(&expanded, &base) != FALSE :
+                    docks[0]->GetElementIconSize(base, expanded) > docks[0]->GetElementIconSize(base, base)) &&
+                    IsRectEmpty(&title), "component drag must grow Dock icons while keeping insertion feedback free of titles");
+                if (effect != 0)
+                {
+                    POINT tip = first;
+                    switch (position)
+                    {
+                    case DockPosition::Bottom: tip.y = base.top - 1; break;
+                    case DockPosition::Top: tip.y = base.bottom; break;
+                    case DockPosition::Left: tip.x = base.right; break;
+                    case DockPosition::Right: tip.x = base.left - 1; break;
+                    }
+                    input(tip);
+                    check(app.widgetDockTarget_ && app.GetDockContainerAtPoint(tip) == docks[0],
+                        "component insertion must retain the visible magnified Dock outside its base cell");
+                }
+                referenceContext->SetTarget(complete.Get());
+                referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                docks[0]->DrawInsertionPreview(referenceContext.Get(), app.widgetDockInsertIndex_);
+                check(SUCCEEDED(referenceContext->EndDraw()), "render component insertion with hover geometry");
+                referenceContext->SetTarget(nullptr);
+                const RECT line = paintedBounds(read(referenceContext.Get(), complete.Get()));
+                check(!IsRectEmpty(&line), "component Dock landing must expose a visible insertion line");
+                input(outside);
+                (void)docks[0]->GetElementVisualRect(base, outside);
+                docks[0]->AdvanceMagnificationAnimation(now + 2000);
+                const RECT exited = docks[0]->GetElementVisualRect(base, outside);
+                check(!app.widgetDockTarget_ && EqualRect(&exited, &base),
+                    "leaving the Dock during a component move must complete its hover exit");
+                app.widgetAction_ = DesktopApp::WidgetAction::Resize;
+                app.lastMousePoint_ = first;
+                const RECT resizing = docks[0]->GetElementVisualRect(base, first);
+                check(EqualRect(&resizing, &base), "component resize must continue to suppress Dock hover");
+                app.widgetAction_ = DesktopApp::WidgetAction::None;
+                app.mouseDown_ = false; app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+                app.widgets_.clear(); app.widgetDockTargetContainer_ = nullptr;
+                app.widgetCollectionGroupTargetIndex_ = app.widgetPairTargetIndex_ = static_cast<size_t>(-1);
+            }
+
             for (const bool reconcile : {false, true})
             {
                 const RECT base = docks[0]->GetSlots().front()->GetBounds();
@@ -553,6 +627,108 @@
                 app.shellPopupMenuLayerDepth_ = 0;
             }
         }
+        // Commit actual item/component pins, then rebuild the real Dock tree.
+        // A stationary pointer on the grown edge is outside the new base
+        // cells; loss of the old focus rectangle must not replay entry.
+        const auto baselineEntries = app.dockEntries_;
+        DesktopWidget insertedWidget;
+        insertedWidget.id = L"r08-committed-component";
+        insertedWidget.type = DesktopWidgetType::Collection;
+        insertedWidget.gridCell = {kDockPageId, 0, 0}; insertedWidget.gridSpan = {1, 1};
+        app.widgets_.push_back(std::move(insertedWidget));
+        app.dockAreas_.assign(areas.begin(), areas.end());
+        const auto rebuild = [&] {
+            // Deny native Host allocation only. The production model rebuild,
+            // presentation capture/restore and Dock geometry remain real.
+            auto device = std::move(app.dcompDevice_);
+            app.RebuildContainersAndItems();
+            app.dcompDevice_ = std::move(device);
+            size_t index = 0;
+            for (const auto& container : app.containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                {
+                    check(index < docks.size(), "rebuild keeps only the three test-owned Docks");
+                    docks[index++] = dock;
+                }
+            check(index == docks.size(), "rebuild restores every Dock model without native Host allocation");
+        };
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        for (const int effect : {1, 2})
+        for (const bool component : {false, true})
+        for (const bool settled : {false, true})
+        {
+            app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
+            app.dockSettings_.edgeAttached = false;
+            app.dockEntries_ = baselineEntries;
+            if (!component) app.dockEntries_.pop_back(); // A real existing item is the unpinned source.
+            app.RefreshCollectedKeysCache();
+            rebuild(); reset();
+            const RECT base = docks[0]->GetSlots().front()->GetBounds();
+            POINT pointer = point(0, 0);
+            app.lastMousePoint_ = pointer;
+            (void)docks[0]->GetElementVisualRect(base, pointer);
+            auto state = docks[0]->CapturePresentationState();
+            state.focusRect = base; state.entry = {}; state.single = {};
+            const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            if (effect == 1)
+            {
+                state.single.SetTarget(base, now - (settled ? 200 : 40), 1.0, vertical ? pointer.y : pointer.x);
+                state.single.Advance(now);
+            }
+            else
+            {
+                state.entry.SetHovered(true, now - (settled ? 200 : 80), 1.0);
+                state.entry.Advance(now);
+            }
+            check(docks[0]->RestorePresentationState(state), "supply real pre-commit hover progress");
+            switch (position)
+            {
+            case DockPosition::Bottom: pointer.y = base.top - 1; break;
+            case DockPosition::Top: pointer.y = base.bottom; break;
+            case DockPosition::Left: pointer.x = base.right; break;
+            case DockPosition::Right: pointer.x = base.left - 1; break;
+            }
+            app.lastMousePoint_ = pointer;
+            (void)docks[0]->GetElementVisualRect(base, pointer);
+            const float maximum = snowdesktop::dock_magnification::ResolveFocusScale(effect, app.dockSettings_.hoverScale, true);
+            const auto amplitude = [&] {
+                const auto current = docks[0]->CapturePresentationState();
+                return effect == 1 ? current.single.Scale() : current.entry.FocusScale(maximum);
+            };
+            const float before = amplitude();
+            check(before > 1.0f, "commit begins with actual visible hover growth");
+            if (component)
+            {
+                Widget source(&app.widgets_.front(), &app);
+                app.CommitDockDrop({&source}, nullptr, docks[0], 1, 0);
+            }
+            else
+            {
+                DesktopIcon source(&app.items_.back(), nullptr, &app);
+                app.CommitDockDrop({&source}, nullptr, docks[0], 1, 0);
+            }
+            check(app.dockEntries_.size() == baselineEntries.size() + static_cast<size_t>(component),
+                "the production commit actually inserts the item or component");
+            auto sample = [&] {
+                const RECT next = docks[0]->GetSlots().front()->GetBounds();
+                (void)docks[0]->GetElementVisualRect(next, pointer);
+                check(amplitude() + 0.0001f >= before && (!settled || !docks[0]->IsMagnificationAnimating()),
+                    "committed insertion must retain hover amplitude instead of starting a new entry animation");
+            };
+            sample(); // Invalidated slots before the runtime-tree handoff.
+            rebuild(); sample();
+            docks[0]->AdvanceMagnificationAnimation(now + (effect == 1 ? 42 : 82));
+            check(!docks[0]->IsMagnificationAnimating() && std::abs(amplitude() - maximum) < 0.0001f,
+                "an in-progress entry finishes at its original deadline across insertion and rebuild");
+        }
+        app.dockEntries_ = baselineEntries;
+        std::erase_if(app.containers_, [](const auto& container) {
+            return dynamic_cast<WidgetContainer*>(container.get()) != nullptr;
+        });
+        app.widgets_.clear(); app.RefreshCollectedKeysCache(); rebuild();
+        app.dockAreas_.clear(); // The later real release must retain the fixture's no-Host boundary.
+
         // The real release may replace the complete Dock runtime tree. Run it
         // after all rendering/menu scenes, and never reuse the fixture's old
         // Dock/Slot pointers afterwards. Double-click mode exposes an unwanted

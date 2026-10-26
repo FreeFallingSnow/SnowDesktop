@@ -7,7 +7,7 @@ void CheckDockHoverTitleCases()
     const RECT base{100, 200, 176, 276};
     for (const int effect : {0, 1, 2})
     {
-        Check(!hover::ShouldSuppressMagnification(false, false, true),
+        Check(!hover::ShouldSuppressMagnification(false, true),
             "a settled interactive Dock keeps its semantic hover in every growth mode");
         const float scale = hover::ResolveFocusScale(effect, 1.6f, true);
         const RECT visual = hover::MagnifyRect(base, DockPosition::Bottom,
@@ -20,12 +20,11 @@ void CheckDockHoverTitleCases()
                 visual.right - visual.left > base.right - base.left,
             "shared chrome must preserve the configured Dock growth effect");
     }
-    Check(hover::ShouldSuppressMagnification(false, false, false),
+    Check(hover::ShouldSuppressMagnification(false, false),
         "hidden or transitioning Dock input must suppress both hover growth and titles");
     for (const bool inputAvailable : {false, true})
-        Check(hover::ShouldSuppressMagnification(true, false, inputAvailable) &&
-                hover::ShouldSuppressMagnification(false, true, inputAvailable),
-            "moving/resizing a widget must suppress Dock hover in either visibility state");
+        Check(hover::ShouldSuppressMagnification(true, inputAvailable),
+            "resizing a widget must suppress Dock hover in either visibility state");
 
     Check(hover::UsesEdgeAnchoredMagnification(true, false) &&
             !hover::UsesEdgeAnchoredMagnification(false, false) &&

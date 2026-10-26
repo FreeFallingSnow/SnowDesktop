@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <string>
@@ -99,6 +100,7 @@ public:
     std::optional<std::vector<std::byte>> wide;
     std::optional<std::vector<std::byte>> ansi;
     std::optional<std::vector<std::byte>> fileDrop;
+    std::optional<std::vector<std::byte>> shellSelection;
     ContentsMedium contentsMedium = ContentsMedium::None;
     std::vector<std::byte> contents;
     bool exposeAsyncCapability = false;
@@ -236,6 +238,8 @@ public:
         }
         else if (format->cfFormat == CF_HDROP)
             payload = &fileDrop;
+        else if (format->cfFormat == RegisterClipboardFormatW(CFSTR_SHELLIDLIST))
+            payload = &shellSelection;
         else
             return DV_E_FORMATETC;
 
@@ -273,6 +277,9 @@ public:
         ++queryGetDataCalls;
         if (!format)
             return E_POINTER;
+        if (shellSelection && format->cfFormat == RegisterClipboardFormatW(CFSTR_SHELLIDLIST) &&
+            format->dwAspect == DVASPECT_CONTENT && format->lindex == -1 && (format->tymed & TYMED_HGLOBAL))
+            return S_OK;
         if (offeredClipboardFormat != 0 &&
             format->cfFormat == offeredClipboardFormat &&
             format->dwAspect == DVASPECT_CONTENT && format->lindex == -1 &&
@@ -821,6 +828,28 @@ void TestAlbumAsyncAdmissionDoesNotRenderData()
         "async virtual-only sources remain rejected without materializing content");
 }
 
+void TestMalformedSelectionCannotRenderDelayedFiles()
+{
+    // Untrusted CIDA count/offset/PIDL fields must fail closed. A failed
+    // metadata probe must never fall back to rendering the delayed CF_HDROP.
+    const auto bytes = [](std::initializer_list<UINT> values) {
+        std::vector<std::byte> result(values.size() * sizeof(UINT));
+        std::memcpy(result.data(), values.begin(), result.size());
+        return result;
+    };
+    for (const auto& malformed : {bytes({0}), bytes({129, 0}), bytes({1, 12}),
+            bytes({1, 0, 0}), bytes({1, 12, 0xffffffffu, 0}), bytes({1, 12, 14, 0xffffu})})
+    {
+        MockDataObject source;
+        source.exposeAsyncCapability = source.asyncMode = source.offerFileDrop = true;
+        source.shellSelection = malformed;
+        const auto probe = snowdesktop::external_drop_content::ProbeFileSource(&source);
+        Check(probe.available && probe.asynchronous && probe.paths.empty() && probe.previewPaths.empty() &&
+            source.getDataCalls == 1 && source.startOperationCalls == 0,
+            "invalid Shell selection metadata preserves admission without reading delayed file content");
+    }
+}
+
 void TestClipboardFilesWithoutLocalPaths()
 {
     using namespace snowdesktop::external_drop_content;
@@ -982,6 +1011,7 @@ int main()
     TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
     TestAsyncSourceCapabilityMatrix();
     TestAlbumAsyncAdmissionDoesNotRenderData();
+    TestMalformedSelectionCannotRenderDelayedFiles();
     TestClipboardFilesWithoutLocalPaths();
     TestClipboardPathPasteExecution();
 
