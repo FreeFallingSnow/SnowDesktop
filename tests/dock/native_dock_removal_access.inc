@@ -2,8 +2,9 @@
     // Only the input model, clock samples and WARP device are fixture-owned.
     static void CheckDockEntryRemoval(DesktopApp& app, bool discardRetention = false)
     {
-        const auto check = [](bool ok, const char* message) {
-            if (!ok) throw std::runtime_error(std::string("Dock removal: ") + message);
+        std::string scenario = "timeline";
+        const auto check = [&](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(std::string("Dock removal [") + scenario + "]: " + message);
         };
         snowdesktop::tests::dock_entry_removal::Run(check);
         snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
@@ -69,6 +70,8 @@
         for (const int sourceKind : {0, 1, 2}) // file, directory, directory shortcut
         for (const int removalKind : {0, 1, 2, 3}) // map menu, Delete, fixed drag, mapping drag
         {
+            scenario = "edge=" + std::to_string(edge) + " position=" + std::to_string(static_cast<int>(position)) +
+                " source=" + std::to_string(sourceKind) + " operation=" + std::to_string(removalKind);
             const bool returnToDesktop = removalKind == 1;
             const bool dragging = removalKind >= 2;
             const bool mapping = removalKind == 0 || removalKind == 3;
@@ -148,8 +151,13 @@
             }
             check(dock->IsEntryRemovalAnimating(), "actual removal route must retain the outgoing presentation");
             const RECT initial = dock->GetBounds();
-            check(EqualRect(&initial, &original) && redPixels(*dock) > 100,
-                "first removal frame keeps original layout and artwork after runtime-tree replacement");
+            const auto initialPixels = redPixels(*dock);
+            if (!EqualRect(&initial, &original) || initialPixels <= 100)
+                std::cout << "First frame original=" << original.left << ',' << original.top << ',' << original.right << ',' << original.bottom
+                    << " actual=" << initial.left << ',' << initial.top << ',' << initial.right << ',' << initial.bottom
+                    << " redPixels=" << initialPixels << " before=" << before << '\n';
+            check(EqualRect(&initial, &original), "first removal frame preserves the original panel geometry");
+            check(initialPixels > 100, "first removal frame preserves outgoing artwork across runtime-tree replacement");
             check(app.dockRunningAnimationFrameToken_ != 0,
                 "the production removal route must arm its scheduler without pointer re-entry or test assistance");
             const auto state = dock->CapturePresentationState();
@@ -173,6 +181,7 @@
         for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
             DesktopWidgetType::FolderMapping, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
         {
+            scenario = "widget=" + std::to_string(static_cast<int>(type));
             app.containers_.clear(); app.items_oo_.clear(); app.items_.clear(); app.widgets_.clear(); app.dockEntries_.clear();
             DesktopWidget widget;
             widget.id = L"outgoing-native-widget"; widget.type = type;
@@ -199,6 +208,7 @@
         }
         // Keep real Shell queuing/completion and missing-pin confirmation.
         // An empty item enumeration is supplied only after physical deletion.
+        scenario = "Shell success and failure";
         app.containers_.clear(); app.items_oo_.clear(); app.items_.clear(); app.dockEntries_.clear();
         app.dockSettings_.position = DockPosition::Bottom;
         app.dockSettings_.edgeAttached = false;
@@ -255,6 +265,7 @@
         app.CancelUiAnimationFrame();
         for (const int sourceKind : {0, 1, 2})
         {
+            scenario = "externally deleted original=" + std::to_string(sourceKind);
             app.containers_.clear(); app.items_oo_.clear(); app.items_.clear(); app.dockEntries_.clear();
             app.d2dIconCache_.clear();
             const auto original = app.initializationExperimentDirectory_ /

@@ -107,6 +107,7 @@ void DockContainer::DrawEntryRemovals(ID2D1DeviceContext* context, bool fixedFol
         const auto& removal = removals[index];
         if ((IsEdgeAttached() && removal.group == snowdesktop::dock_entry_removal::Group::Folder) != fixedFolders)
             continue;
+        entryRemovals_->Present(index, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         const float amount = removal.presence.Amount();
         if (amount <= 0.0f || !removal.snapshot) continue;
         const int size = std::max(1, static_cast<int>(std::lround(static_cast<float>(ItemIconSize()) * amount)));

@@ -27,6 +27,8 @@ public:
         Snapshot snapshot;
         dock_running_animation::Presence presence;
         bool removed = false;
+        bool presented = false;
+        double durationScale = 1.0;
     };
     struct Cell
     {
@@ -65,8 +67,9 @@ public:
             if (!exists && !entry.removed)
             {
                 entry.removed = true;
-                entry.presence.SetVisible(false, now, animate, durationScale);
+                entry.durationScale = durationScale;
             }
+            if (entry.removed && !animate) entry.presence.SetVisible(false, now, false);
         }
         std::erase_if(entries_, [&](const auto& entry) {
             return entry.removed && (entry.presence.IsHidden() ||
@@ -74,12 +77,24 @@ public:
         });
     }
 
+    // Shell completion/rebuild can precede the next paint by an arbitrary
+    // amount. Keep the full first frame until a renderer actually presents it.
+    void Present(std::size_t index, double now)
+    {
+        if (index >= entries_.size()) return;
+        auto& entry = entries_[index];
+        if (!entry.removed || entry.presented) return;
+        entry.presented = true;
+        entry.presence.SetVisible(false, now, true, entry.durationScale);
+    }
+
     bool Advance(double now, bool animate)
     {
         for (auto& entry : entries_)
         {
             if (!entry.removed) continue;
-            if (animate) entry.presence.Advance(now);
+            if (animate && entry.presented) entry.presence.Advance(now);
+            else if (animate) continue;
             else entry.presence.SetVisible(false, now, false);
         }
         std::erase_if(entries_, [](const auto& entry) {
@@ -91,7 +106,7 @@ public:
     bool IsAnimating() const
     {
         return std::any_of(entries_.begin(), entries_.end(), [](const auto& entry) {
-            return entry.removed && entry.presence.IsAnimating();
+            return entry.removed && (!entry.presented || entry.presence.IsAnimating());
         });
     }
 

@@ -27,12 +27,16 @@ void Run(Check check)
         layout[1].modelIndex == removal::kNoIndex && layout[1].removalIndex != removal::kNoIndex &&
         layout[2].begin == 2.0f && !lifetime.expired(),
         "removing a mapping commits its model immediately but retains a noninteractive snapshot in its old slot");
-    timeline.Advance(310.0, true);
+    timeline.Advance(1000.0, true);
+    check(timeline.IsAnimating() && timeline.Units(Group::Fixed) == 1.0f && !lifetime.expired(),
+        "a delayed first paint cannot consume the exit while Shell completion is still blocking presentation");
+    timeline.Present(layout[1].removalIndex, 1000.0);
+    timeline.Advance(1110.0, true);
     layout = timeline.Layout(remaining, 0, 2, Group::Fixed);
     check(timeline.Units(Group::Fixed) == 0.5f && layout[2].begin == 1.5f &&
         removal::GapUnits(timeline.Units(Group::Fixed), 1.0f) == 0.5f,
         "pin size, following position and last-group separator shrink on the running-area exit timeline");
-    timeline.Advance(420.0, true);
+    timeline.Advance(1220.0, true);
     check(!timeline.IsAnimating() && lifetime.expired() &&
         timeline.Layout(remaining, 0, 2, Group::Fixed).size() == 2,
         "completed exits release snapshots and leave only live model slots");
@@ -56,6 +60,7 @@ void Run(Check check)
     check(timeline.Entries().empty(), "reduced motion removes mappings without a retained exit frame");
     timeline.Prepare(original, 3, Group::Folder, std::make_shared<int>(3));
     timeline.Reconcile({L"a", L"b", L"c"}, 700.0, true, 2.0);
+    timeline.Present(0, 700.0);
     timeline.Advance(920.0, true);
     check(timeline.Units(Group::Folder) == 0.5f && timeline.Units(Group::Fixed) == 0.0f &&
         timeline.Layout({L"a", L"b", L"c"}, 3, 0, Group::Folder).size() == 1,
