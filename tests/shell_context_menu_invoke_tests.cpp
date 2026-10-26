@@ -4518,7 +4518,7 @@ void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensi
         ext::Request marker; marker.paths = {(temp.path / L"marker.txt").wstring()};
         std::ofstream(marker.paths.front()) << "private";
         marker.startPinOnly = true;
-        service.Query(marker, ext::QueryPriority::Execute);
+        service.Query(marker, ext::QueryPriority::Inspect);
         PumpUntil([&] { return service.View(marker).snapshot.has_value(); }, "publication barrier completes");
         Expect(!service.View(selected).snapshot && service.View(selected).pending,
             "changed, missing or failed folder proof cannot bypass full registration verification");
