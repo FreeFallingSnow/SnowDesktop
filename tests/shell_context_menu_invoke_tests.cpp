@@ -5731,6 +5731,13 @@ int wmain(int argc, wchar_t **argv)
             preparedSample = request.paths.front();
         }
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"menu-slot-held.txt")
+        {
+            const auto parent = std::filesystem::path(request.paths.front()).parent_path();
+            std::ofstream(parent / L"slot-entered") << "private helper owns its slot";
+            const auto until = GetTickCount64() + 5000;
+            while (!std::filesystem::exists(parent / L"release-slot") && GetTickCount64() < until) Sleep(1);
+        }
         if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"routing-slots.txt")
         {
             namespace ext = snowdesktop::shell_extensions;

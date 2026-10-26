@@ -217,11 +217,45 @@ void CheckRegistryFanout()
     allowB = true;
     const bool laterChanged = later.get();
     Expect(firstChanged && laterChanged, "SHARED_REGISTRY_WAKE_MUST_REACH_EVERY_CONSUMER: late wait cannot lose a sibling's notification");
+    registry.Notify(2);
+    auto joining = std::async(std::launch::async, [] { return ext::TakeMenuRegistryChanges(); });
+    const bool replayedOldChange = joining.get();
+    const bool existingChanged = ext::TakeMenuRegistryChanges();
+    Expect(!replayedOldChange && existingChanged,
+        "NEW_REGISTRY_CONSUMER_STARTS_CURRENT: drain older notifications to existing consumers before subscribing a fresh service");
+}
+void CheckBackgroundProcessSlot()
+{
+    TemporaryDirectory temp; Registry registry(temp); Trace trace(temp);
+    const auto held = temp.path / L"menu-slot-held.txt"; std::ofstream(held) << "private";
+    ext::MenuService service(temp.path / L"cache", {}, [] {
+        auto value = Inventory(); value.rows.front().kind = ext::RegistrationKind::Verb;
+        value.rows.front().verbs = {"unrelated"}; return value;
+    });
+    ext::Preferences prefs;
+    ext::SetHidden(prefs, "verb:first", ext::Context::File, false);
+    ext::SetHidden(prefs, "verb:first", ext::Context::FolderBackground, false);
+    service.Configure(prefs);
+    PumpUntil([&] { return trace.Has("phase=preparation reason=ready"); }, "reserve one ordinary preparation slot");
+    ext::Request file; file.paths = {held.wstring()};
+    service.Query(file, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return std::filesystem::exists(temp.path / L"slot-entered"); }, "a real inspected query holds the other ordinary slot");
+    ext::Request background; background.paths = {temp.path.wstring()};
+    background.background = true; background.context = ext::Context::FolderBackground;
+    service.Query(background);
+    PumpUntil([&] {
+        const auto view = service.View(background);
+        Expect(view.error.empty(), "BACKGROUND_DEMAND_MUST_TAKE_RESERVED_SLOT: background demand cannot fail because preparation occupies the remaining process slot");
+        return view.snapshot.has_value();
+    }, "explicit background demand replaces incompatible preparation without exceeding two processes");
+    std::ofstream(temp.path / L"release-slot") << "release private query";
+    service.Shutdown();
 }
 void Run()
 {
     for (int mode = 0; mode < 5; ++mode) CheckSourceProof(mode);
     CheckPreparedRetention(false); CheckPreparedRetention(true);
     CheckRegistryFanout();
+    CheckBackgroundProcessSlot();
 }
 }

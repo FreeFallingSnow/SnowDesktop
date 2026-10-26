@@ -294,7 +294,9 @@ struct MenuService::Impl
     ULONGLONG ActiveScanElapsed() const
     {
         const auto elapsed = GetTickCount64() - scanStarted;
-        const auto paused = foregroundScanDemand.PausedMilliseconds();
+        // Neither fullscreen suspension nor intentional soft-budget waits
+        // represent a stalled registry/extension operation.
+        const auto paused = foregroundScanDemand.PausedMilliseconds() + foregroundScanDemand.BudgetWaitMilliseconds();
         return elapsed > paused ? elapsed - paused : 0;
     }
     // Called while mutex holds the same row and catalogue used for display.
@@ -648,7 +650,7 @@ struct MenuService::Impl
         // Called only by the worker after ordinary menu/execute work has been
         // dispatched. One metadata probe leaves the other process slot free.
         std::lock_guard lock(mutex);
-        if (!sourcePending || scanning || scanRequested || !catalogue.revision) return {};
+        if (!sourcePending || catalogueStale || scanning || scanRequested || !catalogue.revision) return {};
         // Normal usage learns routing too, but idle learning must not postpone
         // the prepared foreground worker or take its reserved process slot.
         if (!inspected && nativeFactory && ObjectPreparationEnabled() &&
@@ -1489,15 +1491,15 @@ struct MenuService::Impl
                     else row.view.sourcesOnly = false;
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
-                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty() &&
-                    !request.background && request.context != Context::Desktop;
+                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty();
                 if (nativeFactory && usePreparedQuery)
                 {
                     bool unverified = false;
                     { std::lock_guard lock(mutex);
                       unverified = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
                       preparationRequested |= ObjectPreparationEnabled();
-                      if (unverified && preparedSlot && failedRegistryRevision < registryRevision &&
+                      if (unverified && preparedSlot && !request.background && request.context != Context::Desktop &&
+                          failedRegistryRevision < registryRevision &&
                           (!scanning || ActiveScanElapsed() < kInventoryWaitMs))
                       {
                           auto &row = rows[key]; row.queued = true; row.due = GetTickCount64() + 20;

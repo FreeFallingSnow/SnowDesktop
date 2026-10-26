@@ -56,6 +56,19 @@ struct RegistryNotifications
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", 9));
     }
+    // Caller holds mutex. Keep existing consumers' edges while establishing
+    // a current baseline for a new consumer; older events are not its changes.
+    std::uint64_t Poll()
+    {
+        bool signalled = false;
+        for (auto &watch : watches) signalled |= watch->Changed();
+        if (signalled)
+        {
+            ++revision;
+            for (auto subscriber : subscribers) SetEvent(subscriber);
+        }
+        return revision;
+    }
 };
 std::shared_ptr<RegistryNotifications> SharedRegistryNotifications()
 {
@@ -74,7 +87,7 @@ struct CacheState
     CacheState()
     {
         std::lock_guard lock(notifications->mutex);
-        seen = notifications->revision;
+        seen = notifications->Poll();
         if (changed) notifications->subscribers.push_back(changed);
     }
     ~CacheState()
@@ -86,16 +99,9 @@ struct CacheState
     std::uint64_t Poll()
     {
         std::lock_guard lock(notifications->mutex);
-        bool signalled = false;
-        for (auto &watch : notifications->watches) signalled |= watch->Changed();
-        if (signalled)
-        {
-            ++notifications->revision;
-            // A sibling can consume/rearm the native event between our Poll
-            // and wait. A per-subscriber event closes that lost-wakeup window.
-            for (auto subscriber : notifications->subscribers) SetEvent(subscriber);
-        }
-        dirty |= seen != notifications->revision;
+        // The per-subscriber event preserves changes consumed by a sibling
+        // between this Poll and its following wait.
+        dirty |= seen != notifications->Poll();
         seen = notifications->revision;
         if (changed) ResetEvent(changed);
         return generation;
