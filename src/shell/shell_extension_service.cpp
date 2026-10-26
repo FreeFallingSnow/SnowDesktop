@@ -177,6 +177,9 @@ struct MenuService::Impl
         std::optional<MenuSnapshotCache::Ticket> provisionalTicket;
         std::uint64_t provisionalRegistryRevision = 0;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
+        // A notification can request target validation without authorizing a
+        // foreground root query. Only an explicit Queue supplies this intent.
+        std::optional<QueryPriority> targetCheckDemand;
         bool queued = false, force = false, invalid = false, inspection = false;
         // A finite management request, independent of ordinary query priority
         // and of whether settings happened to be opened earlier in this process.
@@ -484,10 +487,11 @@ struct MenuService::Impl
         };
         if (!request.sourceClsid.empty())
         {
-            const std::string clsid(request.sourceClsid.begin(), request.sourceClsid.end());
             for (const auto &row : catalogue.rows)
-                if (row.kind == RegistrationKind::Handler && std::find(row.verbs.begin(), row.verbs.end(), clsid) != row.verbs.end())
-                    return proven(row);
+                if (row.kind == RegistrationKind::Handler && std::any_of(row.verbs.begin(), row.verbs.end(), [&](const auto &verb) {
+                    const std::wstring clsid(verb.begin(), verb.end());
+                    return lstrcmpiW(clsid.c_str(), request.sourceClsid.c_str()) == 0;
+                })) return proven(row);
             return false;
         }
         bool wanted = false;
@@ -609,7 +613,10 @@ struct MenuService::Impl
                 scanRequested = foregroundScanRequested = startupWarm = false;
                 for (auto &[key, row] : rows)
                     if (row.clicks.empty())
+                    {
                         row.queued = row.view.pending = row.checkRequested = row.checkInspection = false;
+                        row.targetCheckDemand.reset();
+                    }
                 releasePrepared = true;
             }
         }
@@ -667,6 +674,7 @@ struct MenuService::Impl
             row.snapshotIdentity != ticket.identity || !row.snapshotDependency ||
             row.snapshotDependency != ticket.dependency) return false;
         row.invalid = row.registryInvalid = false;
+        row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
         row.snapshotTargetChecked = true;
         if (row.queued) row.queued = row.view.pending = row.inspection = false;
         ++row.view.revision;
@@ -784,6 +792,7 @@ struct MenuService::Impl
         }
         row.checkRequested = true;
         row.checkInspection |= priority == QueryPriority::Inspect;
+        row.targetCheckDemand = row.targetCheckDemand ? std::min(*row.targetCheckDemand, priority) : priority;
         SetEvent(wake);
         if (!force && (now < row.retryAt || (row.view.snapshot && !row.invalid && row.expires > MenuSnapshotCache::Now())))
         {
@@ -973,6 +982,8 @@ struct MenuService::Impl
                 continue;
             }
             if (row.invalid) continue; // A requested live verification still owns the snapshot.
+            const auto managementProof = SnapshotDependency(row.request, row.view.contexts, true);
+            if (!managementProof) { finish(); continue; }
             const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
             const auto routable = [](const auto &entry) {
                 return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
@@ -1013,7 +1024,11 @@ struct MenuService::Impl
                 job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
                 job->request.sourceKey = std::move(typeKey);
                 job->identity = row.snapshotIdentity;
-                job->dependency = row.snapshotDependency;
+                // This row still has explicit management attribution demand.
+                // Its latest snapshot may come from Execute and deliberately
+                // carry no ordinary disk proof. Keep this separate full proof
+                // on the metadata job, without promoting that ordinary snapshot.
+                job->dependency = managementProof;
                 job->sequence = row.sequence; job->snapshotRevision = row.snapshotRevision;
                 job->configuration = configurationRevision;
                 job->managementGeneration = managementGeneration;
@@ -1066,7 +1081,7 @@ struct MenuService::Impl
             return false;
         }
         if ((row.invalid && !row.registryInvalid) || !job.dependency ||
-            Dependency(catalogue, row.request, row.view.contexts) != job.dependency ||
+            SnapshotDependency(row.request, row.view.contexts, true) != job.dependency ||
             std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &source) {
                 return source.id == job.source.id && source.systemEnabled && MenuRevision(source) == MenuRevision(job.source);
             })) return discard();
@@ -1756,7 +1771,7 @@ struct MenuService::Impl
                     auto &row = rows[key];
                     if (!row.inspection && priority != QueryPriority::Execute && !Enabled(request, contexts))
                     {
-                        row.view.pending = false; row.checkRequested = false;
+                        row.view.pending = false; row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
                         MenuTrace("schedule", "no_enabled_items"); continue;
                     }
                     if (priority != QueryPriority::Inspect && priority != QueryPriority::Execute &&
@@ -1791,6 +1806,7 @@ struct MenuService::Impl
                         row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
                         verifyCachedRevision = registryRevision;
                     row.identity = ticket.identity; row.checkRequested = row.checkInspection = false;
+                    row.targetCheckDemand.reset();
                 }
                 // A previous background snapshot can be verified while the new
                 // Shell query is still running, including a stalled extension.
@@ -1842,7 +1858,8 @@ struct MenuService::Impl
                         }
                         if (!plan.full)
                         {
-                            row.view.pending = false; row.view.error.clear(); row.checkRequested = false;
+                            row.view.pending = false; row.view.error.clear(); row.checkRequested = row.checkInspection = false;
+                            row.targetCheckDemand.reset();
                             row.force = false; ++row.view.revision;
                             MenuTrace("schedule", "sources_only", 0, static_cast<unsigned>(plan.sources.size()));
                             continue;
@@ -1885,19 +1902,23 @@ struct MenuService::Impl
                     try { job->work = DispatchQuery(job->request); sourceJob = std::move(job); }
                     catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
-            std::vector<std::tuple<Key, Request, bool>> checks;
+            std::vector<std::tuple<Key, Request, bool, std::optional<QueryPriority>, std::uint64_t>> checks;
             {
                 std::lock_guard lock(mutex);
                 for (auto &[key, row] : rows) if (row.checkRequested &&
                     (!row.view.pending || (row.invalid && row.view.snapshot && VerificationIndex(row.view.contexts) > 0)))
                 {
-                    if (!BackgroundWorkAllowed()) { row.checkRequested = row.checkInspection = false; continue; }
-                    checks.emplace_back(key, row.request, row.checkInspection);
-                    row.checkRequested = row.checkInspection = false;
+                    if (!BackgroundWorkAllowed())
+                    {
+                        row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset(); continue;
+                    }
+                    const bool inspection = row.checkInspection || (managementActive && row.snapshotManagementProof);
+                    checks.emplace_back(key, row.request, inspection, row.targetCheckDemand, row.sequence);
+                    row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
                 }
                 Trim();
             }
-            for (const auto &[key, request, inspection] : checks)
+            for (const auto &[key, request, inspection, demand, sequence] : checks)
             {
                 { std::lock_guard lock(mutex);
                   if (!BackgroundWorkAllowed() || (inspection && (!managementActive || iterationManagementGeneration != managementGeneration))) continue; }
@@ -1907,12 +1928,31 @@ struct MenuService::Impl
                     std::lock_guard lock(mutex);
                     const auto found = rows.find(key); if (found == rows.end()) continue;
                     auto &row = found->second;
+                    // Capture performs target I/O outside the lock. A new row
+                    // sequence owns a newer validation, and a closed management
+                    // generation must not be reopened by this old check.
+                    const bool effectiveInspection = inspection || row.checkInspection;
+                    if (row.sequence != sequence || !BackgroundWorkAllowed() ||
+                        (effectiveInspection && (!managementActive || iterationManagementGeneration != managementGeneration))) continue;
+                    auto effectiveDemand = demand;
+                    if (row.targetCheckDemand)
+                        effectiveDemand = effectiveDemand ? std::min(*effectiveDemand, *row.targetCheckDemand) : *row.targetCheckDemand;
                     ticket.dependency = SnapshotDependency(request, row.view.contexts, row.snapshotManagementProof);
                     if (row.view.snapshot && row.identity != ticket.identity)
                     {
                         row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
                         RebuildAvailable();
-                        Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
+                        // Pure notification checks cannot turn an old, unseen
+                        // ordinary row into a foreground aggregate query. A real
+                        // Menu cache hit still carries its explicit priority.
+                        Queue(request, effectiveInspection ? QueryPriority::Inspect : effectiveDemand.value_or(QueryPriority::Prewarm), true);
+                    }
+                    else if (row.targetCheckDemand)
+                    {
+                        // A new memory-hit Query arrived during Capture. Leave
+                        // its intent pending for a fresh target capture rather
+                        // than consuming it with this older observation.
+                        continue;
                     }
                     RestoreRegistrySnapshot(row, ticket);
                     const int scope = VerificationIndex(row.view.contexts);
@@ -2080,7 +2120,9 @@ void MenuService::Configure(Preferences preferences)
         if (!desktop && !impl_->shown[static_cast<int>(Context::Desktop)].empty()) impl_->startupWarm = true;
         for (auto &[key, row] : impl_->rows)
             if (row.queued && !row.inspection && row.priority != QueryPriority::Execute && !impl_->Enabled(row.request, row.view.contexts))
-                row.queued = row.view.pending = row.checkRequested = false;
+            {
+                row.queued = row.view.pending = row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
+            }
         if (enabled && !impl_->AnyEnabled() && !impl_->managementActive)
         {
             ++impl_->workGeneration;
@@ -2178,8 +2220,11 @@ void MenuService::EndInspection()
             row.invalid = true; row.registryInvalid = false;
         }
         row.inspection = row.checkInspection = false;
+        if (row.targetCheckDemand == QueryPriority::Inspect) row.targetCheckDemand.reset();
         if (row.priority == QueryPriority::Inspect && row.clicks.empty())
-            row.queued = row.view.pending = row.checkRequested = false;
+        {
+            row.queued = row.view.pending = row.checkRequested = false; row.targetCheckDemand.reset();
+        }
     }
     if (!impl_->AnyEnabled())
     {

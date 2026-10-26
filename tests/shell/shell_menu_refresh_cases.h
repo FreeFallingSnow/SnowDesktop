@@ -247,11 +247,52 @@ void CheckBackgroundProcessSlot()
     std::ofstream(temp.path / L"release-slot") << "release private query";
     service.Shutdown();
 }
+// A real notification may validate a retained unknown row. It does not mean
+// that the user opened it. An explicit Menu cache hit carries separate demand.
+void CheckNotificationTargetDemand()
+{
+    TemporaryDirectory temp; Registry registry(temp); Trace trace(temp);
+    const auto file = temp.path / L"unrequested.txt"; std::ofstream(file) << "private";
+    ext::Request request; request.paths = {file.wstring()};
+    std::atomic_uint factories = 0, fullReads = 0, sourceReads = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        Expect(target.sourceClsid.empty(), "unknown selection has no independently proven source");
+        ++factories; ext::Entry entry; entry.provider = "verb:unmapped"; entry.key = "unmapped"; entry.label = L"Visible";
+        return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
+    }, [&] { ++fullReads; return Inventory(); }, {}, {}, [&](const auto &) {
+        ++sourceReads; return Inventory();
+    });
+    ext::Preferences prefs; ext::SetHidden(prefs, "verb:unmapped", ext::Context::File, false);
+    service.Configure(prefs); service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return view.snapshot && !view.pending; },
+        "a real initial Menu creates one unknown selection snapshot");
+    Expect(factories == 1, "initial unknown Menu reaches exactly one root factory");
+    std::ofstream(file, std::ios::app) << " changed without another popup";
+    registry.Notify(1);
+    PumpUntil([&] {
+        return factories > 1 || ((trace.Has("reason=prewarm_sources_only") || trace.Has("reason=prewarm_no_aggregate")) &&
+            !service.View(request).pending);
+    }, "notification-only target validation finishes under background prewarm constraints");
+    Expect(factories == 1 && fullReads == 0 && sourceReads == 0 && !service.View(request).snapshot,
+        "NOTIFICATION_IS_NOT_MENU_DEMAND: an unseen unknown row cannot start a background root or inventory query");
+    service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return factories >= 2 && view.snapshot && !view.pending; },
+        "a later explicit Menu performs its one fresh unknown-root fallback");
+    Expect(factories == 2, "the skipped background fallback does not consume or duplicate later Menu demand");
+    std::ofstream(file, std::ios::app) << " changed immediately before explicit cache hit";
+    service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return factories >= 3 && view.snapshot && !view.pending; },
+        "an explicit memory-hit Menu retains permission to refresh a changed target");
+    Expect(factories == 3 && !fullReads && !sourceReads,
+        "EXPLICIT_TARGET_CHECK_REMAINS_FOREGROUND: current Menu demand is consumed once without hidden full inventory");
+    service.Shutdown();
+}
 void Run()
 {
     for (int mode = 0; mode < 5; ++mode) CheckSourceProof(mode);
     CheckDemandOnlyPreparation(false); CheckDemandOnlyPreparation(true);
     CheckRegistryFanout();
     CheckBackgroundProcessSlot();
+    CheckNotificationTargetDemand();
 }
 }
