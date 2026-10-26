@@ -2,6 +2,30 @@
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"
+#include "diagnostics/performance_trace.h"
+
+namespace
+{
+const char* TaskbarDirtyEventMetric(DWORD event) noexcept
+{
+    switch (event)
+    {
+    case EVENT_SYSTEM_FOREGROUND: return "dirty.foreground";
+    case EVENT_SYSTEM_MINIMIZESTART: return "dirty.minimize_start";
+    case EVENT_SYSTEM_MINIMIZEEND: return "dirty.minimize_end";
+    case EVENT_OBJECT_CREATE: return "dirty.create";
+    case EVENT_OBJECT_DESTROY: return "dirty.destroy";
+    case EVENT_OBJECT_SHOW: return "dirty.show";
+    case EVENT_OBJECT_HIDE: return "dirty.hide";
+    case EVENT_OBJECT_LOCATIONCHANGE: return "dirty.location";
+#ifdef EVENT_OBJECT_CLOAKED
+    case EVENT_OBJECT_CLOAKED: return "dirty.cloaked";
+    case EVENT_OBJECT_UNCLOAKED: return "dirty.uncloaked";
+#endif
+    default: return "dirty.other";
+    }
+}
+}
 
 // Dock window closing and hover-preview control.
 
@@ -487,6 +511,7 @@ std::wstring DockItemWindowKey(const DesktopItem& item)
 void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD eventTime)
 {
+    snowdesktop::performance::Scope trace("shared.taskbar", "window_event");
     // Observe before the business filters discard taskbar location changes.
     snowdesktop::dock_taskbar_diagnostics::ObserveWinEvent(
         event, window, objectId, childId, eventTime);
@@ -573,6 +598,7 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     }
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
         std::memory_order_relaxed);
+    snowdesktop::performance::Value("shared.taskbar", TaskbarDirtyEventMetric(event), {}, 1);
     bool dockWindowListChanged =
         event == EVENT_SYSTEM_FOREGROUND ||
         event == EVENT_SYSTEM_MINIMIZESTART ||
@@ -588,14 +614,21 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     {
         DWORD ownerProcess = 0;
         if (window) GetWindowThreadProcessId(window, &ownerProcess);
-        if (ownerProcess == GetCurrentProcessId()) return;
+        if (ownerProcess == GetCurrentProcessId())
+        {
+            snowdesktop::performance::Value("shared.taskbar", "dirty.dock_filtered_self", {}, 1);
+            return;
+        }
         if (IsWindow(window) &&
             (GetAncestor(window, GA_ROOT) != window ||
              ((event != EVENT_OBJECT_CREATE && event != EVENT_OBJECT_DESTROY) &&
               !snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
                  GetWindowLongPtrW(window, GWL_EXSTYLE),
                  GetWindow(window, GW_OWNER) != nullptr))))
+        {
+            snowdesktop::performance::Value("shared.taskbar", "dirty.dock_filtered_window", {}, 1);
             return;
+        }
         // Capture top-level lifetimes before task presentation filters. Hidden
         // document proxies may acquire a title/registration after creation.
         // Destruction can arrive after the HWND became invalid. The UI checks

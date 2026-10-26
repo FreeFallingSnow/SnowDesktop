@@ -775,6 +775,14 @@ void DesktopApp::OnTimer(WPARAM timerId)
             (foregroundChanged || windowStateRefreshDue ||
                 foregroundSettling)))
         {
+            if (controlRefreshDue)
+                snowdesktop::performance::Value("shared.taskbar", "guard.control_due", {}, 1);
+            if (foregroundChanged)
+                snowdesktop::performance::Value("shared.taskbar", "guard.foreground_changed", {}, 1);
+            if (windowStateRefreshDue)
+                snowdesktop::performance::Value("shared.taskbar", "guard.window_dirty_due", {}, 1);
+            if (foregroundSettling)
+                snowdesktop::performance::Value("shared.taskbar", "guard.foreground_settling", {}, 1);
             RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
         }

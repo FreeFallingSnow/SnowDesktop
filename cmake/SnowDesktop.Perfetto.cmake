@@ -64,6 +64,7 @@ endif()
 # sources link the SDK; unrelated unit tests keep their existing dependencies.
 set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/app/features/app_taskbar_integration.cpp
+    src/app/dock/app_dock_window_control.cpp
     src/app/dock/app_dock_window_tracking.cpp
     src/app/dock/app_floating_dock_render.cpp
     src/app/dock/app_floating_dock_window.cpp

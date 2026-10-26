@@ -154,6 +154,22 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 应用探针覆盖。真实线程唤醒需另用ETW的ReadyThread/CSwitch和等待原因分析，缺证据保持未知。
 本轮计量不改变周期、订阅、显隐、失败重试或恢复期限。
 
+任务栏扫描进一步提供以下诊断项：
+
+- `guard.control_due/foreground_changed/window_dirty_due/foreground_settling`记录一次
+  guard刷新时成立的条件；同次可以多项成立，不相加为刷新次数。用父子切片关联对应的refresh。
+- `scan.request.forced/dirty`记录refresh进入扫描分支时采用强制请求还是脏标记请求；
+  status bar等直接调用扫描的路径可能没有这两种事件，仍按实际调用栈区分。
+- `scan.com_setup/windows/shell_ui`分别覆盖虚拟桌面COM对象准备、实际窗口枚举和Shell UI查询。
+  三者是`window_state.scan`的子范围，不再与父范围CPU相加。
+- `window_event`覆盖原生WinEvent回调。`dirty.*`按事件类型记录实际增加任务栏修订的次数；
+  `dirty.dock_filtered_self/window`记录已增加修订后、被现有Dock通知过滤的事件。
+  过滤计数是类型计数的子集，不相加，也不能仅凭同一窗口内出现就归因到某次扫描。
+  两项沿用已有查询结果，不新增窗口枚举、窗口身份查询或窗口标题等采集字段。
+
+这些项使用有限事件名、默认关闭，保持既有过滤位置及判断。未记录标记事件来源到扫描的持久队列，
+不把同一轮合并的多个事件强行分配为唯一根因；事件计数和刷新条件需结合实际时间序列解释。
+
 Lua 配额分配器只在采集代次有效时累计成功的逻辑分配、重分配和释放，低频输出
 字节流量、次数、基线和存量峰值。不逐次发送分配事件；失败分配不计入流量。
 增长是窗口内观测，不是泄漏结论。任务队列到实际执行线程使用 SDK flow，CPU

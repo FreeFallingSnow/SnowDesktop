@@ -356,8 +356,11 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         knownMonitors.size() == static_cast<std::size_t>(monitorCount);
 
     ComPtr<IVirtualDesktopManager> virtualDesktopManager;
-    CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
+    {
+        snowdesktop::performance::Scope comTrace("shared.taskbar", "scan.com_setup");
+        CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
+    }
 
     struct EnumerationContext
     {
@@ -372,23 +375,26 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         SystemTaskbarWindowObservation> observations;
     context.observations = &observations;
 
-    const bool windowsKnown = EnumWindows([](HWND window, LPARAM value) -> BOOL {
-        auto* context = reinterpret_cast<EnumerationContext*>(value);
-        if (!IsSystemTaskbarCandidateWindow(window,
-            context->virtualDesktopManager))
+    const bool windowsKnown = [&context] {
+        snowdesktop::performance::Scope windowTrace("shared.taskbar", "scan.windows");
+        return EnumWindows([](HWND window, LPARAM value) -> BOOL {
+            auto* context = reinterpret_cast<EnumerationContext*>(value);
+            if (!IsSystemTaskbarCandidateWindow(window,
+                context->virtualDesktopManager))
+                return TRUE;
+            const HMONITOR monitor = MonitorFromWindow(window,
+                MONITOR_DEFAULTTONULL);
+            if (!monitor) return TRUE;
+            (*context->observations)[window] = {
+                monitor, IsZoomed(window) != FALSE
+            };
+            auto& state = (*context->states)[monitor];
+            state.visible = true;
+            if (IsZoomed(window))
+                state.maximized = true;
             return TRUE;
-        const HMONITOR monitor = MonitorFromWindow(window,
-            MONITOR_DEFAULTTONULL);
-        if (!monitor) return TRUE;
-        (*context->observations)[window] = {
-            monitor, IsZoomed(window) != FALSE
-        };
-        auto& state = (*context->states)[monitor];
-        state.visible = true;
-        if (IsZoomed(window))
-            state.maximized = true;
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&context)) != FALSE;
+        }, reinterpret_cast<LPARAM>(&context)) != FALSE;
+    }();
     if (!windowsKnown)
     {
         // A partial or failed scan is unknown, including on a monitor whose
@@ -410,35 +416,38 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
             std::move(observations);
     }
 
-    bool launcherVisible = false;
-    if (!taskbarAppVisibilityAttempted_)
     {
-        taskbarAppVisibilityAttempted_ = true;
-        CoCreateInstance(CLSID_AppVisibility, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&taskbarAppVisibility_));
-    }
-    if (taskbarAppVisibility_)
-    {
-        BOOL visible = FALSE;
-        if (SUCCEEDED(taskbarAppVisibility_->IsLauncherVisible(&visible)))
-            launcherVisible = visible != FALSE;
-    }
+        snowdesktop::performance::Scope shellTrace("shared.taskbar", "scan.shell_ui");
+        bool launcherVisible = false;
+        if (!taskbarAppVisibilityAttempted_)
+        {
+            taskbarAppVisibilityAttempted_ = true;
+            CoCreateInstance(CLSID_AppVisibility, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&taskbarAppVisibility_));
+        }
+        if (taskbarAppVisibility_)
+        {
+            BOOL visible = FALSE;
+            if (SUCCEEDED(taskbarAppVisibility_->IsLauncherVisible(&visible)))
+                launcherVisible = visible != FALSE;
+        }
 
-    const HWND foreground = GetForegroundWindow();
-    // ShellViewCoordinator is the preferred event source. On newer Windows
-    // 11 builds it may keep reporting Hidden for Search and the system
-    // sidebars, so retain their foreground identities as a narrow fallback.
-    const bool shellViewVisible =
-        (taskbarSearchVisibility_ &&
-            taskbarSearchVisibility_->IsVisible()) ||
-        IsSystemTaskbarShellUiWindow(foreground);
-    // A Dock-origin Start session owns its taskbar guard. Do not cache Start
-    // as a reason to unhide the bar immediately after that guard is released.
-    systemTaskbarShellUiActive_ = snowdesktop::dock_settings_rules::ShellPanelVisibility(
-        launcherVisible, IsDockStartMenuActive(), shellViewVisible);
-    systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
-        ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
-        : nullptr;
+        const HWND foreground = GetForegroundWindow();
+        // ShellViewCoordinator is the preferred event source. On newer Windows
+        // 11 builds it may keep reporting Hidden for Search and the system
+        // sidebars, so retain their foreground identities as a narrow fallback.
+        const bool shellViewVisible =
+            (taskbarSearchVisibility_ &&
+                taskbarSearchVisibility_->IsVisible()) ||
+            IsSystemTaskbarShellUiWindow(foreground);
+        // A Dock-origin Start session owns its taskbar guard. Do not cache Start
+        // as a reason to unhide the bar immediately after that guard is released.
+        systemTaskbarShellUiActive_ = snowdesktop::dock_settings_rules::ShellPanelVisibility(
+            launcherVisible, IsDockStartMenuActive(), shellViewVisible);
+        systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
+            ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
+            : nullptr;
+    }
     systemTaskbarWindowStateObservedTick_ =
         systemTaskbarWindowStateChangedTick_.load();
 
@@ -498,6 +507,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const DWORD changedTick = systemTaskbarWindowStateChangedTick_.load();
     if (forceWindowScan || changedTick != systemTaskbarWindowStateObservedTick_)
     {
+        snowdesktop::performance::Value("shared.taskbar", forceWindowScan
+            ? "scan.request.forced" : "scan.request.dirty", {}, 1);
         const bool windowStateChanged =
             RefreshSystemTaskbarWindowState();
         systemTaskbarWindowScanTick_ = GetTickCount();

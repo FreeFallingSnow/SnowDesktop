@@ -312,9 +312,19 @@ void RunPerformanceCaptureTests()
     for (int callback = 0; callback < 2; ++callback)
     {
         perf::Scope timer("timer.callback", "host.taskbar_guard");
+        // Conditions can overlap in one callback; events must retain both
+        // observations rather than becoming the last value of a gauge.
+        perf::Value("shared.taskbar", "guard.window_dirty_due", {}, 1);
+        perf::Value("shared.taskbar", "guard.foreground_settling", {}, 1);
+        perf::Value("shared.taskbar", "scan.request.forced", {}, 1);
         perf::Scope work("shared.taskbar", "controller.apply");
         perf::Value("shared.taskbar", "publish", {}, 1);
         perf::Value("shared.taskbar", "apply.post.success", {}, 1);
+    }
+    {
+        perf::Scope event("shared.taskbar", "window_event");
+        perf::Value("shared.taskbar", "dirty.create", {}, 1);
+        perf::Value("shared.taskbar", "dirty.dock_filtered_self", {}, 1);
     }
     for (const auto owner : {L"bar-one", L"bar-two"})
     {
@@ -337,6 +347,12 @@ void RunPerformanceCaptureTests()
         " AND (SELECT COUNT(*) FROM slice WHERE name='controller.apply')=2"
         " AND (SELECT COUNT(*) FROM slice WHERE name='paint.request' AND thread_dur IS NOT NULL)=4"
         " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.module')='shared.taskbar' AND EXTRACT_ARG(arg_set_id,'debug.metric')='publish')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='guard.window_dirty_due')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='guard.foreground_settling')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='scan.request.forced')=2"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='window_event' AND thread_dur IS NOT NULL)=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='dirty.dock_filtered_self')=1"
+        " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='dirty.create')=1"
         " AND (SELECT SUM(EXTRACT_ARG(arg_set_id,'debug.value')) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='paint.unchanged')=2"
         " AND (SELECT COUNT(DISTINCT EXTRACT_ARG(arg_set_id,'debug.owner')) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='commit.success')=2"
         " AND (SELECT COUNT(*) FROM slice WHERE name='metric.event' AND EXTRACT_ARG(arg_set_id,'debug.metric')='surface.begin.success')=2"

@@ -19,6 +19,13 @@ inline bool IsEventMetric(std::string_view module, std::string_view name) noexce
     if (module == "shared.maintenance") return name == "taskbar.refresh.not_due" ||
         name == "dock.discovery.dirty" || name == "dock.discovery.fallback" || name == "recycle.query.in_flight";
     if (module == "shared.taskbar") return name == "refresh.disabled" || name == "refresh.window_state_unchanged" ||
+        name == "guard.control_due" || name == "guard.foreground_changed" ||
+        name == "guard.window_dirty_due" || name == "guard.foreground_settling" ||
+        name == "scan.request.forced" || name == "scan.request.dirty" ||
+        name == "dirty.foreground" || name == "dirty.minimize_start" || name == "dirty.minimize_end" ||
+        name == "dirty.create" || name == "dirty.destroy" || name == "dirty.show" || name == "dirty.hide" ||
+        name == "dirty.location" || name == "dirty.cloaked" || name == "dirty.uncloaked" || name == "dirty.other" ||
+        name == "dirty.dock_filtered_self" || name == "dirty.dock_filtered_window" ||
         name == "publish" || name == "apply.post.success" || name == "apply.post.failure" ||
         name == "restore.send.success" || name == "restore.send.failure";
     if (module == "shared.status_bar") return name == "paint.deferred" || name == "paint.preparing_scroll" ||
