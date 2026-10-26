@@ -44,6 +44,7 @@ void WriteBitmap(const fs::path& path, std::uint32_t color)
 }
 
 #include "widget/widget_cold_start_prewarm_tests.h"
+#include "widget/widget_image_demand_tests.h"
 
 int main(int argc, char** argv)
 {
@@ -180,6 +181,7 @@ int main(int argc, char** argv)
         "cache clear must release pixels and negative entries");
 
     RunColdStartPrewarmCases(root);
+    RunImageDemandCases(root);
     fs::remove_all(root, error);
     if (SUCCEEDED(initialized)) CoUninitialize();
     std::cout << "widget package image cache tests passed\n";

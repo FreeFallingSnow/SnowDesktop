@@ -996,6 +996,7 @@ public:
     /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
     void OnAudioAnalysisWake();
     void OnTaskWake();
+    void DrainPackageImageChanges();
     /**
      * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID

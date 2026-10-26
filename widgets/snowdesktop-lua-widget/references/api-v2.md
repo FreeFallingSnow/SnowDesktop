@@ -201,6 +201,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
   `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
+- `resource.image.lazy`：`resource.image(name, {lazy=true})` 显式延后像素解码；
+  句柄仍在加载阶段创建，首次绘制前 `resource.status` 可以返回 `pending`；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
 - `slots.mutation.userGesture`：binding/collection 的选择、清除、移除、撤销与重做仍要求
@@ -3293,7 +3295,7 @@ view.image({ key = "logo", source = logo, alt = "SnowDesktop" })
 view.text({ key = "title", text = "SnowDesktop", font = display })
 ```
 
-可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。句柄在入口求值期间同步创建，
+可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。默认句柄在入口求值期间同步创建，
 所以状态只会是 `ready` 或带 `error = "unavailable"` 的 `error`，不会留下需要轮询的
 `pending`。创建失败会拒绝本次 VM 加载，并以 `resource.image: code` 或
 `resource.font: code` 抛出稳定错误：`loadPhaseRequired`、`invalidName`、
@@ -3305,12 +3307,38 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 资源名在 VM 建立时一次性解析为宿主私有路径；`resource.exists` 只查询已验证的清单，
 不会在 `view/render` 回调中访问文件系统。`resource.image` 在入口加载期计算内容 SHA-256，
-再把图片解码到有界、同宿主共享的像素缓存；成功 VM 保存资源名对应的内容键，因此同一路径
-热重载不会误用旧像素，失败的新 VM 也不会改变仍在运行的旧实例。绘制和 D2D 设备重建只从
-对应内容键的内存像素创建设备位图；失败加载、热重载、卸载和关机会释放当前 VM 创建的句柄，
-最后一个同内容句柄释放后宿主回收其 CPU 像素和 D2D 位图；
-`resource.font` 同样必须在入口加载期完成私有字体集合创建。解码、字体加载或总缓存额度
-失败会直接拒绝句柄和本次 VM，而不是把同步磁盘 I/O 推迟到首帧。
+保留不可变的压缩源快照；默认调用仍同步完成解码和设备检查，失败时拒绝本次 VM。
+成功 VM 保存资源名对应的内容键，因此同一路径热重载不会误用旧像素，失败的新 VM 也不会
+改变仍在运行的旧实例。绘制和 D2D 设备重建使用内存快照，不重新读取已改变或已删除的文件。
+失败加载、热重载、卸载和关机会释放当前 VM 创建的句柄，最后一个同内容句柄释放后回收
+其快照、CPU 像素和 D2D 位图；`resource.font` 仍在入口加载期完成私有字体集合创建。
+
+宿主按图片内容共享解码像素，合并当前可见组件和 surface 的最大物理像素需求，按分辨率档位
+重建。尺寸增大时准备更高档位，缩小或隐藏后等待约两秒稳定期再降档或回收；同一档内的尺寸
+变化不重复解码。原始宽高比、`fit="none"` 的固有尺寸和裁剪语义保持不变，最近邻绘制保留
+原始像素采样。升级期间继续使用旧位图，结果完成后刷新引用该图片的视图。像素回收不会让
+已验证资源重新变成 `pending`，压缩快照保留到最后一个句柄释放。原始尺寸的图片配额仍在
+创建句柄时预留，不能通过小尺寸绘制或懒解码绕过。
+
+需要懒解码时，先探测 `resource.image.lazy`，在入口加载期显式选择：
+
+```lua
+local lazy = widget.hasFeature("resource.image.lazy")
+local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
+```
+
+`{lazy=true}` 在加载期保留快照并校验格式元数据及配额，像素内容在首次绘制该句柄时按需
+解码。桌面宿主在后台解码并唤醒重绘，等待期间该图片绘制为空操作；组件可继续绘制上一个
+已就绪背景。独立预览会在其隔离进程内完成首次请求，保证一次性导出包含图片。
+尚未使用或首次解码未完成时，`resource.status(handle).state` 为 `pending`；首次成功后为
+`ready`，解码失败为带 `error="unavailable"` 的 `error`。句柄不会自行要求轮询或启动定时器，
+使用场景由绘制决定。损坏的像素数据可能在首次解码时才报错，不能把懒句柄的创建成功当作
+完整解码验证。第二参数仅接受可选布尔字段 `lazy`，无效选项报 `resource.image: invalidOptions`。
+默认调用的加载阶段报错语义保持不变。
+
+此能力是 API v2 的可选扩展，不提高 `apiVersion`。旧宿主（包括同版本号的早期构建）不支持
+该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
+交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
 
 ## 清单 v2 最小要求
 

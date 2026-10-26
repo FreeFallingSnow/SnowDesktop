@@ -106,6 +106,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "layout.relativeUnits",
     "module.package",
     "resource.package",
+    "resource.image.lazy",
     "schedule.absolute",
     "schedule.basic",
     "schedule.timeline",

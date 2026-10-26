@@ -408,9 +408,11 @@ void TestImageDownsampling(const std::filesystem::path& snowwidget,
       "resources":{"stripes":{"type":"image","path":"stripes.png"},
         "alpha":{"type":"image","path":"alpha.png"}}
     })json");
-    for (const bool declarative : { false, true })
+    for (int variant = 0; variant < 4; ++variant)
     {
-        Write(source / L"main.lua", declarative ? R"lua(
+        const bool declarative = (variant & 1) != 0;
+        const bool lazy = (variant & 2) != 0;
+        std::string script = declarative ? R"lua(
 local stripes, alpha = resource.image("stripes"), resource.image("alpha")
 return widget.define({
   view = function()
@@ -430,8 +432,33 @@ return widget.define({render=function()
   draw.imageFit(stripes,48,8,32,32,"contain","center",1,"linear")
   draw.imageFit(stripes,88,8,32,32,"contain","center",1,"nearest")
 end})
-)lua");
-        const auto output = root / (declarative ? L"sampling-view.png" : L"sampling-draw.png");
+)lua";
+        if (lazy)
+        {
+            for (const auto* name : {"stripes", "alpha"})
+            {
+                const std::string original = "resource.image(\"" + std::string(name) + "\")";
+                const std::string deferred = "resource.image(\"" + std::string(name) + "\",{lazy=true})";
+                std::size_t position = 0;
+                while ((position = script.find(original, position)) != std::string::npos)
+                {
+                    script.replace(position, original.size(), deferred);
+                    position += deferred.size();
+                }
+            }
+            script.insert(0, "assert(widget.hasFeature(\"resource.image.lazy\"))\n");
+            script.insert(0,
+                "assert(not pcall(resource.image,\"stripes\",{lazy=\"yes\"}))\n"
+                "assert(not pcall(resource.image,\"stripes\",{unknown=true}))\n");
+        }
+        const auto definition = script.find("return widget.define");
+        Check(definition != std::string::npos, "image fixture has a real widget definition");
+        script.insert(definition, lazy ?
+            "assert(resource.status(stripes).state==\"pending\")\n" :
+            "assert(resource.status(stripes).state==\"ready\")\n");
+        Write(source / L"main.lua", script);
+        const auto output = root / (std::wstring(declarative ? L"sampling-view" : L"sampling-draw") +
+            (lazy ? L"-lazy" : L"") + L".png");
         const auto [code, result] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
             L"--host", host.wstring(), L"--dpi", L"96", L"--content-only"});
         if (code != 0) std::cerr << result << '\n';

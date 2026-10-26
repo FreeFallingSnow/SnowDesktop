@@ -245,6 +245,8 @@ void TestVersionedRegistration()
 
 void TestV2Contract()
 {
+    Check(snowdesktop::widget_api::SupportsFeature("resource.image.lazy"),
+        "lazy package images must be independently discoverable on API v2 hosts");
     const auto v2Libraries =
         snowdesktop::widget_api::SandboxLibraries();
     const auto hasV2Library = [&](std::string_view name) {

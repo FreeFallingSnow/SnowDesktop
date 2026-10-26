@@ -36,6 +36,32 @@ float AlignOffset(DrawImageAlignment alignment, float available,
 }
 }
 
+double RequiredImageRasterScale(float sourceWidth, float sourceHeight,
+    float width, float height, DrawImageFit fit,
+    const ImageRasterTransform& transform, bool originalPixels) noexcept
+{
+    if (!std::isfinite(sourceWidth) || !std::isfinite(sourceHeight) ||
+        sourceWidth <= 0 || sourceHeight <= 0 || !std::isfinite(width) ||
+        !std::isfinite(height) || width <= 0 || height <= 0 ||
+        !std::isfinite(transform.m11) || !std::isfinite(transform.m12) ||
+        !std::isfinite(transform.m21) || !std::isfinite(transform.m22) ||
+        !std::isfinite(transform.dpiX) || !std::isfinite(transform.dpiY) ||
+        transform.dpiX <= 0 || transform.dpiY <= 0)
+        return 0;
+    if (originalPixels) return 1;
+    const double x = static_cast<double>(width) / sourceWidth;
+    const double y = static_cast<double>(height) / sourceHeight;
+    const double logical = fit == DrawImageFit::None ? 1.0 :
+        fit == DrawImageFit::Contain ? std::min(x, y) : std::max(x, y);
+    // Largest singular value covers rotation, shear and nonuniform scale.
+    const double a = transform.m11 * transform.m11 + transform.m12 * transform.m12;
+    const double b = transform.m21 * transform.m21 + transform.m22 * transform.m22;
+    const double c = transform.m11 * transform.m21 + transform.m12 * transform.m22;
+    const double stretch = std::sqrt(std::max(0.0,
+        (a + b + std::hypot(a - b, 2.0 * c)) * 0.5));
+    return logical * stretch * std::max(transform.dpiX, transform.dpiY) / 96.0;
+}
+
 DrawImagePlacement ResolveDrawImagePlacement(float sourceWidth,
     float sourceHeight, const DrawRect& destination, DrawImageFit fit,
     DrawImageAlignment alignment) noexcept

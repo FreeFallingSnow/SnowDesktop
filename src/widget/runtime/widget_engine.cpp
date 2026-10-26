@@ -663,6 +663,7 @@ struct D2DState
     snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
     snowdesktop::widget_runtime::WidgetScriptReadAhead scriptReadAhead;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
+    std::unordered_map<std::string, std::uint64_t> imageCacheRevisions;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
@@ -2169,6 +2170,18 @@ private:
     const char* previous_ = "desktop";
 };
 
+static std::string ImageUseOwner(D2DState* state, bool background = false)
+{
+    return WidgetWideToUtf8(state->currentWidgetId) + "|" +
+        state->surfaceKind +
+        ((background || state->backgroundLayerActive) ? "#background" : "");
+}
+
+static void BeginImageFrame(D2DState* state, bool background = false)
+{
+    if (state) state->packageImageCache.BeginFrame(ImageUseOwner(state, background));
+}
+
 static bool IsPanelSurface(std::string_view surface) noexcept
 {
     return surface == "panel" || surface == "dialog" ||
@@ -2966,10 +2979,16 @@ static void PrewarmWidgetPackageResources(D2DState* state)
                 continue;
             enqueue(package.root, L"widget.json");
             enqueue(package.root, Utf8ToWideLocal(package.manifest.entry));
+            const auto usesLazyImages = [](const auto& features) {
+                return std::find(features.begin(), features.end(),
+                    "resource.image.lazy") != features.end();
+            };
+            const bool lazyImages = usesLazyImages(package.manifest.requiredFeatures) ||
+                usesLazyImages(package.manifest.optionalFeatures);
             for (const auto& [name, resource] : package.manifest.resources)
             {
                 (void)name;
-                if (resource.type == "image")
+                if (resource.type == "image" && !lazyImages)
                     enqueue(package.root, Utf8ToWideLocal(resource.path), true);
             }
             if (files.size() + images.size() >= 128) break;
@@ -10199,25 +10218,57 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->imageSamplingCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
+    state->imageCacheRevisions.clear();
     state->runtimeImageBitmaps.clear();
     ClearShellIconBitmaps(state);
     state->shellIconFailures.clear();
 }
 
 static ID2D1Bitmap1* LoadImageBitmap(
-    D2DState* s, const std::string& contentKey)
+    D2DState* s, const std::string& contentKey,
+    float width = 0.0f, float height = 0.0f,
+    snowdesktop::widget_runtime::DrawImageFit fit =
+        snowdesktop::widget_runtime::DrawImageFit::Fill,
+    bool originalPixels = false)
 {
     if (!s || !s->ctx || contentKey.empty()) return nullptr;
     EnsureBitmapCachesForCurrentDevice(s);
-    auto it = s->imageCache.find(contentKey);
-    if (it != s->imageCache.end()) return it->second.Get();
+    const auto original = s->packageImageCache.OriginalSize(contentKey);
+    if (!original.width || !original.height) return nullptr;
     const auto* source = s->packageImageCache.Find(contentKey);
+    if (width > 0 && height > 0)
+    {
+        D2D1_MATRIX_3X2_F transform{};
+        s->ctx->GetTransform(&transform);
+        float dpiX = 96.0f, dpiY = 96.0f;
+        s->ctx->GetDpi(&dpiX, &dpiY);
+        const double scale = snowdesktop::widget_runtime::RequiredImageRasterScale(
+            static_cast<float>(original.width), static_cast<float>(original.height),
+            width, height, fit, {transform._11, transform._12, transform._21,
+                transform._22, dpiX, dpiY}, originalPixels);
+        source = s->packageImageCache.Request(contentKey, ImageUseOwner(s),
+            scale, snowdesktop::widget_runtime::WidgetPackageImageCache::Clock::now(),
+            s->engine && s->engine->IsPreviewOnly());
+    }
+    auto it = s->imageCache.find(contentKey);
+    const auto revision = s->packageImageCache.Revision(contentKey);
+    if (it != s->imageCache.end() &&
+        (s->imageCacheRevisions[contentKey] == revision || !source))
+        return it->second.Get();
+    if ((!source || source->pixels.empty()) && width <= 0 &&
+        s->packageImageCache.Ready(contentKey))
+    {
+        const std::string owner = "load:" + ImageUseOwner(s);
+        source = s->packageImageCache.Request(contentKey, owner, 1.0,
+            snowdesktop::widget_runtime::WidgetPackageImageCache::Clock::now(), true);
+        s->packageImageCache.ForgetOwner(owner);
+    }
     if (!source || source->pixels.empty()) return nullptr;
     ComPtr<ID2D1Bitmap1> bitmap;
     const auto properties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-        D2D1_ALPHA_MODE_PREMULTIPLIED));
+        D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
     if (FAILED(s->ctx->CreateBitmap(
             D2D1::SizeU(source->width, source->height),
             source->pixels.data(), source->stride,
@@ -10273,9 +10324,13 @@ static ID2D1Bitmap1* LoadImageBitmap(
         {
             s->imageSamplingCache.Clear();
             s->imageCache.clear();
+            s->imageCacheRevisions.clear();
         }
     }
+    if (const auto old = s->imageCache.find(contentKey); old != s->imageCache.end())
+        s->imageSamplingCache.Remove(old->second.Get());
     s->imageCache[contentKey] = bitmap;
+    s->imageCacheRevisions[contentKey] = s->packageImageCache.Revision(contentKey);
     return result;
 }
 
@@ -10283,6 +10338,8 @@ static void ReleasePackageImageResourcesUnprotected(
     D2DState* state, lua_State* luaState)
 {
     if (!state || !luaState) return;
+    state->packageImageCache.ForgetOwner(
+        WidgetWideToUtf8(BoundWidgetId(luaState)) + "|");
     lua_getfield(luaState, LUA_REGISTRYINDEX,
         "__widget_resource_content_keys");
     if (lua_istable(luaState, -1))
@@ -10302,6 +10359,7 @@ static void ReleasePackageImageResourcesUnprotected(
                     {
                         state->imageSamplingCache.Remove(found->second.Get());
                         state->imageCache.erase(found);
+                        state->imageCacheRevisions.erase(contentKey);
                     }
                 }
             }
@@ -11065,7 +11123,10 @@ static int lua_DrawMarqueeText(lua_State* state)
 }
 
 static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
-    D2DState* d2d, int index, const char* api)
+    D2DState* d2d, int index, const char* api,
+    float width, float height,
+    snowdesktop::widget_runtime::DrawImageFit fit,
+    D2D1_SIZE_F* originalSize = nullptr, bool originalPixels = false)
 {
     if (!d2d || !d2d->engine) return nullptr;
     ID2D1Bitmap1* bitmap = nullptr;
@@ -11082,10 +11143,20 @@ static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
             const auto contentKey =
                 ResolveResourceHandleImageContentKey(state, index);
             if (contentKey)
-                bitmap = LoadImageBitmap(d2d, *contentKey);
+            {
+                const auto original = d2d->packageImageCache.OriginalSize(*contentKey);
+                if (originalSize)
+                    *originalSize = D2D1::SizeF(static_cast<float>(original.width),
+                        static_cast<float>(original.height));
+                bitmap = LoadImageBitmap(d2d, *contentKey, width, height, fit, originalPixels);
+                if (!bitmap && d2d->packageImageCache.Find(*contentKey))
+                    return nullptr;
+            }
         }
         if (!bitmap)
             luaL_error(state, "%s: invalid image resource handle", api);
+        if (originalSize && originalSize->width <= 0)
+            *originalSize = bitmap->GetSize();
     }
     else
         luaL_error(state, "%s: API v2 requires an image handle", api);
@@ -11602,7 +11673,8 @@ static int lua_DrawImage(lua_State* L)
     auto* s = GetD2D(L);
     if (!s || !s->engine) return 0;
     ID2D1Bitmap1* bmp = ResolveDrawImageBitmap(
-        L, s, 1, "draw.image");
+        L, s, 1, "draw.image", w, h,
+        snowdesktop::widget_runtime::DrawImageFit::Fill);
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
@@ -11663,12 +11735,14 @@ static int lua_DrawImageFit(lua_State* state)
             transformError.c_str());
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine) return 0;
+    D2D1_SIZE_F originalSize{};
     ID2D1Bitmap1* bitmap = ResolveDrawImageBitmap(
-        state, d2d, 1, "draw.imageFit");
+        state, d2d, 1, "draw.imageFit", width, height, fit, &originalSize,
+        interpolation == "nearest");
     if (!bitmap || !d2d->ctx) return 0;
     const D2D1_SIZE_F sourceSize = bitmap->GetSize();
     const auto placement = snowdesktop::widget_runtime::
-        ResolveDrawImagePlacement(sourceSize.width, sourceSize.height,
+        ResolveDrawImagePlacement(originalSize.width, originalSize.height,
             { x, y, width, height }, fit, alignment);
     if (!placement.valid)
         return luaL_error(state,
@@ -11681,9 +11755,10 @@ static int lua_DrawImageFit(lua_State* state)
         d2d->widgetRect.top + placement.destination.y +
             placement.destination.height);
     const D2D1_RECT_F source = D2D1::RectF(
-        placement.source.x, placement.source.y,
-        placement.source.x + placement.source.width,
-        placement.source.y + placement.source.height);
+        placement.source.x * sourceSize.width / originalSize.width,
+        placement.source.y * sourceSize.height / originalSize.height,
+        (placement.source.x + placement.source.width) * sourceSize.width / originalSize.width,
+        (placement.source.y + placement.source.height) * sourceSize.height / originalSize.height);
     ComPtr<ID2D1RoundedRectangleGeometry> roundedClip;
     if (cornerRadius > 0.0f)
     {
@@ -11770,6 +11845,21 @@ static int lua_ResourceImage(lua_State* L)
 {
     if (!ResourceCreationAllowed(L))
         return ResourceApiError(L, "resource.image", "loadPhaseRequired");
+    bool lazy = false;
+    if (!lua_isnoneornil(L, 2))
+    {
+        if (!lua_istable(L, 2))
+            return ResourceApiError(L, "resource.image", "invalidOptions");
+        lua_pushnil(L);
+        while (lua_next(L, 2) != 0)
+        {
+            const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
+            if (!key || std::string_view(key) != "lazy" || !lua_isboolean(L, -1))
+                return ResourceApiError(L, "resource.image", "invalidOptions");
+            lazy = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
+    }
     size_t length = 0;
     const char* nameRaw = luaL_checklstring(L, 1, &length);
     if (length == 0 || length > 64)
@@ -11787,8 +11877,12 @@ static int lua_ResourceImage(lua_State* L)
         CurrentPackageImageContentKey(L, name);
     if (existingContentKey)
     {
+        PackageImageAcquireError error = PackageImageAcquireError::None;
+        if (!lazy && !state->packageImageCache.Validate(*existingContentKey, &error))
+            return ResourceApiError(L, "resource.image",
+                error == PackageImageAcquireError::QuotaExceeded ? "quotaExceeded" : "decodeFailed");
         if (!state->packageImageCache.Find(*existingContentKey) ||
-            (state->ctx &&
+            (!lazy && state->ctx &&
                 !LoadImageBitmap(state, *existingContentKey)))
             return ResourceApiError(L, "resource.image", "unavailable");
         PushResourceHandle(L, LuaResourceType::Image, name);
@@ -11802,7 +11896,7 @@ static int lua_ResourceImage(lua_State* L)
         return ResourceApiError(L, "resource.image", "unavailable");
     PackageImageAcquireError acquireError = PackageImageAcquireError::None;
     if (!state->packageImageCache.Acquire(
-            contentKey, *path, &acquireError))
+            contentKey, *path, &acquireError, lazy, WidgetPrewarmContentDigest))
     {
         return ResourceApiError(L, "resource.image",
             acquireError == PackageImageAcquireError::QuotaExceeded
@@ -11821,7 +11915,7 @@ static int lua_ResourceImage(lua_State* L)
     lua_pushlstring(L, contentKey.data(), contentKey.size());
     lua_setfield(L, -2, name.c_str());
     lua_pop(L, 1);
-    if (state->ctx && !LoadImageBitmap(state, contentKey))
+    if (!lazy && state->ctx && !LoadImageBitmap(state, contentKey))
         return ResourceApiError(L, "resource.image", "deviceUnavailable");
     PushResourceHandle(L, LuaResourceType::Image, name);
     return 1;
@@ -11871,6 +11965,7 @@ static int lua_ResourceStatus(lua_State* L)
         ? std::optional<std::string>{}
         : ResolveResourceHandleImageContentKey(L, 1);
     bool ready = false;
+    bool pending = false;
     if (runtimeImage && state)
     {
         const auto resource = state->runtimeImages.find(handle->name);
@@ -11879,19 +11974,24 @@ static int lua_ResourceStatus(lua_State* L)
     }
     else if (path && state)
     {
-        ready = handle->type == LuaResourceType::Image
-            ? imageContentKey &&
-                state->packageImageCache.Find(*imageContentKey) != nullptr
-            : handle->type == LuaResourceType::Audio || state->privateFonts.contains(*path);
+        if (handle->type == LuaResourceType::Image && imageContentKey &&
+            state->packageImageCache.Find(*imageContentKey))
+        {
+            ready = state->packageImageCache.Ready(*imageContentKey);
+            pending = !ready && !state->packageImageCache.DecodeFailed(*imageContentKey);
+        }
+        else
+            ready = handle->type == LuaResourceType::Audio ||
+                (handle->type == LuaResourceType::Font && state->privateFonts.contains(*path));
     }
     lua_createtable(L, 0, 3);
-    lua_pushstring(L, ready ? "ready" : "error");
+    lua_pushstring(L, ready ? "ready" : pending ? "pending" : "error");
     lua_setfield(L, -2, "state");
     lua_pushstring(L, type);
     lua_setfield(L, -2, "type");
     lua_pushstring(L, handle->name);
     lua_setfield(L, -2, "name");
-    if (!ready)
+    if (!ready && !pending)
     {
         lua_pushliteral(L, "unavailable");
         lua_setfield(L, -2, "error");
@@ -15773,6 +15873,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
 
     // Allocate D2D state
     d2dState_ = new D2DState{};
+    d2dState_->packageImageCache.SetReadyCallback(taskWakeCallback_);
     d2dState_->dwrite = dwriteFactory_.Get();
     d2dState_->engine = this;
     d2dState_->shellIconLoader =
@@ -15878,6 +15979,7 @@ void WidgetEngine::ResetGraphicsResources(ID2D1DeviceContext* context)
     d2dState_->brushCache.clear();
     d2dState_->brushContext = nullptr;
     d2dState_->imageCache.clear();
+    d2dState_->imageCacheRevisions.clear();
     d2dState_->runtimeImageBitmaps.clear();
     ClearShellIconBitmaps(d2dState_);
     d2dState_->shellIconFailures.clear();
@@ -18493,7 +18595,8 @@ static void DrawWidgetViewBitmap(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
     float opacity, float borderWidth,
-    const snowdesktop::widget_runtime::ViewThemePalette& palette)
+    const snowdesktop::widget_runtime::ViewThemePalette& palette,
+    snowdesktop::widget_runtime::PackageImageSize original = {})
 {
     if (!state || !state->ctx || !bitmap) return;
     using snowdesktop::widget_runtime::DrawImageAlignment;
@@ -18516,6 +18619,9 @@ static void DrawWidgetViewBitmap(D2DState* state,
     const float targetWidth = std::max(0.0f, targetRight - targetLeft);
     const float targetHeight = std::max(0.0f, targetBottom - targetTop);
     const D2D1_SIZE_F sourceSize = bitmap->GetSize();
+    const D2D1_SIZE_F logicalSize = original.width && original.height ?
+        D2D1::SizeF(static_cast<float>(original.width), static_cast<float>(original.height)) :
+        sourceSize;
     DrawImageFit fit = DrawImageFit::Contain;
     if (node.imageFit == ViewImageFit::Fill) fit = DrawImageFit::Fill;
     else if (node.imageFit == ViewImageFit::Cover) fit = DrawImageFit::Cover;
@@ -18526,7 +18632,7 @@ static void DrawWidgetViewBitmap(D2DState* state,
     else if (node.imageAlignment == ViewImageAlignment::End)
         alignment = DrawImageAlignment::End;
     const auto placement = snowdesktop::widget_runtime::
-        ResolveDrawImagePlacement(sourceSize.width, sourceSize.height,
+        ResolveDrawImagePlacement(logicalSize.width, logicalSize.height,
             { targetLeft, targetTop,
                 targetWidth, targetHeight }, fit, alignment);
     if (!placement.valid) return;
@@ -18536,9 +18642,10 @@ static void DrawWidgetViewBitmap(D2DState* state,
         placement.destination.y + placement.destination.height);
     const auto sampled = state->imageSamplingCache.Resolve(state->ctx, bitmap,
         destination, D2D1::RectF(
-            placement.source.x, placement.source.y,
-            placement.source.x + placement.source.width,
-            placement.source.y + placement.source.height),
+            placement.source.x * sourceSize.width / logicalSize.width,
+            placement.source.y * sourceSize.height / logicalSize.height,
+            (placement.source.x + placement.source.width) * sourceSize.width / logicalSize.width,
+            (placement.source.y + placement.source.height) * sourceSize.height / logicalSize.height),
         node.imageInterpolation == ViewImageInterpolation::Nearest);
     bitmap = sampled.bitmap.Get();
     const auto& sourceRect = sampled.source;
@@ -19429,6 +19536,7 @@ static void DrawWidgetViewNode(D2DState* state,
             node.type == ViewNodeType::ReferenceIcon) && state->engine)
     {
         ID2D1Bitmap1* bitmap = nullptr;
+        snowdesktop::widget_runtime::PackageImageSize original;
         if (node.type == ViewNodeType::Image)
         {
             if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
@@ -19443,7 +19551,19 @@ static void DrawWidgetViewNode(D2DState* state,
                         state->currentWidgetId,
                         node.imageResourceName);
                 if (contentKey)
-                    bitmap = LoadImageBitmap(state, *contentKey);
+                {
+                    original = state->packageImageCache.OriginalSize(*contentKey);
+                    const auto content = snowdesktop::widget_runtime::ViewNodeContentRect(node);
+                    using Fit = snowdesktop::widget_runtime::DrawImageFit;
+                    using ViewFit = snowdesktop::widget_runtime::ViewImageFit;
+                    const auto fit = node.imageFit == ViewFit::Cover ? Fit::Cover :
+                        node.imageFit == ViewFit::Fill ? Fit::Fill :
+                        node.imageFit == ViewFit::None ? Fit::None : Fit::Contain;
+                    bitmap = LoadImageBitmap(state, *contentKey,
+                        std::max(0.0f, content.width - borderWidth * 2.0f),
+                        std::max(0.0f, content.height - borderWidth * 2.0f), fit,
+                        node.imageInterpolation == snowdesktop::widget_runtime::ViewImageInterpolation::Nearest);
+                }
             }
         }
         else
@@ -19510,7 +19630,7 @@ static void DrawWidgetViewNode(D2DState* state,
             }
         }
         DrawWidgetViewBitmap(
-            state, node, bitmap, rect, opacity, borderWidth, palette);
+            state, node, bitmap, rect, opacity, borderWidth, palette, original);
         if (imageClipPushed)
             state->ctx->PopLayer();
     }
@@ -20381,6 +20501,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
         widget.preview ? &widget.previewStorage : nullptr);
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    BeginImageFrame(d2dState_, true);
     snowdesktop::lua_runtime::StackGuard stackGuard(widget.state);
     lua_State* state = widget.state;
     d2dState_->ctx = context;
@@ -20639,6 +20760,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     if (!state) return;
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    BeginImageFrame(d2dState_);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
@@ -21355,6 +21477,7 @@ bool WidgetEngine::RenderWidgetPanel(
     WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
     WidgetSurfaceScope surfaceScope(
         d2dState_, normalizedSurface.c_str());
+    BeginImageFrame(d2dState_);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
 
     d2dState_->ctx = context;
@@ -21837,6 +21960,7 @@ void WidgetEngine::OnAudioAnalysisWake()
 void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 {
     taskWakeCallback_ = std::move(callback);
+    if (d2dState_) d2dState_->packageImageCache.SetReadyCallback(taskWakeCallback_);
     if (audioPlayback_) audioPlayback_->SetWakeCallback(taskWakeCallback_);
     if (nativeTaskExecutor_) nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
@@ -21846,11 +21970,55 @@ void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 
 void WidgetEngine::OnTaskWake()
 {
+    DrainPackageImageChanges();
     ApplyWidgetTaskBrokerActions();
+}
+
+void WidgetEngine::DrainPackageImageChanges()
+{
+    if (d2dState_)
+    {
+        for (const auto& widget : widgets_)
+        {
+            const auto prefix = WidgetWideToUtf8(widget.widgetId) + "|";
+            if (!widget.valid)
+                d2dState_->packageImageCache.ForgetOwner(prefix);
+            else if (!widget.preview && !widget.desktopVisible)
+                d2dState_->packageImageCache.ForgetOwner(prefix + "desktop");
+        }
+        d2dState_->packageImageCache.Pump();
+        const auto changed = d2dState_->packageImageCache.TakeChanged();
+        std::vector<std::wstring> invalidated;
+        for (const auto& key : changed)
+        {
+            if (const auto bitmap = d2dState_->imageCache.find(key);
+                bitmap != d2dState_->imageCache.end())
+            {
+                d2dState_->imageSamplingCache.Remove(bitmap->second.Get());
+                d2dState_->imageCache.erase(bitmap);
+                d2dState_->imageCacheRevisions.erase(key);
+            }
+            for (const auto& widget : widgets_)
+            {
+                if (!std::any_of(widget.packageImageContentKeys.begin(),
+                        widget.packageImageContentKeys.end(),
+                        [&](const auto& resource) { return resource.second == key; }))
+                    continue;
+                d2dState_->backgroundCache.Erase(widget.widgetId);
+                if (d2dState_->packageImageCache.DecodeFailed(key))
+                    RuntimeAddLog(widget.widgetId, "error", "Lazy package image decoding failed");
+                invalidated.push_back(widget.widgetId);
+            }
+        }
+        std::sort(invalidated.begin(), invalidated.end());
+        invalidated.erase(std::unique(invalidated.begin(), invalidated.end()), invalidated.end());
+        for (const auto& id : invalidated) RuntimeInvalidateHost(id);
+    }
 }
 
 void WidgetEngine::TickRuntime()
 {
+    DrainPackageImageChanges();
     if (d2dState_ && d2dState_->shellIconLoader)
         d2dState_->shellIconLoader->Pump();
     const auto healthNow = snowdesktop::widget_runtime::
@@ -22146,6 +22314,8 @@ void WidgetEngine::SetWidgetDesktopVisible(
     widget.keepRuntimeActiveForHiddenPage =
         !visible && keepRuntimeActive;
     widget.desktopVisible = visible;
+    if (!visible && d2dState_)
+        d2dState_->packageImageCache.ForgetOwner(WidgetWideToUtf8(widgetId) + "|desktop");
     if (!visible)
         ClearNativeMarqueeComposition(widget);
     ApplyWidgetHostVisibility(
@@ -22161,6 +22331,9 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
             continue;
         widget.keepRuntimeActiveForHiddenPage = false;
         widget.desktopVisible = visible;
+        if (!visible && d2dState_)
+            d2dState_->packageImageCache.ForgetOwner(
+                WidgetWideToUtf8(widget.widgetId) + "|desktop");
         if (!visible)
             ClearNativeMarqueeComposition(widget);
         ApplyWidgetHostVisibility(
@@ -31320,6 +31493,10 @@ void WidgetEngine::CloseWidgetPanelSurface(
         IsPanelSurface(hostScrollbarDrag_.surface))
         hostScrollbarDrag_ = {};
     widget.panelActive = false;
+    if (d2dState_)
+        for (const char* closing : {"panel", "dialog", "popover"})
+            d2dState_->packageImageCache.ForgetOwner(
+                WidgetWideToUtf8(widgetId) + "|" + closing);
     if (d2dState_) d2dState_->textLayoutCache.Erase(widgetId, closingSurface);
     ApplyWidgetHostVisibility(
         widget, widget.desktopVisible || widget.panelActive ||
@@ -31570,6 +31747,7 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
         shared("runtime_image_unique_bytes", pixelBytes);
         shared("runtime_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->runtimeImageBitmaps));
         shared("package_image_decoded_bytes", d2dState_->packageImageCache.Bytes());
+        shared("package_image_encoded_bytes", d2dState_->packageImageCache.EncodedBytes());
         shared("package_image_sources", d2dState_->packageImageCache.Size());
         shared("package_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->imageCache));
         shared("image_sampling_bgra_bytes_estimate", d2dState_->imageSamplingCache.RetainedBytes());

@@ -107,10 +107,13 @@ struct Host
     std::map<std::string,int> modules;
     std::map<int,Subscription> subscriptions;
     std::vector<std::string> drawn,translated;
+    std::vector<std::string> drawnImages;
+    std::map<std::string,bool> lazyImages;
+    std::set<std::string> pendingImages;
     std::vector<std::pair<std::string,long long>> scheduled;
     std::string date="2026-10-16",error,failSchedule;
     long long now=1000;
-    bool queryCap=true,permission=true,available=true,preview=false;
+    bool queryCap=true,permission=true,available=true,preview=false,lazyImageCap=true;
     int opens=0,closes=0,notifications=0;
 
     static Host& Get(lua_State* state)
@@ -129,7 +132,8 @@ struct Host
     static int Feature(lua_State* state)
     {
         const std::string_view feature=luaL_checkstring(state,1);
-        lua_pushboolean(state,feature=="data.calendar.events.query" ? Get(state).queryCap : feature!="ui.durationPicker");return 1;
+        lua_pushboolean(state,feature=="resource.image.lazy" ? Get(state).lazyImageCap :
+            feature=="data.calendar.events.query" ? Get(state).queryCap : feature!="ui.durationPicker");return 1;
     }
     static int Permission(lua_State* state) { lua_pushboolean(state,Get(state).permission);return 1; }
     static int Theme(lua_State* state) { lua_newtable(state);lua_pushinteger(state,1);lua_setfield(state,-2,"contentTheme");return 1; }
@@ -213,7 +217,21 @@ struct Host
         if (std::string_view(luaL_checkstring(state,1))=="notification.show") ++Get(state).notifications;
         lua_pushinteger(state,100);return 1;
     }
-    static int Image(lua_State* state) { lua_pushliteral(state,"fixture-image");return 1; }
+    static int Image(lua_State* state)
+    {
+        const std::string name=luaL_checkstring(state,1);bool lazy=false;
+        if(lua_istable(state,2)){lua_getfield(state,2,"lazy");lazy=lua_toboolean(state,-1)!=0;lua_pop(state,1);}
+        Check(!lazy || Get(state).lazyImageCap,"old hosts must not receive lazy image options");
+        Get(state).lazyImages[name]=lazy;lua_pushlstring(state,name.data(),name.size());return 1;
+    }
+    static int ImageStatus(lua_State* state)
+    {
+        const std::string name=luaL_checkstring(state,1);lua_newtable(state);
+        lua_pushstring(state,Get(state).pendingImages.contains(name)?"pending":"ready");
+        lua_setfield(state,-2,"state");return 1;
+    }
+    static int DrawImage(lua_State* state)
+    { Get(state).drawnImages.emplace_back(luaL_checkstring(state,1));return 0; }
     // Storage scenarios keep audio allocation/playback outside the fixture;
     // wooden-fish still resolves its declared sound while loading real Lua.
     static int Audio(lua_State* state) { luaL_checkstring(state,1);lua_pushliteral(state,"fixture-audio");return 1; }
@@ -274,8 +292,8 @@ struct Host
     {
         lua_newtable(state);for (const auto& [key,callback]:entries) { lua_pushcfunction(state,callback);lua_setfield(state,-2,key); }lua_setglobal(state,name);
     }
-    Host(const std::filesystem::path& source,std::shared_ptr<SharedStorage> shared,CalendarService* service=nullptr,bool capability=true,bool previewMode=false)
-        : package(source),storage(std::move(shared)),calendar(service),queryCap(capability),preview(previewMode)
+    Host(const std::filesystem::path& source,std::shared_ptr<SharedStorage> shared,CalendarService* service=nullptr,bool capability=true,bool previewMode=false,bool lazyCapability=true)
+        : package(source),storage(std::move(shared)),calendar(service),queryCap(capability),preview(previewMode),lazyImageCap(lazyCapability)
     {
         state=luaL_newstate();Check(state!=nullptr,"create actual component Lua VM");
         for (const auto& [name,open]:{std::pair{"_G",luaopen_base},{LUA_TABLIBNAME,luaopen_table},{LUA_STRLIBNAME,luaopen_string},{LUA_MATHLIBNAME,luaopen_math},{LUA_UTF8LIBNAME,luaopen_utf8}})
@@ -286,10 +304,10 @@ struct Host
         Library("module",{{"require",RequireModule}});Library("storage",{{"get",ReadStorage},{"set",WriteStorage},{"remove",Noop}});
         Library("time",{{"now",Now},{"monotonic",Now},{"parts",Parts}});Library("l10n",{{"tr",Translate},{"formatNumber",Identity},{"language",Language}});
         Library("layout",{{"contentWidth",Width},{"contentHeight",Height}});Library("ui",{{"metrics",Metrics}});
-        Library("resource",{{"image",Image},{"audio",Audio}});Library("data",{{"subscribe",Subscribe}});Library("task",{{"start",Task},{"cancel",Noop}});
+        Library("resource",{{"image",Image},{"status",ImageStatus},{"audio",Audio}});Library("data",{{"subscribe",Subscribe}});Library("task",{{"start",Task},{"cancel",Noop}});
         Library("interaction",{{"region",Noop},{"isPressed",False},{"isHovered",False},{"isFocused",False}});
         Library("animation",{{"requestFrame",Frame},{"cancelFrame",CancelFrame}});
-        Library("draw",{{"text",DrawText},{"measureText",Measure},{"circle",Noop},{"line",Noop},{"rect",Noop},{"arc",Noop},{"path",Noop},{"strokeRect",Noop},{"imageFit",Noop},{"shadow",Noop},{"gradientRect",Noop}});
+        Library("draw",{{"text",DrawText},{"measureText",Measure},{"circle",Noop},{"line",Noop},{"rect",Noop},{"arc",Noop},{"path",Noop},{"strokeRect",Noop},{"imageFit",DrawImage},{"shadow",Noop},{"gradientRect",Noop}});
         Library("view",{{"text",Identity},{"button",Identity},{"row",Identity},{"column",Identity},{"scroll",Identity},{"searchBox",Identity},{"textInput",Identity},{"spacer",Identity},{"icon",Identity},{"iconButton",Identity}});
         Library("schedule",{{"cancel",Cancel}});lua_getglobal(state,"schedule");
         lua_pushboolean(state,0);lua_pushcclosure(state,Timer,1);lua_setfield(state,-2,"after");
@@ -329,6 +347,14 @@ struct Host
         Check(lifecycle.PushRenderArguments(state,Context),"render arguments from production lifecycle");
         const auto rendered=snowdesktop::lua_runtime::ProtectedCall(state,2,std::string_view(function)=="render"?0:1);
         Check(rendered==LUA_OK,"actual render: "+LuaError());
+    }
+    void Background()
+    {
+        drawnImages.clear();lua_rawgeti(state,LUA_REGISTRYINDEX,definition);
+        lua_getfield(state,-1,"backgroundLayer");lua_getfield(state,-1,"render");
+        lua_remove(state,-2);lua_remove(state,-2);
+        Check(lifecycle.PushRenderArguments(state,Context),"background uses the production model");
+        Check(snowdesktop::lua_runtime::ProtectedCall(state,2,0)==LUA_OK,"actual background render: "+LuaError());
     }
     static void Keys(lua_State* state,int index,std::set<std::string>& result)
     {
@@ -469,6 +495,25 @@ void TestWeather(const std::filesystem::path& packages,const std::filesystem::pa
     }
     host.storage->Seed("unit",String("f"));host.Render();
     Check(std::find(host.drawn.begin(),host.drawn.end(),"lua_widget.sky_weather.cooler:9°")!=host.drawn.end(),"Fahrenheit cooling uses a9degree delta, without an absolute32degree offset");
+
+    Check(host.lazyImages.size()==6 && std::all_of(host.lazyImages.begin(),host.lazyImages.end(),
+        [](const auto& image){return image.second;}),"new hosts register weather scenes as lazy resources");
+    const auto sunny=forecast("2026-10-26","[\"2026-10-26\"]","[23]","[11]");
+    host.Forecast(sunny);host.Background();
+    Check(host.drawnImages==std::vector<std::string>{"sky"},"sunny weather requests only its selected background");
+    auto rainy=sunny;const auto code=rainy.find("\"weather_code\":0");
+    Check(code!=std::string::npos,"rain fixture changes the actual weather code");
+    rainy.replace(code,std::string("\"weather_code\":0").size(),"\"weather_code\":61");
+    host.pendingImages.insert("rain");host.Forecast(rainy);host.Background();
+    Check(host.drawnImages==std::vector<std::string>({"rain","sky"}),
+        "a pending replacement keeps the last ready scene visible");
+    host.pendingImages.clear();host.Background();
+    Check(host.drawnImages==std::vector<std::string>{"rain"},"ready rain retires the sunny scene demand");
+    Host legacy(packages/L"sky-weather",Storage(root/L"legacy-images"),nullptr,true,true,false);
+    Check(legacy.lazyImages.size()==6 && std::none_of(legacy.lazyImages.begin(),legacy.lazyImages.end(),
+        [](const auto& image){return image.second;}),"old hosts retain the original image API without new options");
+    legacy.Forecast(sunny);legacy.Background();
+    Check(legacy.drawnImages==std::vector<std::string>{"sky"},"the legacy fallback still draws its weather scene");
 }
 
 void TestTimer(const std::filesystem::path& packages,const std::filesystem::path& root)

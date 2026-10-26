@@ -71,10 +71,19 @@ public:
         std::lock_guard lock(state_->mutex);
         state_->stopped = true;
         state_->window = nullptr;
+        state_->onReady = {};
         state_->live.clear();
         state_->queue.clear();
         state_->ready.clear();
         state_->changed.notify_all();
+    }
+
+    // Notification happens after the mailbox owns the completion, so an
+    // immediate UI drain cannot race ahead of result publication.
+    void SetReadyCallback(Completion callback)
+    {
+        std::lock_guard lock(state_->mutex);
+        state_->onReady = std::move(callback);
     }
 
     // Bound batches so a burst of completed icons cannot monopolize a frame.
@@ -123,6 +132,7 @@ private:
         bool stopped = false;
         HWND window = nullptr;
         UINT message = 0;
+        Completion onReady;
     };
     static void Run(const std::shared_ptr<State>& state)
     {
@@ -138,11 +148,17 @@ private:
                 state->queue.pop_front();
             }
             auto completion = job.run();
-            std::lock_guard lock(state->mutex);
+            std::unique_lock lock(state->mutex);
             const auto live = state->live.find(job.key);
             if (state->stopped || live == state->live.end() || live->second != job.id) continue;
             state->ready.push_back({std::move(job.key), job.id, std::move(completion)});
             if (state->window) PostMessageW(state->window, state->message, 0, 0);
+            auto notify = state->onReady;
+            lock.unlock();
+            if (notify)
+            {
+                try { notify(); } catch (...) { /* the UI owns error handling */ }
+            }
         }
         if (SUCCEEDED(initialized)) CoUninitialize();
     }

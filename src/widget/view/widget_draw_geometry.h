@@ -46,6 +46,16 @@ struct DrawImagePlacement
     bool valid = false;
 };
 
+struct ImageRasterTransform
+{
+    double m11 = 1.0, m12 = 0.0, m21 = 0.0, m22 = 1.0;
+    double dpiX = 96.0, dpiY = 96.0;
+};
+
+double RequiredImageRasterScale(float sourceWidth, float sourceHeight,
+    float width, float height, DrawImageFit fit,
+    const ImageRasterTransform& transform, bool originalPixels = false) noexcept;
+
 DrawImagePlacement ResolveDrawImagePlacement(float sourceWidth,
     float sourceHeight, const DrawRect& destination, DrawImageFit fit,
     DrawImageAlignment alignment) noexcept;
