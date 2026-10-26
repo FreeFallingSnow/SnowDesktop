@@ -448,8 +448,10 @@ end})
             }
             script.insert(0, "assert(widget.hasFeature(\"resource.image.lazy\"))\n");
             script.insert(0,
-                "assert(not pcall(resource.image,\"stripes\",{lazy=\"yes\"}))\n"
-                "assert(not pcall(resource.image,\"stripes\",{unknown=true}))\n");
+                "for _,options in ipairs({{lazy=\"yes\"},{unknown=true},true,{[1]=true}}) do\n"
+                "  local ok,message=pcall(resource.image,\"stripes\",options)\n"
+                "  assert(not ok and tostring(message):find(\"resource.image: invalidOptions\",1,true))\n"
+                "end\n");
         }
         const auto definition = script.find("return widget.define");
         Check(definition != std::string::npos, "image fixture has a real widget definition");

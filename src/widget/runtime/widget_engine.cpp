@@ -11842,6 +11842,67 @@ static int lua_ResourceAudio(lua_State* L)
     return 1;
 }
 
+// Expected rejections leave this C++ frame normally. The object-free Lua
+// callback raises the error afterwards, outside string/path/optional lifetimes.
+static __declspec(noinline) int AcquirePackageImageResource(lua_State* L,
+    const char* nameRaw, size_t length, bool lazy, const char*& error)
+{
+    const auto reject = [&error](const char* code) { error = code; return 0; };
+    const std::string name(nameRaw, length);
+    const auto declaration = CurrentPackageResource(L, name);
+    if (!declaration)
+        return reject("notDeclared");
+    if (declaration->type != "image")
+        return reject("typeMismatch");
+    auto* state = GetD2D(L);
+    if (!state)
+        return reject("hostUnavailable");
+    const auto existingContentKey =
+        CurrentPackageImageContentKey(L, name);
+    if (existingContentKey)
+    {
+        PackageImageAcquireError validationError = PackageImageAcquireError::None;
+        if (!lazy && !state->packageImageCache.Validate(*existingContentKey, &validationError))
+            return reject(validationError == PackageImageAcquireError::QuotaExceeded ? "quotaExceeded" : "decodeFailed");
+        if (!state->packageImageCache.Find(*existingContentKey) ||
+            (!lazy && state->ctx &&
+                !LoadImageBitmap(state, *existingContentKey)))
+            return reject("unavailable");
+        PushResourceHandle(L, LuaResourceType::Image, name);
+        return 1;
+    }
+    const auto path = CurrentPackageResourcePath(L, name, "image");
+    if (!path)
+        return reject("unavailable");
+    const std::string contentKey = Sha256File(*path);
+    if (contentKey.empty())
+        return reject("unavailable");
+    PackageImageAcquireError acquireError = PackageImageAcquireError::None;
+    if (!state->packageImageCache.Acquire(
+            contentKey, *path, &acquireError, lazy, WidgetPrewarmContentDigest))
+    {
+        return reject(acquireError == PackageImageAcquireError::QuotaExceeded
+                ? "quotaExceeded" :
+            acquireError == PackageImageAcquireError::InvalidInput
+                ? "unavailable" : "decodeFailed");
+    }
+    lua_getfield(L, LUA_REGISTRYINDEX,
+        "__widget_resource_content_keys");
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        (void)state->packageImageCache.Release(contentKey);
+        return reject("hostUnavailable");
+    }
+    lua_pushlstring(L, contentKey.data(), contentKey.size());
+    lua_setfield(L, -2, name.c_str());
+    lua_pop(L, 1);
+    if (!lazy && state->ctx && !LoadImageBitmap(state, contentKey))
+        return reject("deviceUnavailable");
+    PushResourceHandle(L, LuaResourceType::Image, name);
+    return 1;
+}
+
 static int lua_ResourceImage(lua_State* L)
 {
     if (!ResourceCreationAllowed(L))
@@ -11865,61 +11926,9 @@ static int lua_ResourceImage(lua_State* L)
     const char* nameRaw = luaL_checklstring(L, 1, &length);
     if (length == 0 || length > 64)
         return ResourceApiError(L, "resource.image", "invalidName");
-    const std::string name(nameRaw, length);
-    const auto declaration = CurrentPackageResource(L, name);
-    if (!declaration)
-        return ResourceApiError(L, "resource.image", "notDeclared");
-    if (declaration->type != "image")
-        return ResourceApiError(L, "resource.image", "typeMismatch");
-    auto* state = GetD2D(L);
-    if (!state)
-        return ResourceApiError(L, "resource.image", "hostUnavailable");
-    const auto existingContentKey =
-        CurrentPackageImageContentKey(L, name);
-    if (existingContentKey)
-    {
-        PackageImageAcquireError error = PackageImageAcquireError::None;
-        if (!lazy && !state->packageImageCache.Validate(*existingContentKey, &error))
-            return ResourceApiError(L, "resource.image",
-                error == PackageImageAcquireError::QuotaExceeded ? "quotaExceeded" : "decodeFailed");
-        if (!state->packageImageCache.Find(*existingContentKey) ||
-            (!lazy && state->ctx &&
-                !LoadImageBitmap(state, *existingContentKey)))
-            return ResourceApiError(L, "resource.image", "unavailable");
-        PushResourceHandle(L, LuaResourceType::Image, name);
-        return 1;
-    }
-    const auto path = CurrentPackageResourcePath(L, name, "image");
-    if (!path)
-        return ResourceApiError(L, "resource.image", "unavailable");
-    const std::string contentKey = Sha256File(*path);
-    if (contentKey.empty())
-        return ResourceApiError(L, "resource.image", "unavailable");
-    PackageImageAcquireError acquireError = PackageImageAcquireError::None;
-    if (!state->packageImageCache.Acquire(
-            contentKey, *path, &acquireError, lazy, WidgetPrewarmContentDigest))
-    {
-        return ResourceApiError(L, "resource.image",
-            acquireError == PackageImageAcquireError::QuotaExceeded
-                ? "quotaExceeded" :
-            acquireError == PackageImageAcquireError::InvalidInput
-                ? "unavailable" : "decodeFailed");
-    }
-    lua_getfield(L, LUA_REGISTRYINDEX,
-        "__widget_resource_content_keys");
-    if (!lua_istable(L, -1))
-    {
-        lua_pop(L, 1);
-        (void)state->packageImageCache.Release(contentKey);
-        return ResourceApiError(L, "resource.image", "hostUnavailable");
-    }
-    lua_pushlstring(L, contentKey.data(), contentKey.size());
-    lua_setfield(L, -2, name.c_str());
-    lua_pop(L, 1);
-    if (!lazy && state->ctx && !LoadImageBitmap(state, contentKey))
-        return ResourceApiError(L, "resource.image", "deviceUnavailable");
-    PushResourceHandle(L, LuaResourceType::Image, name);
-    return 1;
+    const char* error = nullptr;
+    const int results = AcquirePackageImageResource(L, nameRaw, length, lazy, error);
+    return error ? ResourceApiError(L, "resource.image", error) : results;
 }
 
 static int lua_ResourceFont(lua_State* L)
