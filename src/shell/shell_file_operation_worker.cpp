@@ -1,6 +1,7 @@
 #include "shell_file_operation_worker.h"
 #include "platform/operation_feedback.h"
 #include "shell_file_operation_progress.h"
+#include "shell_file_history.h"
 #include "drag_drop/clipboard_file_operation.h"
 
 #include <objbase.h>
@@ -485,6 +486,25 @@ ShellFileOperationRequest CreateRecycleBinDeleteRequest(
     return request;
 }
 
+ShellFileOperationWorker::ShellFileOperationWorker()
+    : history_(std::make_shared<file_history::History>()) {}
+
+bool ShellFileOperationWorker::CanUndo() const { return history_->CanUndo(); }
+bool ShellFileOperationWorker::CanRedo() const { return history_->CanRedo(); }
+
+bool ShellFileOperationWorker::EnqueueHistory(bool redo,
+    std::shared_ptr<file_history::Result> result, Completion completion)
+{
+    if (!result) return false;
+    return Enqueue(ShellReadRequest{[this, redo, result]() {
+        *result = history_->Apply(redo);
+        if (!result->failedPath.empty())
+            operation_feedback::Report({"app.operation.fileFailed", result->failedPath,
+                static_cast<DWORD>(result->status)});
+        return result->succeeded;
+    }}, std::move(completion));
+}
+
 ShellFileOperationWorker::~ShellFileOperationWorker()
 {
     Stop();
@@ -805,7 +825,7 @@ ShellRenameResult ShellFileOperationWorker::Execute(
 }
 
 bool ShellFileOperationWorker::Execute(
-    const ShellFileOperationRequest& request)
+    const ShellFileOperationRequest& request, std::vector<file_history::Entry>* recycled)
 {
     bool attempted = false;
     std::optional<operation_feedback::Failure> failure;
@@ -854,6 +874,17 @@ bool ShellFileOperationWorker::Execute(
         if (step.function == 0 || step.sources.empty())
             continue;
         attempted = true;
+
+        if (recycled && step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO))
+        {
+            const HRESULT status = file_history::Recycle(step.sources, step.flags, *recycled);
+            if (FAILED(status))
+            {
+                allSucceeded = false;
+                record(incompleteStep(step), static_cast<DWORD>(status));
+            }
+            continue;
+        }
 
         if (request.result && (step.function == FO_COPY || step.function == FO_MOVE))
         {
@@ -1198,6 +1229,7 @@ void ShellFileOperationWorker::Run()
 
         if (auto* rename = std::get_if<ShellRenameRequest>(&task.request))
         {
+            const auto identity = file_history::Identify(rename->sourcePath);
             ShellRenameResult result;
             if (SUCCEEDED(comResult))
                 result = Execute(*rename);
@@ -1206,10 +1238,32 @@ void ShellFileOperationWorker::Run()
                 result.sourcePath = rename->sourcePath;
                 result.status = comResult;
             }
+            if (SUCCEEDED(result.status) && !result.path.empty() &&
+                result.path != result.sourcePath && identity == file_history::Identify(result.path))
+                history_->Record({{file_history::Entry::Kind::Rename,
+                    result.sourcePath, result.path, identity, {}}});
+            else if (SUCCEEDED(result.status) && result.path != result.sourcePath)
+                history_->Clear();
             if (task.renameCompletion)
                 task.renameCompletion(std::move(result));
             continue;
         }
+        if (auto* operation = std::get_if<ShellFileOperationRequest>(&task.request))
+        {
+            file_history::Group recycled;
+            // A non-recorded mutation is a history barrier; Undo must never
+            // skip a newer copy/move/permanent delete and select an older file.
+            const bool onlyRecycling = operation->shortcuts.empty() && operation->exactFileCopies.empty() &&
+                !operation->steps.empty() && std::all_of(operation->steps.begin(), operation->steps.end(),
+                    [](const auto& step) { return step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO); });
+            if (!onlyRecycling) history_->Clear();
+            const bool succeeded = SUCCEEDED(comResult) && Execute(*operation, &recycled);
+            if (onlyRecycling && !recycled.empty()) history_->Record(std::move(recycled));
+            else if (succeeded) history_->Clear();
+            if (task.completion) task.completion(succeeded);
+            continue;
+        }
+        if (std::holds_alternative<ShellDropRequest>(task.request)) history_->Clear();
         const bool succeeded = std::visit(
             [comResult](auto& request) {
                 using Request = std::decay_t<decltype(request)>;

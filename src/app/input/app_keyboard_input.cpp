@@ -369,7 +369,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         return true;
     }
 
-    if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
+    if (ctrl && !alt && (key == 'Z' || key == 'Y') && widgetEngine_ &&
+        !widgetEngine_->HasFocusedHostInput() &&
+        !(GetAsyncKeyState(VK_LWIN) & 0x8000) && !(GetAsyncKeyState(VK_RWIN) & 0x8000))
     {
         size_t selectedLua = static_cast<size_t>(-1);
         bool multipleSelected = false;
@@ -386,6 +388,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
         if (!multipleSelected && selectedLua < widgets_.size())
         {
+            if (repeated) return true;
             const bool redo = key == 'Y' || shift;
             const auto& widgetId = widgets_[selectedLua].id;
             widgetEngine_->EnsureWidgetLoaded(
@@ -412,7 +415,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 RestoreInteractionInputFocus();
                 return true;
             }
+            // A selected Lua component owns this shortcut even when its
+            // logical-slot history is empty; never fall through to file undo.
+            return true;
         }
+        if (std::any_of(widgets_.begin(), widgets_.end(), [](const auto& widget) {
+                return widget.selected && widget.type == DesktopWidgetType::LuaScript;
+            })) return true;
     }
 
     if (widgetEngine_ && !quickNavigationOpen_ &&
@@ -461,6 +470,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     if (win || (alt && key != VK_RETURN)) return false;
     switch (key)
     {
+    case 'Z':
+    case 'Y':
+        if (!ctrl || quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty()) break;
+        if (!repeated && !QueueFileHistory(key == 'Y' || shift)) MessageBeep(MB_ICONWARNING);
+        return true;
     case 'N':
         if (!ctrl || !shift) break;
         handled = true;

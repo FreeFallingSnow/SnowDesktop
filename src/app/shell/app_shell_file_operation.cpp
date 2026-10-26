@@ -3,6 +3,7 @@
 #include "platform/pending_window_message.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
+#include "shell/shell_file_history.h"
 
 #include <atomic>
 #include <new>
@@ -11,6 +12,63 @@
 #include <filesystem>
 
 // Asynchronous path-based Shell file operations.
+
+bool DesktopApp::CanApplyFileHistory(bool redo) const
+{
+    return shellFileOperationInFlight_ == 0 && pendingRenames_.empty() &&
+        !renameController_.IsActive() && !dragSession_.HasContext() &&
+        widgetAction_ == WidgetAction::None && !largeIconGesture_ &&
+        !dragDropController_.IsTransportActive() &&
+        (redo ? shellFileOperationWorker_.CanRedo() : shellFileOperationWorker_.CanUndo());
+}
+
+void DesktopApp::AppendFileHistoryMenu(HMENU menu)
+{
+    const std::wstring undo = std::wstring(_LW("app.menu.undo")) + L"\tCtrl+Z";
+    const std::wstring redo = std::wstring(_LW("app.menu.redo")) + L"\tCtrl+Y";
+    AppendMenuW(menu, MF_STRING | (CanApplyFileHistory(false) ? 0 : MF_GRAYED), kFileUndoCommand, undo.c_str());
+    AppendMenuW(menu, MF_STRING | (CanApplyFileHistory(true) ? 0 : MF_GRAYED), kFileRedoCommand, redo.c_str());
+    SetMenuItemIcon(menu, kFileUndoCommand, L"\uF199", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kFileRedoCommand, L"\uF16E", MenuIconFont::FluentRegular);
+}
+
+bool DesktopApp::QueueFileHistory(bool redo)
+{
+    if (!CanApplyFileHistory(redo)) return false;
+    const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+    if (!window || !IsWindow(window)) return false;
+    auto historyResult = std::make_shared<snowdesktop::file_history::Result>();
+    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
+        false, [this, historyResult](bool) {
+            for (const auto& [from, to] : historyResult->renames)
+            {
+                auto renamed = std::make_shared<snowdesktop::ShellRenameResult>();
+                renamed->status = S_OK;
+                renamed->sourcePath = from;
+                renamed->path = to;
+                // Apply the existing reference migration before the guarded
+                // reload; file history does not restore a stale layout snapshot.
+                pendingRenames_.push_back(std::move(renamed));
+            }
+            if (!historyResult->removed.empty()) RemoveDesktopKeysFromWidgets(historyResult->removed);
+            ApplyPendingRenames();
+            RequestShellRefresh();
+        }};
+    if (!completion) return false;
+    if (!shellFileOperationWorker_.EnqueueHistory(redo, historyResult, [window, completion](bool succeeded) {
+        completion->succeeded = succeeded;
+        if (!PostMessageW(window, kShellFileOperationCompletedMessage, 0, reinterpret_cast<LPARAM>(completion)))
+            delete completion;
+    }))
+    {
+        delete completion;
+        return false;
+    }
+    ++shellFileOperationInFlight_;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
+    return true;
+}
 
 void DesktopApp::ReportPerformedDropEffect(
     IDataObject* dataObject, DWORD effect)

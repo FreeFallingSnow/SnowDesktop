@@ -2780,6 +2780,11 @@ private:
     bool QueueShellFileOperation(
         snowdesktop::ShellFileOperationRequest request,
         FileOperationCompletion completion);
+    static constexpr UINT kFileUndoCommand = 42990;
+    static constexpr UINT kFileRedoCommand = 42991;
+    bool CanApplyFileHistory(bool redo) const;
+    bool QueueFileHistory(bool redo);
+    void AppendFileHistoryMenu(HMENU menu);
     std::optional<DWORD> TryDropShellNamespaceFiles(
         IDataObject* source, POINT point, DWORD keys, DWORD allowedEffects);
     /** @brief 将路径型 IDropTarget 放置加入独立 Shell STA 队列。 */

@@ -1528,6 +1528,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPasteCommand, _LW("app.menu.paste"));
     AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
+    AppendFileHistoryMenu(menu);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -2211,6 +2212,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         switch (command)
         {
+        case kFileUndoCommand: QueueFileHistory(false); break;
+        case kFileRedoCommand: QueueFileHistory(true); break;
         case kContextRefreshCommand: ReloadItems(); break;
         case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
         case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
