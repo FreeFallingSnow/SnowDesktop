@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "另一个 SnowDesktop 进程正在启动或没有响应，暂时无法连接。请稍后重试；不要同时启动多个实例。",
   "app.startup.recoveryStopped": "SnowDesktop 短时间内多次异常退出，已暂停自动重启。选择“仍然启动”可再尝试一次。",
   "app.startup.recoveryFailed": "无法重新启动 SnowDesktop。可以选择“仍然启动”再次尝试，或取消。",
-  "statusBar.showOnlyWhenSummoned.description": "开启后不预留屏幕空间。融合栏的显示与唤起跟随 Dock。"
+  "statusBar.showOnlyWhenSummoned.description": "开启后不预留屏幕空间。融合栏的显示与唤起跟随 Dock。",
+  "app.fileHistory.undoRename": "将撤销重命名：将“{0}”改回“{1}”",
+  "app.fileHistory.redoRename": "将重做重命名：将“{0}”改为“{1}”",
+  "app.fileHistory.undoDelete": "将撤销删除并恢复：{0}",
+  "app.fileHistory.redoDelete": "将重做删除：{0}"
 }

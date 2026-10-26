@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "Outro processo do SnowDesktop está iniciando ou não está respondendo e não pode ser acessado. Tente novamente mais tarde; não execute várias instâncias ao mesmo tempo.",
   "app.startup.recoveryStopped": "O SnowDesktop foi encerrado inesperadamente várias vezes em pouco tempo, então a reinicialização automática foi pausada. Escolha “Iniciar mesmo assim” para tentar mais uma vez.",
   "app.startup.recoveryFailed": "Não foi possível reiniciar o SnowDesktop. Escolha “Iniciar mesmo assim” para tentar novamente ou cancele.",
-  "statusBar.showOnlyWhenSummoned.description": "Quando ativada, a barra não reserva espaço na tela. As barras unificadas seguem as configurações de exibição e acionamento do Dock."
+  "statusBar.showOnlyWhenSummoned.description": "Quando ativada, a barra não reserva espaço na tela. As barras unificadas seguem as configurações de exibição e acionamento do Dock.",
+  "app.fileHistory.undoRename": "A renomeação será desfeita: “{0}” voltará a se chamar “{1}”",
+  "app.fileHistory.redoRename": "A renomeação será refeita: “{0}” passará a se chamar “{1}”",
+  "app.fileHistory.undoDelete": "A exclusão será desfeita para restaurar: {0}",
+  "app.fileHistory.redoDelete": "A exclusão será refeita: {0}"
 }

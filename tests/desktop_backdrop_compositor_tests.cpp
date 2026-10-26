@@ -457,19 +457,19 @@ int CheckNativeTooltipLifecycle()
         snowdesktop::NativeTooltipPlacement::Below, true);
     check(!tooltip.Visible(), "ordinary tooltips remain suppressed during capture");
     tooltip.SetMenuFeedback(true);
-    tooltip.SetTarget("private/menu-history", L"Rename: after.txt → before.txt", {100, 100, 180, 140},
-        snowdesktop::NativeTooltipPlacement::Below, true, L"Undo");
+    tooltip.SetTarget("private/menu-history", L"Will undo rename: change after.txt back to before.txt", {100, 100, 180, 140},
+        snowdesktop::NativeTooltipPlacement::Below, true);
     wchar_t operationText[256]{};
     GetWindowTextW(tooltip.Window(), operationText, static_cast<int>(std::size(operationText)));
     check(tooltip.Visible() && GetCapture() == owner.handle &&
         std::wstring(operationText).find(L"after.txt") != std::wstring::npos &&
         std::wstring(operationText).find(L"before.txt") != std::wstring::npos,
         "menu-owned tooltip exposes the concrete operation while preserving capture");
-    tooltip.SetTarget("private/menu-history-redo", L"Rename: before.txt → after.txt", {100, 100, 180, 140},
-        snowdesktop::NativeTooltipPlacement::Below, true, L"Redo");
+    tooltip.SetTarget("private/menu-history-redo", L"Will redo rename: change before.txt to after.txt", {100, 100, 180, 140},
+        snowdesktop::NativeTooltipPlacement::Below, true);
     GetWindowTextW(tooltip.Window(), operationText, static_cast<int>(std::size(operationText)));
-    check(std::wstring(operationText).find(L"Redo\nRename: before.txt → after.txt") == 0,
-        "switching history actions replaces the tooltip title and direction");
+    check(std::wstring(operationText) == L"Will redo rename: change before.txt to after.txt",
+        "history hint presents the future action without a title or forced line break");
     tooltip.Hide();
     check(!tooltip.Visible() && GetCapture() == owner.handle, "leaving a menu action hides its hint without stealing capture");
     ReleaseCapture();

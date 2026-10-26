@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "다른 SnowDesktop 프로세스가 시작 중이거나 응답하지 않아 연결할 수 없습니다. 잠시 후 다시 시도하고 여러 인스턴스를 동시에 실행하지 마세요.",
   "app.startup.recoveryStopped": "SnowDesktop이 짧은 시간에 여러 번 비정상 종료되어 자동 재시작이 일시 중지되었습니다. '그래도 시작'을 선택하면 한 번 더 시도합니다.",
   "app.startup.recoveryFailed": "SnowDesktop을 다시 시작할 수 없습니다. '그래도 시작'을 선택해 다시 시도하거나 취소하세요.",
-  "statusBar.showOnlyWhenSummoned.description": "켜면 표시줄을 위한 화면 공간을 확보하지 않습니다. 통합 표시줄의 표시 및 호출 방식은 Dock 설정을 따릅니다."
+  "statusBar.showOnlyWhenSummoned.description": "켜면 표시줄을 위한 화면 공간을 확보하지 않습니다. 통합 표시줄의 표시 및 호출 방식은 Dock 설정을 따릅니다.",
+  "app.fileHistory.undoRename": "이름 변경을 실행 취소하여 “{0}”을(를) “{1}”(으)로 되돌립니다",
+  "app.fileHistory.redoRename": "이름 변경을 다시 실행하여 “{0}”을(를) “{1}”(으)로 변경합니다",
+  "app.fileHistory.undoDelete": "삭제를 실행 취소하고 복원합니다: {0}",
+  "app.fileHistory.redoDelete": "삭제를 다시 실행합니다: {0}"
 }

@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "Ein anderer SnowDesktop-Prozess startet gerade oder reagiert nicht und ist nicht erreichbar. Versuchen Sie es später erneut. Starten Sie nicht mehrere Instanzen gleichzeitig.",
   "app.startup.recoveryStopped": "SnowDesktop ist in kurzer Zeit mehrfach abgestürzt. Der automatische Neustart wurde daher angehalten. Wählen Sie „Trotzdem starten“, um es noch einmal zu versuchen.",
   "app.startup.recoveryFailed": "SnowDesktop konnte nicht neu gestartet werden. Wählen Sie „Trotzdem starten“, um es erneut zu versuchen, oder brechen Sie ab.",
-  "statusBar.showOnlyWhenSummoned.description": "Wenn aktiviert, reserviert die Leiste keinen Bildschirmbereich. Zusammengeführte Leisten verwenden die Anzeige- und Einblendeinstellungen des Docks."
+  "statusBar.showOnlyWhenSummoned.description": "Wenn aktiviert, reserviert die Leiste keinen Bildschirmbereich. Zusammengeführte Leisten verwenden die Anzeige- und Einblendeinstellungen des Docks.",
+  "app.fileHistory.undoRename": "Die Umbenennung wird rückgängig gemacht: „{0}“ wird wieder zu „{1}“",
+  "app.fileHistory.redoRename": "Die Umbenennung wird wiederholt: „{0}“ wird in „{1}“ umbenannt",
+  "app.fileHistory.undoDelete": "Die Löschung wird rückgängig gemacht, um Folgendes wiederherzustellen: {0}",
+  "app.fileHistory.redoDelete": "Die Löschung wird wiederholt: {0}"
 }

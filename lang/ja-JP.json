@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "別の SnowDesktop プロセスが起動中、または応答していないため接続できません。しばらく待ってから再試行してください。複数のインスタンスを同時に起動しないでください。",
   "app.startup.recoveryStopped": "SnowDesktop が短時間に繰り返し異常終了したため、自動再起動を一時停止しました。「このまま起動」を選ぶと、もう一度起動を試みます。",
   "app.startup.recoveryFailed": "SnowDesktop を再起動できませんでした。「このまま起動」を選んで再試行するか、キャンセルしてください。",
-  "statusBar.showOnlyWhenSummoned.description": "有効にすると、バー用の画面領域を確保しません。結合バーの表示と呼び出しには Dock の設定が適用されます。"
+  "statusBar.showOnlyWhenSummoned.description": "有効にすると、バー用の画面領域を確保しません。結合バーの表示と呼び出しには Dock の設定が適用されます。",
+  "app.fileHistory.undoRename": "名前の変更を元に戻し、「{0}」を「{1}」に戻します",
+  "app.fileHistory.redoRename": "名前の変更をやり直し、「{0}」を「{1}」に変更します",
+  "app.fileHistory.undoDelete": "削除を元に戻して復元します：{0}",
+  "app.fileHistory.redoDelete": "削除をやり直します：{0}"
 }

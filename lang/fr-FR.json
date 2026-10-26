@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "Un autre processus SnowDesktop est en cours de démarrage ou ne répond pas et reste inaccessible. Réessayez plus tard ; n’exécutez pas plusieurs instances à la fois.",
   "app.startup.recoveryStopped": "SnowDesktop s’est arrêté anormalement plusieurs fois en peu de temps. Le redémarrage automatique est donc suspendu. Choisissez « Démarrer quand même » pour réessayer une fois.",
   "app.startup.recoveryFailed": "SnowDesktop n’a pas pu redémarrer. Choisissez « Démarrer quand même » pour réessayer, ou annulez.",
-  "statusBar.showOnlyWhenSummoned.description": "Lorsque cette option est activée, la barre ne réserve aucun espace à l’écran. Les barres fusionnées suivent les réglages d’affichage et d’activation du Dock."
+  "statusBar.showOnlyWhenSummoned.description": "Lorsque cette option est activée, la barre ne réserve aucun espace à l’écran. Les barres fusionnées suivent les réglages d’affichage et d’activation du Dock.",
+  "app.fileHistory.undoRename": "L’action de renommage sera annulée : « {0} » reprendra le nom « {1} »",
+  "app.fileHistory.redoRename": "Le renommage sera rétabli : « {0} » sera renommé « {1} »",
+  "app.fileHistory.undoDelete": "La suppression sera annulée pour restaurer : {0}",
+  "app.fileHistory.redoDelete": "La suppression sera répétée : {0}"
 }

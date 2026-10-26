@@ -2637,5 +2637,9 @@
   "app.startup.instanceUnavailable": "Another SnowDesktop process is starting or not responding and cannot be reached. Please try again later; do not run multiple instances at once.",
   "app.startup.recoveryStopped": "SnowDesktop has crashed repeatedly in a short time, so automatic restart is paused. Choose Start anyway to try once more.",
   "app.startup.recoveryFailed": "SnowDesktop could not restart. Choose Start anyway to try again, or cancel.",
-  "statusBar.showOnlyWhenSummoned.description": "When enabled, the bar does not reserve screen space. Merged bars follow Dock display and reveal settings."
+  "statusBar.showOnlyWhenSummoned.description": "When enabled, the bar does not reserve screen space. Merged bars follow Dock display and reveal settings.",
+  "app.fileHistory.undoRename": "Will undo rename: change “{0}” back to “{1}”",
+  "app.fileHistory.redoRename": "Will redo rename: change “{0}” to “{1}”",
+  "app.fileHistory.undoDelete": "Will undo deletion and restore: {0}",
+  "app.fileHistory.redoDelete": "Will redo deletion: {0}"
 }

@@ -2041,22 +2041,32 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             if (CanApplyFileHistory(redo) && !description.items.empty())
             {
                 const bool rename = description.kind == snowdesktop::file_history::Entry::Kind::Rename;
-                std::wstring body = rename ? _LW("app.menu.rename") :
-                    redo ? _LW("app.settings.delete") : _LW("app.settings.restore");
-                if (description.count > 1) body += L" (" + std::to_wstring(description.count) + L")";
-                for (const auto& [from, to] : description.items)
+                std::wstring body;
+                if (rename)
                 {
-                    body += L"\n";
-                    body += rename ? std::filesystem::path(from).filename().wstring() : from;
-                    if (rename) body += L" → " + std::filesystem::path(to).filename().wstring();
+                    const auto& [from, to] = description.items.front();
+                    const auto before = std::filesystem::path(from).filename().wstring();
+                    const auto after = std::filesystem::path(to).filename().wstring();
+                    body = redo ? _LFW("app.fileHistory.redoRename", before, after) :
+                        _LFW("app.fileHistory.undoRename", before, after);
                 }
-                if (description.count > description.items.size()) body += L"\n…";
+                else
+                {
+                    std::wstring paths;
+                    if (description.count > 1) paths = L"(" + std::to_wstring(description.count) + L") ";
+                    for (size_t index = 0; index < description.items.size(); ++index)
+                    {
+                        if (index) paths += L"; ";
+                        paths += description.items[index].first;
+                    }
+                    if (description.count > description.items.size()) paths += L"; …";
+                    body = redo ? _LFW("app.fileHistory.redoDelete", paths) :
+                        _LFW("app.fileHistory.undoDelete", paths);
+                }
                 historyTooltip.Configure(snowdesktop::modern_menu::ActiveRootWindow(), dcompDevice_.Get(),
                     dwriteFactory_.Get(), snowdesktop::NativeTooltipAppearance());
                 historyTooltip.SetTarget(redo ? "file_history.redo" : "file_history.undo", std::move(body),
-                    hover.itemScreenRect, snowdesktop::NativeTooltipPlacement::Below, false,
-                    std::wstring(redo ? _LW("app.menu.redo") : _LW("app.menu.undo")) +
-                        (redo ? L" (Ctrl+Y)" : L" (Ctrl+Z)"));
+                    hover.itemScreenRect, snowdesktop::NativeTooltipPlacement::Below);
             }
             else historyTooltip.Hide();
         }
