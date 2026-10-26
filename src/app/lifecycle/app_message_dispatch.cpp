@@ -111,6 +111,36 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
 
+    // A delivered desktop press is already authoritative. Do not ask global
+    // key polling to rediscover it: cross-integrity input can hide that state.
+    if (hwnd == hwnd_ && floatingDockVisible_ &&
+        (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN ||
+         msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK || msg == WM_MBUTTONDBLCLK))
+    {
+        const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        POINT screen = point;
+        ClientToScreen(hwnd_, &screen);
+        RECT preview{};
+        if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+        {
+            preview = dockWindowPreview_->GetBounds();
+            MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&preview), 2);
+        }
+        if (!IsPointInPromotedDockLayer(point) &&
+            !(dockStartMenu_ && dockStartMenu_->ContainsPoint(screen)) &&
+            !(statusBar_ && statusBar_->ContainsPoint(screen)) &&
+            snowdesktop::floating_dock_rules::ShouldDismissForPointerDown(
+                dragSession_.IsActive() || dragDropController_.IsTransportActive(),
+                HasActiveContextMenuSession(), point, RECT{},
+                snowdesktop::floating_dock_rules::DockAssociatedPopupInteractionRect(
+                    popupAnchoredToDock_, floatingPopupCollectionRegion_),
+                preview, quickNavigationOpen_ ? quickNavigationRect_ : RECT{}))
+        {
+            CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        }
+    }
+
     switch (msg)
     {
     case WM_COMMAND:

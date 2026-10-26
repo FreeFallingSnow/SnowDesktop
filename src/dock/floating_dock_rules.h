@@ -134,7 +134,7 @@ template <typename IsApplicationWindow, typename IsDockWindow, typename PlacePai
 bool RestoreDesktopLayer(
     HWND contentWindow, HWND desktopWindow,
     IsApplicationWindow&& isApplicationWindow, IsDockWindow&& isDockWindow,
-    PlacePair&& placePair)
+    PlacePair&& placePair, HWND foregroundFallback = nullptr)
 {
     if (!contentWindow || !IsWindow(contentWindow))
         return false;
@@ -150,6 +150,15 @@ bool RestoreDesktopLayer(
                 contentWindow, desktopWindow, isApplicationWindow, isDockWindow))
             return true;
     }
+    // A rejected/stale lowest anchor must not leave a dismissed Dock over the
+    // application the user just activated. This is a partial placement only:
+    // retain recovery until the complete desktop-order predicate also passes.
+    if (foregroundFallback && IsWindow(foregroundFallback) &&
+        foregroundFallback != contentWindow && !isDockWindow(foregroundFallback) &&
+        (GetWindowLongPtrW(foregroundFallback, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+        isApplicationWindow(foregroundFallback) && placePair(foregroundFallback))
+        return IsDesktopLayerRestored(
+            contentWindow, desktopWindow, isApplicationWindow, isDockWindow);
     return false;
 }
 
@@ -589,6 +598,14 @@ inline bool HasNewPointerButtonPress(
 {
     return pressedSinceLastSample != 0 ||
         (buttonsDown & ~previousButtonsDown) != 0;
+}
+
+inline bool ShouldDismissForForegroundActivation(
+    bool visible, bool foregroundChanged, bool externalForeground,
+    bool windowTransitionActive, bool recentSystemMinimize) noexcept
+{
+    return visible && foregroundChanged && externalForeground &&
+        !windowTransitionActive && !recentSystemMinimize;
 }
 
 inline bool HasPointerButtonActivity(

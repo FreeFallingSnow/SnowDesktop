@@ -6025,6 +6025,15 @@ int main(int argc, char** argv)
     Check(!floatingDock::HasNewPointerButtonPress(
             1, 1, 0),
         "a held pointer button must not repeatedly dismiss");
+    Check(floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, false),
+        "external activation dismisses a summoned Dock even without a readable button-down");
+    Check(!floatingDock::ShouldDismissForForegroundActivation(true, false, true, false, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(true, true, false, false, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(false, true, true, false, false),
+        "unchanged, internal or hidden foreground observations do not invent dismissal");
+    Check(!floatingDock::ShouldDismissForForegroundActivation(true, true, true, true, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, true),
+        "window animation and recent native minimization retain their Dock handoff");
     Check(floatingDock::HasPointerButtonActivity(
               1, 0, 0) &&
             floatingDock::HasPointerButtonActivity(

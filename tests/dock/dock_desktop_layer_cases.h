@@ -98,6 +98,16 @@ void CheckDockDesktopLayerRestoration(Check&& check)
                     check(prepare() && !rules::RestoreDesktopLayer(content, shell, application, owned,
                             [&](HWND) { ++calls; return false; }) && calls == 2,
                         "persistent placement failure remains pending after a bounded attempt");
+                    calls = 0;
+                    check(prepare() && !rules::RestoreDesktopLayer(content, shell, application, owned,
+                            [&](HWND anchor) {
+                                ++calls;
+                                return anchor == upperApplication && place(anchor);
+                            }, upperApplication) && calls == 3 &&
+                            !pair::IsTopmost(content) && above(upperApplication, content) &&
+                            above(content, shell) && !above(lowerApplication, content) &&
+                            (!glass || (!pair::IsTopmost(backdrop) && pair::IsPaired(content, backdrop))),
+                        "a rejected lowest anchor still lowers the dismissed Dock below the active app while full restoration remains pending");
                     check(prepare() && !rules::RestoreDesktopLayer(content, nullptr, application, owned, place) &&
                             above(lowerApplication, content) && !pair::IsTopmost(content) &&
                             rules::RestoreDesktopLayer(content, shell, application, owned, place) && expected(),

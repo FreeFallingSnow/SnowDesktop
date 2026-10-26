@@ -779,6 +779,23 @@ end})
         app->persistentDockHosts_.push_back(std::move(host));
         const HWND popupWindow = create(&popupContext);
         app->floatingPopupHwnd_ = popupWindow;
+        {
+            // The original desktop press must close promotion even when the
+            // global API reports no button. Only that OS query is replaced;
+            // native dispatch and the real close/visibility path still run.
+            InputSafetyImport buttonState("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            inputSafetyPhysicalButton = 0;
+            for (const UINT press : {WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN})
+            {
+                app->persistentDockHosts_.front()->promoted = true;
+                app->floatingDockVisible_ = true;
+                app->HandleMessage(app->hwnd_, press, 0, MAKELPARAM(200, 200));
+                check(!app->persistentDockHosts_.front()->promoted && !app->floatingDockVisible_,
+                    "delivered native desktop presses dismiss Dock without global button state");
+                app->CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapture();
+            }
+        }
         const auto capture = [](HWND window) {
             SetCapture(window);
             if (GetCapture() != window) throw std::runtime_error("input capture fixture setup failed");

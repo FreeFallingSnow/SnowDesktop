@@ -452,7 +452,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             },
             [&host](HWND anchor) {
                 return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
-            });
+            }, GetAncestor(GetForegroundWindow(), GA_ROOT));
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;

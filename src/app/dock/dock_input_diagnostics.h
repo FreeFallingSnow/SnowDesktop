@@ -47,7 +47,7 @@ struct Sample
 {
     SHORT left = 0, right = 0, middle = 0;
     UINT buttons = 0, previous = 0, recent = 0;
-    bool sampled = false, hook = false, cursorKnown = false;
+    bool sampled = false, hook = false, cursorKnown = false, activation = false;
     LONG x = 0, y = 0;
     HWND foreground = nullptr;
     DWORD process = 0, thread = 0;
@@ -145,6 +145,7 @@ private:
             << L" record=" << session.records << L" outcome=" << sample.outcome
             << L" sampled=" << sample.sampled << L" raw=" << sample.left << L',' << sample.right << L',' << sample.middle
             << L" buttons=" << sample.buttons << L" previous=" << sample.previous << L" recent=" << sample.recent
+            << L" activation=" << sample.activation
             << L" hook=" << sample.hook << L" hookDown=" << (sample.downEvent >> 32) << L'/' << (sample.downEvent & 0xffffffffu)
             << L" hookUp=" << (sample.upEvent >> 32) << L'/' << (sample.upEvent & 0xffffffffu)
             << L" foreground=" << sample.foreground << L" foregroundPid=" << sample.process << L" foregroundTid=" << sample.thread

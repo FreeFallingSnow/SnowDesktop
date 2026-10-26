@@ -451,6 +451,29 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
     const ULONGLONG layerNow = GetTickCount64();
     const HWND layerForeground = GetForegroundWindow();
+    bool foregroundChangedWhilePromoted = false;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->promoted || !layerForeground) continue;
+        foregroundChangedWhilePromoted = foregroundChangedWhilePromoted ||
+            (host->desktopLayerForegroundWindow &&
+                host->desktopLayerForegroundWindow != layerForeground);
+        // While promoted this field tracks the activation baseline. Desktop
+        // restoration continues to own it after promotion has ended.
+        host->desktopLayerForegroundWindow = layerForeground;
+    }
+    DWORD foregroundProcess = 0;
+    if (layerForeground) GetWindowThreadProcessId(layerForeground, &foregroundProcess);
+    const ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
+    const bool externalActivation = snowdesktop::floating_dock_rules::
+        ShouldDismissForForegroundActivation(
+            floatingDockVisible_, foregroundChangedWhilePromoted,
+            foregroundProcess != 0 && foregroundProcess != GetCurrentProcessId() &&
+                IsWindowVisible(layerForeground),
+            dockWindowTransition_ && dockWindowTransition_->IsActive(),
+            minimizeTick != 0 && layerNow - minimizeTick <=
+                snowdesktop::floating_dock_rules::kSystemShowDesktopEvidenceWindowMs);
+    trace.sample.activation = externalActivation;
     for (const auto& host : persistentDockHosts_)
     {
         if (host && host->active && host->container &&
@@ -520,7 +543,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     trace.sample.previous = previousButtonsDown;
     trace.sample.recent = pressedSinceLastSample;
     const bool pointerPressed =
-        snowdesktop::floating_dock_rules::
+        externalActivation || snowdesktop::floating_dock_rules::
             HasNewPointerButtonPress(
                 buttonsDown,
                 previousButtonsDown,
