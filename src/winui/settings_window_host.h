@@ -47,6 +47,7 @@ struct SettingsWindowHostOptions
         std::uint64_t revision)>;
 
     std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
+    std::function<void()> contextMenuClosed;
     LocalizeCallback localize;
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;

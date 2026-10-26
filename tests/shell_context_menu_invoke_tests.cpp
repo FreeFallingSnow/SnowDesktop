@@ -4,6 +4,7 @@
 #include "shell/shell_menu_read_projection.h"
 #include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
+#include "shell/shell_service_catalogue_fixture.h"
 #include "shell/shell_extension_attribution.h"
 #include "shell/shell_extension_management.h"
 #include "shell/shell_extension_menu_items.h"
@@ -2837,8 +2838,8 @@ void TestPairedCommandRefresh()
     auto projectedRequest = request;
     projectedRequest.visibleMenuProviders = ext::MenuReadPolicy(prefs, ext::Category::Objects);
     const auto ordinaryDisk = disk.Find(disk.Capture(projectedRequest));
-    Expect(ordinaryDisk && ordinaryDisk->entries.size() == 1 && ordinaryDisk->entries.front().label == L"Inspect",
-        "the disk snapshot preserves ordinary rows and cannot restore the stale pin state");
+    Expect(!ordinaryDisk,
+        "unproven shortcut display rows cannot persist an ordinary snapshot or restore stale pin state");
     Expect(!disk.Find(disk.Capture(request)),
         "the projected ordinary snapshot cannot be restored as a complete menu query");
     hold = false;
@@ -2970,7 +2971,7 @@ void TestInitialSnapshotPersistence(int mode = 0)
             void Now() { if (!released) { released = true; promise.set_value(); } }
             ~Release() { Now(); }
         } cleanup{release};
-        service.Configure(preferences); service.Query(selected);
+        service.Configure(preferences); service.Inspect(); service.Query(selected);
         PumpUntil([&] { return reads > 0 && polls > 0 && service.View(selected).snapshot.has_value(); },
             "known commands publish while initial inventory is still blocked");
         Expect(queries == 1 && !service.View(selected).pending,
@@ -3003,13 +3004,23 @@ void TestInitialSnapshotPersistence(int mode = 0)
     }
     const auto beforeReload = queries.load();
     {
-        ext::MenuService restored(temp.path / L"cache", factory, inventory);
+        ext::MenuService restored(temp.path / L"cache", factory, inventory, {}, {},
+            [&](const auto &seeds) { return shell_service_fixture::Sources(inventory(), seeds); });
         restored.Configure(preferences); restored.Query(selected);
         PumpUntil([&] { auto view = restored.View(selected); return view.snapshot && !view.pending; },
             "reload a verified exact-object snapshot from the durable cache");
-        Expect(queries == beforeReload && restored.MenuDisplay(selected, preferences).snapshot.has_value(),
-            "a first query preceding catalogue completion remains reusable after service reconstruction");
+        Expect(queries == beforeReload + 1 && restored.MenuDisplay(selected, preferences).snapshot.has_value(),
+            "an ordinary dependency-zero result cannot acquire full-inventory disk proof after publication");
         restored.Shutdown();
+    }
+    {
+        ext::MenuService restored(temp.path / L"cache", factory, inventory, {}, {},
+            [&](const auto &seeds) { return shell_service_fixture::Sources(inventory(), seeds); });
+        restored.Configure(preferences); restored.Query(selected);
+        PumpUntil([&] { auto view = restored.View(selected); return view.snapshot && !view.pending; },
+            "reload a snapshot issued after exact-source verification");
+        Expect(queries == beforeReload + 1,
+            "a current exact-source proof restores a durable snapshot without querying its helper");
     }
     std::cout << "Initial snapshot persistence mode=" << mode << " queries=" << queries.load() << std::endl;
 }
@@ -3068,20 +3079,12 @@ void TestFileSnapshotNotificationReuse()
             "save private shortcut for cache identity verification");
     };
     saveLink(text);
-    std::atomic<unsigned> scans = 0, queries = 0;
+    std::atomic<unsigned> scans = 0, fullScans = 0, sourceProbes = 0, queries = 0;
     std::atomic<bool> decodedIcon = false;
-    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
-        if (target.paths.empty() || std::filesystem::path(target.paths.front()).parent_path() != temp.path)
-            return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
-        ++queries;
-        ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
-        entry.label = L"Cached action"; entry.token = 42;
-        return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
-    }, [&] {
-        ++scans;
-        auto catalogue = ext::ReadCatalogue(registry.key, false);
-        // Model the observed real scanner failure: an unchanged provider icon
-        // sometimes decodes only on a later scan. Only presentation data varies.
+    const auto cachePath = temp.path / L"cache";
+    shell_service_fixture::SeedMetadata(cachePath, ext::ReadCatalogue(registry.key, false));
+    const auto decorateCatalogue = [&](ext::Catalogue catalogue) {
+        // Only presentation data varies; exact command proof remains stable.
         if (decodedIcon)
         {
             for (auto &row : catalogue.rows)
@@ -3093,11 +3096,30 @@ void TestFileSnapshotNotificationReuse()
             catalogue.revision ^= 0x35ab42ull;
         }
         return catalogue;
+    };
+    ext::MenuService service(cachePath, [&](const ext::Request &target) {
+        if (!target.sourceClsid.empty()) ++sourceProbes;
+        if (target.paths.empty() || !target.sourceClsid.empty() ||
+            std::filesystem::path(target.paths.front()).parent_path() != temp.path)
+            return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        ++queries;
+        ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
+        entry.label = L"Cached action"; entry.token = 42;
+        return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
+    }, [&] {
+        ++fullScans;
+        return decorateCatalogue(ext::ReadCatalogue(registry.key, false));
+    }, {}, {}, [&](const auto &seeds) {
+        ++scans;
+        return decorateCatalogue(ext::ReadCatalogueSources(seeds, nullptr, registry.key));
     });
     ext::Preferences preferences;
-    ext::SetCommon(preferences, "verb:cache-reuse", ext::Category::Objects, true);
-    service.Configure(preferences); service.Inspect();
-    PumpUntil([&] { return scans != 0 && !service.Inspect().scanning; }, "establish a live file cache registration baseline");
+    ext::SetCommon(preferences, "reg:*\\shell\\cache-reuse", ext::Category::Objects, true);
+    ext::SetOverride(preferences, "reg:*\\shell\\cache-reuse", ext::Context::Folder, ext::Visibility::Hide);
+    ext::SetCommon(preferences, "reg:directory\\shell\\cache-reuse", ext::Category::Objects, true);
+    ext::SetOverride(preferences, "reg:directory\\shell\\cache-reuse", ext::Context::File, ext::Visibility::Hide);
+    service.Configure(preferences);
+    PumpUntil([&] { return scans != 0; }, "establish an exact selected-source registration baseline");
     DWORD sequence = 0;
     auto notify = [&] {
         ++sequence;
@@ -3106,8 +3128,7 @@ void TestFileSnapshotNotificationReuse()
             "emit an unrelated real Classes notification");
     };
     const std::vector<std::vector<std::wstring>> selections = {
-        {text.wstring()}, {image.wstring()}, {shortcut.wstring()}, {folder.wstring()},
-        {text.wstring(), image.wstring()}, {shortcut.wstring(), folder.wstring()}};
+        {text.wstring()}, {image.wstring()}, {folder.wstring()}, {text.wstring(), image.wstring()}};
     unsigned caseNumber = 0;
     for (const auto &paths : selections) {
         ext::Request selected; selected.paths = paths;
@@ -3128,9 +3149,9 @@ void TestFileSnapshotNotificationReuse()
         PumpUntil([&] { return service.View(selected).revision > revision; }, "observe notification invalidation before reopening");
         service.Query(selected);
         PumpUntil([&] { auto view = service.View(selected); return scans > previousScans &&
-            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify unchanged registrations before reusing file cache");
+            view.snapshot && !view.pending; }, "verify unchanged registrations before reusing file cache");
         Expect(queries == before + 1 && service.MenuDisplay(selected, preferences).snapshot.has_value(),
-            "unrelated Classes noise never launches another file or shortcut query");
+            "unrelated Classes noise never launches another proven file or folder query");
         const auto visualRevision = service.View(selected).revision;
         const auto visualScans = scans.load();
         decodedIcon = !decodedIcon.load();
@@ -3138,9 +3159,9 @@ void TestFileSnapshotNotificationReuse()
         PumpUntil([&] { return service.View(selected).revision > visualRevision; }, "observe an icon-only catalogue update");
         service.Query(selected);
         PumpUntil([&] { auto view = service.View(selected); return scans > visualScans &&
-            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify icon-only changes without another native query");
+            view.snapshot && !view.pending; }, "verify icon-only changes without another native query");
         Expect(queries == before + 1,
-            "ICON_ONLY_COMMAND_PROOF: decoded icon fluctuations cannot discard file or shortcut commands");
+            "ICON_ONLY_COMMAND_PROOF: decoded icon fluctuations cannot discard proven file or folder commands");
         caption((++caseNumber % 2) ? L"Changed action A" : L"Changed action B");
         const auto currentRevision = service.View(selected).revision;
         notify();
@@ -3149,8 +3170,7 @@ void TestFileSnapshotNotificationReuse()
         PumpUntil([&] { auto view = service.View(selected); return queries >= before + 2 && view.snapshot && !view.pending; },
             "a relevant registration mutation refreshes the menu");
         Expect(queries == before + 2, "relevant registration mutation dispatches exactly one fresh query");
-        if (paths.front() == shortcut.wstring()) saveLink(caseNumber % 2 ? folder : image);
-        else {
+        {
             const auto attributes = GetFileAttributesW(paths.front().c_str());
             Expect(attributes != INVALID_FILE_ATTRIBUTES && SetFileAttributesW(paths.front().c_str(), attributes ^ FILE_ATTRIBUTE_HIDDEN),
                 "change a private selected file or folder attribute");
@@ -3169,7 +3189,7 @@ void TestFileSnapshotNotificationReuse()
         PumpUntil([&] { return service.View(selected).revision > forcedRevision; }, "observe noise after an explicit refresh");
         service.Query(selected);
         PumpUntil([&] { auto view = service.View(selected); return scans > forcedScans &&
-            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
+            view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
         Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
     }
     ext::Request assetSelection; assetSelection.paths = {text.wstring()};
@@ -3182,16 +3202,47 @@ void TestFileSnapshotNotificationReuse()
     notify();
     PumpUntil([&] { return service.View(assetSelection).revision > assetRevision; }, "observe local command asset verification");
     service.Query(assetSelection);
-    PumpUntil([&] { auto view = service.View(assetSelection); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+    PumpUntil([&] { auto view = service.View(assetSelection); return view.snapshot && !view.pending; },
         "refresh a command after its executable changes with unchanged registration text");
     Expect(queries == assetQueries + 1,
         "a real local executable mutation still invalidates command proof when decoded icons are ignored");
-    const auto beforeTargetChange = queries.load();
+    // A shared verb with multiple possible owners remains unknown for the
+    // ordinary mixed shortcut root, and therefore carries no durable proof.
+    preferences = {};
+    ext::SetCommon(preferences, "verb:cache-reuse", ext::Category::Objects, true);
+    service.Configure(preferences);
     saveLink(text);
     ext::Request linked; linked.paths = {shortcut.wstring()};
-    service.Query(linked);
-    PumpUntil([&] { auto view = service.View(linked); return queries > beforeTargetChange && view.snapshot && !view.pending; },
-        "warm the changed shortcut target before changing its registrations");
+    for (const auto &paths : std::vector<std::vector<std::wstring>>{
+        {shortcut.wstring()}, {shortcut.wstring(), folder.wstring()}})
+    {
+        auto unproven = linked; unproven.paths = paths;
+        auto before = queries.load();
+        service.Query(unproven);
+        PumpUntil([&] { auto view = service.View(unproven); return queries > before && view.snapshot && !view.pending; },
+            "query an unproven shortcut or mixed selection");
+        before = queries.load();
+        const auto noiseRevision = service.View(unproven).revision;
+        notify();
+        PumpUntil([&] { return service.View(unproven).revision > noiseRevision; }, "observe noise for an unproven shortcut root");
+        service.Query(unproven);
+        PumpUntil([&] { auto view = service.View(unproven); return view.snapshot && !view.pending && queries > before; },
+            "an unproven shortcut uses a fresh foreground query after notification");
+        Expect(queries == before + 1 && fullScans == 0 && sourceProbes == 0,
+            "ordinary shortcut fallback never borrows full inventory proof or starts full discovery");
+        before = queries.load();
+        saveLink(paths.size() == 1 ? folder : image);
+        service.Query(unproven);
+        PumpUntil([&] { auto view = service.View(unproven); return queries > before && view.snapshot && !view.pending; },
+            "a real shortcut target mutation refreshes its exact selection");
+        Expect(queries == before + 1, "shortcut target mutation dispatches exactly one fresh foreground query");
+    }
+    saveLink(text);
+    // A newly introduced, unselected target command belongs to the complete
+    // management view. Its discovery is explicitly requested here.
+    service.Inspect(linked, true);
+    PumpUntil([&] { return !service.Inspect(linked).scanning && service.View(linked).snapshot.has_value(); },
+        "establish a complete management view for shortcut target registrations");
     const auto shortcutQueries = queries.load();
     const auto shortcutRevision = service.View(linked).revision;
     HKEY targetAction = nullptr;
@@ -3212,8 +3263,8 @@ void TestFileSnapshotNotificationReuse()
     Expect(targetCommandStatus == ERROR_SUCCESS, "write the shortcut target command");
     notify();
     PumpUntil([&] { return service.View(linked).revision > shortcutRevision; }, "observe a registration change outside the .lnk type");
-    service.Query(linked);
-    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+    service.Inspect(linked, true);
+    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect(linked).scanning && view.snapshot && !view.pending; },
         "resolve registrations affecting the shortcut target");
     std::cout << "Shortcut target registration: before=" << shortcutQueries << " after=" << queries.load() << std::endl;
     Expect(queries == shortcutQueries + 1, "a shortcut cannot reuse a snapshot after its target type gains a command");
@@ -3316,7 +3367,7 @@ void TestIdleCatalogueInvalidation()
         ++scans; return result;
     });
     ext::Preferences prefs; ext::SetCommon(prefs, "reg:cpu-test", ext::Category::Objects, true);
-    service.Configure(prefs);
+    service.Configure(prefs); service.Inspect();
     const auto target = directory.path / L"selected.cpu-test"; std::ofstream(target) << "fixture";
     ext::Request request; request.paths = {target.wstring()};
     service.Query(request);
@@ -3336,7 +3387,7 @@ void TestIdleCatalogueInvalidation()
         "an open popup retains published data while a new popup cannot reuse the stale cache");
     Sleep(100);
     Expect(scans == baseline, "an idle registry notification does not start a complete catalogue scan");
-    service.Query(request);
+    service.Query(request, ext::QueryPriority::Inspect);
     PumpUntil([&] { return scans > baseline && service.View(request).snapshot &&
         service.View(request).snapshot->entries.front().label == L"2"; }, "the next menu query refreshes the stale catalogue and command snapshot");
     PumpUntil([&] { return !service.Inspect().scanning; },
@@ -3479,12 +3530,22 @@ void TestPendingCachedClick()
     ext::MenuSnapshotCache cache(cachePath);
     Expect(cache.Store(cache.Capture(request), cached), "seed a private disk snapshot");
     {
-        ext::MenuService service(cachePath);
-        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "startup restores the exact selection from disk on the service worker");
+        unsigned queries = 0;
+        ext::MenuService service(cachePath, [&](const ext::Request &target) {
+            // A completed private query seeds display memory. All subsequent
+            // refresh/invocation attempts retain the real child transport.
+            if (++queries == 1) return ext::QueryWork{[cached] { return cached; }, {}};
+            auto session = std::make_shared<ext::Session>(target);
+            return ext::QueryWork{[session] { return session->Poll(); },
+                [session](UINT token, POINT point) { session->Invoke(token, point); }};
+        }, [] { return ext::Catalogue{}; });
+        Expect(!service.View(request).snapshot, "startup does not warm an unverified dependency-zero disk row");
+        service.Query(request);
+        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "a fresh query seeds the exact selection in memory");
         ext::Preferences prefs; ext::SetHidden(prefs, "verb:cached", ext::Context::File, false);
         ext::Presentation presentation(request, prefs, L"", L"", service);
         std::vector<menu::Item> items; menu::Options options; presentation.Attach(items, options, 0);
-        Expect(items.size() == 1, "disk-restored snapshot is immediately available to popup");
+        Expect(items.size() == 1, "a freshly queried snapshot is immediately available to popup");
         service.Query(request, ext::QueryPriority::Menu, true);
         PumpUntil([&] { return !service.View(request).error.empty(); }, "controlled failed refresh completes");
         Expect(service.View(request).snapshot.has_value() && !options.pollItems, "failed query preserves both snapshot and frozen popup");
@@ -3754,6 +3815,7 @@ void TestInitialDiscoveryDoesNotBlockPopup()
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:initial-probe", ext::Category::Objects, true);
     service.Configure(prefs);
+    service.Inspect();
     const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
     service.Query(selected);
     PumpUntil([&] { return replyReady.load(); }, "selected helper has returned its ready reply");
@@ -3795,6 +3857,7 @@ void TestMenuDisplayAttributionSnapshot()
     ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
     ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
     service.Configure(prefs);
+    service.Inspect();
     PumpUntil([&] { return entered.load(); }, "initial attribution worker starts");
     service.Query(selected);
     PumpUntil([&] { return service.View(selected).snapshot.has_value(); }, "native rows arrive before attribution");
@@ -3861,6 +3924,7 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
     ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
     ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
     service.Configure(prefs);
+    service.Inspect();
     const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
     if (warmed)
     {
@@ -3916,7 +3980,6 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
 void TestLaterRegistryNoiseDoesNotExtendPublication()
 {
     namespace ext = snowdesktop::shell_extensions;
-    namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
     const auto path = L"Software\\Classes\\SnowDesktopBoundaryProbe-" + temp.path.filename().wstring();
     struct Fixture
@@ -4034,10 +4097,7 @@ void TestLaterRegistryNoiseDoesNotExtendPublication()
     service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; },
               "initial inventory settles before the noise-boundary experiment");
-    ext::Presentation popup(selected, prefs, L"", L"", service);
-    std::vector<menu::Item> items;
-    menu::Options options;
-    popup.Attach(items, options, 0);
+    service.Query(selected, ext::QueryPriority::Inspect);
     PumpUntil([&] { return replyReady.load(); }, "first helper reply is ready under the blocked verification");
     service.Query(proof, ext::QueryPriority::Menu, true);
     PumpUntil([&] { return proofEntered.load(); }, "second ordinary slot crosses the ready reply boundary");
@@ -4057,9 +4117,9 @@ void TestLaterRegistryNoiseDoesNotExtendPublication()
     notify(3);
     PumpUntil([&] { return service.View(selected).revision > published.revision; },
               "post-publication notification reaches the current popup");
-    if (auto next = options.pollItems(items, true))
-        items = std::move(*next);
-    const bool visible = items.size() == 1 && items.front().label == L"Extra action";
+    const auto retained = service.MenuDisplay(selected, prefs, true);
+    const bool visible = retained.snapshot && retained.snapshot->entries.size() == 1 &&
+        retained.snapshot->entries.front().label == L"Extra action";
     const bool newPopupMisses = !service.MenuDisplay(selected, prefs).snapshot;
     secondRelease.set_value();
     proofReleased = true;
@@ -4101,7 +4161,7 @@ void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool perma
     ext::Request request;
     request.paths = {(temp.path / L"selected.txt").wstring()};
     std::ofstream(temp.path / L"selected.txt") << "private";
-    std::atomic<unsigned> queries = 0;
+    std::atomic<unsigned> queries = 0, fullReads = 0;
     ext::MenuService *observed = nullptr;
     ext::MenuService service(
         temp.path / L"cache",
@@ -4141,6 +4201,7 @@ void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool perma
         },
         [&]
         {
+            ++fullReads;
             ext::Catalogue c;
             if (failedScan && queries > 0 && (permanentFailure || queries == 1))
                 return c;
@@ -4169,21 +4230,20 @@ void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool perma
                 if (auto next = options.pollItems(items, true))
                     items = std::move(*next);
             return options.pollItemsFinished && options.pollItemsFinished() &&
-                   ((failedScan && permanentFailure) || !items.empty());
+                   !items.empty();
         },
         "popup eventually receives the real scheduler publication after noise stops");
 
-    Expect(queries == (failedScan ? 2u : 1u), "unrelated cache verification does not repeat successful queries and "
-                                              "failed verification receives one bounded recovery");
-    Expect(items.empty() == (failedScan && permanentFailure),
-           "transient inventory failure recovers visible items and permanent failure finishes without unbounded retry");
+    Expect(queries == 1 && fullReads == 0,
+           "ordinary popup notification handling never launches full inventory verification or repeats a successful helper");
+    Expect(items.size() == 1,
+           "an unavailable global inventory cannot withhold a successful ordinary foreground result");
 }
 // A later dispatch proves the ready reply has reached its publication boundary.
 // Real registration verification is held there; the popup must remain pending.
 void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = false)
 {
     namespace ext = snowdesktop::shell_extensions;
-    namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
     const auto path = L"Software\\Classes\\SnowDesktopVerifyProbe-" + temp.path.filename().wstring();
     struct Fixture
@@ -4282,10 +4342,9 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
     service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; },
               "initial inventory/discovery completes before a revision changes");
-    ext::Presentation popup(selected, prefs, L"", L"", service);
-    std::vector<menu::Item> items;
-    menu::Options options;
-    popup.Attach(items, options, 0);
+    // Complete global registration proof belongs to the explicit management
+    // view. Ordinary popup progress is exercised independently above.
+    service.Query(selected, ext::QueryPriority::Inspect);
     PumpUntil([&] { return firstReplyReady.load(); },
               "old helper result becomes available during blocked verification");
     service.Query(proof);
@@ -4302,26 +4361,21 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
         }
     }
     const auto before = service.View(selected);
-    if (auto updated = options.pollItems(items, true))
-        items = std::move(*updated);
     {
         std::lock_guard lock(gateMutex);
         release = true;
     }
     gate.notify_one();
     PumpUntil(
-        [&]
-        {
-            if (auto updated = options.pollItems(items, true))
-                items = std::move(*updated);
-            return options.pollItemsFinished();
-        },
-        "popup completes after registration verification");
+        [&] { return !service.View(selected).pending; },
+        "management completes after registration verification");
     Expect(!scanTimedOut, "verification gate completes without a timeout");
     Expect(!before.snapshot && before.pending,
-           "a ready helper result must await registration verification before completing a popup");
-    Expect(queries == 2 && items.size() == 1 && items.front().label == L"18",
-           "a changed registration re-queries once and publishes the current action in the same popup");
+           "a ready management result must await its complete registration verification");
+    const auto after = service.View(selected);
+    Expect(queries == 2 && after.snapshot && after.snapshot->entries.size() == 1 &&
+        after.snapshot->entries.front().label == L"18",
+           "a changed registration re-queries once and publishes the current management action");
 }
 // Only the helper boundary fails. The real popup, backoff and scheduler must
 // recover once, and a persistent failure must finish without a retry loop.
@@ -4407,7 +4461,7 @@ void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensi
     ext::SetCommon(preferences, registrationId, ext::CategoryOf(context), true);
     service.Configure(preferences); service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; }, "initial live folder inventory is ready");
-    service.Query(selected, mode == 4 ? ext::QueryPriority::Execute : ext::QueryPriority::Menu);
+    service.Query(selected, ext::QueryPriority::Inspect);
     PumpUntil([&] { return queries.load() == 1; }, "folder native query starts once");
     const auto before = service.View(selected).revision;
     if (mode == 1) {
@@ -4544,7 +4598,7 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
     ext::SetCommon(preferences, registration, ext::Category::Background, true);
     service.Configure(preferences); service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; }, "initial background inventory establishes live proof");
-    service.Query(selected);
+    service.Query(selected, ext::QueryPriority::Inspect);
     PumpUntil([&] { auto view = service.View(selected); return !view.pending && view.snapshot.has_value(); },
               "previous native snapshot is ready");
     auto before = service.View(selected).revision;
@@ -4562,7 +4616,7 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
     auto opened = selected;
     if (mode == 5) service.Invalidate(selected);
     if (mode == 7) opened.extended = true;
-    service.Query(opened);
+    service.Query(opened, ext::QueryPriority::Inspect);
     PumpUntil([&] { return queries >= 2 && blocked; }, "new native query and full scan are independently held");
     if (mode == 0 || mode == 1 || mode == 2 || mode == 6)
         PumpUntil([&] { return scopeFinished > 0; }, "background proof runs before stalled native reply");
@@ -4571,15 +4625,16 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
         ext::SetCommon(preferences, registration, ext::Category::Background, false);
         service.Configure(preferences);
     }
-    ext::Presentation presentation(opened, preferences, L"", L"", service);
-    std::vector<snowdesktop::modern_menu::Item> items;
-    snowdesktop::modern_menu::Options options;
-    presentation.Attach(items, options, 7);
+    // This is a complete management snapshot. Observe the production display
+    // projection directly; constructing a normal popup would intentionally
+    // request a separate, filtered query with a different ownership lifetime.
+    std::vector<ext::Entry> items;
     auto poll = [&]
     {
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
-        if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        const auto display = service.MenuDisplay(opened, preferences);
+        items = display.snapshot ? display.snapshot->entries : std::vector<ext::Entry>{};
     };
     if (mode == 0)
     {
@@ -4770,14 +4825,14 @@ void TestPopupQueryFailureRecovery(bool background, bool permanent)
     service.Configure(prefs);
     if (background)
     {
-        service.Query(request, ext::QueryPriority::Prewarm, true);
+        service.Query(request, ext::QueryPriority::Menu, true);
         PumpUntil(
             [&]
             {
                 auto view = service.View(request);
                 return !view.pending && !view.error.empty();
             },
-            "background query fails before popup opens");
+            "an earlier explicit menu query fails before the next popup opens");
     }
     ext::Presentation popup(request, prefs, L"", L"", service);
     std::vector<menu::Item> items;
@@ -5045,7 +5100,7 @@ void TestBackgroundQueriesReserveMenuSlot()
             if (background && !release) return {};
             return reply;
         }, {}};
-    }, [] { return ext::Catalogue{}; });
+    }, [] { ext::Catalogue catalogue; catalogue.revision = 1; return catalogue; });
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
     ext::SetCommon(prefs, "state:start-pin", ext::Category::Objects, true);
@@ -5086,8 +5141,6 @@ void TestVisibilityScheduling()
         entry.token = 71; reply.entries.push_back(entry);
     }
     const auto cachePath = temp.path / L"cache";
-    ext::MenuSnapshotCache cache(cachePath);
-    Expect(cache.Store(cache.Capture(request), reply, ext::MenuSnapshotCache::Now() - 60000), "seed an older valid display snapshot");
     std::mutex mutex;
     std::vector<ext::Request> launched;
     auto factory = [&](const ext::Request &target) {
@@ -5095,8 +5148,11 @@ void TestVisibilityScheduling()
         return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {}};
     };
     ext::MenuService service(cachePath, factory, [] { ext::Catalogue c; c.revision = 1; return c; });
+    service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return view.snapshot && !view.pending; }, "seed raw display memory through a completed query");
+    { std::lock_guard lock(mutex); launched.clear(); }
     service.Configure({});
-    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "restore raw cached commands while all switches are off");
+    Expect(service.View(request).snapshot.has_value(), "all-off rules retain completed display memory without warming disk rows");
     ext::Preferences prefs; ext::SetCommon(prefs, "a", ext::Category::Objects, true);
     service.Configure(prefs);
     ext::Preferences stale; ext::SetCommon(stale, "b", ext::Category::Objects, true);
@@ -5240,6 +5296,7 @@ void TestKnownScopeQueryPolicy()
     catalogue.rows.push_back(registration);
     registration.id = "system-disabled"; registration.systemEnabled = false; registration.types = {L".txt"};
     catalogue.rows.push_back(registration);
+    shell_service_fixture::SeedMetadata(temp.path / L"cache", catalogue);
     std::atomic<int> starts = 0;
     std::atomic<bool> ready = false;
     ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
@@ -5249,7 +5306,8 @@ void TestKnownScopeQueryPolicy()
             ext::Reply reply; reply.ok = true; ext::Entry e;
             e.provider = "verb:image"; e.key = "image"; e.label = L"Image command"; reply.entries = {e}; return reply;
         }, {}};
-    }, [catalogue] { return catalogue; });
+    }, [catalogue] { return catalogue; }, {}, {},
+       [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
     ext::Preferences prefs;
     ext::SetCommon(prefs, "image-action", ext::Category::Objects, true);
     ext::SetCommon(prefs, "system-disabled", ext::Category::Objects, true);
@@ -5260,12 +5318,16 @@ void TestKnownScopeQueryPolicy()
     std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
     PumpUntil([&] { return starts == 1; }, "eligible first uncached popup queries dynamically");
     Expect(bool(options.pollItems) && items.empty(), "uncached query starts without a loading placeholder");
-    service.Configure({}); ready = true;
-    PumpUntil([&] { return service.View(image).snapshot.has_value(); }, "valid in-flight result can warm cache after disable");
+    service.Configure({});
+    PumpUntil([&] { return !service.View(image).pending; }, "all-off rules retire unaccepted display work");
+    ready = true;
+    Expect(!service.View(image).snapshot, "disabled display work cannot warm an unseen snapshot");
     const auto filled = options.pollItems(items, true);
     Expect(filled && filled->empty() && starts == 1, "first-load completion uses new hidden settings and never queries unrelated text handlers");
-    service.Configure(prefs);
-    Expect(service.MenuDisplay(image, {}).snapshot->entries.size() == 1, "reenabling applies immediately to the raw warmed cache");
+    service.Configure(prefs); service.Query(image);
+    PumpUntil([&] { return service.MenuDisplay(image, {}).snapshot.has_value(); }, "reenabling requests a fresh eligible image result");
+    Expect(starts == 2 && service.MenuDisplay(image, {}).snapshot->entries.size() == 1,
+        "reenabling never presents the discarded disabled query as verified cache");
 }
 
 void TestSelectionScopes()

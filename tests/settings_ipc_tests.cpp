@@ -1,4 +1,5 @@
 #include "settings/settings_ipc_channel.h"
+#include "settings/settings_ipc_services.h"
 #include "settings/settings_ipc_values.h"
 #include "settings/icon_library_ipc_paging.h"
 #include "system/status_bar/status_bar_appearance.h"
@@ -868,6 +869,85 @@ void TestChannel()
     Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
 }
 
+void TestContextMenuInspectionLifetime()
+{
+    HANDLE clientRead = nullptr, serverWrite = nullptr, serverRead = nullptr, clientWrite = nullptr;
+    if (!CreatePipe(&clientRead, &serverWrite, nullptr, 0))
+        throw std::runtime_error("menu inspection pipe creation failed");
+    if (!CreatePipe(&serverRead, &clientWrite, nullptr, 0))
+    {
+        CloseHandle(clientRead); CloseHandle(serverWrite);
+        throw std::runtime_error("menu inspection reply pipe creation failed");
+    }
+    Channel client;
+    client.Open(clientRead, clientWrite, CurrentProcessHandle());
+    std::promise<bool> ready;
+    std::atomic<bool> hostFailed = false;
+    std::thread host([&] {
+        try
+        {
+            Channel server;
+            server.Open(serverRead, serverWrite, CurrentProcessHandle());
+            bool active = false;
+            unsigned inspections = 0, closures = 0;
+            ContextMenuInspectionCallbacks callbacks;
+            callbacks.inspect = [&](const snowdesktop::shell_extensions::Request& request, bool refresh) {
+                active = true;
+                snowdesktop::shell_extensions::CatalogueView view;
+                view.selection = request;
+                view.menu.revision = ++inspections;
+                view.menu.pending = refresh;
+                view.catalogue.revision = closures;
+                return view;
+            };
+            callbacks.closed = [&] { active = false; ++closures; };
+            BindContextMenuInspection(server, std::move(callbacks));
+            server.Bind<std::pair<bool, unsigned>>("test.menu.state", [&] { return std::pair{active, closures}; });
+            server.Bind<void>("test.menu.exit", [] { PostQuitMessage(0); });
+            server.SetDisconnected([] { PostQuitMessage(0); });
+            ready.set_value(true);
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        }
+        catch (...)
+        {
+            hostFailed = true;
+            try { ready.set_value(false); } catch (...) {}
+        }
+    });
+    const bool started = ready.get_future().get();
+    try
+    {
+        Check(started, "the real menu-page backend pipe becomes ready");
+        if (started)
+        {
+            auto remote = CreateContextMenuInspectionProxy(client);
+            snowdesktop::shell_extensions::Request request;
+            request.paths = {L"C:\\Private\\菜单范围"};
+            request.context = snowdesktop::shell_extensions::Context::Folder;
+            const auto first = remote.inspect(request, true);
+            Check(first.selection == request && first.menu.revision == 1 && first.menu.pending && first.catalogue.revision == 0,
+                "the production remote menu options preserve selection and refresh intent through actual pipes");
+            remote.closed();
+            Check(client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{false, 1u},
+                "leaving the menu page delivers its close notification to the actual backend before the next request");
+            const auto reopened = remote.inspect(request, false);
+            Check(reopened.selection == request && reopened.menu.revision == 2 && !reopened.menu.pending && reopened.catalogue.revision == 1 &&
+                    client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{true, 1u},
+                "a later menu-page inspection reopens after the prior close rather than being closed by stale IPC");
+            remote.closed();
+            Check(client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{false, 2u},
+                "each explicit menu-page departure reaches the host without another menu read");
+        }
+    }
+    catch (const std::exception& error) { Check(false, error.what()); }
+    try { if (client.Connected()) client.Notify("test.menu.exit"); } catch (...) {}
+    client.Close();
+    PostThreadMessageW(GetThreadId(host.native_handle()), WM_QUIT, 0, 0);
+    host.join();
+    Check(!hostFailed, "the menu lifetime backend remains healthy through close and reopen");
+}
+
 void TestIconLibraryPaging()
 {
     // Real icon packs contain tens of thousands of entries. A single snapshot
@@ -1281,6 +1361,10 @@ void TestProcessLifecycle()
 void TestMenuHelperStartupFeedback()
 {
     using namespace snowdesktop::settings_ipc;
+    PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY parentPolicy{};
+    const bool parentPolicyKnown = GetProcessMitigationPolicy(GetCurrentProcess(), ProcessExtensionPointDisablePolicy,
+        &parentPolicy, sizeof(parentPolicy)) != FALSE;
+    Check(parentPolicyKnown, "read the original process extension-point policy for role isolation checks");
     for (const auto command : {L"--settings-ui", L"--shell-menu-helper", L"--start-menu-helper"})
     {
         Channel channel;
@@ -1290,6 +1374,18 @@ void TestMenuHelperStartupFeedback()
         const bool menuHelper = std::wstring_view(command) != L"--settings-ui";
         Check(((flags & STARTF_FORCEOFFFEEDBACK) != 0) == menuHelper,
             "the real launcher suppresses startup cursor feedback for both private background menu modes");
+        HANDLE childPolicyProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, process.ProcessId());
+        PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY childPolicy{};
+        const bool childPolicyKnown = childPolicyProcess && GetProcessMitigationPolicy(childPolicyProcess,
+            ProcessExtensionPointDisablePolicy, &childPolicy, sizeof(childPolicy)) != FALSE;
+        if (childPolicyProcess) CloseHandle(childPolicyProcess);
+        Check(childPolicyKnown, "read extension-point mitigation from the actual supervised child process");
+        if (parentPolicyKnown && childPolicyKnown)
+        {
+            const bool shellMenu = std::wstring_view(command) == L"--shell-menu-helper";
+            Check((childPolicy.DisableExtensionPoints != 0) == (shellMenu || parentPolicy.DisableExtensionPoints != 0),
+                "only Shell menu helpers add legacy extension-point isolation; settings and Start retain their original baseline");
+        }
         if (std::wstring_view(command) == L"--start-menu-helper")
         {
             Check(channel.CallWithTimeout<std::pair<LONG, bool>>(500, "start.state") == std::pair<LONG, bool>{S_OK, true},
@@ -1464,6 +1560,7 @@ int RunSettingsIpcTests()
     TestLargeIconEditing();
     TestCustomCategoryCreation();
     TestChannel();
+    TestContextMenuInspectionLifetime();
     TestIconLibraryPaging();
     TestAsyncOpening();
     TestOverlappingSettingsRefresh();

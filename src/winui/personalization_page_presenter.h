@@ -20,6 +20,7 @@ namespace snowdesktop::winui
 struct PersonalizationPageActions
 {
     std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
+    std::function<void()> contextMenuClosed;
     using Edit = std::function<void(PersonalizationSettings&)>;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;

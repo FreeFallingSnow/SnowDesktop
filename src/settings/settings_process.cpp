@@ -126,11 +126,13 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     if (!job.value || !SetInformationJobObject(job.value, JobObjectExtendedLimitInformation,
         &limits, sizeof(limits))) throw ProtocolError("cannot supervise settings process");
 
+    const bool isolateExtensionPoints = childCommand == L"--shell-menu-helper";
+    const DWORD attributeCount = isolateExtensionPoints ? 2u : 1u;
     SIZE_T attributeBytes = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+    InitializeProcThreadAttributeList(nullptr, attributeCount, 0, &attributeBytes);
     std::vector<std::byte> storage(attributeBytes);
     auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeBytes))
+    if (!InitializeProcThreadAttributeList(attributes, attributeCount, 0, &attributeBytes))
         throw ProtocolError("cannot initialize settings handle allowlist");
     struct AttributeGuard
     {
@@ -154,6 +156,13 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(),
                                    inherited.size() * sizeof(HANDLE), nullptr, nullptr))
         throw ProtocolError("cannot set settings handle allowlist");
+    // Unrelated global hooks can re-enter Shell initialization inside provider
+    // DLL loading. Isolate this query helper at creation; registered COM Shell
+    // extensions still load normally. Settings and Start UI keep their policy.
+    DWORD64 extensionPointPolicy = PROCESS_CREATION_MITIGATION_POLICY_EXTENSION_POINT_DISABLE_ALWAYS_ON;
+    if (isolateExtensionPoints && !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+        &extensionPointPolicy, sizeof(extensionPointPolicy), nullptr, nullptr))
+        throw ProtocolError("cannot set Shell menu extension-point isolation");
     const auto executable = ExecutablePath();
     std::wstring command = L"\"" + executable + L"\" " + std::wstring(childCommand) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(childRead.value)) + L" " +

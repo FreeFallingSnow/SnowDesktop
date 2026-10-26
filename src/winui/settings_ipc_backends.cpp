@@ -1,6 +1,7 @@
 #include "settings_ipc_backends.h"
 #include <thread>
 #include "settings_ipc_values.h"
+#include "settings/settings_ipc_services.h"
 #include "settings/icon_library_ipc_paging.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
@@ -289,9 +290,7 @@ struct BackendServer::Impl
         WidgetEngine* engineValue, SettingsWindowHostOptions configured)
         : channel(channelValue), controller(controllerValue), engine(engineValue), options(std::move(configured))
     {
-        channel.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect", [this](auto request, bool refresh) {
-            return options.contextMenu ? options.contextMenu(request, refresh) : shell_extensions::CatalogueView{};
-        });
+        BindContextMenuInspection(channel, {options.contextMenu, options.contextMenuClosed});
 #define SD_OPTION(Name, Return) \
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
@@ -526,9 +525,9 @@ void BackendServer::ClosePages() noexcept { impl_->ClosePages(); }
 SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
 {
     SettingsWindowHostOptions options;
-    options.contextMenu = [&channel](const shell_extensions::Request &request, bool refresh) {
-        return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
-    };
+    auto menu = CreateContextMenuInspectionProxy(channel);
+    options.contextMenu = std::move(menu.inspect);
+    options.contextMenuClosed = std::move(menu.closed);
     options.runtimeModulesStatus = [&channel](auto completed) {
         channel.RequestAsync("options.runtimeModulesStatus", Pack(), [completed = std::move(completed)](Bytes bytes, std::exception_ptr error) {
             if (error) { completed({}); return; }

@@ -2140,6 +2140,7 @@ struct SettingsWindowHost::Impl
             return state->owner->ThemeOperation(generation, request);
         };
         personalization.contextMenu = options.contextMenu;
+        personalization.contextMenuClosed = options.contextMenuClosed;
         personalization.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
             const auto state = weak.lock();
             if (state && state->alive.load() && state->owner)
