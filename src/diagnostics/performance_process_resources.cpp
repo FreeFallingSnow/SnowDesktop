@@ -270,8 +270,11 @@ Family ReadFamily()
     Handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
     if (snapshot.value == INVALID_HANDLE_VALUE) return result;
     std::array<wchar_t, 32768> executable{};
-    const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
-    if (!length || length == executable.size()) return result;
+    DWORD length = static_cast<DWORD>(executable.size());
+    // Use the same path namespace on both sides. The loader may retain a
+    // junction path while the process image query returns its resolved path.
+    if (!QueryFullProcessImageNameW(GetCurrentProcess(), 0, executable.data(), &length) ||
+        !length || length == executable.size()) return result;
     const std::wstring_view path(executable.data(), length);
     const auto basename = path.substr(path.find_last_of(L"\\/") + 1);
     std::vector<PROCESSENTRY32W> entries;

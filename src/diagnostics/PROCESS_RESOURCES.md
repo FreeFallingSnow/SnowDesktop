@@ -17,6 +17,7 @@
   SnowDesktopLauncher 和 snowwidget 后代。父子创建时间链须有效，句柄对应进程须已在枚举开始前创建，拒绝枚举后重用的PID；
   最多 64 个成员。不同路径的同名程序、外部启动的
   应用和 Explorer 不纳入。设置/守护/Shell helper 使用相同 EXE 且属该链时可纳入。
+  主、子进程均用 QueryFullProcessImageNameW 取得映像路径，避免加载器保留目录联接路径时误排除。
   其他目录/未列出的 EXE、经未纳入的中间进程产生的后代、独立启动的实例暂未覆盖。
 - `observed_*_sum_bytes` 是成功查询的当前成员观测和。只有 `sample_complete=1`
   才表示本轮发现与查询完整；失败候选数和观察成员数同时记录。总工作集相加包含
