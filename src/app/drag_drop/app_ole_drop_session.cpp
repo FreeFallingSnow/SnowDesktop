@@ -393,8 +393,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
         const auto fileSource = snowdesktop::external_drop_content::ProbeFileSource(dataObject);
         const bool delayedFileDrop = fileSource.asynchronous;
         const auto& paths = fileSource.paths;
+        const auto& previewPaths = paths.empty() ? fileSource.previewPaths : paths;
         externalLuaFileDropAvailable_ = fileSource.available;
-        if (fileSource.available) externalFileDropPaths_ = paths;
+        if (fileSource.available) externalFileDropPaths_ = previewPaths;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
                 VirtualFileDescriptor>{}
@@ -423,9 +424,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
                         L".lnk") == 0;
                 });
         externalSummary.foldersOnly =
-            !paths.empty() &&
+            !previewPaths.empty() &&
             std::all_of(
-                paths.begin(), paths.end(),
+                previewPaths.begin(), previewPaths.end(),
                 [](const std::wstring& path) {
                     return snowdesktop::
                         item_location::

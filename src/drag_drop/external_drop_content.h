@@ -57,6 +57,9 @@ struct FileSource
     bool asynchronous = false;
     bool available = false;
     Paths paths;
+    // Optional Shell selection identities, never materialized file content.
+    // Available for Explorer's delayed CF_HDROP without starting its operation.
+    Paths previewPaths;
 };
 // Delayed CF_HDROP is advertised at hover time without rendering its data.
 // ReadFilePaths runs later on the source's marshaled apartment after Drop.

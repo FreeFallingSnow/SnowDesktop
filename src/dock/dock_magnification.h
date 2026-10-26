@@ -38,14 +38,12 @@ inline float ScaleGrowthMultiplier(float focusScale) noexcept
 }
 
 inline constexpr bool ShouldSuppressMagnification(
-    bool widgetMoveActive,
     bool widgetResizeActive,
     bool inputAvailable = true)
 {
-    // Item drags retain the same hover timeline as passive pointer motion.
+    // Item and component drags retain the passive pointer hover timeline.
     // Titles have a separate drag gate so they do not obscure drop feedback.
-    return !inputAvailable || widgetMoveActive ||
-        widgetResizeActive;
+    return !inputAvailable || widgetResizeActive;
 }
 
 // Shared full-width chrome does not pin the Dock's magnification to an edge.

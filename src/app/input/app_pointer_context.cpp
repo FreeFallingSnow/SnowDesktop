@@ -700,7 +700,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                         // Menu commands need the launcher as their target even
                         // when its running indicator suppresses Dock selection.
                         items_[itemIndex].selected = true;
-                        items_[itemIndex].bounds = dockItemBounds;
+                        // The source can remain visible on the desktop. Pass
+                        // its Dock anchor separately without moving that view.
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         ShowItemContextMenu(
                                 screenPt,
@@ -740,8 +741,6 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ClearSelection();
                 frequentItem->SetSelected(true);
                 items_[itemIndex].selected = true;
-                items_[itemIndex].bounds = dock->GetElementVisualRect(
-                    frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 ShowItemContextMenu(
                         screenPt,

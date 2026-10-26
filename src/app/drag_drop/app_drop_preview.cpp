@@ -326,6 +326,13 @@ DragSourceList DesktopApp::BuildDragSourceList(
             }
         }
 
+        if (entry.kind == DropSourceKind::DesktopIcon && !entry.filePath.empty())
+        {
+            // First hover must use the same folder/shortcut partition as the
+            // eventual commit, rather than waiting for a previous drag's IO.
+            const DockEntry probe{DockEntryType::DesktopItem, entry.desktopKey, true};
+            (void)ResolveDockFolderTarget(probe, nullptr, true);
+        }
         if (entry.originalSpan.columns <= 0) entry.originalSpan.columns = 1;
         if (entry.originalSpan.rows <= 0) entry.originalSpan.rows = 1;
         list.entries.push_back(entry);
