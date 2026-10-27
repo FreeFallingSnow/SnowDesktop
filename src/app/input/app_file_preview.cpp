@@ -13,9 +13,9 @@ std::wstring DesktopApp::GetSelectedFilePreviewPath()
         for (const auto& entry : dockEntries_)
         {
             if (!entry.selected || entry.type != DockEntryType::DesktopItem) continue;
-            const auto index = FindItemIndexByKey(entry.reference);
-            if (index < items_.size() && items_[index].desktopIconClsid.empty() &&
-                IsFileSystemPath(items_[index].parsingName)) return items_[index].parsingName;
+            const auto itemIndex = FindItemIndexByKey(entry.reference);
+            if (itemIndex < items_.size() && items_[itemIndex].desktopIconClsid.empty() &&
+                IsFileSystemPath(items_[itemIndex].parsingName)) return items_[itemIndex].parsingName;
         }
         targets = GetDesktopSelectionTargets();
     }
