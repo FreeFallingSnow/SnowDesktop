@@ -316,6 +316,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/layout/app_item_sorting.cpp
     src/app/menus/app_item_menu.cpp
     src/app/input/app_keyboard_input.cpp
+    src/app/input/app_file_preview.cpp
     src/app/input/app_type_to_select.cpp
     src/app/input/app_keyboard_navigation.cpp
     src/app/layout/app_layout.cpp
@@ -352,6 +353,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell/shell_new_menu.h
     src/desktop/windows_desktop_layout.cpp
     src/shell/shell_launch_worker.cpp
+    src/shell/file_preview.cpp
     src/shell/shell_launch_process.cpp
     src/shell/shell_extension_menu.cpp
     src/shell/shell_extension_menu_query.h
@@ -2777,6 +2779,15 @@ if (BUILD_TESTING)
         LABELS contract interaction shell)
 
     snowdesktop_add_test(
+        SnowDesktopFilePreviewTests
+        external_file_preview
+        SOURCES tests/shell/file_preview_tests.cpp src/shell/file_preview.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES advapi32 ole32 shell32 user32 version
+        LABELS integration interaction shell
+        TIMEOUT 30)
+
+    snowdesktop_add_test(
         SnowDesktopIconRenderRulesTests
         icon_render_rules
         SOURCES
@@ -3093,6 +3104,11 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
     add_test(NAME native_input_safety
         COMMAND SnowDesktopNativeDragIntegrationTests --input-safety)
+    add_test(NAME native_file_preview
+        COMMAND SnowDesktopNativeDragIntegrationTests --file-preview)
+    set_tests_properties(native_file_preview PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 60 LABELS "integration;interaction;shell")
     set_tests_properties(native_list_title_hover native_list_title_font_isolation native_popup_display_menu PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;widget;rendering")

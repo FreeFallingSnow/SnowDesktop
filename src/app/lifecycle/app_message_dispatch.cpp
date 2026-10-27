@@ -1177,6 +1177,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return HandleInputMessage(hwnd, msg, wp, lp);
     case WM_SYSKEYDOWN:
     {
+        typeToSelectSuppressChar_ = TryHandleFilePreviewKey(wp,
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
+        if (typeToSelectSuppressChar_) { typeToSelectSession_.Reset(); return 0; }
         if (wp == VK_RETURN && OnKeyDown(wp,
                 (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0))
             return 0;
@@ -1209,6 +1212,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SYSCHAR:
     {
+        if (typeToSelectSuppressChar_) return 0;
         if (wp > 0x7f) break;
         const char key = static_cast<char>(wp);
         if (!((key >= 'A' && key <= 'Z') ||

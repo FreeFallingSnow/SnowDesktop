@@ -151,6 +151,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (TryHandleFilePreviewKey(key, repeated)) return true;
     // Text arrives as WM_CHAR. Commands, arrows and scope changes end the
     // previous query before subsequent text can reuse it.
     if ((key < VK_SPACE && key != VK_SHIFT && key != VK_CAPITAL) || key > VK_OEM_CLEAR ||

@@ -1115,6 +1115,7 @@ struct NativeDragIntegrationAccess
 #include "../dock/native_preview_order_access.inc"
 #include "../layout/native_list_hover_access.inc"
 #include "native_input_safety_access.inc"
+#include "../app/native_file_preview_access.inc"
 #include "../render/native_foreground_culling_access.inc"
 #include "native_drag_foreground_damage_access.inc"
 #include "../dock/native_dock_hover_access.inc"
@@ -1226,6 +1227,12 @@ int main(int argc, char** argv)
             native_widget_surface_handoff_cases::Run();
             RunTargets();
             native_preview_order_cases::Run();
+        }
+        else if (argc == 2 && std::string_view(argv[1]) == "--file-preview")
+        {
+            native_drag_commit_cases::Profile profile;
+            auto& app = profile.Model(false, profile.root / L"preview-layout");
+            NativeDragIntegrationAccess::CheckFilePreview(app, profile.root);
         }
         else if (argc == 2 && std::string_view(argv[1]) == "--r05-full-reference")
             native_drag_foreground_damage_cases::Run(true);

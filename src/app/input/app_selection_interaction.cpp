@@ -256,6 +256,8 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return;
 
+    if (filePreview_.RetainsSelection(window)) return;
+
     const auto revision = selectionController_.Revision();
     const bool keyboardFocus = keyboardNavVisualFocus_;
     ClearSelection();

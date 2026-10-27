@@ -116,6 +116,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "desktop/desktop_drop_cache.h"
 #include "dock/dock_app_identity_rules.h"
 #include "shell/shell_launch_worker.h"
+#include "shell/file_preview.h"
 #include "drag_drop/url_drop_download_worker.h"
 #include "drag_drop/drop_text_rules.h"
 #include "drag_drop/virtual_file_drop.h"
@@ -2026,6 +2027,8 @@ private:
         const RightDragMenuPresenter& presentMenu = {}, bool externalContent = false);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
+    bool TryHandleFilePreviewKey(WPARAM key, bool repeated = false);
+    std::wstring GetSelectedFilePreviewPath();
     /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
     bool TryHandleTypeToSelectChar(wchar_t ch, bool repeated = false);
     /** @brief 在桌面根输入上下文中处理可配置的本地翻页按键。 */
@@ -4241,6 +4244,7 @@ private:
         std::wstring shortcutFallbackUrl;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
+    snowdesktop::file_preview::Service filePreview_;
     snowdesktop::ShellLaunchWorker shellElevationWorker_{
         &snowdesktop::ShellLaunchWorker::ExecuteRunAsAdministrator };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;

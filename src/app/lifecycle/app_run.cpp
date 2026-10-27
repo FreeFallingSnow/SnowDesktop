@@ -799,6 +799,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
 
+    filePreview_.Start();
+
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
