@@ -252,7 +252,7 @@ struct Runtime::Impl
                 std::lock_guard guard(mutex);
                 failures.Record(current.request.target, capability, Provider::Helper, response.error, GetTickCount64());
             }
-            if (response.error && current.request.command != protocol::Command::Poll)
+            if (response.error && response.error != ERROR_BUSY && current.request.command != protocol::Command::Poll)
                 operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, response.error});
             if (current.completion)
             {

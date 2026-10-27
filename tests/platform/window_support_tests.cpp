@@ -54,6 +54,9 @@ int main()
     check(!failures.Blocked(first, Capability::WindowPin, Provider::Helper, 101), "another provider can satisfy the failed operation");
     check(!failures.Blocked(reused, Capability::WindowPin, Provider::InProcess, 101), "reused HWNDs do not inherit an earlier process failure");
     check(!failures.Blocked(first, Capability::WindowPin, Provider::InProcess, 5100), "a transient failure permits a bounded later retry");
+    failures.Record(reused, Capability::WindowPin, Provider::InProcess, ERROR_TIMEOUT, 100);
+    check(!failures.Blocked(reused, Capability::WindowPin, Provider::InProcess, 101),
+        "an asynchronous confirmation timeout cannot disable later native retry");
     const auto descriptor = AuthorizationSecurityDescriptor();
     check(TrustedAuthorizationSecurity(descriptor.c_str()), "configured task is trusted");
     const auto unsafeOwner = L"O:" + CurrentUserSid() + L"G:BAD:P(A;;GA;;;BA)(A;;GRGX;;;" + CurrentUserSid() + L")";
@@ -104,6 +107,10 @@ int main()
     check(recent.Accept(down, 16), "event age handles DWORD tick wrap");
     down.time = 1100; down.point.x = 43;
     check(recent.Accept(down, 1101), "a later distinct press remains actionable");
+    down.time = 1200; down.flags = LLMHF_INJECTED;
+    check(recent.Accept(down, 1201), "injected observation is delivered once");
+    down.flags |= LLMHF_LOWER_IL_INJECTED;
+    check(!recent.Accept(down, 1201), "observer integrity metadata does not duplicate the same input");
     HWND fixture = CreateWindowExW(0, L"STATIC", L"Window support identity fixture", WS_POPUP,
         0, 0, 20, 20, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     check(fixture != nullptr, "native target fixture is created");

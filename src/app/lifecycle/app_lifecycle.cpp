@@ -553,6 +553,7 @@ bool DesktopApp::EnsureFloatingDockInputWindow()
 
 void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
+    for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
     floatingDockInputDeactivated_ = false;
     if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
     if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
@@ -644,6 +645,7 @@ void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExi
 void DesktopApp::EndFloatingDockKeyboardSession(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
     floatingDockInputDeactivated_ = false;
     floatingDockInputForegroundSeen_ = false;
     if (!floatingDockKeyboardSessionActive_)

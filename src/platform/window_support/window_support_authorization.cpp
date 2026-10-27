@@ -22,8 +22,9 @@ void Check(HRESULT result) { if (FAILED(result)) throw Failure{static_cast<DWORD
 void WinCheck(BOOL result) { if (!result) throw Failure{GetLastError()}; }
 struct ComScope
 {
-    HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    ComScope() { if (result != RPC_E_CHANGED_MODE) Check(result); }
+    HRESULT result;
+    explicit ComScope(DWORD flags = COINIT_MULTITHREADED) : result(CoInitializeEx(nullptr, flags))
+    { if (result != RPC_E_CHANGED_MODE) Check(result); }
     ~ComScope() { if (SUCCEEDED(result)) CoUninitialize(); }
 };
 struct Text
@@ -264,6 +265,7 @@ DWORD ConfigureAuthorization(bool enabled, HWND owner) noexcept
 {
     try
     {
+        ComScope shellScope(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         const auto ownImage = ProcessImage(GetCurrentProcess());
         if (ownImage.empty()) return ERROR_PATH_NOT_FOUND;
         const auto directory = std::filesystem::path(ownImage).parent_path();

@@ -12,7 +12,8 @@ public:
         if (now - event.time > 250) return false;
         const auto duplicate = [&](const auto& old) {
             return old.time == event.time && old.message == event.message && old.mouseData == event.mouseData &&
-                old.flags == event.flags && old.point.x == event.point.x && old.point.y == event.point.y;
+                (old.flags & ~LLMHF_LOWER_IL_INJECTED) == (event.flags & ~LLMHF_LOWER_IL_INJECTED) &&
+                old.point.x == event.point.x && old.point.y == event.point.y;
         };
         if (std::any_of(events_.begin(), events_.begin() + count_, duplicate)) return false;
         events_[next_++ % events_.size()] = event;

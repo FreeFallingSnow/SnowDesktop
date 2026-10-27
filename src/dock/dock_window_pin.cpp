@@ -716,17 +716,28 @@ bool DockWindowPin::Toggle(HWND window)
     // target the same native window; an old inverse must not undo a new pin.
     if (const HWND retiringBorder = static_cast<HWND>(GetPropW(window, kUndoProperty)))
     {
+        const HWND border = static_cast<HWND>(GetPropW(window, kPinProperty));
+        if (!IsWindow(retiringBorder) && (!border || !IsWindow(border)))
+        {
+            // A crashed helper cannot run its retirement window. Only reclaim
+            // our stale markers after both owning HWNDs have disappeared.
+            RemovePropW(window, kUndoProperty);
+            if (border) RemovePropW(window, kPinProperty);
+        }
+        else
+        {
         DWORD ownerProcess = 0;
         wchar_t className[64]{};
         if (GetWindowThreadProcessId(retiringBorder, &ownerProcess) != GetCurrentThreadId() ||
             ownerProcess != GetCurrentProcessId() ||
             !GetClassNameW(retiringBorder, className, static_cast<int>(std::size(className))) ||
-            lstrcmpW(className, kOperationClass) != 0) return false;
+            lstrcmpW(className, kOperationClass) != 0) { SetLastError(ERROR_BUSY); return false; }
         auto* cleanup = reinterpret_cast<PinRetirement*>(
             GetWindowLongPtrW(retiringBorder, GWLP_USERDATA));
         if (!cleanup || cleanup->target != window || cleanup->operation != retiringBorder ||
-            !cleanup->retired || !cleanup->Advance()) return false;
+            !cleanup->retired || !cleanup->Advance()) { SetLastError(ERROR_BUSY); return false; }
         DestroyWindow(retiringBorder);
+        }
     }
     if (IsTopmost(window))
     {
@@ -784,6 +795,7 @@ bool DockWindowPin::Toggle(HWND window)
     }();
     if (accepted) return true;
     const DWORD error = GetLastError() ? GetLastError() : ERROR_GEN_FAILURE;
+    if (error == ERROR_BUSY) return false;
     auto& support = snowdesktop::window_support::WindowSupport();
     support.RecordFailure(snowdesktop::window_support::Capability::WindowPin, window,
         snowdesktop::window_support::Provider::InProcess, error);
@@ -796,5 +808,6 @@ bool DockWindowPin::Toggle(HWND window)
         if (support.Submit(request)) return true;
     }
     snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+    SetLastError(error);
     return false;
 }

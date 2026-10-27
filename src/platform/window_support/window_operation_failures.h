@@ -10,7 +10,9 @@ class WindowOperationFailures
 public:
     void Record(protocol::WindowIdentity target, Capability capability, Provider provider, DWORD error, ULONGLONG now) noexcept
     {
-        if (!target.window || !error) return;
+        // A timed-out, already accepted asynchronous action says nothing
+        // about the provider's access once that target resumes pumping.
+        if (!target.window || !error || error == ERROR_TIMEOUT || error == ERROR_BUSY) return;
         for (auto& entry : entries_)
             if (Matches(entry, target, capability, provider)) { entry.error = error; entry.at = now; return; }
         entries_[next_++ % entries_.size()] = {target, capability, provider, error, now};

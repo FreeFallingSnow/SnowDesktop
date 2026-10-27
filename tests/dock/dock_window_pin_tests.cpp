@@ -268,6 +268,17 @@ int RunDockWindowPinTests()
             !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
             "the independent operation owner withdraws a late pin after its visual was destroyed");
         pin->Clear();
+        const HWND lostBorder = CreateWindowExW(0, L"STATIC", L"stale pin fixture", WS_POPUP,
+            0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        check(lostBorder && SetPropW(target.window, kPinProperty, lostBorder) &&
+            SetPropW(target.window, kUndoProperty, lostBorder), "fixture establishes markers owned by a disappearing pin host");
+        DestroyWindow(lostBorder);
+        SetWindowPos(target.window, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS);
+        check(target.Until([&] { return IsNativeTopmost(target.window); }), "orphaned pin remains topmost before recovery");
+        check(pin->Toggle(target.window) && target.Until([&] { return !IsNativeTopmost(target.window); }) &&
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty),
+            "next user toggle recovers stale owner markers and unpins after helper loss");
     }
     // A protected consent broker can reject process-path reads while exposing
     // a normal task window. The discovery identity must retain each such window

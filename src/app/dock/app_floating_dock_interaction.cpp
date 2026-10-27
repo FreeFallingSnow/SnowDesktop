@@ -76,6 +76,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         host.promotionInputBorrowedFocus = false;
         host.promotionInputFocusPendingUntil = 0;
         EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        return; // Hiding the proxy can rebuild hosts; reacquire on the next observation.
     }
     host.promotionInputForeground = foreground;
     host.promotionInputProcess = process;
