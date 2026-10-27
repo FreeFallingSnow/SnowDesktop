@@ -46,7 +46,7 @@ class Source final : public Microsoft::WRL::RuntimeClass<
 public:
     ComPtr<IDataObject> shell;
     DWORD owner = GetCurrentThreadId();
-    int reads = 0, starts = 0, ends = 0, performed = 0;
+    int reads = 0, metadataReads = 0, starts = 0, ends = 0, performed = 0;
     HRESULT outcome = E_PENDING;
     DWORD endEffect = 0xffffffff, performedEffect = 0xffffffff;
     bool wrongApartment = false, readBeforeStart = false, failRead = false, failStart = false;
@@ -55,7 +55,9 @@ public:
     void CheckThread() { wrongApartment |= GetCurrentThreadId() != owner; }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f, STGMEDIUM* m) override
     {
-        CheckThread(); ++reads; readBeforeStart |= async && starts == 0;
+        CheckThread();
+        if (f && f->cfFormat == RegisterClipboardFormatW(CFSTR_SHELLIDLIST)) ++metadataReads;
+        else { ++reads; readBeforeStart |= async && starts == 0; }
         return failRead ? E_FAIL : shell->GetData(f, m);
     }
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC* f, STGMEDIUM* m) override

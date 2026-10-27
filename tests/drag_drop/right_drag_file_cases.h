@@ -63,6 +63,8 @@ inline void Run(const std::filesystem::path& root)
                 });
             Require(dispatched.has_value() && *dispatched == expected,
                 "right-drag selection reaches production dispatch with the selected offered operation");
+            Require(batch.source->metadataReads > 0,
+                "dispatch probes Shell selection metadata before starting the content transfer");
             PumpUntil([&] { return batch.source->ends == 1; });
             // Assert physical results against the menu promise, independently
             // of any effect produced by the selected key conversion.

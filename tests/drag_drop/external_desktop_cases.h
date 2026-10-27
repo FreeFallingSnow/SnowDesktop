@@ -44,9 +44,13 @@ class DelayedSource final : public Microsoft::WRL::RuntimeClass<
 public:
     Microsoft::WRL::ComPtr<IDataObject> shell;
     bool offer = true;
-    int reads = 0;
+    int reads = 0, metadataReads = 0;
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f, STGMEDIUM* m) override
-    { ++reads; return shell->GetData(f, m); }
+    {
+        if (f && f->cfFormat == RegisterClipboardFormatW(CFSTR_SHELLIDLIST)) ++metadataReads;
+        else ++reads;
+        return shell->GetData(f, m);
+    }
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC* f, STGMEDIUM* m) override
     { return shell->GetDataHere(f, m); }
     HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f) override
@@ -119,6 +123,7 @@ inline void Run(const std::filesystem::path& root)
                 Require(request && ShellFileOperationWorker::Execute(*request), "dispatched operation executes real Shell request");
                 return selected;
             });
+        Require(source->metadataReads > 0, "probe reads Shell selection metadata without rendering file contents");
         Require(handled.has_value(), "delayed file desktop drop is handled by its production dispatch route");
         // Evaluate the user's original Shift+Explorer failure through real
         // source/destination state before checking the reported effect.
