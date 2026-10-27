@@ -404,7 +404,7 @@
   `Table Multiple 24 Filled + Regular`，同时表达多页面和网格。
 - 沿用现有设置图标的配色体系，以 Filled 作为色块、Regular 作为轮廓；调整颜色不得改变官方
   路径几何。不得混入已弃用的上游 Color 变体，也不得为此分发 Filled 字体。
-- 上游版本须与内嵌 Fluent Regular 字体一致，以 `third_party/fluentui-system-icons/README.md`
+- 上游版本须与内嵌 Fluent Regular 字体一致，以 `THIRD_PARTY_NOTICES.md` 的 Fluent System Icons 条目
   和 `assets/settings/icons/README.md` 记录的固定提交为准。每个 SVG 的 `metadata` 必须注明
   官方图标名称、原生尺寸、组合变体及上游提交；新增或替换图标时同步维护设置图标 README 的映射表，
   并保留上游 MIT 许可证说明。
@@ -843,6 +843,8 @@
 - `.build/`、`.build_debug/`、`artifacts/` 和 `docs/html/` 是生成目录，不得提交。
 - `.codex-probes/` 是 Agent 临时探测目录，不得提交或依赖其中内容。
 - `src/` 只保存源码和长期维护所需的模块说明，禁止写入排查日志、运行日志、验收记录、候选记录或实施计划。一次性材料使用 Git 忽略的临时目录（如 `.codex-probes/`），不得随源码提交。Agent 工作规范统一维护在本文件。
+- 项目维护的第三方来源、版本或固定提交、用途、改编和分发说明统一写入根目录 `THIRD_PARTY_NOTICES.md`，使用对应的中英双语和一致的条目格式。`third_party/<component>/` 保存对应源码、资源、许可证与构建材料，不另建来源说明 README 或 `SNOWDESKTOP.md`；上游自带的构建、API 文档和许可原文按原内容保留。
+- `steam_bridge/` 按独立项目管理，保留自己的 `LICENSE` 和中英双语 `THIRD_PARTY_NOTICES.md`。主项目与桥接项目分别维护适用的第三方声明，构建与打包复制各自对应文件。
 - `.codex-remote-attachments/` 保存用户提供的临时附件，不得提交；整理工作区时保留原文件，不得当作无用文档删除。
 - 除忽略的生成输出外，`docs/` 不提交文档。持续规则写入 `AGENTS.md` 或对应模块的说明文件；一次性排查与验收证据记录在提交、版本日志或忽略的临时目录，未关闭产品问题记录在 GitHub Issues。
 

@@ -205,7 +205,7 @@ inline bool LookupGeometry(SharedState& state, const Identity& identity, RECT& r
 }
 
 // Explorer's private wire layout, adapted from YASB at the revision recorded in
-// third_party/yasb/README.md. MIT notices are retained in that directory.
+// THIRD_PARTY_NOTICES.md#yasb. MIT notices are retained in third_party/yasb/.
 // This layout is deliberately isolated from both the host model and our IPC.
 #pragma pack(push, 1)
 struct NotifyIcon32

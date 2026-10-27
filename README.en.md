@@ -102,16 +102,16 @@ output owners; see the [build script documentation](scripts/README.md) for those
 
 ## 🧩 Third-Party Code and Assets
 
-The entries below are grouped by their use in SnowDesktop. Local links describe their provenance and integration; complete copyright and license notices are in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+The entries below are grouped by their use in SnowDesktop. Local links point to the corresponding entries in the consolidated provenance and license notices; the full document is [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ### Libraries, SDKs and Runtimes
 
 | Project | Use | License |
 | --- | --- | --- |
-| [Everything SDK](third_party/everything/README.md) | Everything file-index queries in quick navigation | MIT |
-| [Dear ImGui](third_party/imgui/README.md) | Workshop Manager interface | MIT |
-| [Lua](third_party/lua/README.md) | Widget script engine and authoring tools | MIT |
-| [MinHook](third_party/minhook/README.md) | Taskbar and Wallpaper Engine capture hooks | BSD 2-Clause |
+| [Everything SDK](THIRD_PARTY_NOTICES.md#everything) | Everything file-index queries in quick navigation | MIT |
+| [Dear ImGui](THIRD_PARTY_NOTICES.md#imgui) | Workshop Manager interface | MIT |
+| [Lua](THIRD_PARTY_NOTICES.md#lua) | Widget script engine and authoring tools | MIT |
+| [MinHook](THIRD_PARTY_NOTICES.md#minhook) | Taskbar and Wallpaper Engine capture hooks | BSD 2-Clause |
 | [Windows App SDK](https://github.com/microsoft/WindowsAppSDK) | WinUI 3 settings interface and private application runtime | Microsoft Software License Terms |
 | [Windows ML](https://learn.microsoft.com/windows/ai/new-windows-ml/) | Runtime dependency deployed with Windows App SDK | Microsoft Software License Terms |
 | [WebView2 SDK](https://developer.microsoft.com/microsoft-edge/webview2/) | Dependency in the Windows App SDK deployment manifest | BSD 3-Clause |
@@ -121,26 +121,26 @@ The entries below are grouped by their use in SnowDesktop. Local links describe 
 
 | Project | Use | License |
 | --- | --- | --- |
-| [pinyin-data](third_party/pinyin-data/README.md) | Full-pinyin and initial-letter matching for Chinese names | MIT |
+| [pinyin-data](THIRD_PARTY_NOTICES.md#pinyin-data) | Full-pinyin and initial-letter matching for Chinese names | MIT |
 
 ### Fonts, Icons and Textures
 
 | Project | Use | License |
 | --- | --- | --- |
-| [MiSans Regular](third_party/misans/README.md) | Optional interface font | MiSans font license agreement |
-| [HarmonyOS Sans SC](third_party/harmonyos-sans/README.md) | Optional interface font | HarmonyOS Sans Fonts License Agreement |
-| [Fluent System Icons](third_party/fluentui-system-icons/README.md) | Menu, status-bar and control-center icons | MIT |
-| [Font Awesome Free Solid](third_party/font-awesome/README.md) | Backward-compatible widget icon font | SIL OFL 1.1 |
-| [WinUI acrylic noise](third_party/microsoft-ui-xaml/README.md) | Noise texture for glass materials | MIT |
+| [MiSans Regular](THIRD_PARTY_NOTICES.md#misans) | Optional interface font | MiSans font license agreement |
+| [HarmonyOS Sans SC](THIRD_PARTY_NOTICES.md#harmonyos-sans) | Optional interface font | HarmonyOS Sans Fonts License Agreement |
+| [Fluent System Icons](THIRD_PARTY_NOTICES.md#fluent-system-icons) | Menu, status-bar and control-center icons | MIT |
+| [Font Awesome Free Solid](THIRD_PARTY_NOTICES.md#font-awesome) | Backward-compatible widget icon font | SIL OFL 1.1 |
+| [WinUI acrylic noise](THIRD_PARTY_NOTICES.md#winui-acrylic-noise) | Noise texture for glass materials | MIT |
 
 ### Referenced and Adapted Projects
 
 | Project | Reuse | License |
 | --- | --- | --- |
-| [YASB](third_party/yasb/README.md) | Tray protocol, callbacks and panel organization; Bluetooth, power-mode and notification-state references | MIT |
-| [TranslucentTB](THIRD_PARTY_NOTICES.md#translucenttb-derived-portions) | Portions of taskbar integration and desktop backdrop composition | GPL-3.0-only |
-| [DeskMakeover](THIRD_PARTY_NOTICES.md#deskmakeover-derived-shape-geometry) | Icon shape control points and continuous corner geometry | MIT |
-| [OpenHarmony GraphicsEffect](third_party/graphics-effect/README.md) | Glass edge-light, fan-mask and inner-shadow calculations | Apache-2.0 |
+| [YASB](THIRD_PARTY_NOTICES.md#yasb) | Tray protocol, callbacks and panel organization; Bluetooth, power-mode and notification-state references | MIT |
+| [TranslucentTB](THIRD_PARTY_NOTICES.md#translucenttb) | Portions of taskbar integration and desktop backdrop composition | GPL-3.0-only |
+| [DeskMakeover](THIRD_PARTY_NOTICES.md#deskmakeover) | Icon shape control points and continuous corner geometry | MIT |
+| [OpenHarmony GraphicsEffect](THIRD_PARTY_NOTICES.md#graphics-effect) | Glass edge-light, fan-mask and inner-shadow calculations | Apache-2.0 |
 
 ## 🤝 Contributing
 

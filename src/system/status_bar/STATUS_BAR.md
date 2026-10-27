@@ -38,7 +38,7 @@ Dock 靠边且与状态栏同侧时，状态栏控件并入 Dock。整栏服从 
 
 勿扰指示读取当前生效配置，包括自动规则。Windows 10 的未读数量与 Windows 11 的通知中心总数分别处理，读取失败显示未知；点击打开系统通知中心，不采集通知内容。
 
-Explorer 私有托盘结构、WNF 状态和部分设备 API 的兼容性依赖 Windows 版本。第三方来源及许可见 [YASB 来源说明](../../../third_party/yasb/README.md)。
+Explorer 私有托盘结构、WNF 状态和部分设备 API 的兼容性依赖 Windows 版本。第三方来源及许可见 [YASB 来源说明](../../../THIRD_PARTY_NOTICES.md#yasb)。
 
 ## 诊断与测试
 
