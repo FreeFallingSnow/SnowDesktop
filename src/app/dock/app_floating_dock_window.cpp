@@ -837,7 +837,8 @@ CalculateFloatingDockStableSourceRect(
             }
         }
     }
-    return snowdesktop::floating_dock_rules::UnionNonEmptyRects(sourceRect, host.explicitDismissRect);
+    return snowdesktop::floating_dock_rules::UnionNonEmptyRects(sourceRect,
+        snowdesktop::floating_dock_rules::ExpandForBorderOverdraw(host.explicitDismissRect));
 }
 
 std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
@@ -1174,7 +1175,9 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
     if (!region) return false;
     if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
     {
-        RECT button = host.explicitDismissRect;
+        // The binary GDI ellipse needs an outward fence for the D2D
+        // antialiased stroke. Keep the actual hit circle unchanged.
+        RECT button = snowdesktop::floating_dock_rules::ExpandForBorderOverdraw(host.explicitDismissRect);
         OffsetRect(&button, -host.sourceRect.left, -host.sourceRect.top);
         HRGN buttonRegion = CreateEllipticRgn(button.left, button.top, button.right, button.bottom);
         const bool combined = buttonRegion && CombineRgn(region, region, buttonRegion, RGN_OR) != ERROR;

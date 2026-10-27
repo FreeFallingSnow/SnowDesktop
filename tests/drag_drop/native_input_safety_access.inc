@@ -918,6 +918,73 @@ end})
         const HWND popupWindow = create(&popupContext);
         app->floatingPopupHwnd_ = popupWindow;
         {
+            // Compare actual D2D dismiss-stroke pixels with the region installed
+            // by the production host. All HWNDs remain on the private desktop.
+            using Microsoft::WRL::ComPtr;
+            ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;
+            ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device; ComPtr<ID2D1DeviceContext> context;
+            if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &gpu, nullptr, nullptr)) ||
+                FAILED(gpu.As(&dxgi)) || FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) ||
+                FAILED(factory->CreateDevice(dxgi.Get(), &device)) ||
+                FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)))
+                throw std::runtime_error("create dismiss-rim WARP fixture");
+            ComPtr<ID2D1Bitmap1> target, readable;
+            const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+            if (FAILED(context->CreateBitmap(D2D1::SizeU(400,300), nullptr, 0,
+                    D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format), &target)) ||
+                FAILED(context->CreateBitmap(D2D1::SizeU(400,300), nullptr, 0,
+                    D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format), &readable)))
+                throw std::runtime_error("create dismiss-rim readable fixture");
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush)))
+                throw std::runtime_error("create dismiss-rim brush");
+            context->SetTarget(target.Get()); context->SetDpi(96,96);
+            context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            auto& dock = *app->persistentDockHosts_.front();
+            dock.promoted = dock.explicitDismissAvailable = true;
+            dock.sourceRect = {0,0,400,300};
+            dock.dockRect = dock.animationVisualRect = {0,220,100,260};
+            std::size_t oldLost = 0, actualLost = 0;
+            int offset = 0;
+            for (const int size : {24,25,30,31,36,48})
+            {
+                dock.explicitDismissRect = {31+offset,32,31+offset+size,32+size};
+                const RECT button = dock.explicitDismissRect;
+                dock.windowRegionPending = true;
+                HRGN observed = CreateRectRgn(0,0,0,0);
+                HRGN exact = CreateEllipticRgn(button.left,button.top,button.right,button.bottom);
+                if (!observed || !exact || !app->ApplyFloatingDockWindowRegion(dock) ||
+                    GetWindowRgn(dockWindow,observed) == ERROR)
+                    throw std::runtime_error("install actual dismiss-rim native region");
+                context->BeginDraw(); context->Clear(D2D1::ColorF(0,0.f));
+                const float radius = static_cast<float>(size)*.5f-.5f;
+                context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(
+                    static_cast<float>(button.left)+static_cast<float>(size)*.5f,
+                    static_cast<float>(button.top)+static_cast<float>(size)*.5f),radius,radius),brush.Get(),1.f);
+                if (FAILED(context->EndDraw()) || FAILED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)))
+                    throw std::runtime_error("read dismiss-rim pixels");
+                D2D1_MAPPED_RECT map{};
+                if (FAILED(readable->Map(D2D1_MAP_OPTIONS_READ,&map))) throw std::runtime_error("map dismiss-rim pixels");
+                for (int y=0;y<300;++y) for (int x=0;x<400;++x)
+                    if (map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3])
+                    {
+                        if (!PtInRegion(exact,x,y)) ++oldLost;
+                        if (!PtInRegion(observed,x,y)) ++actualLost;
+                    }
+                readable->Unmap(); DeleteObject(exact); DeleteObject(observed);
+                ++offset;
+            }
+            std::cout << "Dismiss rim pixels: exact fence lost=" << oldLost << "; actual fence lost=" << actualLost << '\n';
+            check(oldLost > 0, "same-size native ellipse reproduces dismiss outer-stroke clipping");
+            check(actualLost == 0, "actual dismiss fence retains every antialiased stroke pixel at moving even/odd DPI sizes");
+            context->SetTarget(nullptr);
+            SetWindowRgn(dockWindow,nullptr,FALSE);
+            dock.promoted = dock.explicitDismissAvailable = false;
+            dock.sourceRect = dock.dockRect = dock.animationVisualRect = dock.explicitDismissRect = {};
+        }
+        {
             // All HWNDs live on this fixture's inactive desktop. Keep a Dock
             // already raised while its foreground changes after the summon.
             auto& dock = *app->persistentDockHosts_.front();
