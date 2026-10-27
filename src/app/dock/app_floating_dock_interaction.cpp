@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "dock_platform_helpers.h"
+#include "dock_input_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
@@ -428,7 +429,10 @@ void DesktopApp::ReleaseTemporaryDockActionPromotion()
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (ownedHost && ownedHost->windowActionPromotion.Release(dockSettings_.summonOnAppMinimize))
+        {
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"promotion-release", ownedHost->hwnd, ownedHost->promoted);
             CloseFloatingDock(*ownedHost, FloatingDockCloseFocusPolicy::PreserveCurrent);
+        }
     }
     RefreshFloatingDockPromotionInputs(true);
 }
@@ -470,6 +474,7 @@ void DesktopApp::CloseFloatingDock(
 
     const bool closingSelectedHost =
         floatingDockHost_ == &host;
+    snowdesktop::dock_input_diagnostics::RecordLayer(L"close-host", host.hwnd, host.promoted);
     const bool endKeyboardSession =
         closingSelectedHost &&
         floatingDockKeyboardSessionActive_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "diagnostics/diagnostic_log.h"
+#include "platform/window_support/window_support_runtime.h"
 #include <windows.h>
 #include <array>
 #include <atomic>
@@ -16,6 +17,42 @@
 namespace snowdesktop::dock_input_diagnostics
 {
 inline std::atomic<std::uint64_t> lastDown{0}, lastUp{0};
+
+// Bounded failure observations for the administrator-native-minimize report.
+// No titles, content, input injection or persisted log preferences are used.
+inline void RecordLayer(const wchar_t* reason, HWND host, bool promoted,
+    UINT buttons = 0, UINT semantics = 0, ULONGLONG minimizeTick = 0, bool activation = false) noexcept try
+{
+    static unsigned records = 0;
+    if (records++ >= 128) return;
+    const auto status = window_support::WindowSupport().Status();
+    const auto helper = window_support::WindowSupport().HelperSnapshot();
+    const HWND foreground = GetForegroundWindow();
+    DWORD process = 0;
+    GetWindowThreadProcessId(foreground, &process);
+    std::wostringstream out;
+    out << L"DockNativeMinTrace reason=" << reason << L" tick=" << GetTickCount64()
+        << L" host=" << host << L" promoted=" << promoted
+        << L" topmost=" << (host && (GetWindowLongPtrW(host, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
+        << L" buttons=" << buttons << L" semantics=" << semantics << L" activation=" << activation
+        << L" minTick=" << minimizeTick << L" foreground=" << foreground << L" foregroundPid=" << process
+        << L" authorization=" << static_cast<unsigned>(status.authorization)
+        << L" helperState=" << static_cast<unsigned>(status.capabilities.helperState)
+        << L" helperCaps=" << status.capabilities.helper << L" error=" << status.error
+        << L" animation=" << helper.animationActive << L" direction=" << helper.direction
+        << L" source=" << helper.animationTarget.window << L" presentation=" << helper.presentation;
+    void* frames[6]{};
+    const auto count = CaptureStackBackTrace(1, static_cast<DWORD>(std::size(frames)), frames, nullptr);
+    const auto base = reinterpret_cast<UINT_PTR>(GetModuleHandleW(nullptr));
+    out << L" stackRva=" << std::hex;
+    for (USHORT i = 0; i < count; ++i)
+    {
+        const auto address = reinterpret_cast<UINT_PTR>(frames[i]);
+        if (address >= base && address - base < 0x10000000u) out << (address - base) << L',';
+    }
+    WriteDiagnosticLogEntry(out.str().c_str(), DiagnosticLogLevel::Warning);
+}
+catch (...) { /* Observation never changes the layer decision. */ }
 
 inline void ObserveMouse(WPARAM message, LPARAM data) noexcept
 {

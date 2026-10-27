@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock_input_diagnostics.h"
 #include "ui/render/ui_presentation_scope.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
@@ -415,6 +416,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR)) return 0;
     switch (msg)
     {
+    case WM_WINDOWPOSCHANGED:
+        if (host.promoted && !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"observed-low-while-promoted", hwnd, host.promoted);
+        break;
     case WM_WINDOWPOSCHANGING:
         if (lp)
             PreserveModernMenuHostZOrder(

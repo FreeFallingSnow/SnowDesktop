@@ -443,7 +443,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // Also applies with both invocation triggers disabled. Relinquish an
         // existing session without restoring its previous foreground window.
         if (floatingDockVisible_ || floatingDockKeyboardSessionActive_)
+        {
+            inputTrace::RecordLayer(L"fullscreen-close", nullptr, floatingDockVisible_);
             CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        }
         if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) HideDockWindowPreview();
         POINT cursor{};
         if (GetCursorPos(&cursor)) UpdatePassiveDragRevealHosts(cursor);
@@ -479,6 +482,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // An owned native deactivation survives a fast click that skipped the
         // poll's proxy sample, and does not depend on cursor/button queries.
         floatingDockInputDeactivated_ = false;
+        inputTrace::RecordLayer(L"focus-loss-close", nullptr, floatingDockVisible_);
         CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
         floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
         return;
@@ -645,6 +649,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
         dockExternalMinimize_->IsMinimizeButtonPress(
             GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor)));
+    if (floatingDockVisible_ && leftButtonPressed)
+        inputTrace::RecordLayer(minimizeButtonPress ? L"pointer-minimize" : L"pointer-other", nullptr,
+            floatingDockVisible_, buttonsDown, observedPresses, minimizeTick, externalActivation);
     if (trace.Observe(inputTrace::Gate::VisibleOrBar, floatingDockVisible_ || statusBar_) &&
         trace.Observe(inputTrace::Gate::Press, pointerPressed) &&
         !trace.Observe(inputTrace::Gate::PassiveReveal, passiveDragRevealedThisSample) &&
@@ -760,6 +767,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             // race the clicked window's activation and force two DWM/backdrop
             // source changes through the shared close handoff.
             trace.sample.outcome = L"dismissed";
+            inputTrace::RecordLayer(L"outside-close", nullptr, floatingDockVisible_, buttonsDown,
+                observedPresses, minimizeTick, externalActivation);
             CloseAllFloatingDocks(
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.

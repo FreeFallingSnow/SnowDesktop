@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
+#include "app/dock/dock_input_diagnostics.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_hover_rules.h"
@@ -95,12 +96,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         const HWND source = reinterpret_cast<HWND>(wp);
         const DWORD deadline = static_cast<DWORD>(lp);
+        snowdesktop::dock_input_diagnostics::RecordLayer(L"native-minimize-notice", nullptr, floatingDockVisible_);
         if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
             !IsWindowVisible(source) || IsIconic(source) ||
             snowdesktop::window_support::WindowSupport().Resolve(
                 snowdesktop::window_support::Capability::MinimizeAnimation, source).provider !=
                 snowdesktop::window_support::Provider::Helper) return 0;
         dockSystemMinimizeStartedTick_.store(GetTickCount64());
+        snowdesktop::dock_input_diagnostics::RecordLayer(L"native-minimize-accepted", nullptr, floatingDockVisible_,
+            0, 0, dockSystemMinimizeStartedTick_.load());
         floatingDockInputDeactivated_ = false;
         CancelDockWindowActivationObservation(source);
         PrepareDockWindowMinimize(source, L"helper-application-minimize");
@@ -156,6 +160,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     popupAnchoredToDock_, floatingPopupCollectionRegion_),
                 preview, quickNavigationOpen_ ? quickNavigationRect_ : RECT{}))
         {
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"desktop-down-close", hwnd_, floatingDockVisible_,
+                static_cast<UINT>(msg));
             CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
         }

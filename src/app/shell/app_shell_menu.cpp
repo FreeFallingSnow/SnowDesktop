@@ -3,6 +3,7 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
+#include "app/dock/dock_input_diagnostics.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
@@ -436,6 +437,8 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
     if (!promoted && !systemShowDesktopGuard)
     {
+        if (wasTopmost)
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"policy-lower", host.hwnd, host.promoted);
         // A desktop-band Dock is still a top-level no-activate window. Place
         // it below ordinary applications and above Explorer's desktop host,
         // while preserving the same HWND and
