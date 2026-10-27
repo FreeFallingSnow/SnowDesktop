@@ -255,21 +255,6 @@ int RunFullscreenFocusTests()
         movedButton.left - initialButton.left == movedPanel.right - panel.right &&
         movedButton.top - initialButton.top == movedPanel.top - panel.top,
         "dismiss follows the painted Dock corner as the panel moves and changes width");
-    {
-        const RECT resting{-1500, 500, -400, 580};
-        const RECT extended{-1540, 500, -340, 580};
-        const RECT source{-1600, 400, -200, 700};
-        HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
-            resting, resting, {}, {}, source, 20, 3.0f, extended);
-        check(region && PtInRegion(region, extended.right - source.left - 1,
-                (extended.top + extended.bottom) / 2 - source.top) &&
-            PtInRegion(region, extended.left - source.left + 1,
-                (extended.top + extended.bottom) / 2 - source.top) &&
-            !PtInRegion(region, extended.right - source.left + 20,
-                (extended.top + extended.bottom) / 2 - source.top),
-            "native clipping includes both extended panel borders without relying on the resting animation envelope");
-        if (region) DeleteObject(region);
-    }
 
     std::vector<DockFullscreenException> exceptions{
         {L"C:\\Apps\\Player.exe", P::Allow}, {L"C:/Apps/PLAYER.exe", P::BlockGestures},

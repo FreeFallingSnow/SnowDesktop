@@ -948,7 +948,7 @@ inline RECT DesktopRectToWindowRect(
 inline HRGN CreateHostWindowRegion(
     const RECT& dockRect, const RECT& animationVisualRect, const RECT& popupRect,
     const RECT& tooltipRect, const RECT& sourceRect,
-    int radius, float dockBorderWidth, const RECT& panelRect = {})
+    int radius, float dockBorderWidth)
 {
     const RECT dockVisualRect = UnionNonEmptyRects(dockRect, animationVisualRect);
     const int borderOverdraw =
@@ -970,7 +970,7 @@ inline HRGN CreateHostWindowRegion(
         (radius + borderOverdraw) * 2);
     auto appendRegion = [&](
         const RECT& desktopRect,
-        int cornerRadius, float borderWidth) {
+        int cornerRadius) {
         if (!windowRegion ||
             IsRectEmpty(&desktopRect))
             return;
@@ -978,7 +978,7 @@ inline HRGN CreateHostWindowRegion(
             snowdesktop::
                 floating_dock_rules::
                     ExpandForBorderOverdraw(
-                        desktopRect, borderWidth);
+                        desktopRect);
         const RECT local =
             snowdesktop::floating_dock_rules::
                 DesktopRectToWindowRect(
@@ -1000,13 +1000,9 @@ inline HRGN CreateHostWindowRegion(
         }
     };
     appendRegion(
-        popupRect, radius, 1.0f);
+        popupRect, radius);
     appendRegion(
-        tooltipRect, 7, 1.0f);
-    // This is a visibility envelope; D2D owns the actual smooth corners and
-    // hit testing stays independent. An extended panel must not inherit the
-    // old rounded native envelope's clipped right edge.
-    appendRegion(panelRect, 0, dockBorderWidth);
+        tooltipRect, 7);
     return windowRegion;
 }
 

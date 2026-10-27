@@ -13,7 +13,6 @@
 #include "platform/foreground_fullscreen.h"
 #include "platform/owned_window_shutdown.h"
 #include "shell/shell_extension_service.h"
-#include <utility>
 
 // Desktop host lifecycle.
 
@@ -469,19 +468,16 @@ bool DesktopApp::FocusKeyboardWindow(
                 observation.foreground == activationWindow);
         return observation;
     };
-    BOOL foregroundAccepted = FALSE;
-    const auto requestFocus = [this, target, activationWindow, &foregroundAccepted,
+    const auto requestFocus = [this, target, activationWindow,
                                   requestForeground, deliberateFullscreenExit]() {
         const bool deliberateExitAllowed = deliberateFullscreenExit &&
             !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
         return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
-            snowdesktop::fullscreen::ObserveForeground, [=, &foregroundAccepted]() {
+            snowdesktop::fullscreen::ObserveForeground, [=]() {
                 if (requestForeground)
                 {
                     ShowWindow(target, SW_SHOWNOACTIVATE);
-                    foregroundAccepted = SetForegroundWindow(activationWindow);
-                    if (!foregroundAccepted && GetForegroundWindow() != activationWindow)
-                        return;
+                    (void)SetForegroundWindow(activationWindow);
                     (void)SetActiveWindow(activationWindow);
                 }
                 (void)SetFocus(target);
@@ -515,13 +511,13 @@ bool DesktopApp::FocusKeyboardWindow(
         message,
         L"%ls focus FAILED target=%p activation=%p foreground=%p "
         L"foregroundThread=%lu foregroundFocus=%p focusKnown=%d "
-        L"localFocus=%p foregroundAccepted=%d",
+        L"localFocus=%p",
         diagnosticLabel ? diagnosticLabel : L"Keyboard window",
         target, activationWindow, observation.foreground,
         observation.foregroundThread,
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
-        GetFocus(), foregroundAccepted ? 1 : 0);
+        GetFocus());
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
     return false;
 }
@@ -634,14 +630,9 @@ void DesktopApp::EndFloatingDockKeyboardSession(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     floatingDockInputDeactivated_ = false;
-    const auto retireInputWindow = [this] {
-        const HWND input = std::exchange(floatingDockInputHwnd_, nullptr);
-        if (input && IsWindow(input)) DestroyWindow(input);
-    };
     if (!floatingDockKeyboardSessionActive_)
     {
         floatingDockLogicalForegroundWindow_ = nullptr;
-        retireInputWindow();
         return;
     }
 
@@ -666,10 +657,11 @@ void DesktopApp::EndFloatingDockKeyboardSession(
         restoreWindow = nullptr;
     }
     floatingDockKeyboardSessionActive_ = false;
-    // The input queue can retain a hidden proxy as its active/focused window.
-    // Retire that HWND, including on failure, so another reveal cannot inherit
-    // the previous session's native activation and local focus state.
-    retireInputWindow();
+    if (floatingDockInputHwnd_ &&
+        IsWindow(floatingDockInputHwnd_))
+    {
+        ShowWindow(floatingDockInputHwnd_, SW_HIDE);
+    }
     floatingDockLogicalForegroundWindow_ = nullptr;
 
     if (focusPolicy ==

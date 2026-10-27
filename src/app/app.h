@@ -820,7 +820,6 @@ private:
         RECT sourceRect{};
         RECT dockRect{};
         RECT animationVisualRect{};
-        RECT visualPanelRect{};
         RECT popupRect{};
         RECT tooltipRect{};
         snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;

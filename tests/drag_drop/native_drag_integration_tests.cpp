@@ -8,7 +8,6 @@
 #include "system/status_bar/status_bar_interaction.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "widgets/group_tab_drag_preview.h"
-#include "theme/flat_glass_rim.h"
 #include "../test_temporary_directory.h"
 #include "../dock/dock_entry_removal_cases.h"
 #include <fstream>

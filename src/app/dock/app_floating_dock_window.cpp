@@ -3,18 +3,6 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
 #include "platform/window_peek_policy.h"
-#include "theme/flat_glass_rim.h"
-
-namespace
-{
-RECT ExpandFloatingDockPaintBounds(RECT bounds, float borderWidth, bool highlight)
-{
-    const int padding = std::max(snowdesktop::floating_dock_rules::ResolveBorderOverdraw(borderWidth),
-        highlight ? snowdesktop::flat_glass_rim::kPanelOverdraw : 0);
-    if (!IsRectEmpty(&bounds)) InflateRect(&bounds, padding, padding);
-    return bounds;
-}
-}
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -808,9 +796,8 @@ CalculateFloatingDockStableSourceRect(
     // Reserve before the first launch and after layout rebuilds. The active
     // animation region still uses the unreserved bounds below, so idle
     // reserve pixels never become visible or interactive.
-    const RECT dockRect = snowdesktop::floating_dock_rules::UnionNonEmptyRects(
-        host.container->GetAnimationVisualBounds(true),
-        host.container->GetVisualPanelBounds(lastMousePoint_));
+    const RECT dockRect =
+        host.container->GetAnimationVisualBounds(true);
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
@@ -823,7 +810,8 @@ CalculateFloatingDockStableSourceRect(
         (dockRect.top + dockRect.bottom) / 2});
     const float tooltipScale = tooltipPage ? static_cast<float>(tooltipPage->dpiX) / 96.f : 1.f;
     RECT sourceRect =
-        ExpandFloatingDockPaintBounds(
+        snowdesktop::floating_dock_rules::
+            ExpandForBorderOverdraw(
                 snowdesktop::
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
@@ -831,7 +819,7 @@ CalculateFloatingDockStableSourceRect(
                             dockSettings_.position,
                             static_cast<int>(std::ceil(300.f * tooltipScale)),
                             static_cast<int>(std::ceil(96.f * tooltipScale))),
-                visualEdgeWidth, appearance.widgetEdgeHighlightEnabled);
+                visualEdgeWidth);
 
     if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
     {
@@ -945,9 +933,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
     const RECT nextDockRect =
         host.container->GetInteractiveBounds();
-    const RECT nextVisualPanelRect = host.container->GetVisualPanelBounds(lastMousePoint_);
-    const RECT nextAnimationVisualRect = snowdesktop::floating_dock_rules::UnionNonEmptyRects(
-        host.container->GetAnimationVisualBounds(), nextVisualPanelRect);
+    const RECT nextAnimationVisualRect =
+        host.container->GetAnimationVisualBounds();
     const RECT nextTooltipRect =
         host.container->
             GetHoveredTitleBounds(
@@ -960,7 +947,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         OffsetRect(&dismissMonitor.rcMonitor, -virtualLeft_, -virtualTop_);
         const float scale = static_cast<float>(GetDpiForWindow(host.hwnd)) / 96.f;
         nextDismissRect = snowdesktop::floating_dock_rules::ExplicitDismissBounds(
-            nextVisualPanelRect, dismissMonitor.rcMonitor,
+            host.container->GetVisualPanelBounds(lastMousePoint_), dismissMonitor.rcMonitor,
             static_cast<int>(std::ceil(24.f * scale)));
     }
     const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
@@ -1001,7 +988,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             &floatingDockPopupRect_);
     const bool animationRegionChanged =
         !EqualRect(&nextAnimationVisualRect, &host.animationVisualRect);
-    const bool panelRegionChanged = !EqualRect(&nextVisualPanelRect, &host.visualPanelRect);
     const bool titleRegionChanged =
         !EqualRect(&nextTooltipRect,
             &floatingDockTooltipRect_);
@@ -1022,7 +1008,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !dismissRegionChanged &&
         !guideRegionChanged &&
         !animationRegionChanged &&
-        !panelRegionChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
         !sourceRectChanged &&
@@ -1036,7 +1021,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     host.guideOcclusionRect = guideOcclusion;
     floatingDockRect_ = nextDockRect;
     host.animationVisualRect = nextAnimationVisualRect;
-    host.visualPanelRect = nextVisualPanelRect;
     floatingDockPopupRect_ = nextPopupRect;
     floatingDockTooltipRect_ = nextTooltipRect;
 
@@ -1180,7 +1164,7 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
     const int radius = std::max(1, static_cast<int>(std::round(appearance.cornerRadius)));
     HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
         host.dockRect, host.animationVisualRect, host.popupRect, host.tooltipRect,
-        host.sourceRect, radius, borderWidth, host.visualPanelRect);
+        host.sourceRect, radius, borderWidth);
     if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
     {
         if (region) DeleteObject(region);
@@ -1188,16 +1172,6 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
             host.sourceRect.bottom - host.sourceRect.top);
     }
     if (!region) return false;
-    if (!IsRectEmpty(&host.visualPanelRect))
-    {
-        RECT painted = ExpandFloatingDockPaintBounds(host.visualPanelRect, borderWidth,
-            appearance.widgetEdgeHighlightEnabled);
-        OffsetRect(&painted, -host.sourceRect.left, -host.sourceRect.top);
-        HRGN paintedRegion = CreateRectRgnIndirect(&painted);
-        const bool combined = paintedRegion && CombineRgn(region, region, paintedRegion, RGN_OR) != ERROR;
-        if (paintedRegion) DeleteObject(paintedRegion);
-        if (!combined) { DeleteObject(region); return false; }
-    }
     if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
     {
         RECT button = host.explicitDismissRect;
