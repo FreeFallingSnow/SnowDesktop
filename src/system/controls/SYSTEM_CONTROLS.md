@@ -1,8 +1,6 @@
 # 共享系统控制与 Lua 接入边界
 
-本文保存共享设备服务的调用链及 Lua 控制边界。2026-09-26 在 `3e8373b3` 发现的 19 项缺口于 59 集中批次接线；当前工作区已包含 registry、七项独立权限、类型文档、执行桥和共享宿主提示，标准构建及本轮自动验收通过，实机／发布尚未完成。最终验证见 [复核记录](../status_bar/STATUS_BAR_AUDIT_20260927.md)。
-
-当前实施顺序见 [STATUS_BAR_IMPLEMENTATION_PLAN.md](../status_bar/STATUS_BAR_IMPLEMENTATION_PLAN.md) 第 6 项。本文是内部实施说明，不是公共 API 公告；实际编辑公共契约前，仍须按 [AGENTS.md](../../../AGENTS.md) 公告具体接口、权限、feature、兼容风险和旧宿主降级方式。
+本文说明共享设备服务的调用链、Lua 任务契约、权限和生命周期。
 
 ## 已有公开能力
 
@@ -19,7 +17,7 @@
 
 上述六个主题已有结构化序列化、类型说明和确定性预览样本，见 [widget_system_control_data.h](../../widget/data/widget_system_control_data.h)。`audio.output.default`、`audio.output.volume` 是更早的公开主题，继续保留原有类型和缺省值语义。
 
-此前公开的非媒体设备写任务有两个，继续保留原参数、权限和结果：
+默认音频输出任务保留以下参数、权限和结果：
 
 | 任务 | 参数与返回 | 权限／feature |
 | --- | --- | --- |
@@ -28,13 +26,13 @@
 
 两者要求当前可信用户手势，结果保留 `accepted` 字段。现有权限文案明确为“控制默认音频输出音量”，不能因增加设备选择任务而静默扩大既有授权。
 
-十个媒体任务已公开：`media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，不属于下面 19 项缺口。已有 Lua `media.setShuffle` 参数叫 `shuffle`，原生共享服务参数叫 `enabled`；不能直接将两套参数解释互换。
+十个媒体任务已公开：`media.play/pause/toggle/stop/next/previous/seek/setRate/setShuffle/setRepeat`，独立于下列系统控制任务。已有 Lua `media.setShuffle` 参数叫 `shuffle`，原生共享服务参数叫 `enabled`；不能直接将两套参数解释互换。
 
 `system.openSettings({page})` 已公开，要求 `shell.launch` 和可信手势；`audio`、`display`、`network`、`bluetooth`、`power` 页面可作为能力不足时的降级入口。页面白名单见 [widget_system_settings.cpp](../../widget/settings/widget_system_settings.cpp)。
 
-## 59 批次新增的 19 项任务
+## 系统控制任务
 
-以下名称与原生参数来自 [system_controls.cpp](system_controls.cpp) 的 `rules`；59 已增加严格 Lua 参数解析、task registry、写权限、feature 和类型重载。内部字符串化只用于宿主桥接，不允许组件传字符串代替数字或布尔值。具体公共契约已在编辑前向用户公告。
+任务名称与原生参数见 [system_controls.cpp](system_controls.cpp)；Lua 入口执行严格参数校验，内部字符串化仅用于宿主桥接。
 
 | 序号 | 任务 | 参数 | 权限组 |
 | --- | --- | --- | --- |
@@ -60,9 +58,9 @@
 
 `network.wifi.connect` 的 `interfaceId` 为必填字符串；`networkId`、`profileName`、`ssid` 必须且只能提供一个非空字符串。`ssid` 不超过 32 字节，`hidden` 为可选布尔值，`security` 若提供只能为 `open`、`wpa2` 或 `wpa3`。`networkId` 由后端重新解析真实安全类型；直接指定 SSID 时必须获得明确安全类型才能连接。不得接受 `password`、`hostConfirmed`、任意 XML、脚本或系统命令参数。
 
-下列七个权限组和 feature 为本批新增，尚未随宿主发布：
+系统控制任务使用以下七个独立权限组和 feature：
 
-| 新增权限 | 新增 feature | 授权范围 |
+| 权限 | feature | 授权范围 |
 | --- | --- | --- |
 | `audio.devices.control` | `task.audio.devices.control` | 切换默认输入／输出设备 |
 | `audio.input.control` | `task.audio.input.control` | 默认麦克风音量／静音 |
@@ -78,11 +76,11 @@
 
 1. Lua `task.start` 进入 [widget_engine.cpp](../../widget/runtime/widget_engine.cpp) 的 `lua_TaskStart`，解析普通参数表，再由 `RuntimeStartTask` 取得实例 `runtimeToken`、权限和 `trustedGestureState_`。不要接受组件自行声明的可信手势。
 2. [widget_task_broker.cpp](../../widget/tasks/widget_task_broker.cpp) 的 `Start` 检查注册、权限、手势、实例／全局并发限制，生成 broker task ID。`InitializeWidgetTaskBroker` 根据 `SystemTaskContracts()` 注册任务，因此只在后端补 `SupportsTask` 不会使任务可用。
-3. 当前输出音量任务仍由 `WidgetAudioOutputTaskExecutor` 执行；媒体也保留原执行器。新增任务经 [widget_system_control_tasks.cpp](../../widget/tasks/widget_system_control_tasks.cpp) 连接 `WidgetSystemDataProvider::Controls()`，复用应用持有的 [Service](system_controls.h)，不新建设备服务或线程。
+3. 当前输出音量任务仍由 `WidgetAudioOutputTaskExecutor` 执行；媒体也保留原执行器。系统控制任务经 [widget_system_control_tasks.cpp](../../widget/tasks/widget_system_control_tasks.cpp) 连接 `WidgetSystemDataProvider::Controls()`，复用应用持有的 [Service](system_controls.h)，不新建设备服务或线程。
 4. 原生面板与 Lua 复用 [system_control_prompt.cpp](system_control_prompt.cpp)。Lua 经应用回调提供宿主窗口、真实组件身份及仍授权检查，不需要先打开面板。网络 ID 必须匹配近期 `network.wifi` 缓存，密码保存在 `Secret`，开放网络不弹密码框。
 5. 桥保存 broker ID、service ID、实例 runtime token 的对应关系，再进入 broker 完成和 `task.done` 派发。Cancel／Forget 精确取消对应 service ID，最后一个任务清理 consumer；服务直接给已脱离的 Work 标记 `detached`，不永久缓存退休实例代次。
 
-若同时迁移旧输出音量任务到共享服务，必须保留参数、截断、结果和取消语义，单独评估由“系统接受”变成“回读匹配”可能增加的失败结果。不要以补齐这 19 项为由顺带改写媒体接口或控件语言。
+迁移输出音量任务到共享服务时，必须保留参数、截断、结果和取消语义，单独评估由“系统接受”变成“回读匹配”可能增加的失败结果。
 
 ## 手势、确认和结果
 
@@ -113,18 +111,18 @@
 | [system_control_brightness.cpp](system_control_brightness.cpp) | 内置屏使用 WMI，外屏使用 DDC；依据真实 monitor ID 重新查找、确认支持并回读，不用未知值伪装 0。同步驱动调用仍有平台阻塞边界。 |
 | [system_control_wifi.cpp](system_control_wifi.cpp) | 读取使用缓存；扫描是显式任务。新配置支持开放网络和 WPA2/WPA3 Personal，其他认证返回 `systemSettingsRequired`。新建配置失败后仅在确认未使用时清理，未知状态保留；扫描等待最多 4 秒后读取缓存，连接按实际目标核对；不向 Lua 返回密码。 |
 | [system_control_bluetooth.cpp](system_control_bluetooth.cpp) | 枚举已配对设备；连接／断开当前仅支持可解析的经典蓝牙音频设备，其他设备返回 `systemSettingsRequired`。没有配对、取消配对或通用 BLE 连接任务；Lua 必须尊重 `canConnect/canDisconnect`。 |
-| [system_control_power.cpp](system_control_power.cpp) | 模式仅在系统支持且计划兼容时可用，`setMode` 同时设置 AC／DC。敏感动作保留确认及系统权限检查，重启／关机不强制关闭其他应用。没有本批次可用的休眠任务。 |
+| [system_control_power.cpp](system_control_power.cpp) | 模式仅在系统支持且计划兼容时可用，`setMode` 同时设置 AC／DC。敏感动作保留确认及系统权限检查，重启／关机不强制关闭其他应用。没有休眠任务。 |
 
-设备消失、策略拒绝、硬件不支持和读回不一致均是实际可能的结果；不要通过复制请求值或假成功消除它们。本批在公共文档中说明错误语义，不直接暴露内部平台码成为新的未审查契约。
+设备消失、策略拒绝、硬件不支持和读回不一致均是实际可能的结果；不要通过复制请求值或假成功消除它们。公共文档说明错误语义，不直接暴露内部平台码成为新的未审查契约。
 
 ## 兼容与发布顺序
 
-- 增量添加任务／权限／feature 可保持 Lua API v2，不修改既有任务参数与数据字段；这只是兼容方案，实施后的兼容结果仍须测试。
+- 系统控制任务沿用 Lua API v2，保留既有任务参数与数据字段。
 - 组件应检测实际新增 feature／capability。旧宿主和同版本早期构建不能按版本号推断支持；缺失时隐藏写入口，或在用户手势下调用已支持且获授权的 `system.openSettings`。其本身也不可用时，仅保留读取状态。
 - 新组件声明 `minHostVersion: "1.0.8.0"` 并检测具体 feature；最低版本不能替代 feature，同版本早期构建仍需降级。
 - 官方社区组件使用新任务前，先发布包含完整契约的宿主，再发布组件，并再次公告旧宿主／缺失 capability 时的行为。不能因为原生控制中心已能执行而提前发布依赖这些 Lua 任务的组件。
 
-## 实施文件和验收落点
+## 实现与回归入口
 
 | 范围 | 现有文件／目标 |
 | --- | --- |
@@ -138,5 +136,3 @@
 | 后端取消、释放与竞争 | `tests/system_controls_tests.cpp` 隶属 CTest **`widget_system_data_provider`**，可执行目标 `SnowDesktopWidgetSystemDataProviderTests`；不存在单独的 `system_controls` CTest 条目 |
 
 最低回归应覆盖 19 项注册及 feature／权限对应、严格参数类型与未知键拒绝、缺少手势／权限、取消确认、撤权和实例重载后的迟到结果、真实 ID 失效、并发采样／执行／释放、预览零系统调用及旧输出任务兼容。竞争场景用可控同步门复现，不以固定 sleep 猜测调度。
-
-这是公共 API 与异步跨模块改动，本批已按仓库规则执行标准构建及完整回归；实机设备和危险系统动作仍分别记录授权与实际验收，不能用预览成功代替。59 标准构建、完整 120/120 与类型警告更正后的受影响资源目标通过；具体输入复用、预览边界和日志见复核报告。未执行真实设备或危险电源动作。

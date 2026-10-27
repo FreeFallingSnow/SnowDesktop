@@ -4,7 +4,7 @@
 
 官方仓库为
 [FreeFallingSnow/SnowDesktop](https://github.com/FreeFallingSnow/SnowDesktop)。
-本指南说明贡献流程；自动化 Agent 还必须遵守 [AGENTS.md](./AGENTS.md) 中的完整规则。
+本指南说明参与方式与贡献要求。
 
 ## 当前参与方式
 
@@ -29,101 +29,22 @@
 
 操作说明参见 [Steam 测试分支文档](https://partner.steamgames.com/doc/store/application/branches)。
 
-## 开始之前
+## 问题反馈与建议
 
-以下规范适用于维护者开发，并供今后开放代码贡献时参考。
+提交前先搜索已有 Issue。问题报告请提供 SnowDesktop 版本、发行渠道、Windows 版本、
+复现步骤、预期与实际结果，以及相关日志或截图。分享前移除个人路径、凭据和其他隐私信息。
 
-- 先搜索已有 Issue 和 Pull Request，避免重复工作。较大的功能、架构调整或公共 API 变更，请先通过 Issue 与维护者讨论范围和兼容性。
-- 问题报告请提供 SnowDesktop 版本、发行渠道、Windows 版本、复现步骤、预期与实际结果，以及相关日志或截图。分享前移除个人路径、凭据和其他隐私信息。
-- 一个 PR 聚焦一个问题。说明用户可见变化、已知风险和未完成事项，避免混入无关重构或格式化。
-- 可以使用中文或英文讨论；请尊重参与者，并围绕可复现的行为和具体代码提出意见。
+较大的功能、架构调整或公共 API 变更，请先通过 Issue 与维护者讨论。
+可以使用中文或英文交流，围绕可复现的行为和具体建议展开。
 
-## 分支与 Pull Request
+## 代码贡献
 
-1. 从官方仓库当前开发版本的 `release/vA.B.C.D` 分支创建工作分支。
-2. PR 的目标分支也应为该版本分支。`main` 是稳定发布分支，不直接接收普通开发 PR。若没有合适的版本分支，请先由维护者确定目标。
-3. `version.json` 是版本号的唯一来源，格式为 `A.B.C.0`：`A` 为 1–65535，`B`、`C` 为 0–65535。除非贡献本身涉及已商定的版本更新，否则不要自行修改版本号。
-4. 使用 [PR 模板](./.github/pull_request_template.md)，关联相关 Issue，并记录验证命令、结果、未运行原因和待验证场景。尚未完成的工作请使用 Draft PR。
-5. 合入版本分支时保留贡献者的提交及作者信息；维护者的补充修改使用独立提交，不仅为格式统一而改写外部贡献者的既有提交。
+恢复接收代码贡献后，PR 应提交到当前开发版本的 `release/vA.B.C.D` 分支；
+`main` 为稳定发布分支。使用 [PR 模板](./.github/pull_request_template.md) 说明改动、
+关联问题、验证结果和未完成事项。
 
-版本分支经验证后，由维护者通过 Squash and merge 发布到 `main`。本地版本合并与标签使用
-`scripts/squash_release_to_main.bat`；远程发布必须在维护者测试本地 `main` 并明确确认后单独执行。
-普通贡献 PR 不执行发布操作，也不向 GitCode 推送。
-
-## 提交信息
-
-版本分支上的新开发提交采用以下中英双语格式，中英文应描述相同范围：
-
-```text
-<type>(<scope>): <中文摘要> / <English summary>
-```
-
-`scope` 可省略。常用类型为 `feat`、`fix`、`perf`、`refactor`、`test`、`docs`、`build`、
-`ci`、`chore`、`try`、`verify` 和 `revert`。摘要应具体，不写“修复问题”或“fix bug”。
-非平凡改动在正文中分别写明中文说明、英文说明和实际验证，例如：
-
-```text
-docs(contributing): 补充贡献流程 / Expand the contribution workflow
-
-中文：
-- 说明分支选择与验证要求
-
-English:
-- Explain branch selection and validation requirements
-
-验证 / Validation:
-- git diff --check（通过 / passed）
-- 纯文档改动，未运行构建或测试 / Documentation only; build and tests not run
-```
-
-`feat`、`fix`、`perf` 只用于已经完成对应验收、缺陷复现验证或性能测量的结果。
-编译通过但视觉、交互或兼容性仍待实机验证时，使用 `try`，摘要同时包含
-“编译通过，待验证”和 `build passed, validation pending`，并在正文记录验证范围与限制。
-每轮单独编译成功的代码尝试分别提交，再继续下一轮修改；不提交编译失败的中间状态。
-后续完成实测时以独立 `verify` 提交记录原 `try` 哈希、步骤和实际结果，不改写历史验证状态。
-纯组件更新使用组件级验证及对应的 `try(widget)` 格式，详见 [AGENTS.md](./AGENTS.md)。
-
-## 构建与验证
-
-环境要求见 [README 的构建说明](./README.md)，脚本说明见 [scripts/README.md](./scripts/README.md)。
-在仓库根目录使用以下入口，按改动范围选择测试：
-
-```bat
-scripts\build.bat
-scripts\test.bat list
-scripts\test.bat name "<regex>"
-scripts\test.bat label "<regex>"
-scripts\test.bat core
-scripts\test.bat fast
-scripts\test.bat full
-```
-
-- 原生代码改动需完成相应编译；最终 Release 构建验证使用 `scripts/build.bat`，并确认 `.build/Release/SnowDesktop.exe` 已生成。直接调用 CMake 或 Ninja 仅用于诊断，不替代标准入口。
-- 当前第4版协作构建在独立候选目录编译，无需提前关闭 SnowDesktop 或重启 Explorer；原检出的进程或 Hook 占用不阻断候选。完整 Release 产品构建成功后，脚本更新本检出的运行文件，正常退出并恢复原先运行的宿主，保留用户数据；原先未运行则保持关闭。旧协议或直接覆盖活动运行目录的入口才按实际输出路径核对占用、显式处理，不默认追加 `--reload-shell`。
-- 开发期间先运行覆盖改动的最小充分测试组。宿主改动最终交付、合入 PR 或发布前运行 `scripts/test.bat full`；构建、测试基础设施和跨模块公共行为改动也需要完整测试。
-- 交付待实机验证的 `try` 版本可先完成必要构建和定向测试，注明完整测试未运行；用户确认场景后、最终交付或创建 `verify` 前运行一次完整测试。高风险边界仍需完整测试。
-- 仅修改 Lua 组件包且未涉及宿主、公共 API 或构建脚本时，使用 `snowwidget lint`、组件测试、包校验和打包验证，无需为此编译宿主或运行宿主完整测试。纯文档、注释改动可采用链接、内容和差异检查，说明未运行构建和测试的原因。
-- 测试应防止实际行为回归、数据或 API 约束被破坏，以及已知缺陷复发；优先扩展现有目标。测试源码放在 `tests/`，由 `CMakeLists.txt` 的 `SnowDesktopTests` 聚合目标统一登记，避免仅验证源码排版或复述实现。
-- 视觉、交互和兼容性结果需要原始场景或等价的可观察证据。编译和自动化测试不能代替实测。桌面宿主不支持稳定的桌面自动化验证，请由使用者实机验证；独立设置窗口等可稳定操作的界面可采用相应工具。
-
-## 代码、组件与本地化
-
-- 保持现有代码风格，优先复用已有模块和接口。公共组件 API、清单、协议或 capability 变更应在实现前说明受影响的调用方、兼容性风险，以及 `apiVersion`、`minHostVersion`、能力检测和降级方案；不能用同一版本号代替兼容性验证。
-- 修改用户可见文案时，同步更新 `lang/*.json` 的全部语言，并使用真实翻译。内置及官方社区组件的 `locales` 应与这些语言文件完全一致；运行本地化契约测试并人工检查翻译质量。
-- `widgets/` 保存内置组件及随软件分发的组件开发 Skill。官方社区组件位于 `developer_assets/workshop_widgets/`，不随应用发行，不得擅自迁入内置目录。
-- 内置组件运行时读取构建输出，修改源码后需通过标准构建复制，或按 [AGENTS.md](./AGENTS.md) 精确临时同步到 `.build/<Configuration>/widgets/<slug>/`，才能交付实机验证。临时同步不等于宿主编译。
-- 官方社区组件实测前先标准构建宿主，再运行 `scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once`；首次发现或切换来源时按需追加 `-RestartHost`。随后在组件开发入口启用“开发版本”，确认实际来源后再验证。
-- 高级功能入口、Fluent 设置图标、组件封面及发布顺序的具体约束见 [AGENTS.md](./AGENTS.md)。关闭效果、恢复普通状态等反向操作不得因 Steam 桥或解锁状态而失效。
-
-## 数据与提交范围
-
-保留已有用户改动，不覆盖或混入其他人的未提交工作。提交前检查暂存区，仅包含本 PR 的文件。
-不要提交 `.build/`、`.build_debug/`、`artifacts/`、`docs/html/`、`.codex-probes/` 中的生成物，
-也不要提交日志、凭据、证书私钥或用户数据。
-
-**`.build/Release/data/` 可能包含正在使用的桌面布局、设置、组件存储和备份。**
-不要将它当作构建缓存删除。完整清理 `.build` 前必须说明数据丢失风险、取得使用者明确确认，
-并先尝试备份数据；普通贡献和测试不应依赖清空用户数据。
+本地构建参见 [README](./README.md) 和 [脚本说明](./scripts/README.md)。
+维护者及自动化 Agent 的工作流程统一见 [AGENTS.md](./AGENTS.md)。
 
 ## 贡献许可与商业发行
 

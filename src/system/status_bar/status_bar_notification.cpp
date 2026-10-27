@@ -6,7 +6,7 @@
 // d6d1e6d553b0aac34fd5fb34928d3ca82b8d055f,
 // src/core/widgets/services/dnd/dnd_api.py and
 // src/core/widgets/services/notifications/windows_notification.py.
-// See third_party/yasb/README.md and LICENSE for source and compatibility notes.
+// See third_party/yasb/README.md and LICENSE for attribution details.
 namespace snowdesktop::status_bar_notification
 {
 namespace

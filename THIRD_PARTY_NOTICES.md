@@ -37,9 +37,6 @@ described under "Optional Steamworks dependency" below.
 - Original SDK sources: `third_party/perfetto/perfetto.h` and `perfetto.cc`
 - The build verifies the original SDK bytes and generates a compiler-only copy
   with two explicit MSVC type corrections; see `cmake/SnowDesktop.Perfetto.cmake`.
-- Offline analysis optionally downloads the official v58.2 Windows x64 Trace
-  Processor, with its fixed SHA-256 verified before use. The shipped SQL and
-  analysis scripts perform local analysis.
 
 ## Third-party components
 
@@ -89,12 +86,12 @@ or font redevelopment is performed. The full agreements are retained in
 `third_party/misans/LICENSE.pdf` and `third_party/harmonyos-sans/LICENSE.txt` and
 copied into release payloads as `MiSans-LICENSE.pdf` and
 `HarmonyOS-Sans-LICENSE.txt`. These fonts may not be redistributed as standalone
-font products. The font settings and About page identify their use and owners.
+font products.
 
 SnowDesktop 使用 MiSans 与 HarmonyOS Sans 作为可选界面字体，字体资源分别适用
 自己的许可，不适用 SnowDesktop 源码的 GPL 许可。仅随应用分发原始 OTF/TTF 文件，
 不进行字形裁剪、转换或字体再开发；保留完整协议并随发行包交付。禁止将这些字体
-作为独立字体产品再次分发。字体设置与关于页面标明使用的字体和权利人。
+作为独立字体产品再次分发。
 
 ## YASB references and adapted portions
 
@@ -104,9 +101,7 @@ YASB references and adapted portions are documented separately in
 Copyright (c) 2021 denBot. Its MIT notice is retained in
 [`third_party/yasb/LICENSE`](third_party/yasb/LICENSE) and distributed as
 `YASB-LICENSE.txt`. The adapted private tray wire structures and Bluetooth
-control approach are identified there; SnowDesktop's IPC, task service and
-native presentation are separate implementations. The About page links to
-the pinned upstream source.
+control approach are identified there.
 
 ## TranslucentTB-derived portions
 
@@ -165,14 +160,13 @@ opposing fan-mask and exponential inner-shadow calculations from OpenHarmony
 GraphicsEffect at commit `da8e11652a705ea2141c35de1a1fff501148740e`.
 Copyright (c) 2025-2026 Huawei Device Co., Ltd. SnowDesktop modified these
 portions in 2026 for its existing opacity masks and chose its own visual
-parameters. This is not an assertion that Honor MagicAnimation uses the same
-implementation. The source paths and adaptation boundaries are documented in
+parameters. The source paths and adapted calculations are documented in
 `third_party/graphics-effect/README.md`. The Apache-2.0 license is reproduced
 below so release packages containing this notices file retain the full text.
 
 `src/theme/flat_glass_rim.h` 包含上述官方边缘光、对向扇区遮罩和指数内阴影计算的修改版。
-SnowDesktop 于 2026 年将其移植到现有透明度遮罩并独立调校视觉参数，未声称与荣耀
-MagicAnimation 使用相同实现。来源和移植边界见上述 README；完整许可证附于本文末尾。
+SnowDesktop 于 2026 年将其移植到现有透明度遮罩并独立调校视觉参数。来源和改编的
+计算见上述 README；完整许可证附于本文末尾。
 
 ## Optional Steamworks dependency
 
@@ -186,9 +180,7 @@ SnowDesktop GPL license or the bridge MIT license. See
 
 `src/dock/dock_attraction_rules.h` adapts the control-point trajectories and
 timing parameters of `RSAttractionEffectFilter` at the pinned commit above.
-SnowDesktop supplies its own DWM image grid, Coons evaluation, source-local
-projection, compositor timeline, finite transparent endpoint, and motion
-bounds. These changes are part of SnowDesktop's corresponding source.
+SnowDesktop's adaptations are included in its corresponding source.
 The copyright and Apache-2.0 notice are retained in the adapted header;
 the complete Apache-2.0 license below applies to these adapted portions too.
 

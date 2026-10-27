@@ -18,4 +18,4 @@ Microsoft 的图标资源，用于 SnowDesktop 的菜单、状态栏和控制中
 
 Regular 字体 SHA-256：`53204be5637d3872892e64aa7012f79f1e7480f03b534ae1d29a66e62a96d7fc`。
 
-上述图标轮廓保持上游形状，颜色由 SnowDesktop 的界面状态和主题决定。发行包包含 Regular 字体和 `licenses/FluentSystemIcons-LICENSE.txt`，不包含 Filled 字体。
+发行包包含 Regular 字体和 `licenses/FluentSystemIcons-LICENSE.txt`。

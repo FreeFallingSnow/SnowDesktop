@@ -13,4 +13,4 @@ MiSans Regular 是 SnowDesktop 提供的可选界面字体。
 
 字体文件为 [MiSans-Regular.otf](../../assets/fonts/MiSans/MiSans-Regular.otf)，保持原始文件，未裁剪字形、转换格式或修改字体。
 
-字体仅随 SnowDesktop 应用分发，发行包保留 `licenses/MiSans-LICENSE.pdf`；不得作为独立字体产品分发。字体设置和关于页标明使用的字体及权利人。文件大小、SHA-256 和字重说明见 [字体资源说明](../../assets/fonts/README.md)。
+发行包随附 `licenses/MiSans-LICENSE.pdf`。分发限制见 [第三方声明](../../THIRD_PARTY_NOTICES.md#optional-interface-fonts--可选界面字体)；文件大小、SHA-256 和字重说明见 [字体资源说明](../../assets/fonts/README.md)。

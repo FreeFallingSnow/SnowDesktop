@@ -13,4 +13,4 @@
 
 目录保留 ImGui 核心、内置文本和字体辅助头文件，以及 `backends/` 中的 Win32、DirectX 11 后端；[imconfig.h](imconfig.h) 为库配置入口。
 
-根目录 [CMakeLists.txt](../../CMakeLists.txt) 将这些源码编译为 `SnowDesktopWorkshopImgui`。设置中心使用 WinUI 3。发行包随附 `licenses/DearImGui-LICENSE.txt`。
+根目录 [CMakeLists.txt](../../CMakeLists.txt) 将这些源码编译为 `SnowDesktopWorkshopImgui`。发行包随附 `licenses/DearImGui-LICENSE.txt`。

@@ -183,7 +183,11 @@ droppedFrames 在无法归因时保持 null。交互预设在 Windows 11 可选�
 Clock 显示合成统计，每次最多 10 ms、256 帧及 16 个目标，不等待或提升系统合成时钟。
 compositor.csv 仅表达显示合成，不能代表每个动画，也不能完整覆盖 independent flip。
 
-## 验证与实施边界
+## 回归与测量边界
+
+原生回归使用官方 Windows x64 Trace Processor v58.2 解析 SDK 输出。可安装官方 Perfetto Skill 后运行 `python <skill>/bin/trace_processor --version`，或为测试进程设置 `SNOWDESKTOP_TRACE_PROCESSOR`，指向原生可执行文件。
+
+默认缓存文件为 `~/.local/share/perfetto/prebuilts/trace_processor_shell-adfa6bad3d72be3b.exe`，SHA-256 为 `adfa6bad3d72be3ba9b83fa2b17b69fa13b3ab1cad0f42e52b86188bd5f0f997`。缺少分析工具时回归明确失败。
 
 `widget_runtime_diagnostics` 使用真实 SDK、真实 Lua 和官方分析器验证 native trace、
 CPU 可用/不可用、层级、flow、预设过滤、重启、幂等、会话隔离及失败证据。其隐藏

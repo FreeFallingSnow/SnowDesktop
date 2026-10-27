@@ -65,7 +65,7 @@ sampler_workspace_bytes_estimate 是本轮查询数组的尺寸；采样会产�
 - vector_storage_bytes：vector capacity×sizeof(value_type)；嵌套 vector 单列。
 - selected_text_payload_bytes/fields：明确选中的字符串内容字节/字段数，不是堆占用。
   包括名称、路径、页面/组件标识、包来源、集合成员及分类顺序；不序列化内容。
-  首批未覆盖 PIDL、large-icon 配置、shortcut extension、JSON/COM 对象及全部业务缓存。
+  统计未覆盖 PIDL、large-icon 配置、shortcut extension、JSON/COM 对象及全部业务缓存。
 - map_value_storage_lower_bound_bytes 与 bucket_storage_bytes_estimate 分列，不包含
   节点链接、分配器开销；desktop_app_inline_bytes 只计 sizeof(DesktopApp)。
 
@@ -73,5 +73,5 @@ sampler_workspace_bytes_estimate 是本轮查询数组的尺寸；采样会产�
 像素、位图和文字布局继续沿用 native.*.memory、widget.*.memory 指标，不重复实现。
 `profiler/sample.host_models` 单列 UI 遍历成本。
 
-本轮可以把进程总量、地址类别与部分业务载荷并列观察；匿名私有区内的具体堆分配、
+进程总量、地址类别与部分业务载荷可以并列观察；匿名私有区内的具体堆分配、
 逐线程栈、字体/COM/图形驱动内部所有者及内核侧资源仍未归因。没有把未归因余量标为代码或浪费。

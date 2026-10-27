@@ -15,4 +15,4 @@
 - [pinyin_full_table.cpp](pinyin_full_table.cpp) 与 [pinyin_full_table.h](pinyin_full_table.h)：从数据生成的紧凑 C++ 查询表。
 - [name_pinyin.h](../../src/navigation/name_pinyin.h) 与 [search_match.cpp](../../src/navigation/search_match.cpp)：在名称查询中使用上述表。
 
-此目录提供数据及其生成表，搜索匹配逻辑由 SnowDesktop 实现。发行包随附 `licenses/PinyinData-LICENSE.txt`。
+发行包随附 `licenses/PinyinData-LICENSE.txt`。

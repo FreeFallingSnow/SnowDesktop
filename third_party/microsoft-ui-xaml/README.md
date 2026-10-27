@@ -16,4 +16,4 @@
 
 [generate_acrylic_noise_asset.py](../../scripts/generate_acrylic_noise_asset.py) 将原图嵌入 [acrylic_noise_asset.h](../../src/ui/render/acrylic_noise_asset.h)。在仓库根目录执行 `python scripts/generate_acrylic_noise_asset.py --check` 可核对生成内容。
 
-渲染时使用 256×256 纹理，以 2% 画刷透明度、物理像素尺寸平铺，采用上游 `AcrylicBrush::sc_noiseOpacity` 的取值。复用范围是这张纹理及该参数，不包含 WinUI 画刷实现代码。
+渲染使用 256×256 纹理，以物理像素尺寸平铺；2% 透明度采用上游 `AcrylicBrush::sc_noiseOpacity` 的取值。

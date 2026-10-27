@@ -18,11 +18,3 @@
 | 蓝牙音频连接与电量 | `src/core/widgets/services/bluetooth/bluetooth_audio.py`、`bluetooth_api.py` | [system_control_bluetooth.cpp](../../src/system/controls/system_control_bluetooth.cpp) 改编 KS 连接／断开方法及电池属性识别 |
 | 电源模式 | `src/core/widgets/services/power_mode/power_mode_api.py` | [system_control_power.cpp](../../src/system/controls/system_control_power.cpp) 参考模式 GUID 和动态 API 支持检查 |
 | 勿扰状态与通知数量 | `src/core/widgets/services/dnd/dnd_api.py`、`src/core/widgets/services/notifications/windows_notification.py` | [status_bar_notification.cpp](../../src/system/status_bar/status_bar_notification.cpp) 参考 WNF 状态标识与计数载荷 |
-
-## 改编范围
-
-SnowDesktop 使用原生 C++、Direct2D 控件和自己的托盘采集、IPC、任务服务及生命周期管理；发行包不包含 YASB 的 Python、Qt 代码或运行环境。
-
-托盘键盘操作、焦点返回、菜单位置兼容处理和图标矩形查询由 SnowDesktop 实现。勿扰指示读取当前生效的配置（含自动规则），与上游读取用户选择配置的方式有别。Windows 10 未读通知数量与 Windows 11 通知中心总数分别处理。
-
-Explorer 私有托盘结构和 WNF 状态不是公开的 Windows 兼容性契约，兼容情况依赖 Windows 版本。实现细节、诊断入口和验收记录见 [状态栏模块说明](../../src/system/status_bar/STATUS_BAR.md)。
