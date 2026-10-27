@@ -78,6 +78,7 @@ struct Response
     std::uint64_t sequence = 0;
     CapabilityMask capabilities = 0;
     std::uint32_t error = ERROR_SUCCESS;
+    std::uint32_t asynchronousError = ERROR_SUCCESS;
     std::uint32_t succeeded = 0;
     std::uint32_t buttons = 0;
     std::uint32_t pointerCount = 0;

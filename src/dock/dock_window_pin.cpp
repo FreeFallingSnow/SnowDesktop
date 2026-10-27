@@ -1,5 +1,6 @@
 #include "dock_window_pin.h"
 #include "platform/window_support/window_support_runtime.h"
+#include "platform/operation_feedback.h"
 #include "theme/personalization.h"
 
 #include <dwmapi.h>
@@ -259,8 +260,23 @@ struct DockWindowPin::State
             {
                 ShowWindow(border, SW_HIDE);
                 if (requestPending)
-                    return now < requestDeadline;
-                if (!ChangeTopmost(target, true)) return false;
+                {
+                    if (now < requestDeadline) return true;
+                    snowdesktop::window_support::WindowSupport().RecordFailure(
+                        snowdesktop::window_support::Capability::WindowPin, target,
+                        snowdesktop::window_support::Provider::InProcess, ERROR_TIMEOUT);
+                    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, ERROR_TIMEOUT});
+                    return false;
+                }
+                if (!ChangeTopmost(target, true))
+                {
+                    const DWORD error = GetLastError() ? GetLastError() : ERROR_GEN_FAILURE;
+                    snowdesktop::window_support::WindowSupport().RecordFailure(
+                        snowdesktop::window_support::Capability::WindowPin, target,
+                        snowdesktop::window_support::Provider::InProcess, error);
+                    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+                    return false;
+                }
                 requestPending = !IsTopmost(target);
                 pinInFlight = requestPending;
                 cleanup->pinInFlight = pinInFlight;
@@ -668,7 +684,12 @@ bool DockWindowPin::Toggle(HWND window)
         return snowdesktop::window_support::WindowSupport().Submit(request);
     }
     if (!route.Available())
-        return snowdesktop::window_support::WindowSupport().RequestPinAuthorization(window);
+    {
+        if (snowdesktop::window_support::WindowSupport().RequestPinAuthorization(window)) return true;
+        snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, ERROR_NOT_SUPPORTED});
+        return false;
+    }
+    const bool accepted = [&]() -> bool {
     if (state_)
     {
         if (auto* entry = state_->FindEntry(window); entry && entry->OwnsTarget())
@@ -760,4 +781,20 @@ bool DockWindowPin::Toggle(HWND window)
     state_->entries.push_back(std::move(entry));
     state_->Subscribe();
     return true;
+    }();
+    if (accepted) return true;
+    const DWORD error = GetLastError() ? GetLastError() : ERROR_GEN_FAILURE;
+    auto& support = snowdesktop::window_support::WindowSupport();
+    support.RecordFailure(snowdesktop::window_support::Capability::WindowPin, window,
+        snowdesktop::window_support::Provider::InProcess, error);
+    if (support.Resolve(snowdesktop::window_support::Capability::WindowPin, window).provider ==
+            snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::TogglePin;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        if (support.Submit(request)) return true;
+    }
+    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+    return false;
 }

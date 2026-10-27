@@ -1007,7 +1007,6 @@ target_compile_definitions(SnowDesktopWindowSupport PRIVATE UNICODE _UNICODE NOM
 target_compile_options(SnowDesktopWindowSupport PRIVATE /W4 /permissive- /EHsc /utf-8)
 set_property(TARGET SnowDesktopWindowSupport PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(SnowDesktopWindowSupport PUBLIC advapi32 ole32 oleaut32 shell32 taskschd user32)
-target_link_libraries(SnowDesktop PRIVATE SnowDesktopWindowSupport)
 
 # A small, independently authorized HWND broker. No desktop composition root,
 # Lua engine, Shell extension loader or arbitrary command executor is linked.
@@ -1211,7 +1210,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    webpdecoder SnowDesktopPuff
+    webpdecoder SnowDesktopPuff SnowDesktopWindowSupport
     ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
@@ -1472,7 +1471,7 @@ if (BUILD_TESTING)
         SnowDesktopWindowSupportTests
         window_support
         SOURCES tests/platform/window_support_tests.cpp
-        LINK_LIBRARIES user32
+        LINK_LIBRARIES SnowDesktopWindowSupport user32
         INCLUDE_DIRECTORIES src
         LABELS core platform rules)
 

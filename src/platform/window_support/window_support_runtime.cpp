@@ -4,6 +4,7 @@
 #include "window_support_pipe.h"
 #include "window_pointer_observer.h"
 #include "window_pointer_events.h"
+#include "window_operation_failures.h"
 #include "platform/operation_feedback.h"
 
 #include <chrono>
@@ -42,6 +43,7 @@ struct Runtime::Impl
     bool stopping = false, running = false, polling = false;
     std::uint64_t nextSequence = 0;
     RecentPointerEvents recentPointerEvents;
+    WindowOperationFailures failures;
     ULONGLONG lastResponse = 0;
 
     void Disconnect(DWORD error)
@@ -106,6 +108,8 @@ struct Runtime::Impl
     }
     void Publish(const protocol::Response& response)
     {
+        if (response.asynchronousError)
+            operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, response.asynchronousError});
         std::lock_guard guard(mutex);
         if (status.capabilities.helperState != ProviderState::Ready)
         {
@@ -238,6 +242,16 @@ struct Runtime::Impl
                 response.error = error;
             }
             else Publish(response);
+            if (response.error && protocol::Current(current.request.target))
+            {
+                const auto command = current.request.command;
+                const auto capability = command == protocol::Command::TogglePin ? Capability::WindowPin :
+                    command == protocol::Command::StartMinimize || command == protocol::Command::StartRestore ? Capability::MinimizeAnimation :
+                    command == protocol::Command::CloseWindow || command == protocol::Command::MinimizeWindow || command == protocol::Command::RestoreWindow
+                        ? Capability::WindowControl : Capability::None;
+                std::lock_guard guard(mutex);
+                failures.Record(current.request.target, capability, Provider::Helper, response.error, GetTickCount64());
+            }
             if (response.error && current.request.command != protocol::Command::Poll)
                 operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, response.error});
             if (current.completion)
@@ -309,7 +323,7 @@ CapabilityRoute Runtime::Resolve(Capability capability, HWND target) const
 {
     const auto status = Status();
     OperationContext context;
-    context.targetCurrent = !target || TargetInCurrentSession(target);
+    context.targetCurrent = capability == Capability::PointerObservation || !target || TargetInCurrentSession(target);
     const HWND subject = target ? target : GetForegroundWindow();
     // LL mouse events execute on our observer thread. They do not require
     // opening the foreground process or injecting a hook into that process.
@@ -317,6 +331,13 @@ CapabilityRoute Runtime::Resolve(Capability capability, HWND target) const
         !subject || NativeTargetAccessible(subject);
     if (capability == Capability::PointerObservation && status.capabilities.helperState == ProviderState::Ready &&
         Contains(status.capabilities.helper, capability)) context.inProcessEligible = false;
+    if (target && capability != Capability::PointerObservation)
+    {
+        const auto identity = protocol::Capture(target);
+        std::lock_guard guard(impl_->mutex);
+        if (impl_->failures.Blocked(identity, capability, Provider::InProcess, GetTickCount64())) context.inProcessEligible = false;
+        if (impl_->failures.Blocked(identity, capability, Provider::Helper, GetTickCount64())) context.helperEligible = false;
+    }
     return ResolveCapability(status.capabilities, capability, context);
 }
 std::optional<std::uint32_t> Runtime::PointerButtons() const
@@ -419,6 +440,13 @@ void Runtime::SetNativeCapability(Capability capability, bool available)
     else impl_->status.capabilities.inProcess &= ~Mask(capability);
     ++impl_->status.capabilities.generation;
 }
+void Runtime::RecordFailure(Capability capability, HWND target, Provider provider, DWORD error)
+{
+    if (!protocol::Current(protocol::Capture(target))) return;
+    std::lock_guard guard(impl_->mutex);
+    impl_->failures.Record(protocol::Capture(target), capability, provider, error, GetTickCount64());
+    ++impl_->status.capabilities.generation;
+}
 void Runtime::SetAuthorizationRequestHandler(std::function<void()> handler)
 { std::lock_guard guard(impl_->mutex); impl_->authorizationRequest = std::move(handler); }
 bool Runtime::RequestPinAuthorization(HWND target)
@@ -427,6 +455,7 @@ bool Runtime::RequestPinAuthorization(HWND target)
     {
         std::lock_guard guard(impl_->mutex);
         if (!impl_->running || impl_->status.hostElevated || !impl_->authorizationRequest || !TargetInCurrentSession(target)) return false;
+        if (impl_->status.authorization == AuthorizationState::Registered && impl_->status.capabilities.helperState == ProviderState::Ready) return false;
         impl_->pendingPin = protocol::Capture(target);
         impl_->pendingPinAt = GetTickCount64();
         handler = impl_->authorizationRequest;

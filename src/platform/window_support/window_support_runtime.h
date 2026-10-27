@@ -34,6 +34,7 @@ public:
     void SetPinPeek(HWND target);
     void SetPointerCallback(PointerCallback callback);
     void SetNativeCapability(Capability capability, bool available);
+    void RecordFailure(Capability capability, HWND target, Provider provider, DWORD error);
     void SetAuthorizationRequestHandler(std::function<void()> handler);
     bool RequestPinAuthorization(HWND target);
     bool Submit(protocol::Request request, Completion completion = {});

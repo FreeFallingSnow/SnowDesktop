@@ -3,6 +3,7 @@
 #include "settings/settings_ipc_values.h"
 #include "home_about_ipc_values.h"
 #include "general_advanced_feature_ipc_values.h"
+#include "window_support_ipc_values.h"
 #include "settings_window_host.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -13,9 +14,6 @@ namespace snowdesktop::settings_ipc
     template<> struct Fields<Type> { \
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
-
-SD_IPC_FIELDS(window_support::CapabilitySnapshot, v.inProcess, v.helper, v.helperState, v.generation);
-SD_IPC_FIELDS(window_support::SupportStatus, v.capabilities, v.authorization, v.hostElevated, v.error);
 
 SD_IPC_FIELDS(calendar::CalendarEvent, v.id, v.revision, v.title, v.date, v.allDay, v.startMinutes, v.endMinutes, v.notes, v.reminderMinutes, v.notifiedTrigger, v.seriesId, v.occurrenceDate, v.occurrenceOverride);
 SD_IPC_FIELDS(calendar::CalendarSeriesRule, v.kind, v.dates, v.startDate, v.endDate, v.interval, v.weekdays, v.monthDay);

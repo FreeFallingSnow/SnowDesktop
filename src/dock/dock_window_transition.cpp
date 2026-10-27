@@ -664,6 +664,7 @@ bool DockWindowTransition::StartHelperAnimation(HWND source, RECT anchor, HWND b
     namespace support = snowdesktop::window_support;
     namespace wire = support::protocol;
     auto& runtime = support::WindowSupport();
+    if (!snowdesktop::animation::RuntimeAnimationsEnabled() || snowdesktop::animation::RuntimeWindowEffect() == 0) return false;
     if (!helperRouting_ || runtime.Resolve(support::Capability::MinimizeAnimation, source).provider != support::Provider::Helper)
         return false;
     if (IsActive() && !remoteAnimation_) Cancel();
@@ -696,6 +697,9 @@ bool DockWindowTransition::StartMinimize(
     HWND keepBelowWindow, std::function<void(HWND)> minimizeRequest)
 {
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false)) return true;
+    if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
+            snowdesktop::window_support::Provider::InProcess) return false;
     ObserveMinimize(sourceWindow, dockRect, true);
     const bool alreadyPending = IsActiveFor(sourceWindow) && (awaitingMinimizePresentation_ || externalMinimize_);
     const bool started = Start(
@@ -706,6 +710,12 @@ bool DockWindowTransition::StartMinimize(
     {
         if (awaitingMinimizePresentation_) minimizeRequest_ = std::move(minimizeRequest);
         else if (SourceIdentityCurrent()) minimizeRequest(sourceWindow_);
+    }
+    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    {
+        snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
+            sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
+        return StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false);
     }
     return started;
 }
@@ -831,13 +841,23 @@ bool DockWindowTransition::StartRestore(
     HWND keepBelowWindow)
 {
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, restoreCallback)) return true;
+    if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
+            snowdesktop::window_support::Provider::InProcess) return false;
     if (!restoreCallback)
         return false;
-    return Start(
+    const bool started = Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Restore,
-        std::move(restoreCallback),
+        restoreCallback,
         keepBelowWindow);
+    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    {
+        snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
+            sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
+        return StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, std::move(restoreCallback));
+    }
+    return started;
 }
 
 bool DockWindowTransition::Start(

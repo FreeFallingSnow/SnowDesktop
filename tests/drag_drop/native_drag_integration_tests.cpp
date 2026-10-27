@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "app/dock/dock_running_drag_state.h"
 #include "app/input/native_item_drag_source.h"
 #include "app/shell/shell_refresh_snapshot.h"

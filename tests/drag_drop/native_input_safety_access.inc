@@ -1019,7 +1019,7 @@ end})
             inputSafetyPhysicalButton = 0;
             dock.promotionInputForeground = control;
             dock.promotionInputProcess = GetCurrentProcessId() + 1000;
-            dock.promotionInputPrivilegeGap = true;
+            dock.promotionInputCapabilityMissing = true;
             app->RefreshFloatingDockPromotionInputs();
             check(dock.explicitDismissAvailable && inputSafetyForeground == control,
                 "already-visible Dock gains its escape path when elevated foreground persists without a focus request");
@@ -1032,14 +1032,18 @@ end})
                 app->floatingDockKeyboardSessionActive_,
                 "queued proxy activation retains its session without flashing the fallback before a result");
             inputSafetyForeground = app->hwnd_;
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, true);
             app->RefreshFloatingDockPromotionInputs();
             check(!dock.explicitDismissAvailable && !dock.promotionInputFocusPendingUntil,
-                "live foreground recheck hides the escape path after confirmed loss of higher-privilege foreground");
+                "restored pointer capability hides the escape path independently of foreground privilege");
 
             inputSafetyForeground = control;
             dock.promotionInputForeground = control;
             dock.promotionInputProcess = GetCurrentProcessId() + 1000;
-            dock.promotionInputPrivilegeGap = true;
+            dock.promotionInputCapabilityMissing = true;
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, false);
             dock.promotionInputFocusPendingUntil = GetTickCount64() - 1;
             app->RefreshFloatingDockPromotionInputs();
             check(dock.explicitDismissAvailable && !dock.promotionInputFocusPendingUntil &&
@@ -1073,17 +1077,19 @@ end})
                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 dock.dockRect = dock.animationVisualRect = {0,0,200,200};
                 dock.sourceRect = {0,0,400,300};
-                const auto seedForeground = [&](bool elevated) {
+                const auto seedForeground = [&](bool pointerUnavailable) {
                     inputSafetyForeground = control;
                     dock.promotionInputForeground = control;
                     dock.promotionInputProcess = GetCurrentProcessId() + 1000;
-                    dock.promotionInputPrivilegeGap = elevated;
+                    dock.promotionInputCapabilityMissing = pointerUnavailable;
+                    snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                        snowdesktop::window_support::Capability::PointerObservation, !pointerUnavailable);
                 };
                 const unsigned beforePointer = inputSafetyForegroundCalls;
                 seedForeground(false);
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(40,40));
                 check(inputSafetyForegroundCalls == beforePointer && inputSafetyForeground == control,
-                    "native Dock pointer input never takes foreground from an ordinary window");
+                    "available pointer observation never takes foreground from another window");
                 dock.frameReady = true;
                 seedForeground(true);
                 dock.promotionInputRequestInputTime = inputSafetyLastInputTick;
@@ -1093,7 +1099,7 @@ end})
                 ++inputSafetyLastInputTick;
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
                 check(inputSafetyForegroundCalls == beforePointer + 1 && inputSafetyForeground == proxy &&
-                    !dock.explicitDismissAvailable,
+                    dock.explicitDismissAvailable,
                     "fresh native Dock pointer input retries a missed promotion and confirms the proxy foreground");
                 seedForeground(true);
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));

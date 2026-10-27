@@ -19,6 +19,8 @@ std::filesystem::path HelperDirectory();
 std::filesystem::path HelperImage();
 std::wstring HelperPipeName();
 std::wstring HelperTaskName();
+std::wstring AuthorizationSecurityDescriptor(bool sharedFolder = false);
+bool TrustedAuthorizationSecurity(const wchar_t* descriptor) noexcept;
 bool SameInteractiveUser(HANDLE process) noexcept;
 bool TargetInCurrentSession(HWND window) noexcept;
 bool NativeTargetAccessible(HWND window) noexcept;

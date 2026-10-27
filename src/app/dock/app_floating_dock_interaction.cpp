@@ -348,7 +348,8 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             !ownedHost->hwnd) continue;
         // Consume the native minimize-button press for hidden and visible
         // Hosts alike, before an outside-pointer timer can sample it.
-        floatingDockPointerButtonsDown_ |= snowdesktop::window_support::WindowSupport().PointerButtons().value_or(
+        const auto buttons = snowdesktop::window_support::WindowSupport().PointerButtons();
+        floatingDockPointerButtonsDown_ |= buttons ? *buttons : (
             ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
             ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
             ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));

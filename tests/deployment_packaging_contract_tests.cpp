@@ -567,7 +567,7 @@ foreach ($loop in $loops) { Invoke-Statement $loop }
         auto result = bridge.invoke(driver, {utf8(script.wstring()), utf8(output.wstring())});
         require(result.code == 0, result.out + result.err);
         for (const auto* hook : {"SnowDesktopHookEntry.dll", "SnowDesktopHookEntry32.dll", "SnowDesktopDockMinimizeHook.dll",
-                 "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe"})
+                 "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe", "SnowDesktopWindowHelper.exe"})
         {
             const auto packaged = output / "output" / "SnowDesktop.Runtime" / hook;
             require(fs::is_regular_file(packaged) && read(packaged) == "fixture:" + std::string(hook),

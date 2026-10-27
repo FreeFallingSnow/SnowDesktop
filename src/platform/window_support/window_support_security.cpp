@@ -76,6 +76,40 @@ std::wstring HelperPipeName()
     return L"\\\\.\\pipe\\SnowDesktop.WindowSupport.v1." + identity.sid + L"." + std::to_wstring(identity.session);
 }
 std::wstring HelperTaskName() { return CurrentUserSid(); }
+std::wstring AuthorizationSecurityDescriptor(bool sharedFolder)
+{
+    const auto sid = CurrentUserSid();
+    if (sid.empty()) return {};
+    // The split-token user must not regain WRITE_DAC through ownership.
+    return L"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;" +
+        (sharedFolder ? std::wstring(L"BU") : sid) + L")";
+}
+bool TrustedAuthorizationSecurity(const wchar_t* text) noexcept
+{
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!text || !ConvertStringSecurityDescriptorToSecurityDescriptorW(text, SDDL_REVISION_1, &descriptor, nullptr)) return false;
+    PSID owner = nullptr;
+    BOOL defaulted = FALSE, present = FALSE;
+    PACL dacl = nullptr;
+    bool trusted = GetSecurityDescriptorOwner(descriptor, &owner, &defaulted) &&
+        (IsWellKnownSid(owner, WinBuiltinAdministratorsSid) || IsWellKnownSid(owner, WinLocalSystemSid)) &&
+        GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
+    for (DWORD i = 0; trusted && i < dacl->AceCount; ++i)
+    {
+        void* raw = nullptr;
+        if (!GetAce(dacl, i, &raw)) { trusted = false; break; }
+        const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
+        if (ace->Header.AceType == ACCESS_DENIED_ACE_TYPE) continue;
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE) { trusted = false; break; }
+        auto* sid = const_cast<DWORD*>(&ace->SidStart);
+        constexpr DWORD writeRights = GENERIC_ALL | GENERIC_WRITE | WRITE_DAC | WRITE_OWNER | DELETE |
+            FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
+        if (!IsWellKnownSid(sid, WinBuiltinAdministratorsSid) && !IsWellKnownSid(sid, WinLocalSystemSid) &&
+            (ace->Mask & writeRights)) trusted = false;
+    }
+    LocalFree(descriptor);
+    return trusted;
+}
 bool SameInteractiveUser(HANDLE process) noexcept
 {
     TokenIdentity own, other;

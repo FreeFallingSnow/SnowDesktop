@@ -6,6 +6,7 @@
 #include "dock/dock_window_pin.h"
 #include "dock/dock_window_helper_animation.h"
 #include "theme/personalization.h"
+#include "platform/operation_feedback.h"
 
 #include <sddl.h>
 #include <shellapi.h>
@@ -114,6 +115,7 @@ struct Engine
     PointerObserver pointer;
     DockWindowPin pins;
     DockWindowHelperAnimation animation;
+    std::atomic<DWORD> pendingError{ERROR_SUCCESS};
     CapabilityMask Capabilities() const noexcept
     {
         return Mask(Capability::WindowPin) | Mask(Capability::WindowControl) |
@@ -203,6 +205,8 @@ struct Engine
         pointer.Collect(response);
         pins.Refresh();
         animation.Snapshot(response);
+        const auto asynchronous = pendingError.exchange(ERROR_SUCCESS);
+        if (asynchronous != response.error) response.asynchronousError = asynchronous;
         return response;
     }
 };
@@ -248,6 +252,11 @@ int RunHelper()
     const DWORD hostProcess = request.hostProcess;
     std::uint64_t lastSequence = 0;
     Engine engine;
+    operation_feedback::SetReporter([&engine](const operation_feedback::Failure& failure) {
+        DWORD empty = ERROR_SUCCESS;
+        engine.pendingError.compare_exchange_strong(empty, failure.error);
+    });
+    struct ReporterScope { ~ReporterScope() { operation_feedback::SetReporter({}); } } reporterScope;
     engine.animation.Initialize();
     animationScheduler = &engine.animation.Scheduler();
     struct SchedulerScope { ~SchedulerScope() { animationScheduler = nullptr; } } schedulerScope;

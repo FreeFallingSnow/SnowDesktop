@@ -12,6 +12,7 @@
 #include "shell/shell_extension_service.h"
 #include "app/lifecycle/settings_external_state_refresh.h"
 #include "settings/bar_settings_rules.h"
+#include "winui/window_support_ipc_values.h"
 
 #include <atomic>
 #include <future>
@@ -1555,6 +1556,16 @@ void TestLargeIconEditing()
 
 int RunSettingsIpcTests()
 {
+    {
+        using namespace snowdesktop::window_support;
+        SupportStatus status{{Mask(Capability::WindowPin), Mask(Capability::PointerObservation), ProviderState::Ready, 57},
+            AuthorizationState::Registered, false, ERROR_NOT_SUPPORTED};
+        const auto copy = Unpack<SupportStatus>(Pack(status));
+        Check(copy.capabilities.inProcess == status.capabilities.inProcess && copy.capabilities.helper == status.capabilities.helper &&
+            copy.capabilities.helperState == ProviderState::Ready && copy.capabilities.generation == 57 &&
+            copy.authorization == AuthorizationState::Registered && !copy.hostElevated && copy.error == ERROR_NOT_SUPPORTED,
+            "settings IPC preserves independent capabilities, authorization and real host elevation");
+    }
     TestCodec();
     TestPermissionAndRelocatedRoutesCodec();
     TestLargeIconEditing();

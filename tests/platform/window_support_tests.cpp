@@ -1,5 +1,8 @@
 #include "platform/window_support/window_capabilities.h"
 #include "platform/window_support/window_pointer_events.h"
+#include "platform/window_support/window_operation_failures.h"
+#include "platform/window_support/window_support_security.h"
+#include <sddl.h>
 
 #include <cstdio>
 #include <initializer_list>
@@ -43,6 +46,51 @@ int main()
     check(ResolveCapability(partial, Capability::PointerObservation).NeedsFallback(),
         "pin support does not suppress an unavailable pointer fallback");
     check(ResolveCapability(partial, Capability::None).NeedsFallback(), "empty capability is never usable");
+    WindowOperationFailures failures;
+    const protocol::WindowIdentity first{17, 18, 19}, reused{17, 20, 21};
+    failures.Record(first, Capability::WindowPin, Provider::InProcess, ERROR_ACCESS_DENIED, 100);
+    check(failures.Blocked(first, Capability::WindowPin, Provider::InProcess, 101), "an actual failed operation excludes its provider");
+    check(!failures.Blocked(first, Capability::PointerObservation, Provider::InProcess, 101), "pin failure never disables mouse observation");
+    check(!failures.Blocked(first, Capability::WindowPin, Provider::Helper, 101), "another provider can satisfy the failed operation");
+    check(!failures.Blocked(reused, Capability::WindowPin, Provider::InProcess, 101), "reused HWNDs do not inherit an earlier process failure");
+    check(!failures.Blocked(first, Capability::WindowPin, Provider::InProcess, 5100), "a transient failure permits a bounded later retry");
+    const auto descriptor = AuthorizationSecurityDescriptor();
+    check(TrustedAuthorizationSecurity(descriptor.c_str()), "configured task is trusted");
+    const auto unsafeOwner = L"O:" + CurrentUserSid() + L"G:BAD:P(A;;GA;;;BA)(A;;GRGX;;;" + CurrentUserSid() + L")";
+    check(!TrustedAuthorizationSecurity(unsafeOwner.c_str()), "user-owned task cannot retain one-time elevation authority");
+    const auto unsafeWrite = L"O:BAG:BAD:P(A;;GA;;;BA)(A;;GW;;;" + CurrentUserSid() + L")";
+    check(!TrustedAuthorizationSecurity(unsafeWrite.c_str()) && !TrustedAuthorizationSecurity(L"invalid"),
+        "writable or malformed registered authority is rejected before use");
+    PSECURITY_DESCRIPTOR security = nullptr;
+    const bool parsed = ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor.c_str(), SDDL_REVISION_1, &security, nullptr) != FALSE;
+    check(parsed, "task security descriptor is accepted by Windows");
+    if (parsed)
+    {
+        PSID owner = nullptr;
+        BOOL defaulted = FALSE;
+        check(GetSecurityDescriptorOwner(security, &owner, &defaulted) && IsWellKnownSid(owner, WinBuiltinAdministratorsSid),
+            "ordinary split-token user is not the privileged task owner");
+        PACL dacl = nullptr;
+        BOOL present = FALSE;
+        check(GetSecurityDescriptorDacl(security, &present, &dacl, &defaulted) && present && dacl,
+            "privileged task has an explicit access list");
+        PSID user = nullptr;
+        const auto userSid = CurrentUserSid();
+        const bool sidValid = ConvertStringSidToSidW(userSid.c_str(), &user) != FALSE;
+        bool foundUser = false;
+        if (dacl && sidValid) for (DWORD i = 0; i < dacl->AceCount; ++i)
+        {
+            void* raw = nullptr;
+            if (!GetAce(dacl, i, &raw)) continue;
+            const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
+            if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE || !EqualSid(user, const_cast<DWORD*>(&ace->SidStart))) continue;
+            foundUser = true;
+            check(ace->Mask == (GENERIC_READ | GENERIC_EXECUTE), "ordinary user may read/run but cannot rewrite the task or its DACL");
+        }
+        check(foundUser, "authorized current user has the demand-run grant");
+        if (user) LocalFree(user);
+        LocalFree(security);
+    }
     RecentPointerEvents recent;
     protocol::PointerEvent down{1, {42, -10}, WM_LBUTTONDOWN, 1000, 0, 0, 1};
     auto up = down;

@@ -45,6 +45,24 @@ struct Variant
     ~Variant() { VariantClear(&value); }
 };
 struct Handle { HANDLE value = nullptr; ~Handle() { if (value) CloseHandle(value); } };
+Handle CreateProtectedFile(const std::filesystem::path& path)
+{
+    const auto text = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;" + CurrentUserSid() + L")";
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    WinCheck(ConvertStringSecurityDescriptorToSecurityDescriptorW(text.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
+    SECURITY_ATTRIBUTES attributes{sizeof(attributes), descriptor, FALSE};
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const DWORD error = file == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+    LocalFree(descriptor);
+    if (error) throw Failure{error};
+    return Handle{file};
+}
+bool TaskSecurityMatches(IRegisteredTask* task)
+{
+    Text descriptor;
+    Check(task->GetSecurityDescriptor(OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &descriptor.value));
+    return TrustedAuthorizationSecurity(descriptor.value);
+}
 struct Scheduler
 {
     ComScope scope;
@@ -60,28 +78,31 @@ struct Scheduler
 };
 std::wstring SecurityDescriptor()
 {
-    const auto sid = CurrentUserSid();
-    if (sid.empty()) throw Failure{ERROR_INVALID_SID};
-    // Ordinary host can invoke/read, but cannot replace the privileged action.
-    return L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;" + sid + L")";
+    const auto text = AuthorizationSecurityDescriptor();
+    if (text.empty()) throw Failure{ERROR_INVALID_SID};
+    return text;
 }
 bool Missing(HRESULT result)
 { return result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) || result == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND); }
 ComPtr<ITaskFolder> EnsureTaskFolder(Scheduler& scheduler)
 {
     ComPtr<ITaskFolder> folder;
-    const HRESULT existing = scheduler.Folder(folder);
-    if (SUCCEEDED(existing)) return folder;
-    Check(Missing(existing) ? S_OK : existing);
     ComPtr<ITaskFolder> root, product;
     const Text rootName(L"\\"), productName(L"SnowDesktop"), supportName(L"WindowSupport");
     Check(scheduler.service->GetFolder(rootName.value, &root));
-    const Variant security(SecurityDescriptor());
+    const auto sharedSecurity = AuthorizationSecurityDescriptor(true);
+    if (sharedSecurity.empty()) throw Failure{ERROR_INVALID_SID};
+    const Variant security(sharedSecurity);
+    const Text descriptor(sharedSecurity);
     const Text absoluteProduct(L"\\SnowDesktop");
     HRESULT result = scheduler.service->GetFolder(absoluteProduct.value, &product);
     if (Missing(result)) result = root->CreateFolder(productName.value, security.value, &product);
     Check(result);
-    Check(product->CreateFolder(supportName.value, security.value, &folder));
+    Check(product->SetSecurityDescriptor(descriptor.value, 0));
+    result = scheduler.Folder(folder);
+    if (Missing(result)) result = product->CreateFolder(supportName.value, security.value, &folder);
+    Check(result);
+    Check(folder->SetSecurityDescriptor(descriptor.value, 0));
     return folder;
 }
 bool TaskMatches(ITaskDefinition* definition)
@@ -127,14 +148,15 @@ void RejectReparse(const std::filesystem::path& path)
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
         throw Failure{ERROR_ACCESS_DENIED};
 }
-void ProtectDirectory(const std::filesystem::path& path)
+void ProtectDirectory(const std::filesystem::path& path, bool shared = false)
 {
     RejectReparse(path);
     if (!CreateDirectoryW(path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
         throw Failure{GetLastError()};
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     const auto sid = CurrentUserSid();
-    const auto text = L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;" + sid + L")";
+    const auto text = L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;" +
+        (shared ? std::wstring(L"BU") : sid) + L")";
     WinCheck(ConvertStringSecurityDescriptorToSecurityDescriptorW(text.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
     const BOOL result = SetFileSecurityW(path.c_str(), OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, descriptor);
@@ -149,8 +171,8 @@ void InstallFiles(const std::filesystem::path& source)
     const auto support = destination.parent_path();
     const auto product = support.parent_path();
     RejectReparse(product.parent_path());
-    ProtectDirectory(product);
-    ProtectDirectory(support);
+    ProtectDirectory(product, true);
+    ProtectDirectory(support, true);
     ProtectDirectory(destination);
     // Fixed distribution-owned images only. The broker never accepts a DLL,
     // executable or command line from an ordinary IPC request.
@@ -169,8 +191,7 @@ void InstallFiles(const std::filesystem::path& source)
         if (!DeleteFileW(to.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) throw Failure{GetLastError()};
         std::ifstream input(from, std::ios::binary);
         if (!input) throw Failure{ERROR_FILE_NOT_FOUND};
-        Handle output{CreateFileW(to.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
-        if (output.value == INVALID_HANDLE_VALUE) { output.value = nullptr; throw Failure{GetLastError()}; }
+        const auto output = CreateProtectedFile(to);
         std::array<char, 65536> buffer{};
         while (input)
         {
@@ -212,7 +233,7 @@ AuthorizationResult QueryAuthorization() noexcept
         Check(task->get_Definition(&definition));
         const auto image = HelperImage();
         const auto attributes = GetFileAttributesW(image.c_str());
-        const bool valid = enabled == VARIANT_TRUE && TaskMatches(definition.Get()) &&
+        const bool valid = enabled == VARIANT_TRUE && TaskMatches(definition.Get()) && TaskSecurityMatches(task.Get()) &&
             attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
         return {valid ? AuthorizationState::Registered : AuthorizationState::Invalid,
             static_cast<DWORD>(valid ? ERROR_SUCCESS : ERROR_INVALID_DATA)};
@@ -231,7 +252,7 @@ DWORD StartAuthorizedHelper() noexcept
         Check(folder->GetTask(name.value, &task));
         ComPtr<ITaskDefinition> definition;
         Check(task->get_Definition(&definition));
-        if (!TaskMatches(definition.Get())) return ERROR_INVALID_DATA;
+        if (!TaskMatches(definition.Get()) || !TaskSecurityMatches(task.Get())) return ERROR_INVALID_DATA;
         Variant empty;
         ComPtr<IRunningTask> running;
         Check(task->Run(empty.value, &running));
@@ -291,11 +312,13 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
             const auto identityPath = HelperDirectory() / L"host-path.bin";
             RejectReparse(identityPath);
             if (!DeleteFileW(identityPath.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) throw Failure{GetLastError()};
-            std::ofstream identity(identityPath, std::ios::binary | std::ios::trunc);
+            const auto identity = CreateProtectedFile(identityPath);
             const auto path = hostImage.wstring();
-            identity.write(reinterpret_cast<const char*>(path.data()), static_cast<std::streamsize>(path.size() * sizeof(wchar_t)));
-            identity.flush();
-            if (!identity) throw Failure{ERROR_WRITE_FAULT};
+            const DWORD size = static_cast<DWORD>(path.size() * sizeof(wchar_t));
+            DWORD written = 0;
+            WinCheck(WriteFile(identity.value, path.data(), size, &written, nullptr));
+            if (written != size) throw Failure{ERROR_WRITE_FAULT};
+            WinCheck(FlushFileBuffers(identity.value));
         }
         ComPtr<ITaskDefinition> definition;
         Check(scheduler.service->NewTask(0, &definition));
