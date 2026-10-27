@@ -80,6 +80,15 @@
     static inline bool inputSafetyAllowForeground = false;
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
     static HWND WINAPI InputSafetyForeground() { return inputSafetyForeground; }
+    static inline decltype(&InvalidateRect) inputSafetyOriginalInvalidate = nullptr;
+    static inline HWND inputSafetyInvalidationWindow = nullptr;
+    static inline unsigned inputSafetyInvalidations = 0;
+    static BOOL WINAPI InputSafetyInvalidate(HWND window, const RECT* bounds, BOOL erase)
+    {
+        const BOOL accepted = inputSafetyOriginalInvalidate(window, bounds, erase);
+        if (accepted && window == inputSafetyInvalidationWindow) ++inputSafetyInvalidations;
+        return accepted;
+    }
     static BOOL WINAPI InputSafetyDenyForeground(HWND window)
     { if (!inputSafetyAllowForeground) return FALSE; inputSafetyForeground = window; return TRUE; }
     static HWND WINAPI InputSafetyDenyFocus(HWND) { ++inputSafetyLocalFocusCalls; return nullptr; }
@@ -758,6 +767,7 @@ end})
                 app.hwnd_ = app.inputHwnd_ = app.controlHwnd_ = app.floatingPopupHwnd_ = nullptr;
                 app.floatingDockInputHwnd_ = app.renameInputWindow_ = nullptr;
                 inputSafetyForeground = nullptr;
+                inputSafetyInvalidationWindow = nullptr;
             }
         } cleanup{app, windows};
         app.hwnd_ = create();
@@ -787,34 +797,42 @@ end})
             app.keyboardNavVisualFocus_ = app.keyboardNavInsideWidget_ = true;
             app.keyboardNavWidgetIndex_ = 0;
             ValidateRect(app.hwnd_, nullptr);
+            inputSafetyInvalidations = 0;
         };
-        const auto requireCleared = [&] {
+        const auto requireCleared = [&](const char* route) {
             if (std::any_of(app.items_.begin(), app.items_.end(), [](const auto& item) { return item.selected; }) ||
                 app.dockEntries_[0].selected || app.dockUnpinnedRunningApps_[0].selected ||
                 app.widgets_[0].selected || app.widgets_[0].folderEntries[0].selected ||
                 app.dockFolderPopupWidget_.folderEntries[0].selected ||
                 app.keyboardNavVisualFocus_ || app.keyboardNavInsideWidget_)
-                throw std::runtime_error("leaving desktop must clear every selected model and keyboard focus");
-            if (!GetUpdateRect(app.hwnd_, nullptr, FALSE))
-                throw std::runtime_error("external selection clear must invalidate the old selected pixels");
+                throw std::runtime_error(std::string(route) + ": leaving desktop must clear every selected model and keyboard focus");
+            if (inputSafetyInvalidations == 0)
+                throw std::runtime_error(std::string(route) + ": external selection clear must request repaint of the old selected pixels");
         };
+        // Foreground reconciliation can synchronously UpdateWindow and consume
+        // the update region before dispatch returns. Observe accepted real OS
+        // invalidations, retaining the production repaint and presentation path.
+        inputSafetyOriginalInvalidate = &InvalidateRect;
+        inputSafetyInvalidationWindow = app.hwnd_;
+        InputSafetyImport invalidation("InvalidateRect", reinterpret_cast<ULONG_PTR>(&InputSafetyInvalidate));
         InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
         inputSafetyForeground = external;
         seed();
         SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
-        requireCleared();
+        requireCleared("input proxy focus loss");
         seed();
         app.HandleMessage(app.hwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
-        requireCleared();
+        requireCleared("desktop focus loss");
         seed();
         SendMessageW(app.inputHwnd_, WM_KILLFOCUS, 0, 0);
-        requireCleared();
+        requireCleared("focus loss without next HWND");
         seed();
         SendMessageW(app.controlHwnd_, kForegroundInteractionChangedMessage, 0, 0);
-        requireCleared();
+        requireCleared("global foreground notification");
         ValidateRect(app.hwnd_, nullptr);
+        inputSafetyInvalidations = 0;
         SendMessageW(app.inputHwnd_, WM_KILLFOCUS, reinterpret_cast<WPARAM>(external), 0);
-        if (GetUpdateRect(app.hwnd_, nullptr, FALSE))
+        if (inputSafetyInvalidations != 0)
             throw std::runtime_error("repeated external notifications must not repaint unchanged selection");
         for (const HWND owned : {app.hwnd_, app.inputHwnd_, app.floatingPopupHwnd_,
                 app.floatingDockInputHwnd_, app.renameInputWindow_})
