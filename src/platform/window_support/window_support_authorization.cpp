@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::window_support
 {
@@ -127,7 +128,7 @@ bool TaskMatches(ITaskDefinition* definition)
     Check(principal->get_LogonType(&logon));
     Check(principal->get_UserId(&sid.value));
     if (level != TASK_RUNLEVEL_HIGHEST || logon != TASK_LOGON_INTERACTIVE_TOKEN ||
-        !sid.value || CurrentUserSid() != sid.value) return false;
+        !sid.value || !AuthorizationTaskUserMatches(sid.value)) return false;
     ComPtr<IActionCollection> actions;
     ComPtr<IAction> action;
     ComPtr<IExecAction> execute;
@@ -234,7 +235,7 @@ AuthorizationResult QueryAuthorization() noexcept
         Check(task->get_Definition(&definition));
         const auto image = HelperImage();
         const auto attributes = GetFileAttributesW(image.c_str());
-        const bool valid = enabled == VARIANT_TRUE && TaskMatches(definition.Get()) && TaskSecurityMatches(task.Get()) &&
+        const bool valid = enabled == VARIANT_TRUE && TaskSecurityMatches(task.Get()) && TaskMatches(definition.Get()) &&
             attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
         return {valid ? AuthorizationState::Registered : AuthorizationState::Invalid,
             static_cast<DWORD>(valid ? ERROR_SUCCESS : ERROR_INVALID_DATA)};
@@ -253,13 +254,38 @@ DWORD StartAuthorizedHelper() noexcept
         Check(folder->GetTask(name.value, &task));
         ComPtr<ITaskDefinition> definition;
         Check(task->get_Definition(&definition));
-        if (!TaskMatches(definition.Get()) || !TaskSecurityMatches(task.Get())) return ERROR_INVALID_DATA;
+        if (!TaskSecurityMatches(task.Get()) || !TaskMatches(definition.Get())) return ERROR_INVALID_DATA;
         Variant empty;
         ComPtr<IRunningTask> running;
         Check(task->Run(empty.value, &running));
         return ERROR_SUCCESS;
     }
     catch (...) { return Error(); }
+}
+bool AuthorizationTaskUserMatches(std::wstring_view user) noexcept
+{
+    if (user.empty()) return false;
+    try
+    {
+        const std::wstring name(user);
+        const auto ownSid = CurrentUserSid();
+        if (name == ownSid) return true;
+        // Task Scheduler may return a SAM account name even when a SID was
+        // registered. Compare account identity, not its display syntax.
+        DWORD bytes = 0, domainLength = 0;
+        SID_NAME_USE use{};
+        LookupAccountNameW(nullptr, name.c_str(), nullptr, &bytes, nullptr, &domainLength, &use);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || !bytes) return false;
+        std::vector<BYTE> sid(bytes);
+        std::wstring domain(domainLength, L'\0');
+        if (!LookupAccountNameW(nullptr, name.c_str(), sid.data(), &bytes, domain.data(), &domainLength, &use)) return false;
+        LPWSTR text = nullptr;
+        if (!ConvertSidToStringSidW(sid.data(), &text)) return false;
+        const bool same = text && ownSid == text;
+        LocalFree(text);
+        return same;
+    }
+    catch (...) { return false; }
 }
 DWORD WaitForAuthorizationCompletion(HANDLE process, DWORD timeoutMs) noexcept
 {

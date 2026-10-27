@@ -20,6 +20,12 @@ int main()
         check(!AuthorizationPending(state), "completed and failed authorizations allow another explicit action");
     check(AuthorizationPending(AuthorizationState::AwaitingConsent) && AuthorizationPending(AuthorizationState::Configuring),
         "consent and installation both prevent overlapping authorization requests");
+    wchar_t userName[256]{};
+    DWORD userNameLength = static_cast<DWORD>(std::size(userName));
+    check(GetUserNameW(userName, &userNameLength) && AuthorizationTaskUserMatches(userName),
+        "Task Scheduler's normalized account name resolves to the current SID");
+    check(AuthorizationTaskUserMatches(CurrentUserSid()) && !AuthorizationTaskUserMatches(L"S-1-5-18") &&
+        !AuthorizationTaskUserMatches(L""), "only the actual current user can own the authorization task");
     bool launched = false;
     check(ConfigureAuthorization(true, nullptr, [&] { launched = true; }) == ERROR_CANCELLED && !launched,
         "a missing initiating settings window cancels before UAC and before installation progress");

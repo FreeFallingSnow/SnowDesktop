@@ -1212,12 +1212,14 @@ struct GeneralPagePresenter::Impl
         if (!configuring && !starting && status.error && status.error != ERROR_CANCELLED)
             description += L" (" + std::to_wstring(status.error) + L")";
         windowSupportRow.SetText(L("settings.general.windowSupport.title"), description);
-        constexpr const char* features[] = {"pin", "animation", "dock"};
+        const std::array titles{L("settings.general.windowSupport.features.pin.title"),
+            L("settings.general.windowSupport.features.animation.title"), L("settings.general.windowSupport.features.dock.title")};
+        const std::array descriptions{L("settings.general.windowSupport.features.pin.description"),
+            L("settings.general.windowSupport.features.animation.description"), L("settings.general.windowSupport.features.dock.description")};
         for (std::size_t i = 0; i < windowSupportFeatureTitles.size(); ++i)
         {
-            const std::string prefix = std::string("settings.general.windowSupport.features.") + features[i];
-            windowSupportFeatureTitles[i].Text(L(prefix + ".title"));
-            windowSupportFeatureDescriptions[i].Text(L(prefix + ".description"));
+            windowSupportFeatureTitles[i].Text(titles[i]);
+            windowSupportFeatureDescriptions[i].Text(descriptions[i]);
         }
         const auto enableText = L(registered || status.authorization == AuthorizationState::Invalid
             ? "settings.general.windowSupport.repair" : "settings.general.windowSupport.enable");

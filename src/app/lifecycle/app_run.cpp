@@ -700,6 +700,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
     auto& windowSupport = snowdesktop::window_support::WindowSupport();
     windowSupport.Start();
+    windowSupport.SetStatusChangedHandler([this] {
+        if (settingsWindow_) settingsWindow_->RefreshGeneralRuntimeState();
+    });
     windowSupport.SetAuthorizationRequestHandler([this] {
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
             snowdesktop::SettingsPage::General, "general.windowSupport"));

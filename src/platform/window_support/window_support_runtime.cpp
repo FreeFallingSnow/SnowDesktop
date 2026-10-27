@@ -35,6 +35,8 @@ struct Runtime::Impl
     std::deque<Completion> animationCompletions;
     PointerCallback pointerCallback;
     std::function<void()> authorizationRequest;
+    std::function<void()> statusChanged;
+    std::optional<SupportStatus> publishedStatus;
     std::optional<protocol::WindowIdentity> pendingPin;
     ULONGLONG pendingPinAt = 0;
     std::optional<protocol::PointerEvent> currentPointer;
@@ -331,6 +333,8 @@ void Runtime::Stop()
     impl_->status.capabilities.inProcess = 0;
     impl_->pointerCallback = {};
     impl_->authorizationRequest = {};
+    impl_->statusChanged = {};
+    impl_->publishedStatus.reset();
     impl_->pendingPin.reset();
     impl_->finished.clear();
     impl_->configured.clear();
@@ -350,10 +354,10 @@ CapabilityRoute Runtime::Resolve(Capability capability, HWND target) const
     OperationContext context;
     context.targetCurrent = capability == Capability::PointerObservation || !target || TargetInCurrentSession(target);
     const HWND subject = target ? target : GetForegroundWindow();
-    // LL mouse events execute on our observer thread. They do not require
-    // opening the foreground process or injecting a hook into that process.
-    context.inProcessEligible = capability == Capability::PointerObservation ||
-        !subject || NativeTargetAccessible(subject);
+    // Installing a local observer establishes its backend, not coverage of
+    // every target input queue. Target eligibility belongs to the provider;
+    // feature consumers still depend only on the resolved capability.
+    context.inProcessEligible = !subject || NativeTargetAccessible(subject);
     if (capability == Capability::PointerObservation && status.capabilities.helperState == ProviderState::Ready &&
         Contains(status.capabilities.helper, capability)) context.inProcessEligible = false;
     if (target && capability != Capability::PointerObservation)
@@ -425,6 +429,18 @@ void Runtime::Poll()
     }
     for (auto& item : finished) if (item.completion) item.completion({});
     for (auto& item : configured) if (item.first) item.first(item.second);
+    const auto currentStatus = Status();
+    std::function<void()> changed;
+    {
+        std::lock_guard guard(impl_->mutex);
+        if (impl_->publishedStatus != currentStatus)
+        {
+            impl_->publishedStatus = currentStatus;
+            changed = impl_->statusChanged;
+        }
+    }
+    try { if (changed) changed(); }
+    catch (...) { operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, ERROR_GEN_FAILURE}); }
     std::optional<protocol::WindowIdentity> pin;
     {
         std::lock_guard guard(impl_->mutex);
@@ -517,5 +533,11 @@ void Runtime::Configure(bool enabled, HWND owner, std::function<void(DWORD)> com
 }
 protocol::Response Runtime::HelperSnapshot() const
 { std::lock_guard guard(impl_->mutex); return impl_->snapshot; }
+void Runtime::SetStatusChangedHandler(std::function<void()> handler)
+{
+    std::lock_guard guard(impl_->mutex);
+    impl_->statusChanged = std::move(handler);
+    impl_->publishedStatus.reset();
+}
 Runtime& WindowSupport() { static Runtime runtime; return runtime; }
 }

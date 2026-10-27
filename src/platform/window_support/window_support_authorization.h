@@ -3,6 +3,7 @@
 #include "window_capabilities.h"
 #include <windows.h>
 #include <functional>
+#include <string_view>
 
 namespace snowdesktop::window_support
 {
@@ -13,6 +14,7 @@ struct AuthorizationResult
 };
 AuthorizationResult QueryAuthorization() noexcept;
 DWORD StartAuthorizedHelper() noexcept;
+bool AuthorizationTaskUserMatches(std::wstring_view user) noexcept;
 // COM-aware, bounded wait shared with authorization; never closes the handle.
 DWORD WaitForAuthorizationCompletion(HANDLE process, DWORD timeoutMs = 60000) noexcept;
 // Run on a worker: UAC is an explicit user decision, never a background retry.

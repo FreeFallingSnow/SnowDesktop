@@ -84,6 +84,12 @@
     static BOOL WINAPI InputSafetyCursor(LPPOINT point) { *point = {40, 40}; return TRUE; }
     static HWND WINAPI InputSafetyWindowAtPoint(POINT) { return inputSafetyPointerWindow; }
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
+    static inline decltype(&OpenProcess) inputSafetyOriginalOpenProcess = nullptr;
+    static HANDLE WINAPI InputSafetyOpenProcess(DWORD access, BOOL inherit, DWORD process)
+    {
+        if (process == GetCurrentProcessId() + 1000) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
+        return inputSafetyOriginalOpenProcess(access, inherit, process);
+    }
     static HWND WINAPI InputSafetyForeground() { return inputSafetyForeground; }
     static inline decltype(&InvalidateRect) inputSafetyOriginalInvalidate = nullptr;
     static inline HWND inputSafetyInvalidationWindow = nullptr;
@@ -996,6 +1002,18 @@ end})
             dock.sourceRect = dock.dockRect = dock.animationVisualRect = dock.explicitDismissRect = {};
         }
         {
+            unsigned statusChanges = 0;
+            snowdesktop::window_support::Runtime statusProbe;
+            statusProbe.SetStatusChangedHandler([&] { ++statusChanges; });
+            statusProbe.Poll();
+            statusProbe.Poll();
+            check(statusChanges == 1, "runtime status publishes its initial state without polling unchanged settings");
+            statusProbe.SetNativeCapability(snowdesktop::window_support::Capability::PointerObservation, true);
+            statusProbe.Poll();
+            check(statusChanges == 2, "newly available capability notifies the settings consumer");
+            statusProbe.SetNativeCapability(snowdesktop::window_support::Capability::PointerObservation, false);
+            statusProbe.Poll();
+            check(statusChanges == 3, "capability loss notifies the settings consumer after revocation or disconnect");
             // All HWNDs live on this fixture's inactive desktop. Keep a Dock
             // already raised while its foreground changes after the summon.
             auto& dock = *app->persistentDockHosts_.front();
@@ -1010,8 +1028,10 @@ end})
             inputSafetyForeground = control;
             inputSafetyOwnedWindow = app->hwnd_;
             inputSafetyOriginalThread = &GetWindowThreadProcessId;
+            inputSafetyOriginalOpenProcess = &OpenProcess;
             InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
             InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
+            InputSafetyImport processAccess("OpenProcess", reinterpret_cast<ULONG_PTR>(&InputSafetyOpenProcess));
             InputSafetyImport denyForeground("SetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyForeground));
             InputSafetyImport denyActive("SetActiveWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
             InputSafetyImport denyFocus("SetFocus", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
@@ -1049,6 +1069,14 @@ end})
             check(dock.explicitDismissAvailable && !dock.promotionInputFocusPendingUntil &&
                 !app->floatingDockKeyboardSessionActive_ && inputSafetyForeground == control,
                 "uncompleted activation publishes fallback only after bounded observation and retires the proxy session");
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, true);
+            app->RefreshFloatingDockPromotionInputs();
+            check(dock.explicitDismissAvailable && snowdesktop::window_support::WindowSupport().Resolve(
+                    snowdesktop::window_support::Capability::PointerObservation, control).NeedsFallback(),
+                "an installed local observer cannot hide the dismiss fallback for an uncovered target context");
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, false);
 
             // A failed request has never armed this session. A late inactive
             // notification must not be treated as evidence of foreground loss.
@@ -1079,6 +1107,7 @@ end})
                 dock.sourceRect = {0,0,400,300};
                 const auto seedForeground = [&](bool pointerUnavailable) {
                     inputSafetyForeground = control;
+                    inputSafetyOwnedWindow = pointerUnavailable ? app->hwnd_ : control;
                     dock.promotionInputForeground = control;
                     dock.promotionInputProcess = GetCurrentProcessId() + 1000;
                     dock.promotionInputCapabilityMissing = pointerUnavailable;

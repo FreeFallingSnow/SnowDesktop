@@ -1570,6 +1570,36 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::General && focusId == "general.windowSupport")
+        {
+            c::Expander support{nullptr};
+            Walk(cards, [&](const x::DependencyObject& node) {
+                if (const auto candidate = node.try_as<c::Expander>(); candidate &&
+                    x::Automation::AutomationProperties::GetName(candidate) == _LW("settings.general.windowSupport.title"))
+                    support = candidate;
+            });
+            if (!support || !support.IsExpanded()) throw std::runtime_error("window support locator did not expand its card");
+            const auto features = support.Content().as<c::StackPanel>();
+            if (features.Children().Size() != 3) throw std::runtime_error("window support feature list is incomplete");
+            const auto settled = GetTickCount64() + 650;
+            PumpUntil([&] { shell.as<x::FrameworkElement>().UpdateLayout(); return GetTickCount64() >= settled; });
+            std::ofstream details(output / L"window-support.tsv");
+            details << "text\twidth\theight\topacity\n";
+            unsigned count = 0;
+            Walk(features, [&](const x::DependencyObject& node) {
+                if (const auto text = node.try_as<c::TextBlock>())
+                {
+                    if (text.Text().empty() || text.ActualWidth() <= 0 || text.ActualHeight() <= 0 ||
+                        text.Visibility() != x::Visibility::Visible)
+                        throw std::runtime_error("window support feature text is empty or has no visible layout");
+                    details << winrt::to_string(text.Text()) << '\t' << text.ActualWidth() << '\t'
+                        << text.ActualHeight() << '\t' << text.Opacity() << '\n';
+                    ++count;
+                }
+            });
+            if (count != 6) throw std::runtime_error("window support feature titles or descriptions are missing");
+            savePreviewElement(features, L"window-support-features.png");
+        }
         if (generalNotices)
         {
             captureGeneralNotices();
