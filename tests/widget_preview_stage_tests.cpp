@@ -91,6 +91,57 @@ void CheckRimCoverage()
     Check(tightSurfaceLoss>0,"a render target bounded to the card crops straight-edge pixels even with an expanded GDI fence");
 }
 
+void CheckAnimatedRimWidths()
+{
+    using Microsoft::WRL::ComPtr;
+    namespace wp = snowdesktop::widget_preview;
+    ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device; ComPtr<ID2D1DeviceContext> context;
+    Check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &gpu, nullptr, nullptr)) &&
+        SUCCEEDED(gpu.As(&dxgi)) && SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
+        SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)) &&
+        SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)),
+        "animated rim uses an offscreen WARP context");
+    ComPtr<ID2D1Bitmap1> target, readable;
+    Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(1024,160), nullptr, 0,
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &target)) &&
+        SUCCEEDED(context->CreateBitmap(D2D1::SizeU(1024,160), nullptr, 0,
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &readable)),
+        "animated rim creates readable targets");
+    context->SetTarget(target.Get());
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    const auto style = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+    // Seed more widths than the bounded mask cache, then revisit the same
+    // sizes under another DPI on the same device, as independent hosts do.
+    for (float dpi : {144.f,96.f,120.f,96.f})
+        for (int step = 0; step < 37; ++step)
+        {
+            const RECT frame{16,16,337+step*7,112};
+            context->SetDpi(dpi,dpi);
+            context->BeginDraw(); context->Clear(D2D1::ColorF(0,0.f));
+            Check(wp::DrawEdgeHighlight(context.Get(),frame,12.f,D2D1::ColorF(1.f,1.f,1.f,.02f),
+                1.25f,.8f,style.light,wp::HighlightEdge::All,true), "animated rim draws");
+            Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)),
+                "animated rim pixels read back");
+            D2D1_MAPPED_RECT map{};
+            Check(SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)), "animated rim pixels map");
+            const auto alpha = [&](LONG x,LONG y) {
+                return map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3];
+            };
+            const bool complete = alpha(frame.left,64)>0 && alpha(frame.right-1,64)>0 &&
+                alpha((frame.left+frame.right)/2,frame.top)>0;
+            if (!complete) std::cerr << "rim gap dpi=" << dpi << " width=" << frame.right-frame.left <<
+                " left=" << static_cast<int>(alpha(frame.left,64)) <<
+                " right=" << static_cast<int>(alpha(frame.right-1,64)) << '\n';
+            readable->Unmap();
+            Check(complete, "changing width preserves both real rim edges in pixel mode across cached DPIs");
+        }
+    context->SetTarget(nullptr);
+}
+
 void CheckAcrylicNoiseRendering()
 {
     using Microsoft::WRL::ComPtr;
@@ -175,6 +226,7 @@ void CheckAcrylicNoiseRendering()
 int main()
 {
     CheckRimCoverage();
+    CheckAnimatedRimWidths();
     CheckAcrylicNoiseRendering();
     using namespace snowdesktop::widget_preview;
     const Wallpaper dark = GenerateWallpaper(96, 72, false);
