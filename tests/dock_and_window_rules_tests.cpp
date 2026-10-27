@@ -6082,6 +6082,28 @@ int main(int argc, char** argv)
     Check(floatingDock::HasNewPointerButtonPress(1, 0, 0, false) &&
             floatingDock::HasNewPointerButtonPress(3, 1, 0, false),
         "live native input must retain rising-edge detection without forwarded events");
+    {
+        floatingDock::WindowActionOutsidePress outside;
+        const HWND source = reinterpret_cast<HWND>(1), other = reinterpret_cast<HWND>(2);
+        outside.Begin(source);
+        Check(!outside.TakeReady(true, 100) && !outside.TakeReady(true, 1000),
+            "a custom window-action press must stay pending for the whole physical hold");
+        Check(!outside.TakeReady(false, 1001) && !outside.TakeReady(false, 1050) &&
+                outside.TakeReady(false, 1051) && !outside.TakeReady(false, 1100),
+            "an ordinary outside click dismisses once after its release handoff");
+        outside.Begin(source);
+        outside.TakeReady(false, 2000);
+        outside.Cancel(source);
+        Check(!outside.TakeReady(false, 2051),
+            "native minimization consumes the matching pending outside click");
+        outside.Begin(source);
+        outside.Cancel(other);
+        Check(outside.Source() == source,
+            "another window's minimization must not consume an independent outside press");
+        outside.Cancel();
+        Check(!outside.TakeReady(false, 3000),
+            "closing or explicitly summoning a Dock retires the old pending click");
+    }
     Check(floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, false),
         "external activation dismisses a summoned Dock even without a readable button-down");
     Check(!floatingDock::ShouldDismissForForegroundActivation(true, false, true, false, false) &&

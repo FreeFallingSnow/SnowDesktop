@@ -80,6 +80,15 @@
     static inline unsigned inputSafetyForegroundCalls = 0, inputSafetyActiveCalls = 0, inputSafetyFocusCalls = 0;
     static inline DWORD inputSafetyLastInputTick = 100;
     static inline HWND inputSafetyPointerWindow = nullptr;
+    static inline decltype(&IsWindowVisible) inputSafetyOriginalVisible = nullptr;
+    static inline HWND inputSafetyMinimizeSource = nullptr;
+    static inline unsigned inputSafetyMinimizeValidations = 0;
+    static BOOL WINAPI InputSafetyValidateMinimizeSource(HWND window)
+    {
+        if (window == inputSafetyMinimizeSource)
+        { ++inputSafetyMinimizeValidations; return FALSE; }
+        return inputSafetyOriginalVisible(window);
+    }
     static BOOL WINAPI InputSafetyLastInput(PLASTINPUTINFO info) { info->dwTime = inputSafetyLastInputTick; return TRUE; }
     static BOOL WINAPI InputSafetyCursor(LPPOINT point) { *point = {40, 40}; return TRUE; }
     static HWND WINAPI InputSafetyWindowAtPoint(POINT) { return inputSafetyPointerWindow; }
@@ -933,6 +942,28 @@ end})
         } cleanup{*app, windows};
         app->hwnd_ = create(nullptr, 6400, 2160);
         const HWND control = create(nullptr);
+        {
+            // Exercise the actual control -> main dispatcher. Only the source
+            // visibility boundary is rejected; it must be reached through the
+            // stable receiver, without requiring a real elevated helper here.
+            inputSafetyOriginalVisible = &IsWindowVisible;
+            InputSafetyImport visibility("IsWindowVisible",
+                reinterpret_cast<ULONG_PTR>(&InputSafetyValidateMinimizeSource));
+            inputSafetyMinimizeSource = control;
+            inputSafetyMinimizeValidations = 0;
+            const UINT notice = snowdesktop::window_support::BeforeNativeMinimizeMessage();
+            const auto tick = app->dockSystemMinimizeStartedTick_.load();
+            const auto deadline = static_cast<LPARAM>(GetTickCount() + 180);
+            DefWindowProcW(control, notice, reinterpret_cast<WPARAM>(control), deadline);
+            check(inputSafetyMinimizeValidations == 0,
+                "falling through the control receiver bypasses native-minimize validation");
+            app->HandleControlMessage(control, notice, reinterpret_cast<WPARAM>(control), deadline);
+            check(inputSafetyMinimizeValidations == 1,
+                "stable control receiver forwards helper pre-minimize notices into production source validation");
+            check(app->dockSystemMinimizeStartedTick_.load() == tick,
+                "an invalid pre-minimize source cannot establish native action protection");
+            inputSafetyMinimizeSource = nullptr;
+        }
         auto host = std::make_unique<DesktopApp::PersistentDockHost>();
         host->active = true; dockContext.dock = host.get(); host->hwnd = create(&dockContext);
         const HWND dockWindow = host->hwnd;
@@ -1270,6 +1301,38 @@ end})
             ShowWindow(control, SW_HIDE);
             SetWindowPos(dockWindow, HWND_NOTOPMOST, 0, 0, 0, 0,
                 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+        }
+        {
+            // Preserve the production timer -> outside decision -> close path.
+            // Supply OS pointer state and the model's release deadline only;
+            // actual elevated/custom caption scheduling remains user acceptance.
+            InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+            InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&InputSafetyCursor));
+            InputSafetyImport hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&InputSafetyWindowAtPoint));
+            InputSafetyImport buttons("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+            auto& dock = *app->persistentDockHosts_.front();
+            dock.promoted = app->floatingDockVisible_ = true;
+            dock.dockRect = {200, 200, 400, 240};
+            dock.explicitDismissRect = {};
+            app->floatingDockKeyboardSessionActive_ = app->floatingDockInputDeactivated_ = false;
+            app->floatingDockPointerButtonsDown_ = 0;
+            inputSafetyForeground = app->hwnd_;
+            inputSafetyPointerWindow = control;
+            inputSafetyPhysicalButton = VK_LBUTTON;
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, true);
+            app->floatingDockOutsidePress_.Begin(control);
+            app->UpdateFloatingDockEdgeSwipe();
+            check(dock.promoted && app->floatingDockVisible_ && app->floatingDockOutsidePress_.Source() == control,
+                "production outside dispatch retains a pending window-action click while held");
+            inputSafetyPhysicalButton = 0;
+            app->floatingDockOutsidePress_.TakeReady(false, GetTickCount64() - 100);
+            app->UpdateFloatingDockEdgeSwipe();
+            check(!dock.promoted && !app->floatingDockVisible_ && !app->floatingDockOutsidePress_.Source(),
+                "production timer dismisses an ordinary deferred outside click once its release handoff completes");
+            snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                snowdesktop::window_support::Capability::PointerObservation, false);
+            inputSafetyForeground = nullptr;
         }
         {
             // A delivered button press is an independent escape path, even

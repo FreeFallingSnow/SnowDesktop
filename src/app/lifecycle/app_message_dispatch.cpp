@@ -102,6 +102,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             snowdesktop::window_support::WindowSupport().Resolve(
                 snowdesktop::window_support::Capability::MinimizeAnimation, source).provider !=
                 snowdesktop::window_support::Provider::Helper) return 0;
+        floatingDockOutsidePress_.Cancel(source);
         dockSystemMinimizeStartedTick_.store(GetTickCount64());
         snowdesktop::dock_input_diagnostics::RecordLayer(L"native-minimize-accepted", nullptr, floatingDockVisible_,
             0, 0, dockSystemMinimizeStartedTick_.load());

@@ -201,6 +201,7 @@ void DesktopApp::RefreshFloatingDockPromotionInputs(bool requestFocus)
 void DesktopApp::ShowFloatingDock(
     HMONITOR preferredMonitor, DockRevealSource source)
 {
+    floatingDockOutsidePress_.Cancel();
     if (desktopPassthroughActive_)
         return;
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
@@ -537,6 +538,7 @@ void DesktopApp::CloseFloatingDock(
 void DesktopApp::CloseAllFloatingDocks(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    floatingDockOutsidePress_.Cancel();
     rightButtonDownDockHost_ = nullptr;
     const bool endKeyboardSession =
         floatingDockKeyboardSessionActive_;

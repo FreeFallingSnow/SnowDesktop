@@ -117,6 +117,8 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
         !dockExternalMinimize_ || !dockExternalMinimize_->OwnsTarget(window) ||
         !IsWindowVisible(window) || IsIconic(window)) return false;
+    floatingDockOutsidePress_.Cancel(window);
+    dockSystemMinimizeStartedTick_.store(GetTickCount64());
     PrepareDockWindowMinimize(window, L"application-minimize");
     if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
         !generalSettings_.dockEnabled || reloading_ || dragSession_.HasContext() ||

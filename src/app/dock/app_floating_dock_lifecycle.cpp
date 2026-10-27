@@ -487,8 +487,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
         return;
     }
-    const ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
-    const bool externalActivation = snowdesktop::floating_dock_rules::
+    ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
+    bool externalActivation = snowdesktop::floating_dock_rules::
         ShouldDismissForForegroundActivation(
             floatingDockVisible_, foregroundChangedWhilePromoted,
             foregroundProcess != 0 && foregroundProcess != GetCurrentProcessId() &&
@@ -496,7 +496,6 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             dockWindowTransition_ && dockWindowTransition_->IsActive(),
             minimizeTick != 0 && layerNow - minimizeTick <=
                 snowdesktop::floating_dock_rules::kSystemShowDesktopEvidenceWindowMs);
-    trace.sample.activation = externalActivation;
     for (const auto& host : persistentDockHosts_)
     {
         if (host && host->active && host->container &&
@@ -563,6 +562,23 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         ((middleState & 1) ? middleButtonBit : 0);
     const UINT previousButtonsDown =
         floatingDockPointerButtonsDown_;
+    if (!floatingDockVisible_ ||
+        ((buttonsDown | pressedSinceLastSample) & (rightButtonBit | middleButtonBit)) != 0)
+        floatingDockOutsidePress_.Cancel();
+    if (const HWND source = floatingDockOutsidePress_.Source(); source &&
+        (IsIconic(source) || (dockWindowTransition_ && dockWindowTransition_->IsActiveFor(source) &&
+            dockWindowTransition_->GetDirection() == DockWindowTransitionDirection::Minimize)))
+    {
+        // Native minimization is observable even if the target was created
+        // before its animation Hook registration completed.
+        floatingDockOutsidePress_.Cancel(source);
+        minimizeTick = layerNow;
+        dockSystemMinimizeStartedTick_.store(minimizeTick);
+        externalActivation = false;
+    }
+    const bool deferredOutsidePress = floatingDockOutsidePress_.TakeReady(
+        (buttonsDown & leftButtonBit) != 0, layerNow);
+    trace.sample.activation = externalActivation;
     trace.sample.sampled = true;
     trace.sample.left = leftState;
     trace.sample.right = rightState;
@@ -571,7 +587,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     trace.sample.previous = previousButtonsDown;
     trace.sample.recent = pressedSinceLastSample;
     const bool pointerPressed =
-        externalActivation || snowdesktop::floating_dock_rules::
+        externalActivation || deferredOutsidePress || snowdesktop::floating_dock_rules::
             HasNewPointerButtonPress(
                 buttonsDown,
                 previousButtonsDown,
@@ -651,6 +667,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
         dockExternalMinimize_->IsMinimizeButtonPress(
             GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor)));
+    if (minimizeButtonPress) floatingDockOutsidePress_.Cancel();
     if (floatingDockVisible_ && leftButtonPressed)
         inputTrace::RecordLayer(minimizeButtonPress ? L"pointer-minimize" : L"pointer-other", nullptr,
             floatingDockVisible_, buttonsDown, observedPresses, minimizeTick, externalActivation);
@@ -764,6 +781,28 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                     previewDesktopRect,
                     quickNavigationInteractionRect)))
         {
+            // A client-drawn caption can emit an ordinary down before its
+            // minimize action exists. Reserve that press only for a target
+            // with an actual animation route and Dock destination. Native
+            // preparation consumes it; an ordinary click completes after up.
+            const HWND source = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+            if (leftButtonPressed && source != floatingDockOutsidePress_.Source())
+                floatingDockOutsidePress_.Cancel();
+            DWORD sourceProcess = 0;
+            if (source) GetWindowThreadProcessId(source, &sourceProcess);
+            if (!deferredOutsidePress && buttonsDown == leftButtonBit &&
+                !floatingDockOutsidePress_.Source() && sourceProcess && sourceProcess != GetCurrentProcessId() &&
+                dockWindowTransition_ && snowdesktop::animation::RuntimeAnimationsEnabled() &&
+                snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
+                snowdesktop::window_support::WindowSupport().Resolve(
+                    snowdesktop::window_support::Capability::MinimizeAnimation, source).Available() &&
+                dockWindowTransition_->ResolveMinimizeTarget(source))
+                floatingDockOutsidePress_.Begin(source);
+            if (!deferredOutsidePress && floatingDockOutsidePress_.Source())
+            {
+                trace.sample.outcome = L"outside-awaiting-window-action";
+                return;
+            }
             // A physical outside click owns the foreground transition. Do not
             // restore the window that preceded the floating Dock: doing so can
             // race the clicked window's activation and force two DWM/backdrop

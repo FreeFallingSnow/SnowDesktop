@@ -614,6 +614,39 @@ inline bool HasNewPointerButtonPress(
         (!forwardedState && (buttonsDown & ~previousButtonsDown) != 0);
 }
 
+// Custom caption buttons announce their action after button-up. Retain an
+// outside press while it is held and briefly after release, so the actual
+// native action can consume it before dismissal. Never infer an action from
+// the target's elevation or the presence of a helper process.
+class WindowActionOutsidePress
+{
+public:
+    static constexpr ULONGLONG SettleMs = 50;
+    HWND Source() const noexcept { return source_; }
+    void Begin(HWND source) noexcept
+    {
+        source_ = source;
+        released_ = false;
+    }
+    void Cancel(HWND source = nullptr) noexcept
+    {
+        if (!source || source == source_) { source_ = nullptr; released_ = false; }
+    }
+    bool TakeReady(bool held, ULONGLONG now) noexcept
+    {
+        if (!source_) return false;
+        if (held) { released_ = false; return false; }
+        if (!released_) { released_ = true; releasedAt_ = now; return false; }
+        if (now - releasedAt_ < SettleMs) return false;
+        Cancel();
+        return true;
+    }
+private:
+    HWND source_ = nullptr;
+    ULONGLONG releasedAt_ = 0;
+    bool released_ = false;
+};
+
 inline bool ShouldDismissForForegroundActivation(
     bool visible, bool foregroundChanged, bool externalForeground,
     bool windowTransitionActive, bool recentSystemMinimize) noexcept

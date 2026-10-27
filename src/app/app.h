@@ -4273,6 +4273,7 @@ private:
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
         floatingDockEdgeSwipeDetector_;
     UINT floatingDockPointerButtonsDown_ = 0;
+    snowdesktop::floating_dock_rules::WindowActionOutsidePress floatingDockOutsidePress_;
     snowdesktop::floating_dock_rules::ExternalPointerDrag floatingDockExternalPointerDrag_;
     DockContainer* floatingDockContainer_ = nullptr;
     HMONITOR floatingDockMonitor_ = nullptr;

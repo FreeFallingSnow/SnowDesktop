@@ -9,6 +9,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "shell/directory_change_watch.h"
 
@@ -377,7 +378,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return HandleMessage(hwnd, msg, wp, lp);
     if (msg >= 0xC000 &&
         (msg == snowdesktop::dock_minimize::RequestMessage() ||
-         msg == snowdesktop::dock_minimize::CancelMessage()))
+         msg == snowdesktop::dock_minimize::CancelMessage() ||
+         msg == snowdesktop::window_support::BeforeNativeMinimizeMessage()))
         return HandleMessage(hwnd, msg, wp, lp);
     static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
     if (menuUnavailable && msg == menuUnavailable)
